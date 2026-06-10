@@ -47,23 +47,14 @@ Each beat is a focused conversational flow. The beats:
 
 (Runs when there's no `.spec/project.json`.)
 
-Ask in order:
+Ask only what's needed to start eliciting:
 
 1. Project name (slug).
 2. Greenfield or existing code?
-3. Repo layout: single-repo (code lives here), multi-repo (code in separate repos), or spec-only.
-4. If multi-repo: for each code repo, ask logical name + URL + default branch + PR tool. Write to `.spec/project.json` `repos`. Prompt user to add per-dev paths to `.spec/local.json` (or do it on their behalf if they want).
-5. Functional areas to specify (comma-separated names). For each: kind (area / contract / ui), description, code repo (if multi-repo), `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
-6. **Project architecture defaults** (Layer 0 + 4 + the existence of catalogs):
-   - Stack (language, version, framework, test framework, package manager)
-   - Default persistence (kind, engine, client)
-   - Default patterns + protocols (likely empty initially; catalog grows over time)
-   - Module layout templates
-   - Conventions (naming)
-   - Cross-cutting (logging, metrics, tracing, auth)
-   Write to `project.architecture`.
-7. Topology (Layer 4) — usually skip on initial setup; add later when there are multiple deployment units.
-8. Apalache settings (timeout, max steps) — offer defaults.
+3. Repo layout: single-repo (code lives here), multi-repo (code in separate repos), or spec-only. If multi-repo: for each code repo, logical name + URL + default branch → `.spec/project.json` `repos`; prompt user to add per-dev paths to `.spec/local.json` (or do it for them).
+4. Functional areas to specify (comma-separated names). For each: kind (area / contract / ui), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
+
+**Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-apply` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units; Apalache settings only when a check times out. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
 Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and an empty `formal_model.quint_file` pointer.
 
@@ -103,17 +94,23 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 
 - **Purpose**: one sentence on what this area is for.
 - **Domain vocabulary**: entities (with states if applicable), actors, verbs.
-- **Behavior (EARS-structured)**: walk the user through scenarios (happy paths, edge cases, errors). Capture each candidate REQ-NNN as **EARS fields**, not free text — this is the precision mechanism. The pattern is derived from which fields are filled; never ask the user to pick one. Targeted questions:
-  - "What triggers this?" → `ears.trigger`
-  - "Does it only apply in some state or mode?" → `ears.state`. Phrase it using the entity's **declared state names** ("the Session is Active", not "the user is logged in") — it makes the requirement↔state-machine link reviewable and matrix triage mechanical.
-  - "What exactly shall the system do?" → `ears.response` (always required)
-  - For every happy-path REQ: "and if that goes wrong / arrives in the wrong state?" → a counterpart REQ with `ears.unwanted: true` (+ its trigger). This is where most missed requirements live.
+- **Behavior (EARS-structured)**: ask for scenarios as stories ("walk me through a login — then walk me through one going wrong"), not field-by-field. From each story, **draft the EARS fields yourself**, render the sentence, and read drafts back in batches of ~5 for the user to confirm or correct — confirm-and-correct converges faster and more accurately than interrogation. The pattern is derived from which fields are filled; never ask the user to pick one. Use targeted questions only for fields the story left open:
+  - trigger unclear → "What kicks this off?" → `ears.trigger`
+  - state unclear → "Always, or only in some state?" → `ears.state`. Phrase it using the entity's **declared state names** ("the Session is Active", not "the user is logged in") — it makes the requirement↔state-machine link reviewable and matrix triage mechanical.
+  - `ears.response` is always required.
+
+  Three checks **at capture time** — each is one question and each kills a class of wrong or missing requirement:
+  1. **Witness test for vagueness.** If you can't sketch a `witness.predicate` for the response (an observable state change or output), the response is too vague to ever be witnessed or verified — sharpen it now ("handle errors gracefully" → what state results, visible where?).
+  2. **Unwanted counterpart.** For every happy-path REQ: "and if that goes wrong / arrives in the wrong state?" → a counterpart REQ with `ears.unwanted: true` (+ its trigger). This is where most missed requirements live.
+  3. **Boundary semantics.** Whenever a REQ references a CON: "at exactly N, or after N?" Encode the answer in the response ("locks the account **on the 5th** failed attempt"), not just the constant — off-by-one is the classic wrong-rule bug witness traces exist to catch; settle it before formalizing.
 
   Store the fields in `requirements[].ears`; render `description` from them ("While `<state>`, when `<trigger>`, the system shall `<response>`."). A requirement that can't be expressed in the fields is usually two requirements or a vague one — split or sharpen. An answer with no trigger/state ("always true") is an invariant — capture it as INV-NNN, not REQ-NNN.
 - **Invariants**: "what must always be true?" Capture INV-NNN candidates with criticality.
 - **Constraints**: numeric thresholds, bounds, max/min — capture CON-NNN (with units!).
 - **Decisions**: architectural choices being made, with alternatives.
 - **Open questions**: anything the user can't answer yet; mark `Q-NNN` `status: open`.
+
+**Early matrix pass**: as soon as `state_machines[]` and a first batch of REQs exist, run `tools/spec-matrix.py <target>` and triage the `?` cells in this conversation. A gap found now, while the user is describing the domain, becomes a REQ in one exchange; the same gap found later by `/spec-check` becomes a stale entry in the Q-NNN queue. Same tool, earlier moment.
 
 Write to `specs/<target>.json` as you go. After enough is captured, draft a Quint module in `specs/<target>.qnt` (structure convention: `templates/spec.qnt.template`) — the EARS fields map mechanically: `trigger` → action, `state` → `require` guard, `response` → effect. While formalizing, also draft each requirement's `witness.predicate` (the Quint boolean over state that's true exactly when the behavior has happened — `/spec-check` uses it to produce the witness trace). Show the module for confirmation; offer `/spec-check` next.
 

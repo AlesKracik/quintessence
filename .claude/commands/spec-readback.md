@@ -1,8 +1,8 @@
 # /spec-readback — Generate Human-Readable Review Document
 
-Produce a Markdown readback document that translates the area JSON and its Quint sidecar into a form humans can review: natural-language summary, embedded Mermaid diagrams, traceability snapshot, verification status. Written to `specs/<target>.readback.md` (per-area) or `.spec/readback.md` (project-wide).
+Produce a Markdown readback that translates the area JSON and its Quint sidecar into a form humans can review. Written to `specs/<target>.readback.md` (per-area) or `.spec/readback.md` (project-wide).
 
-This is the primary artifact for **PR review and stakeholder review** — auto-regenerated, never hand-edited, but rendered as a clean Markdown file in any viewer.
+This is the primary artifact for **PR review and stakeholder review** — auto-regenerated, never hand-edited. It is ordered for the reviewer, not for the data model: what needs a human decision comes first, behavior second, reference material collapsed at the end. A reviewer who reads only the first two sections has seen everything that needs judgment.
 
 ## Usage
 ```
@@ -11,55 +11,91 @@ This is the primary artifact for **PR review and stakeholder review** — auto-r
 /spec-readback --all               # both: project overview + every area
 ```
 
-`[target]` is the area name. Works for any kind: `area`, `contract`, `ui`. The shape of the readback adapts to the kind.
+`[target]` is the area name. Works for any kind: `area`, `contract`, `ui`.
 
 ## Instructions
 
-You are the **Readback Author**. You read structured artifacts (area JSON + sidecar + project config) and emit a human-readable Markdown document with embedded Mermaid diagrams. You do NOT invent content — everything in the readback is derived from existing data. If a section has no source data, omit the section rather than fabricate.
+You are the **Readback Author**. You read structured artifacts (area JSON + sidecar + project config) and emit human-readable Markdown with embedded Mermaid. You do NOT invent content — everything is derived from existing data. If a section has no source data, omit the section rather than fabricate.
 
-**Determinism rule:** structure, diagrams, tables, statuses, and traces are derived mechanically from the source artifacts (use `tools/itf_tools.py mermaid` for trace diagrams — don't hand-draw them). Your own prose is limited to short glosses that restate what the data says; where you add an interpretive sentence, it must be traceable to a specific field. The readback is the review surface humans trust — it must not be able to diverge from what the checker actually verified.
+**Determinism rule:** structure, diagrams, tables, statuses, and traces are derived mechanically from the source artifacts (use `tools/itf_tools.py mermaid` for trace diagrams — don't hand-draw them). Your own prose is limited to short glosses that restate what the data says; an interpretive sentence must be traceable to a specific field. The readback is the review surface humans trust — it must not be able to diverge from what the checker actually verified.
+
+**Stable-order rule:** within every section, order entries by ID (REQ-001, REQ-002, …; alphabetical where there's no ID). Identical input must produce byte-identical output. Then `git diff specs/<area>.readback.md` on a PR **is** the change review — what changed in the spec is exactly what changed in the readback. No diff machinery needed; don't break this with timestamps outside the designated status fields or with reflowed prose.
 
 ### Step 1 — Resolve target and read sources
 
-Per-area readback (`/spec-readback <target>`):
-- `specs/<target>.json` (required)
-- `specs/<target>.qnt` (the sidecar; used for state machine inference)
-- `.spec/project.json` (for resolved architecture and topology context)
-- `.spec/patterns/*.json` and `.spec/protocols/*.json` (to resolve referenced names to descriptions)
-- For UI areas: also read each `spans` area's JSON to cross-reference.
-- For contracts: read each `spans` area's JSON for participant summaries.
+Per-area (`/spec-readback <target>`):
+- `specs/<target>.json` (required) and `specs/<target>.qnt` (sidecar — Quint excerpts, state-machine fallback inference)
+- `.spec/project.json` (resolved architecture, topology context)
+- `.spec/patterns/*.json`, `.spec/protocols/*.json` (resolve referenced names to descriptions)
+- For `ui` and `contract` kinds: each `spans` area's JSON for cross-references.
 
-Project-wide readback (`/spec-readback` with no target):
-- `.spec/project.json`
-- Every `specs/*.json` (for the per-area summary table)
+Project-wide (no target): `.spec/project.json` + every `specs/*.json`.
 
-### Step 2 — Choose template by kind
+### Step 2 — Emit by kind
 
 #### Per-area readback for `kind: "area"`
 
 ```markdown
 # Spec Readback: <area> — v<version>
 
-> Auto-generated from `specs/<area>.json` by `/spec-readback`. Do not edit directly.
-> Regenerate after spec changes: `claude /spec-readback <area>`
+> Auto-generated from `specs/<area>.json` by `/spec-readback`. Do not edit; regenerate after spec changes.
 
-**Status:** <status>  |  **Last modified:** <last_modified>  |  **Last verified:** <date from verification_log[-1] or "never">
+**Status:** <status>  |  **Requirements:** <n verified>/<total> verified, <n witnessed>/<total> witnessed  |  **Invariants:** <n verified>/<total>  |  **Open questions:** <n>  |  **Last verified:** <verification_log[-1] date or "never">
 
 ## Purpose
 <purpose>
 
-## Concepts
+## ⚠ Needs Your Attention
 
-**Entities:**
-- **<Name>** — <states or description>
-- ...
+Everything requiring a human decision, in one place, first. Include each non-empty list; if ALL are empty, replace the section body with "**Nothing needs attention.**"
 
-**Actors:** <comma-separated>
-**Verbs:** <comma-separated>
+- **Counterexamples** — each `check_results.checks[]` entry with `result: "counterexample"`: what the invariant says, the NL explanation written by `/spec-check`, a brief trace summary.
+- **Unwitnessed requirements** — each REQ with `witness.status: "no-witness"` (behavior unreachable as specified — a spec bug until shown otherwise) or `"not-run"`.
+- **Stale witnesses** — `witness.model_sha` no longer matches `tools/itf_tools.py sha <area>`: the trace proves nothing about the current model.
+- **Open questions** — each `open_questions[]` entry with `status: "open"` or `"deferred"`.
+- **Drift** — if the last `verification_log[]` entry has `drift_detected: true`.
+
+## What the System Does
+
+One block per requirement. **This is the EARS ↔ Quint review surface** — whether the formal action means what the sentence says is the one link no tool checks (METHODOLOGY → "honest residual gaps"), so sentence, formal encoding, and machine-found example sit together and the review is a glance, not a hunt:
+
+### REQ-003 — <short name>  <status mark>
+*While* the account is Unlocked, *when* the user submits invalid credentials, the system *shall* increment failedAttempts and lock the account at MAX_FAILED_ATTEMPTS.
+
+> **Witness:** <one-line `tools/itf_tools.py summarize` output — e.g. "6 steps: 5× login_failed(alice) → account Locked">. Found by Apalache <witness.checked_at>; code replay: <✓ green / not yet run>.
+
+<details><summary>Quint action `login_failed` + witness trace diagram</summary>
+
+```quint
+<verbatim body of the quint_ref action from the sidecar>
+```
+
+```mermaid
+<output of: tools/itf_tools.py mermaid specs/<area>/traces/REQ-003.itf.json --title "REQ-003 witness">
+```
+</details>
+```
+
+Status marks: ✓ verified (witness replayed green against code) · ◐ witnessed, not yet verified · ✗ no witness · ⏳ not checked · ⊘ skipped (cite the `justification` and the enforcing INV inline).
+
+The one-line trace summary is always inline — that's where wrong-rule bugs (locks at attempt 6, not 5) get caught at a glance. The full diagram and Quint excerpt live in the collapsed block. Traces longer than ~12 steps: summary only, link the `.itf.json`. Group by component only when components are declared and the grouping clarifies.
+
+```markdown
+## What Must Always Be True
+
+- **INV-001 (singleSession)** — At most one Active session per user. Criticality: critical. ✓ verified
+
+(✗ entries just carry the mark and "see Needs Your Attention" — the explanation already appeared there; don't repeat it.)
+
+## What Must Eventually Happen
+
+- **PROP-001 (eventualLogout)** — Every Active session eventually ends. ✓ verified up to N steps
+
+(Always state the bound — bounded liveness is all Apalache gives. Omit section if no properties.)
 
 ## State Machines
 
-For each entry in `state_machines[]`, emit a state diagram directly from the declared transitions (no sidecar inference needed — the structure is right there in the JSON):
+For each `state_machines[]` entry, a diagram directly from the declared transitions:
 
 ```mermaid
 stateDiagram-v2
@@ -68,166 +104,61 @@ stateDiagram-v2
   Active --> LoggedOut: logout (User)
 ```
 
-Terminal states get the `--> [*]` edge; `lifecycle_actions[]` show as `[*] --> initial_state: <action_name>` to indicate creation. Edge labels use `trigger (actor)`; the guard becomes a tooltip if rendered with Mermaid extensions.
+Terminal states get `--> [*]`; `lifecycle_actions[]` show as `[*] --> initial_state: <action>`. Edge labels are `trigger (actor)`. If an entity has `concepts.entities[].states[]` but no declared machine, infer a less precise diagram from the sidecar's action mutations and note: "State machine not declared. Run `/spec <area>` to capture it formally."
 
-If `state_machines[]` is missing but an entity has `concepts.entities[].states[]`, fall back to inference from the sidecar's `action` mutations and emit a less precise diagram, plus a note: "State machine not declared explicitly. Run `/spec <area>` to capture it formally."
+## Reference
 
-## Components
+<details><summary>Concepts, architecture, decisions, traceability, verification history</summary>
 
-Only if `architecture.components[]` is non-empty:
+**Entities:** <Name> — <states or description> (one line each)  ·  **Actors:** <comma-separated>
 
-```mermaid
-graph LR
-  subgraph <area> [<area>]
-    service[service<br/>role: transport]
-    worker[worker<br/>role: async]
-  end
-  service -. emits .-> worker
-```
+**Architecture (resolved project ⊕ area):** stack · persistence · patterns (name — one-line description) · protocols · cross-cutting. If `architecture.components[]` is non-empty, the component diagram (graph LR; edges from `implements` overlap or pattern usage, heuristic edges dotted) and a bullet list of components with roles + implemented actions.
 
-Then list components with their roles + implemented actions in a bulleted form.
+**Decisions:** for each `decisions[]` entry — **DEC-001 (<date>, <status>)** — <title>. Rationale: <…>. Alternatives: <…>.
 
-## What the System Does
+**Traceability:**
 
-For each requirement, write one bullet. Render the EARS fields when present (they're the source of truth; the free-text description is derived):
+| ID | Quint | Component | Code | Verified |
+|---|---|---|---|---|
 
-- **REQ-003** — *While* the account is Unlocked, *when* the user submits invalid credentials, the system *shall* increment failedAttempts and lock the account at MAX_FAILED_ATTEMPTS.
-  - Realized by Quint action `login_failed` in component **service**.
-  - Witness: ✓ demonstrated — see trace below. (or: ✗ NO WITNESS — unreachable in model; or ⏳ not checked yet)
-  - Followed by the **Quint excerpt**: the body of the `quint_ref` action (verbatim from the sidecar) in a collapsed `<details>` block. EARS sentence and formal encoding sit side by side — this is the one semantic link no tool checks, so the readback makes the human review of it a diff, not a hunt.
+(from `traceability[]`; if empty: "No code generated yet. Run `/spec-apply <area>`.")
 
-Group by component if helpful.
-
-### Witnessed Behavior (machine-found example traces)
-
-For each requirement whose `witness.status == "witnessed"`, embed the trace as a sequence diagram — generated, not drawn:
-
-```bash
-tools/itf_tools.py mermaid specs/<area>/traces/REQ-003.itf.json --title "REQ-003 witness"
-```
-
-Paste the output into a `mermaid` block under the requirement, with one caption line: "Machine-found by Apalache on <witness.checked_at>; replayed against code by /spec-verify." For traces longer than ~12 steps, link the `.itf.json` and show `tools/itf_tools.py summarize` output instead.
-
-## What Must Always Be True
-
-For each invariant:
-
-- **INV-001 (atMostOneActiveSession)** — At most one Active session per user.
-  - Criticality: critical | Formal status: ✓ verified (or ✗ counterexample / ~ specified)
-
-If `check_results[]` has counterexamples, embed a brief summary of the trace.
-
-## What Must Eventually Happen
-
-For each property (liveness):
-
-- **PROP-001 (eventualLogout)** — Every Active session eventually transitions to LoggedOut or Expired.
-  - Formal status: ✓ verified
-
-(Omit section if no properties.)
-
-## Architecture
-
-Resolved view (project ⊕ area ⊕ components):
-
-- **Stack:** TypeScript 5.4 + Express + Vitest
-- **Persistence:** Postgres via Prisma
-- **Patterns referenced:**
-  - `outbox` — append-only outbox for transactional outbound messaging
-- **Protocols spoken:**
-  - `api-envelope` — {data, errors, meta} response shape
-- **Cross-cutting:** pino logging (json), OpenTelemetry tracing
-
-If components are declared, restate the layout from the component table.
-
-## Architectural Decisions
-
-For each `decisions[]` entry with `kind: "architecture"`:
-
-- **DEC-001 (2026-04-12, accepted)** — JWT (RS256) over session cookies.
-  - **Rationale:** Edge proxy needs to validate without a round-trip.
-  - **Alternatives considered:** Cookie-based sessions (edge can't validate), opaque tokens with introspection (extra request per call).
-
-## Traceability
-
-| ID      | Quint              | Component | Code                          | Verified |
-|---------|--------------------|-----------|-------------------------------|----------|
-| REQ-001 | action login       | service   | authService.ts:login          | ✓        |
-| INV-001 | val singleSession  | service   | authService.ts:login (guard)  | ✓        |
-
-(All from `traceability[]`. If empty: "No code generated yet. Run `/spec-apply <area>`.")
-
-## Open Questions
-
-Only entries with `status: "open"` or `status: "deferred"`:
-
-- **Q-001** (open) — Should unlock_account be self-service or Admin-only?
-
-(Skip section if none open.)
-
-## Verification Status
-
-If `verification_log[]` has entries, show the last:
-
-- **2026-05-14**: PASS  |  4 tests, 0 failures  |  Spec @ abc1234 ⇄ Code @ def5678
-- Drift detected: no
-
-Plus an inline mini-trend (last 5 entries, if available, as a compact list).
-
-If empty: "No verification runs recorded. Run `/spec-verify <area>`."
-
-## Counterexamples (if any)
-
-If `check_results.checks[]` has entries with `result: "counterexample"`, include the NL explanation written by `/spec-check`. Otherwise omit.
+**Verification history:** last 5 `verification_log[]` entries, compact: `<date>: PASS | 4 tests, 0 failures | spec @ abc1234 ⇄ code @ def5678 | drift: no`. If empty: "No runs recorded. Run `/spec-verify <area>`."
+</details>
 ```
 
 #### Per-area readback for `kind: "contract"`
 
-Different shape — contracts have no code, no traceability:
+Same ordering discipline (attention first, reference collapsed); contracts have no code or traceability:
 
 ```markdown
 # Contract Readback: <name> — v<version>
 
-**Spans:** <area1>, <area2>, ...  |  **Status:** <status>  |  **Last checked:** <date>
+**Spans:** <area1>, <area2>  |  **Status:** <status>  |  **Joint invariants:** <n verified>/<total>  |  **Last checked:** <date>
+
+## ⚠ Needs Your Attention
+(counterexamples on joint invariants + open questions; or "Nothing needs attention.")
 
 ## What This Contract Says
-
 <purpose>
 
 ## Joint Invariants
-
-For each invariant (typically prefixed `INV-CONTRACT-NNN`):
-
-- **INV-CONTRACT-001 (noOrphanAccounts)** — Every billing.Account.userId refers to an existing auth.User.
-  - Status: ✓ verified
+- **INV-CONTRACT-001 (noOrphanAccounts)** — Every billing.Account.userId refers to an existing auth.User. ✓ verified
 
 ## Participant Obligations
-
-For each participant area:
-
+Per spanned area, what it must expose / must respect — derived from the sidecar's imports and usage:
 ### auth must expose
 - State: `users` (the set of valid user IDs)
-- Actions that don't violate: `delete_user` must publish a cascade event, OR ...
-
 ### billing must respect
-- Cannot create Account.userId not in auth.users (enforced by checking at write time)
-- ...
+- Cannot create Account.userId not in auth.users
 
-(Derived by analyzing the Quint sidecar's imports and usage.)
-
-## Decisions
-(Same as area)
-
-## Open Questions
-(Same as area)
-
-## Check Status
-Last `/spec-check`: 2026-05-14 — VERIFIED.
+## Reference
+<details><summary>Decisions, check history</summary>(same shapes as area)</details>
 ```
 
 #### Per-area readback for `kind: "ui"`
 
-Same shape as area, but replace the State Machines section with **Navigation**:
+Same as area, with the State Machines section replaced by **Navigation** + **Screens** (placed right after Needs Your Attention — the navigation graph IS the behavior surface for a UI):
 
 ```markdown
 ## Navigation
@@ -238,7 +169,6 @@ graph TB
   Login --> |submit valid| Dashboard
   Login --> |submit when locked| LockedNotice
   Dashboard --> |logout| Home
-  LockedNotice -.-> |after lockout expires| Home
 
   classDef auth_required fill:#fff5b1
   class Dashboard auth_required
@@ -250,134 +180,70 @@ Auth-required screens highlighted. Edges from `navigation[]`.
 
 | Screen | Auth required | Purpose | Components |
 |---|---|---|---|
-| Home | no | Public landing | Header |
-| Login | no | Email/password form | Header, LoginForm |
-| Dashboard | yes | Logged-in landing | Header |
-| LockedNotice | no | Shown when account locked | Header |
 
 ## UI Components
-
-For each `ui_components[]`:
-
 - **LoginForm** — fields: email, password. States: idle, submitting, error.
-- **Header** — visible when always.
-
-## Behaviors (UI requirements)
-
-Per requirement:
-- **UI-001** — Clicking 'Sign in' from Home navigates to Login.
-- **INV-001 (guardedDashboard)** — Dashboard is unreachable without an authenticated session. ✓ verified by Apalache.
 ```
 
-#### Project-wide readback (`/spec-readback` no target)
+UI requirements (`UI-NNN`) render in "What the System Does" with the same EARS + witness shape.
 
-`.spec/readback.md`:
+#### Project-wide readback (no target) → `.spec/readback.md`
 
 ```markdown
 # Project Readback: <project-name>
 
 > Auto-generated. Regenerate: `claude /spec-readback`
 
-**Areas:** <count>  |  **Last activity:** <max last_modified across areas>
+**Areas:** <count>  |  **Last activity:** <max last_modified>
 
-## System Context (C4)
+## ⚠ Needs Your Attention
 
-```mermaid
-graph TB
-  user((User))
-  admin((Admin))
-  system[<project>]
-  postgres[(Postgres)]
-  auth0[Auth0]
-  user --> system
-  admin --> system
-  system --> postgres
-  system --> auth0
-```
-
-(Actors collected from per-area `concepts.actors`; external systems from `.spec/project.json` `topology.external_systems[]`.)
-
-## Topology (Deployment)
-
-Only if `.spec/project.json` `topology` is set:
-
-```mermaid
-graph TB
-  subgraph prod [prod]
-    service-api[service-api<br/>K8s pod, 3 replicas]
-    pipeline[analytics-pipeline<br/>AWS Lambda]
-  end
-  service-api -. Kafka async .-> pipeline
-  service-api --> postgres[(managed-postgres)]
-```
+Roll-up across areas — anything any area's readback would flag:
+- **billing** — 3 open questions, last verify 2 weeks old.
+- **search** — INV-002 counterexample (2026-05-10).
+(or "Nothing needs attention.")
 
 ## Areas
 
 | Area | Kind | Version | Status | Code repo | Last verified |
 |---|---|---|---|---|---|
 | auth | area | 1.0.0 | approved | service-api | 2026-05-14 ✓ |
-| auth-ui | ui | 0.3.0 | formalized | service-web | 2026-05-12 ✓ |
-| user-permission | contract | 1.0.0 | approved | — | 2026-05-13 ✓ |
 
-Per-area readback links: [auth](./specs/auth.readback.md), [auth-ui](./specs/auth-ui.readback.md), ...
+Per-area links: [auth](./specs/auth.readback.md), …
 
-## Architecture Defaults
+## System Context (C4)
+(graph TB: actors from per-area `concepts.actors`, external systems from `topology.external_systems[]`)
 
-- Stack: <project.architecture.stack>
-- Persistence: <project.architecture.persistence>
-- Cross-cutting: ...
+## Topology (Deployment)
+(only if `.spec/project.json` `topology` is set — direct translation)
 
-## Catalogs
-
-**Patterns** (`.spec/patterns/`): outbox, repository-with-uow, ...
-**Protocols** (`.spec/protocols/`): api-envelope, pagination-cursor, ...
-
-## Health Check
-
-Areas needing attention:
-- **billing** — 3 open questions, last verify is 2 weeks old.
-- **search** — INV-002 has counterexample (last check 2026-05-10).
+## Reference
+<details><summary>Architecture defaults, catalogs</summary>
+Stack / persistence / cross-cutting from `project.architecture`; patterns and protocols lists from `.spec/patterns/`, `.spec/protocols/`.
+</details>
 ```
 
 ### Step 3 — Write files
 
-For per-area: write to `specs/<target>.readback.md` (flat, next to the JSON and sidecar). Overwrite if exists; the file is generated.
-
-For project-wide: write to `.spec/readback.md`.
-
-For `--all`: write both the project-wide AND every per-area readback.
+Per-area → `specs/<target>.readback.md` (flat, next to JSON and sidecar). Project-wide → `.spec/readback.md`. `--all` → both. Overwrite — the file is generated.
 
 ### Step 4 — Diagram correctness
 
-All Mermaid in the readback is generated from existing structured data:
-
-- **State machines** — parse the sidecar; for each `var` typed as a variant, infer states from the type; infer transitions from `action` declarations that mutate the var.
-- **Component diagrams** — read `architecture.components[]`; edges from `implements_actions` overlap or pattern usage (mark heuristic edges with dotted lines).
-- **Navigation diagrams** — direct translation of `navigation[]`.
-- **Topology** — direct translation of `.spec/project.json.topology`.
-- **C4 context** — actors from per-area `concepts.actors`, external systems from topology.
-
-If a source is empty, skip the corresponding diagram section rather than emitting an empty Mermaid block.
+All Mermaid is generated from existing structured data: state machines from `state_machines[]` (sidecar inference only as fallback), component diagrams from `architecture.components[]`, navigation from `navigation[]`, topology from project JSON, C4 from actors + external systems, sequence diagrams exclusively from ITF traces via `tools/itf_tools.py mermaid`. Empty source → skip the diagram, never emit an empty Mermaid block.
 
 ### Step 5 — Validate against source
 
-Before writing, cross-check:
-- Every node name in a component diagram matches a `components[]` entry.
-- Every navigation node matches a `screens[]` entry.
-- Every topology node matches a deployment unit or external system.
-
-If a previous hand-edited readback had extra content (rare — readbacks are normally auto-generated), warn the user and ask whether to drop those edits.
+Before writing, cross-check: every component-diagram node matches a `components[]` entry; every navigation node matches a `screens[]` entry; every topology node matches a deployment unit or external system. If a previous readback was hand-edited (rare), warn and ask whether to drop those edits.
 
 ### Step 6 — Summary and commit
 
 ```
 ✓ Readback written:
-  specs/auth.readback.md         — 4 sections, 2 embedded diagrams
-  specs/auth-ui.readback.md      — 5 sections, 1 navigation diagram
-  .spec/readback.md              — project overview, 2 diagrams
+  specs/auth.readback.md         — 1 item needs attention, 4 requirements, 2 diagrams
+  .spec/readback.md              — project overview
 
 Render in any markdown viewer (GitHub, VS Code, Mermaid Live).
-Linkable from PR descriptions for stakeholder review.
+Reviewers: read "Needs Your Attention" + "What the System Does"; the rest is reference.
 ```
 
 ```bash
@@ -388,6 +254,6 @@ git commit -m "spec(<target>): readback — <summary>"
 ### What `/spec-readback` does NOT do
 
 - **Does not render images.** Mermaid is text; renderers handle visuals.
-- **Does not let you hand-edit nodes or sections that don't exist in the source.** Declare them in the source artifact (area JSON, sidecar, topology) and regenerate. This keeps the readback from drifting.
-- **Does not invent sequence diagrams.** Sequence diagrams come exclusively from ITF witness traces via `tools/itf_tools.py mermaid` — machine-found, never sketched from imagination.
-- **Does not modify the area JSON or sidecar.** Read-only over those; only writes the `.readback.md` files.
+- **Does not let you hand-edit content that doesn't exist in the source.** Declare it in the source artifact and regenerate.
+- **Does not invent sequence diagrams.** They come exclusively from ITF witness traces via `tools/itf_tools.py mermaid` — machine-found, never sketched.
+- **Does not modify the area JSON or sidecar.** Read-only over those; writes only `.readback.md` files.
