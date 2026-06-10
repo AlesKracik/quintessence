@@ -1,0 +1,86 @@
+# Spec CI — runs on every PR touching specs/ or .spec/.
+#
+# Gates, in order of cost:
+#   1. spec-lint            — jsonschema validation, structural consistency,
+#                             EARS structure, witness obligations (trace
+#                             present, valid ITF, fresh model_sha)
+#   2. spec-matrix --strict — state×event completeness: every cell covered or
+#                             explicitly triaged (GAP / IMPOSSIBLE / OUT-OF-SCOPE)
+#   3. quint typecheck      — sidecars and probe modules still compile
+#   4. quint test           — the model's `run` scenarios still pass
+#
+# QUINT_IR_ENGINE=cli pins lint/matrix to the Quint compiler's typed IR —
+# verdicts here never depend on the lossy regex fallback.
+#
+# Apalache model checking (/spec-check) and conformance replay (/spec-verify)
+# are heavier and agent-driven; run them locally or scheduled. ALSO wire each
+# area's conformance.command into the CODE repo's own CI — the replay harness
+# is an ordinary test file and needs no spec tooling.
+#
+# This file ships with the template; adjust paths/commands to your project.
+
+name: spec-ci
+
+on:
+  pull_request:
+    paths:
+      - "specs/**"
+      - ".spec/**"
+      - "schemas/**"
+      - "tools/**"
+  push:
+    branches: [main]
+    paths:
+      - "specs/**"
+      - ".spec/**"
+
+env:
+  QUINT_IR_ENGINE: cli
+
+jobs:
+  spec-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Quint CLI + jsonschema
+        run: |
+          npm install -g @informalsystems/quint
+          pip install jsonschema
+
+      - name: spec-lint (jsonschema + consistency + EARS + witness obligations + freshness)
+        run: python tools/spec-lint.py --no-color
+
+      - name: spec-matrix --strict (state×event completeness gate)
+        run: |
+          set -e
+          for area in $(python -c "import json; print(' '.join(a['name'] for a in json.load(open('.spec/project.json'))['areas'] if a.get('kind') != 'contract'))"); do
+            echo "── matrix: $area"
+            python tools/spec-matrix.py "$area" --stdout --strict > /dev/null
+          done
+
+      - name: Quint typecheck (sidecars + probe modules)
+        run: |
+          set -e
+          for f in specs/*.qnt; do
+            echo "── typecheck: $f"
+            quint typecheck "$f"
+          done
+
+      - name: Quint test (run scenarios in the models)
+        run: |
+          set -e
+          shopt -s nullglob
+          for f in specs/*.qnt; do
+            case "$f" in *.probes.qnt) continue;; esac
+            echo "── test: $f"
+            quint test "$f" || exit 1
+          done
