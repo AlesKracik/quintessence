@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "pattern.schema.json",
+  "title": "Architectural Pattern (catalog entry)",
+  "description": "Reusable architectural pattern (Layer 2). Lives at .spec/patterns/<name>.json. Referenced by name from area.architecture.patterns[] or component.patterns[]. Authored/edited via /spec (no dedicated command).",
+  "type": "object",
+  "required": ["name", "description"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema":     { "type": "string" },
+    "name":        { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "version":     { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$", "default": "0.1.0" },
+    "description": { "type": "string" },
+    "applies_to": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["action", "invariant", "var", "type", "temporal", "any"] }
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["check"],
+        "additionalProperties": false,
+        "properties": {
+          "check":     { "type": "string", "description": "Plain-language predicate over the resolved architecture or spec." },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    "generates": {
+      "type": "array",
+      "description": "File templates emitted by /spec-apply when this pattern is active. Variables: {area}, {component}, {ext}.",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path":    { "type": "string" },
+          "purpose": { "type": "string" }
+        }
+      }
+    },
+    "trade_offs":      { "type": "array", "items": { "type": "string" } },
+    "when_to_use":     { "type": "string" },
+    "when_not_to_use": { "type": "string" },
+    "references":      { "type": "array", "items": { "type": "string" }, "description": "Links, ADR IDs (DEC-NNN), papers." }
+  }
+}

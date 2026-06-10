@@ -1,0 +1,5 @@
+# Everything text stays LF — tools/*.sh and tools/pre-commit run under
+# bash/WSL where CRLF breaks them; Python and Quint tooling is happier too.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

@@ -1,0 +1,42 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code — user-/conversation-specific (never check in)
+#
+# What stays tracked under .claude/: commands/, agents/, skills/, hooks/,
+# output-styles/, and a shared settings.json if the project ships team defaults.
+# Everything below is local state that belongs to whoever is running Claude Code.
+memory/
+.claude/settings.local.json
+.claude/projects/
+.claude/todos/
+.claude/shell-snapshots/
+.claude/statsig/
+.claude/ide/
+.claude/__store.db
+.claude/__store.db-*
+.claude.json
+.claude.json.backup
+CLAUDE.local.md
+
+# Python (for tools/spec-lint.py)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Apalache scratch files (counterexamples and results.json ARE checked in)
+specs/*/apalache/_tmp/
+*.tla.bak
+
+# Regenerable spec artifacts (tools re-emit these on every run).
+# NOT ignored: specs/<area>/traces/ (witness traces are committed — they're
+# verification inputs cross-machine) and specs/*.probes.qnt (CI typechecks them).
+**/specs/*/gen/

@@ -1,0 +1,560 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "area.schema.json",
+  "title": "Spec Area (area | contract | ui)",
+  "description": "One JSON file per area at specs/<name>.json. The formal Quint model lives in a sidecar specs/<name>.qnt referenced from formal_model.quint_file. Three kinds supported: 'area' (functional area with code), 'contract' (cross-area agreement, spec-only), 'ui' (interactive surface with screens/navigation). Most fields are optional; required fields are gated by kind. Sections grow conversationally via /spec — empty arrays/objects are valid for incomplete specs.",
+  "type": "object",
+  "required": ["kind", "area", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+
+    "kind": {
+      "type": "string",
+      "enum": ["area", "contract", "ui"],
+      "description": "area: functional area with code (default). contract: cross-area invariant carrier, spec-only, requires spans[]. ui: interactive surface, requires screens[] + navigation[]."
+    },
+    "area": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Slug, also the filename: specs/<area>.json. Examples: auth, billing, auth-ui, user-permission."
+    },
+    "spans": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Areas this spec depends on. Contracts: the 2+ areas the contract joins (required). UI areas: the area(s) whose state the UI reads (e.g. ['auth'])."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["raw", "structured", "formalized", "in-review", "approved"],
+      "default": "raw"
+    },
+    "last_modified": { "type": "string", "format": "date-time" },
+
+    "purpose": {
+      "type": "string",
+      "description": "One paragraph: what this area is responsible for."
+    },
+
+    "concepts": {
+      "type": "object",
+      "description": "Vocabulary: entities, actors, verbs. The 'what we're talking about' layer that informs the formal model.",
+      "additionalProperties": false,
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name":        { "type": "string" },
+              "id_field":    { "type": "string" },
+              "states":      { "type": "array", "items": { "type": "string" }, "description": "If stateful, the possible states." },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "actors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Who/what can initiate actions: User, Admin, System, ScheduledJob, etc."
+        },
+        "verbs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Domain actions: login, charge, expire, etc. Loose — gets refined into Quint actions during formalization."
+        }
+      }
+    },
+
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^(REQ|UI)(-CONTRACT)?-\\d{3}$",
+            "description": "REQ-NNN for functional behavior; UI-NNN for kind=ui; REQ-CONTRACT-NNN for kind=contract."
+          },
+          "description": { "type": "string", "description": "Human-readable rendering. When ears is present this is derived from it; the EARS fields are the source of truth." },
+          "type": {
+            "type": "string",
+            "enum": ["functional", "non-functional"],
+            "default": "functional"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["raw", "needs-validation", "pending", "specified", "verified", "deferred"],
+            "default": "raw"
+          },
+          "source":    { "type": "string", "description": "elicited | extracted | reconciled | etc." },
+          "ears": {
+            "type": "object",
+            "description": "EARS-structured requirement (Easy Approach to Requirements Syntax). The fields ARE the structure — the EARS pattern is derived from which are filled (trigger → 'When …', state → 'While …', both → complex, feature → 'Where …'; none → ubiquitous, which belongs in invariants[] instead). Mapping to Quint: trigger → action, state → require guard, response → effect. spec-lint validates; a requirement without ears past status raw/needs-validation gets a WARN.",
+            "additionalProperties": false,
+            "required": ["response"],
+            "properties": {
+              "state":    { "type": "string", "description": "Precondition / system mode ('While ...'). Maps to a Quint require guard." },
+              "trigger":  { "type": "string", "description": "Initiating event ('When/If ...'). Maps to a Quint action. Required when unwanted is true." },
+              "feature":  { "type": "string", "description": "Optional-feature condition ('Where ...')." },
+              "unwanted": { "type": "boolean", "default": false, "description": "True when this is error/abnormal-situation handling ('If <trigger>, then …'). The one EARS distinction not derivable from field presence." },
+              "response": { "type": "string", "description": "What the system shall do. Maps to the Quint action's effect." }
+            }
+          },
+          "witness": {
+            "type": "object",
+            "description": "Witness obligation: machine-found proof that this behavior is reachable in the model. /spec-check negates the predicate, runs the checker, and saves the counterexample (= the witness trace) as ITF. status 'no-witness' means the behavior is UNREACHABLE — a vacuity red flag. spec-lint blocks approval while any requirement is unwitnessed.",
+            "additionalProperties": false,
+            "properties": {
+              "predicate":  { "type": "string", "description": "Quint boolean expression (or val name) over state that is true exactly when the required behavior has happened. Example for 'account locks after N failures': accountStatus.keys().exists(u => accountStatus.get(u) == Locked)." },
+              "trace":      { "type": "string", "description": "ITF trace path relative to specs/, e.g. 'auth/traces/REQ-003.itf.json'. Written by /spec-check." },
+              "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "skipped"], "default": "not-run" },
+              "justification": { "type": "string", "description": "Required when status is 'skipped'. Typical case: a rejection requirement ('shall be rejected') has no state change to witness — pair it with the invariant that stays true and point here, e.g. 'rejection — enforced by INV-002 noSessionWhileLocked'." },
+              "checked_at": { "type": "string", "format": "date-time" },
+              "model_sha":  { "type": "string", "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one." }
+            }
+          },
+          "quint_ref": { "type": "string", "description": "Name of the Quint action that realizes this requirement." },
+          "cross_refs": { "type": "array", "items": { "type": "string" }, "description": "Cross-area references in <area>.<ID> form." }
+        }
+      }
+    },
+
+    "invariants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^INV(-CONTRACT)?-\\d{3}$"
+          },
+          "description":   { "type": "string" },
+          "quint_name":    { "type": "string", "description": "Name of the Quint `val` or `invariant` that encodes this." },
+          "formal_status": {
+            "type": "string",
+            "enum": ["specified", "verified", "counterexample-found", "accepted-risk", "not-run"],
+            "default": "specified"
+          },
+          "criticality":   { "type": "string", "enum": ["critical", "high", "medium", "low"], "default": "high" },
+          "cross_refs":    { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "properties": {
+      "type": "array",
+      "description": "Liveness / temporal properties (eventually X happens).",
+      "items": {
+        "type": "object",
+        "required": ["id", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "id":            { "type": "string", "pattern": "^PROP(-CONTRACT)?-\\d{3}$" },
+          "description":   { "type": "string" },
+          "quint_name":    { "type": "string" },
+          "formal_status": { "type": "string", "enum": ["specified", "verified", "counterexample-found", "not-run"], "default": "specified" }
+        }
+      }
+    },
+
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "id":          { "type": "string", "pattern": "^CON(-CONTRACT)?-\\d{3}$" },
+          "name":        { "type": "string", "description": "Symbolic name used in code, e.g. MAX_FAILED_ATTEMPTS." },
+          "value":       {},
+          "unit":        { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+
+    "decisions": {
+      "type": "array",
+      "description": "ADRs. kind='architecture' entries pair with the architecture section to record WHY non-obvious choices were made.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "decision", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id":      { "type": "string", "pattern": "^DEC-\\d{3}$" },
+          "kind":    { "type": "string", "enum": ["architecture", "process", "scope", "trade-off", "milestone", "other"], "default": "other" },
+          "title":   { "type": "string" },
+          "context": { "type": "string" },
+          "decision":{ "type": "string" },
+          "rationale": { "type": "string" },
+          "alternatives_considered": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["option"],
+              "properties": {
+                "option":          { "type": "string" },
+                "reason_rejected": { "type": "string" }
+              }
+            }
+          },
+          "status":        { "type": "string", "enum": ["proposed", "accepted", "deprecated", "superseded"] },
+          "superseded_by": { "type": "string" },
+          "decided_at":    { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+
+    "state_machines": {
+      "type": "array",
+      "description": "Explicit state machines for stateful entities. Optional but valuable: spec-lint validates structural completeness (unreachable states, dangling non-terminal states, transitions referencing undeclared states, Quint mutations not listed as transitions) without needing Apalache. /spec-readback renders the diagram from this section. Each entry corresponds to one entity from concepts.entities[] that has states[].",
+      "items": {
+        "type": "object",
+        "required": ["entity", "states", "initial_state"],
+        "additionalProperties": false,
+        "properties": {
+          "entity": {
+            "type": "string",
+            "description": "Entity name. Must match a concepts.entities[].name."
+          },
+          "quint_var": {
+            "type": "string",
+            "description": "Quint var that holds this state in the sidecar (used by spec-lint to cross-check)."
+          },
+          "quint_type": {
+            "type": "string",
+            "description": "Quint variant type defining the state values."
+          },
+          "initial_state": {
+            "type": "string",
+            "description": "The state the entity is in after `init`. Must appear in states[]."
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "additionalProperties": false,
+              "properties": {
+                "name":        { "type": "string", "description": "State name; matches a variant constructor in quint_type." },
+                "terminal":    { "type": "boolean", "default": false, "description": "No outgoing transitions expected. Lint warns if a terminal state has any." },
+                "description": { "type": "string" }
+              }
+            }
+          },
+          "lifecycle_actions": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Quint actions that mutate quint_var but aren't state transitions on an existing instance — creation, destruction, garbage collection. Suppresses the 'sidecar action mutates quint_var but isn't listed as a transition' warning for these. Example: login creates a Session in initial_state, so it goes here, not in transitions[]."
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["from", "to", "trigger"],
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "description": "Origin state (must be in states[]) or '*' meaning 'from any non-terminal state'."
+                },
+                "to": {
+                  "type": "string",
+                  "description": "Destination state (must be in states[])."
+                },
+                "trigger": {
+                  "type": "string",
+                  "description": "Action or event name; usually matches a Quint action."
+                },
+                "actor": {
+                  "type": "string",
+                  "description": "Who or what initiates the transition: User, Admin, System, etc."
+                },
+                "guard": {
+                  "type": "string",
+                  "description": "Plain-language precondition. The Quint action encodes the formal version."
+                },
+                "quint_action": {
+                  "type": "string",
+                  "description": "Name of the Quint action that realizes this transition. spec-lint checks the sidecar mutation of quint_var matches the transitions listed here."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "architecture": {
+      "type": "object",
+      "description": "Per-area architecture (Layer 0-6 except diagrams). Sparse: only declares overrides from project defaults in .spec/project.json. inherits_project=true (default) merges; false makes this fully standalone.",
+      "additionalProperties": false,
+      "properties": {
+        "inherits_project": { "type": "boolean", "default": true },
+        "stack": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "language":         { "type": "string" },
+            "language_version": { "type": "string" },
+            "runtime":          { "type": "string" },
+            "framework":        { "type": "string" },
+            "test_framework":   { "type": "string" },
+            "package_manager":  { "type": "string" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind":            { "type": "string", "enum": ["none", "sql", "nosql", "key-value", "graph", "columnar", "event-store", "in-memory", "filesystem"] },
+            "engine":          { "type": "string" },
+            "client":          { "type": "string" },
+            "schema_location": { "type": "string" }
+          }
+        },
+        "patterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names from .spec/patterns/<name>.json catalog. Layer 2."
+        },
+        "protocols": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names from .spec/protocols/<name>.json catalog. Layer 5."
+        },
+        "components": {
+          "type": "array",
+          "description": "Per-area decomposition. Layer 1.",
+          "items": {
+            "type": "object",
+            "required": ["name", "role"],
+            "additionalProperties": false,
+            "properties": {
+              "name":               { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+              "role":               { "type": "string", "enum": ["transport", "async", "read-model", "persistence", "cli", "scheduler", "edge", "other"] },
+              "implements":         { "type": "array", "items": { "type": "string" }, "description": "Quint action names this component implements." },
+              "patterns":           { "type": "array", "items": { "type": "string" } },
+              "protocols":          { "type": "array", "items": { "type": "string" } },
+              "architecture_file":  { "type": "string", "description": "Optional sidecar specs/<area>/components/<name>.json with a fuller per-component architecture." }
+            }
+          }
+        },
+        "module_layout": {
+          "type": "object",
+          "description": "Path templates. Variables: {area}, {component}, {ext}. Paths relative to code_root resolved from .spec/project.json.",
+          "additionalProperties": { "type": "string" }
+        },
+        "conventions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "cross_cutting": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "logging, metrics, tracing, auth, feature_flags. Each is a string or object."
+        },
+        "external_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "purpose"],
+            "additionalProperties": false,
+            "properties": {
+              "name":    { "type": "string" },
+              "purpose": { "type": "string" },
+              "version": { "type": "string" }
+            }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+
+    "formal_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quint_file": {
+          "type": "string",
+          "description": "Sidecar path, e.g. 'auth.qnt' (relative to this JSON). The Quint module is the source of truth for the formal spec; module name and imports are read from it directly via tools/quint_ir.py — never mirrored here."
+        },
+        "probes_file": {
+          "type": "string",
+          "description": "Generated probe module, e.g. 'auth.probes.qnt' (relative to this JSON). Contains the ghost-instrumented step wrapper and the path-constrained witness probes. Regenerated by /spec-check; never hand-edited."
+        }
+      }
+    },
+
+    "conformance": {
+      "type": "object",
+      "description": "Model-based conformance testing config: how witness traces are replayed against real code. /spec-apply generates the adapter and harness; /spec-verify runs the command and treats a requirement as verified only when its witness trace replays green.",
+      "additionalProperties": false,
+      "properties": {
+        "adapter":    { "type": "string", "description": "Path (relative to code root) of the adapter mapping Quint actions to code API calls and Quint vars to observable code state." },
+        "harness":    { "type": "string", "description": "Path (relative to tests root) of the trace-replay harness that loads ITF files and drives the adapter." },
+        "command":    { "type": "string", "description": "Shell command that replays all traces, e.g. 'pnpm test conformance'. Run from the code repo root by /spec-verify." },
+        "traces_dir": { "type": "string", "description": "Where witness traces live, relative to specs/. Default: '<area>/traces'." }
+      }
+    },
+
+    "traceability": {
+      "type": "array",
+      "description": "Maps each requirement/invariant to its Quint construct, the component implementing it, and the code/test locations. Filled in by /spec-apply.",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": {
+          "id":             { "type": "string" },
+          "quint":          { "type": "string" },
+          "component":      { "type": ["string", "null"] },
+          "code":           { "type": "string" },
+          "tests":          { "type": "array", "items": { "type": "string" } },
+          "verified":       { "type": "boolean" }
+        }
+      }
+    },
+
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "question"],
+        "additionalProperties": false,
+        "properties": {
+          "id":         { "type": "string", "pattern": "^Q-\\d{3}$" },
+          "question":   { "type": "string" },
+          "status":     { "type": "string", "enum": ["open", "deferred", "resolved"], "default": "open" },
+          "resolution": { "type": "string" },
+          "resolved_at":{ "type": "string", "format": "date-time" }
+        }
+      }
+    },
+
+    "screens": {
+      "type": "array",
+      "description": "UI only. Each screen is a top-level navigable view.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name":          { "type": "string" },
+          "auth_required": { "type": "boolean", "default": false },
+          "purpose":       { "type": "string" },
+          "components":    { "type": "array", "items": { "type": "string" }, "description": "Names from ui_components[] that appear on this screen." }
+        }
+      }
+    },
+    "ui_components": {
+      "type": "array",
+      "description": "UI only. Reusable interactive components.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name":          { "type": "string" },
+          "fields":        { "type": "array", "items": { "type": "string" }, "description": "For forms: field names." },
+          "states":        { "type": "array", "items": { "type": "string" }, "description": "Visible states: idle, loading, error, etc." },
+          "visible_when":  { "type": "string", "description": "Plain-language condition or Quint predicate name." }
+        }
+      }
+    },
+    "navigation": {
+      "type": "array",
+      "description": "UI only. Allowed transitions between screens.",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "trigger"],
+        "additionalProperties": false,
+        "properties": {
+          "from":    { "type": "string" },
+          "to":      { "type": "string" },
+          "trigger": { "type": "string", "description": "Plain-language user action: 'click \"Sign in\"', 'submit valid credentials'." },
+          "guard":   { "type": "string", "description": "Optional precondition referencing a Quint val or another area's state." }
+        }
+      }
+    },
+
+    "verification_log": {
+      "type": "array",
+      "description": "Appended by /spec-verify each run.",
+      "items": {
+        "type": "object",
+        "required": ["date", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "date":          { "type": "string", "format": "date-time" },
+          "spec_sha":      { "type": "string" },
+          "code_sha":      { "type": "string" },
+          "code_repo":     { "type": ["string", "null"] },
+          "status":        { "type": "string", "enum": ["pass", "warn", "fail"] },
+          "drift_detected":{ "type": "boolean" },
+          "summary":       { "type": "string" },
+          "findings_count":{ "type": "integer", "minimum": 0 },
+          "conformance": {
+            "type": "object",
+            "description": "Trace-replay results from this run (see conformance section).",
+            "additionalProperties": false,
+            "properties": {
+              "traces_replayed": { "type": "integer", "minimum": 0 },
+              "passed":          { "type": "integer", "minimum": 0 },
+              "failed":          { "type": "integer", "minimum": 0 },
+              "failed_ids":      { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "check_results": {
+      "type": "object",
+      "description": "Latest Apalache results. Overwritten by /spec-check each run.",
+      "additionalProperties": false,
+      "properties": {
+        "ran_at": { "type": "string", "format": "date-time" },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "result"],
+            "additionalProperties": false,
+            "properties": {
+              "id":              { "type": "string", "description": "INV-NNN or PROP-NNN. Witness results live in requirements[].witness, not here." },
+              "kind":            { "type": "string", "enum": ["invariant", "property"], "default": "invariant" },
+              "quint_name":      { "type": "string" },
+              "result":          { "type": "string", "enum": ["verified", "counterexample", "timeout", "error", "not-run"] },
+              "duration_s":      { "type": "number" },
+              "trace":           { "type": "string", "description": "Counterexample ITF path relative to specs/, if any." },
+              "counterexample":  { "type": "object", "additionalProperties": true, "description": "NL explanation of the counterexample (nl_explanation). The raw trace lives in the file at `trace`, not inline." }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if":   { "properties": { "kind": { "const": "contract" } } },
+      "then": { "required": ["spans"], "properties": { "spans": { "minItems": 2 } } }
+    },
+    {
+      "if":   { "properties": { "kind": { "const": "ui" } } },
+      "then": { "required": ["screens", "navigation"] }
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "project.schema.json",
+  "title": "Spec Project Configuration",
+  "description": "One file at .spec/project.json. Covers project meta, area index, code-repo paths (config-driven, not submodules), project-level architecture defaults inherited by every area, deployment topology, and Apalache settings. Per-dev path overrides go in .spec/local.json (gitignored).",
+  "type": "object",
+  "required": ["project", "areas"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+
+    "project":      { "type": "string", "description": "Project name slug." },
+    "description":  { "type": "string" },
+    "version":      { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "last_modified":{ "type": "string", "format": "date-time" },
+
+    "areas": {
+      "type": "array",
+      "description": "Index of all spec files under specs/. Each entry names where the area JSON lives, the kind, and the code mapping (if any).",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "name":        { "type": "string", "description": "Area slug. File is specs/<name>.json." },
+          "kind":        { "type": "string", "enum": ["area", "contract", "ui"] },
+          "description": { "type": "string" },
+          "code_repo":   { "type": ["string", "null"], "description": "Key from repos[]. null = spec-only." },
+          "code_path":   { "type": "string", "description": "Inside the code repo, e.g. 'src/auth/'." },
+          "tests_path":  { "type": "string", "description": "Inside the code repo, e.g. 'tests/auth/'." },
+          "test_command":{ "type": "string", "description": "What /spec-verify runs." }
+        }
+      }
+    },
+
+    "repos": {
+      "type": "object",
+      "description": "Code repositories the project's areas live in. Logical name → repo metadata. Local paths come from .spec/local.json (gitignored).",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["url"],
+        "additionalProperties": false,
+        "properties": {
+          "url":            { "type": "string", "description": "Clone URL; informational, used by tools/setup-repos.sh." },
+          "default_branch": { "type": "string", "default": "main" },
+          "pr_tool":        { "type": "string", "enum": ["gh", "glab", "none"], "default": "gh" }
+        }
+      }
+    },
+
+    "architecture": {
+      "type": "object",
+      "description": "Project-wide architecture defaults. Each area inherits these unless its `architecture.inherits_project` is false. Same shape as area.architecture (minus components, which are per-area).",
+      "additionalProperties": false,
+      "properties": {
+        "stack": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "language":         { "type": "string" },
+            "language_version": { "type": "string" },
+            "runtime":          { "type": "string" },
+            "framework":        { "type": "string" },
+            "test_framework":   { "type": "string" },
+            "package_manager":  { "type": "string" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind":            { "type": "string", "enum": ["none", "sql", "nosql", "key-value", "graph", "columnar", "event-store", "in-memory", "filesystem"] },
+            "engine":          { "type": "string" },
+            "client":          { "type": "string" },
+            "schema_location": { "type": "string" }
+          }
+        },
+        "patterns":  { "type": "array", "items": { "type": "string" } },
+        "protocols": { "type": "array", "items": { "type": "string" } },
+        "module_layout": { "type": "object", "additionalProperties": { "type": "string" } },
+        "conventions":   { "type": "object", "additionalProperties": { "type": "string" } },
+        "cross_cutting": { "type": "object", "additionalProperties": true },
+        "notes":         { "type": "string" }
+      }
+    },
+
+    "topology": {
+      "type": "object",
+      "description": "Deployment topology (Layer 4). Components are <area>.<component> from area JSON files.",
+      "additionalProperties": false,
+      "properties": {
+        "environments": { "type": "array", "items": { "type": "string" } },
+        "deployment_units": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "runtime"],
+            "additionalProperties": false,
+            "properties": {
+              "name":       { "type": "string" },
+              "runtime":    { "type": "string" },
+              "components": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$" } },
+              "replicas":   { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+              "notes":      { "type": "string" }
+            }
+          }
+        },
+        "network_boundaries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "protocol"],
+            "additionalProperties": false,
+            "properties": {
+              "from":     { "type": "string" },
+              "to":       { "type": "string" },
+              "protocol": { "type": "string" },
+              "async":    { "type": "boolean" },
+              "auth":     { "type": "string" },
+              "notes":    { "type": "string" }
+            }
+          }
+        },
+        "external_systems": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": true,
+            "properties": {
+              "name":    { "type": "string" },
+              "kind":    { "type": "string" },
+              "purpose": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "apalache": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300 },
+        "max_steps":       { "type": "integer", "minimum": 1, "default": 10 }
+      }
+    }
+  }
+}

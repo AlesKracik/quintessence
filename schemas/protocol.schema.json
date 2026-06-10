@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "protocol.schema.json",
+  "title": "Technical Protocol / I/O Convention (catalog entry)",
+  "description": "Named cross-boundary I/O convention (Layer 5). Lives at .spec/protocols/<name>.json. Distinct from contracts (which are formal business agreements between areas, model-checked by Apalache): protocols define HOW a wire message is shaped (envelope, headers, encoding). Referenced by name from area.architecture.protocols[] or component.protocols[]. Authored/edited via /spec.",
+  "type": "object",
+  "required": ["name", "description"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema":     { "type": "string" },
+    "name":        { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "version":     { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$", "default": "0.1.0" },
+    "description": { "type": "string" },
+    "applies_to": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["rest", "grpc", "events", "queue", "rpc", "websocket", "graphql", "cli", "filesystem", "all"] }
+    },
+    "definition": {
+      "type": "object",
+      "description": "The structural definition. shape may be JSON-Schema-style or a free-form example.",
+      "additionalProperties": true,
+      "properties": {
+        "shape":            { "description": "Object or array describing the message/envelope structure." },
+        "required_headers": { "type": "array", "items": { "type": "string" } },
+        "encoding":         { "type": "string", "description": "json, protobuf, msgpack, etc." },
+        "versioning":       { "type": "string", "description": "How the protocol itself is versioned: url-path, media-type, header, none." }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title"],
+        "additionalProperties": false,
+        "properties": {
+          "title":   { "type": "string" },
+          "example": { "description": "Concrete payload or call." },
+          "notes":   { "type": "string" }
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "breaking_change_policy": { "type": "string" },
+        "supersedes":             { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "references": { "type": "array", "items": { "type": "string" } }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "../../schemas/project.schema.json",
+  "project": "example-auth",
+  "description": "Example project demonstrating the new methodology shape: one JSON per area + Quint sidecar.",
+  "version": "0.1.0",
+  "last_modified": "2026-05-15T12:00:00Z",
+
+  "areas": [
+    {
+      "name": "auth",
+      "kind": "area",
+      "description": "User authentication: login, logout, session lifecycle, lockout.",
+      "code_repo": null,
+      "code_path": "src/auth/",
+      "tests_path": "tests/auth/",
+      "test_command": "pnpm test auth"
+    },
+    {
+      "name": "auth-ui",
+      "kind": "ui",
+      "description": "Login flow UI: Home, Login form, Dashboard, LockedNotice.",
+      "code_repo": null,
+      "code_path": "src/ui/auth/",
+      "tests_path": "tests/ui/auth/",
+      "test_command": "pnpm test ui/auth"
+    }
+  ],
+
+  "architecture": {
+    "stack": {
+      "language": "TypeScript",
+      "language_version": "5.4",
+      "runtime": "Node.js 20",
+      "framework": "Express",
+      "test_framework": "Vitest",
+      "package_manager": "pnpm"
+    },
+    "persistence": {
+      "kind": "sql",
+      "engine": "postgres",
+      "client": "Prisma"
+    },
+    "module_layout": {
+      "types_file":   "src/{area}/types.ts",
+      "store_file":   "src/{area}/{area}Store.ts",
+      "service_file": "src/{area}/{area}Service.ts",
+      "test_dir":     "tests/{area}/"
+    },
+    "conventions": {
+      "file_naming":     "camelCase",
+      "type_naming":     "PascalCase",
+      "function_naming": "camelCase",
+      "constant_naming": "SCREAMING_SNAKE_CASE"
+    },
+    "cross_cutting": {
+      "logging": { "library": "pino", "format": "json" },
+      "tracing": "OpenTelemetry"
+    }
+  },
+
+  "apalache": {
+    "timeout_seconds": 300,
+    "max_steps": 10
+  }
+}

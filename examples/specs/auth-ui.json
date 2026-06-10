@@ -1,0 +1,101 @@
+{
+  "$schema": "../../schemas/area.schema.json",
+  "kind": "ui",
+  "area": "auth-ui",
+  "spans": ["auth"],
+  "version": "0.1.0",
+  "status": "formalized",
+  "last_modified": "2026-05-15T12:00:00Z",
+
+  "purpose": "Login flow UI: Home screen, Login form, Dashboard (auth-required), LockedNotice. The navigation graph is model-checked — Dashboard is provably unreachable without an Active session.",
+
+  "concepts": {
+    "actors": ["User"],
+    "verbs":  ["click_sign_in", "submit_credentials", "click_logout", "go_home"]
+  },
+
+  "screens": [
+    { "name": "Home",         "auth_required": false, "purpose": "Public landing; shows 'Sign in' for unauthenticated users.", "components": ["Header"] },
+    { "name": "Login",        "auth_required": false, "purpose": "Email/password form.",                                      "components": ["Header", "LoginForm"] },
+    { "name": "Dashboard",    "auth_required": true,  "purpose": "Logged-in landing.",                                        "components": ["Header"] },
+    { "name": "LockedNotice", "auth_required": false, "purpose": "Shown when login fails because the account is locked.",      "components": ["Header"] }
+  ],
+
+  "ui_components": [
+    { "name": "LoginForm", "fields": ["email", "password"], "states": ["idle", "submitting", "error"] },
+    { "name": "Header",    "visible_when": "always" }
+  ],
+
+  "navigation": [
+    { "from": "Home",         "to": "Login",        "trigger": "click 'Sign in'" },
+    { "from": "Login",        "to": "Dashboard",    "trigger": "submit valid credentials",                "guard": "auth::login succeeds" },
+    { "from": "Login",        "to": "LockedNotice", "trigger": "submit when account locked",              "guard": "auth::isLocked(user)" },
+    { "from": "Login",        "to": "Login",        "trigger": "submit invalid credentials (stays, shows error)" },
+    { "from": "Dashboard",    "to": "Home",         "trigger": "click logout",                            "guard": "auth::logout succeeds" },
+    { "from": "LockedNotice", "to": "Home",         "trigger": "after lockout expires (page refresh)" }
+  ],
+
+  "requirements": [
+    {
+      "id": "UI-001",
+      "description": "While on Home, when the user clicks 'Sign in', the system shall navigate to Login.",
+      "status": "specified",
+      "quint_ref": "click_sign_in",
+      "ears": { "state": "the user is on Home", "trigger": "the user clicks 'Sign in'", "response": "navigate to Login" },
+      "witness": { "predicate": "current == Login", "status": "not-run" }
+    },
+    {
+      "id": "UI-002",
+      "description": "While on Login, when the user submits valid credentials, the system shall navigate to Dashboard.",
+      "status": "specified",
+      "quint_ref": "submit_success",
+      "ears": { "state": "the user is on Login", "trigger": "the user submits valid credentials", "response": "navigate to Dashboard" },
+      "witness": { "predicate": "current == Dashboard", "status": "not-run" }
+    },
+    {
+      "id": "UI-003",
+      "description": "If the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.",
+      "status": "specified",
+      "quint_ref": "submit_locked",
+      "ears": { "unwanted": true, "state": "the user is on Login", "trigger": "the user submits credentials for a Locked account", "response": "navigate to LockedNotice" },
+      "witness": { "predicate": "current == LockedNotice", "status": "not-run" }
+    }
+  ],
+
+  "invariants": [
+    { "id": "INV-001", "description": "Dashboard is reachable only when authenticated == true. ('Shall always' statements are invariants, not requirements — Apalache proves them across all reachable states.)", "quint_name": "guardedDashboard", "formal_status": "specified", "criticality": "critical" }
+  ],
+
+  "decisions": [
+    {
+      "id": "DEC-001",
+      "kind": "architecture",
+      "title": "Model the navigation as a Quint state machine",
+      "decision": "Encode screens as a variant type, navigation as Quint actions, auth gating as invariants checked by Apalache.",
+      "rationale": "Lets us prove 'Dashboard unreachable without auth' rather than relying on convention. Visual design stays in the design tooling — not formalized.",
+      "status": "accepted",
+      "decided_at": "2026-05-15T00:00:00Z"
+    }
+  ],
+
+  "architecture": {
+    "inherits_project": true,
+    "stack": { "framework": "React", "test_framework": "Vitest" },
+    "module_layout": {
+      "screens_dir":    "src/ui/auth/screens/",
+      "components_dir": "src/ui/auth/components/",
+      "routes_file":    "src/ui/auth/routes.tsx",
+      "test_dir":       "tests/ui/auth/"
+    }
+  },
+
+  "formal_model": {
+    "quint_file":  "auth-ui.qnt"
+  },
+
+  "traceability": [],
+
+  "open_questions": [],
+
+  "verification_log": []
+}

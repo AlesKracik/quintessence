@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# spec-lint pre-commit hook — blocks the commit when spec-lint FAILs.
+# Install: bash tools/setup-hooks.sh
+set -euo pipefail
+
+# Only run when spec files are staged.
+git diff --cached --name-only | grep -qE '^(specs|\.spec)/' || exit 0
+
+PYTHON="$(command -v python3 || command -v python || true)"
+if [ -z "$PYTHON" ]; then
+  echo "spec-lint: python not found — skipping (install Python 3 to enable)"
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+[ -f "$ROOT/tools/spec-lint.py" ] || exit 0
+
+echo "spec-lint: checking specs..."
+if ! "$PYTHON" "$ROOT/tools/spec-lint.py" --no-color --root "$ROOT"; then
+  echo ""
+  echo "spec-lint: FAILED — fix the errors above before committing."
+  echo "  To skip (not recommended): git commit --no-verify"
+  exit 1
+fi

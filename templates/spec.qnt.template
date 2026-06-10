@@ -1,0 +1,146 @@
+// ============================================================
+// Quint Specification: {{AREA}}
+// Companion JSON: specs/{{AREA}}.json (v{{VERSION}})
+// Last modified: {{DATE}}
+//
+// Structure convention used by /spec when drafting a sidecar.
+// Coverage: REQ-* → actions, INV-* → invariants, PROP-* →
+// temporal, CON-* → consts. Witness probes live in the separate
+// generated specs/{{AREA}}.probes.qnt.
+// ============================================================
+
+module {{MODULE_NAME}} {
+
+  // ----------------------------------------------------------
+  // TYPES
+  // Define all domain types before state variables.
+  // Each type corresponds to a domain concept from requirements.
+  // ----------------------------------------------------------
+
+  // {{TYPE_DEFINITIONS}}
+  // Example:
+  //   type UserId = str
+  //   type Status = Active | Inactive | Suspended
+
+
+  // ----------------------------------------------------------
+  // STATE
+  // One var per independent piece of mutable state.
+  // Derived values should be val (pure functions), not var.
+  // ----------------------------------------------------------
+
+  // {{STATE_VARIABLES}}
+  // Example:
+  //   var users: UserId -> UserRecord      // REQ-001
+  //   var sessionCount: int                // CON-002
+
+
+  // ----------------------------------------------------------
+  // CONSTANTS / PARAMETERS
+  // Bounds and configuration used in model checking. Use
+  // `pure val NAME: type = literal` — spec-lint cross-checks the
+  // literal against constraints[].value in the area JSON.
+  // ----------------------------------------------------------
+
+  // {{CONSTANTS}}
+  // Example:
+  //   pure val MAX_SESSIONS: int = 5      // CON-003
+
+
+  // ----------------------------------------------------------
+  // HELPERS
+  // Pure functions (val) that compute derived state.
+  // Keep actions thin — push logic into helpers.
+  // ----------------------------------------------------------
+
+  // {{HELPER_DEFINITIONS}}
+
+
+  // ----------------------------------------------------------
+  // INITIAL STATE  (action init)
+  // Must establish all invariants from the start.
+  // ----------------------------------------------------------
+
+  action init = {
+    // {{INIT_BODY}}
+    // Example:
+    //   users' = Map()
+    //   sessionCount' = 0
+    all {
+      true // replace with actual initial conditions
+    }
+  }
+
+
+  // ----------------------------------------------------------
+  // ACTIONS (state transitions)
+  // Each action corresponds to one or more REQ-* items.
+  // Guard conditions (require) encode CON-* constraints.
+  // ----------------------------------------------------------
+
+  // {{ACTION_DEFINITIONS}}
+  // Template for each action:
+  //
+  // /// REQ-NNN: <requirement description>
+  // action {{ACTION_NAME}}({{PARAMS}}) = {
+  //   require({{PRECONDITION}})   // CON-NNN guard
+  //   all {
+  //     {{STATE_UPDATES}}
+  //   }
+  // }
+
+
+  // ----------------------------------------------------------
+  // STEP (composite action for model checking)
+  // Enumerates all possible transitions in one step.
+  // ----------------------------------------------------------
+
+  action step = {
+    any {
+      // {{LIST_ALL_ACTIONS_HERE}}
+      // Example:
+      //   {{ACTION_NAME1}}(...),
+      //   {{ACTION_NAME2}}(...),
+    }
+  }
+
+
+  // ----------------------------------------------------------
+  // SAFETY INVARIANTS (INV-*)
+  // Must hold in every reachable state.
+  // Apalache will try to find a state where these are false.
+  // ----------------------------------------------------------
+
+  // {{INVARIANT_DEFINITIONS}}
+  // Template:
+  //
+  // /// INV-NNN: <requirement description>
+  // invariant {{INV_NAME}} = {{FORMULA}}
+
+
+  // ----------------------------------------------------------
+  // LIVENESS / TEMPORAL PROPERTIES (PROP-*)
+  // Things that must eventually become true or always cycle.
+  // These require temporal model checking (CTL/LTL).
+  // ----------------------------------------------------------
+
+  // {{TEMPORAL_DEFINITIONS}}
+  // Template:
+  //
+  // /// PROP-NNN: <requirement description>
+  // temporal {{PROP_NAME}} = {{TEMPORAL_FORMULA}}
+
+
+  // ----------------------------------------------------------
+  // TESTS (simulation traces for sanity checking)
+  // Run with: quint test specs/{{AREA}}/spec.qnt
+  // ----------------------------------------------------------
+
+  // {{TEST_DEFINITIONS}}
+  // Template:
+  //
+  // run {{TEST_NAME}} = {
+  //   init.then({{ACTION_SEQUENCE}})
+  // }
+
+}
