@@ -129,6 +129,26 @@
       }
     },
 
+    "use_cases": {
+      "type": "array",
+      "description": "Named user-visible flows in temporal order — the digestion layer for readbacks. Each use case lists the requirement IDs that make up the flow, in the order they happen (each happy-path step followed immediately by its unwanted counterparts). A requirement may appear in several use cases (shared step); requirements in none render under 'Other behaviors'. References only — requirement content stays in requirements[]. Captured naturally during elicitation: one story walked with the user = one use case.",
+      "items": {
+        "type": "object",
+        "required": ["name", "ids"],
+        "additionalProperties": false,
+        "properties": {
+          "name":        { "type": "string", "description": "Short flow name, e.g. 'Login', 'Account lockout and recovery'. Unique within the area." },
+          "actor":       { "type": "string", "description": "Primary actor, from concepts.actors." },
+          "description": { "type": "string", "description": "One line: what the actor accomplishes." },
+          "ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "REQ/UI IDs in temporal order. This order IS the render order in the readback."
+          }
+        }
+      }
+    },
+
     "invariants": {
       "type": "array",
       "items": {

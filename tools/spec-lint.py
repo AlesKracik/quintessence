@@ -262,6 +262,34 @@ def check_ears(area_data, area_name, findings):
                 f"statement.", ref=rid)
 
 
+def check_use_cases(area_data, area_name, findings):
+    """use_cases[] integrity: names unique, ids resolve to requirements,
+    no duplicate id within one use case. Membership is optional (cross-
+    cutting REQs may belong to no flow — they render under 'Other
+    behaviors'), so no warning for unassigned requirements."""
+    use_cases = area_data.get("use_cases") or []
+    if not use_cases:
+        return
+    req_ids = {r.get("id") for r in (area_data.get("requirements") or []) if r.get("id")}
+    seen_names = set()
+    for uc in use_cases:
+        name = uc.get("name", "?")
+        if name in seen_names:
+            add(findings, FAIL, "use-cases", "duplicate-use-case", area_name,
+                f"use_cases[] has two entries named '{name}'.", ref=name)
+        seen_names.add(name)
+        seen_ids = set()
+        for iid in uc.get("ids", []) or []:
+            if iid in seen_ids:
+                add(findings, FAIL, "use-cases", "duplicate-id-in-use-case", area_name,
+                    f"use case '{name}' lists '{iid}' twice.", ref=iid)
+            seen_ids.add(iid)
+            if iid not in req_ids:
+                add(findings, FAIL, "use-cases", "dangling-use-case-id", area_name,
+                    f"use case '{name}' references '{iid}' which is not in requirements[].",
+                    ref=iid)
+
+
 def check_witnesses(root, area_data, area_name, findings):
     """Witness obligations: every claimed behavior must be demonstrable in
     the model. A verified-but-unwitnessed spec can be vacuous (invariants
@@ -803,6 +831,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_area_meta(area_data, area_name, findings)
     check_ids(area_data, area_name, findings)
     check_ears(area_data, area_name, findings)
+    check_use_cases(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
     check_quint_refs(area_data, sidecar, area_name, findings)
     check_orphan_actions(area_data, sidecar, area_name, findings)

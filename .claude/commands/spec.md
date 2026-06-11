@@ -131,7 +131,8 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 
 - **Purpose**: one sentence on what this area is for.
 - **Domain vocabulary**: entities (with states if applicable), actors, verbs.
-- **Behavior (EARS-structured)**: ask for scenarios as stories ("walk me through a login — then walk me through one going wrong"), not field-by-field. From each story, **draft the EARS fields yourself**, render the sentence, and read drafts back in batches of ~5 for the user to confirm or correct — confirm-and-correct converges faster and more accurately than interrogation. The pattern is derived from which fields are filled; never ask the user to pick one. Use targeted questions only for fields the story left open:
+- **State machines**: any entity captured with `states[]` → run the state-machine beat (below) right away, not at resume. The early matrix pass needs `state_machines[]` to exist, and transition capture surfaces missing behaviors while the user is still describing the domain.
+- **Behavior (EARS-structured)**: ask for scenarios as stories ("walk me through a login — then walk me through one going wrong"), not field-by-field. **Each story is a use case**: write a `use_cases[]` entry (name, primary actor, one-line description) and append every REQ drafted from that story to its `ids[]` in the order the story told them — happy-path step, then its unwanted counterparts. This costs nothing at capture time (the story already has a name and an order) and is what makes the readback digestible; reconstructing flows later from a flat ID list is guesswork. From each story, **draft the EARS fields yourself**, render the sentence, and read drafts back in batches of ~5 for the user to confirm or correct — confirm-and-correct converges faster and more accurately than interrogation. The pattern is derived from which fields are filled; never ask the user to pick one. Use targeted questions only for fields the story left open:
   - trigger unclear → "What kicks this off?" → `ears.trigger`
   - state unclear → "Always, or only in some state?" → `ears.state`. Phrase it using the entity's **declared state names** ("the Session is Active", not "the user is logged in") — it makes the requirement↔state-machine link reviewable and matrix triage mechanical.
   - `ears.response` is always required.
@@ -147,7 +148,9 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 - **Decisions**: architectural choices being made, with alternatives.
 - **Open questions**: anything the user can't answer yet; mark `Q-NNN` `status: open`.
 
-**Early matrix pass**: as soon as `state_machines[]` and a first batch of REQs exist, run `tools/spec-matrix.py <target>` and triage the `?` cells in this conversation. A gap found now, while the user is describing the domain, becomes a REQ in one exchange; the same gap found later by `/spec-check` becomes a stale entry in the Q-NNN queue. Same tool, earlier moment.
+**Early matrix pass**: as soon as `state_machines[]` and a first batch of REQs exist, run `tools/spec-matrix.py <target>` and triage the `?` cells in this conversation — classify into the GAP / IMPOSSIBLE / OUT-OF-SCOPE buckets defined in `/spec-check` Step 4a; triage values written into `covered_by` survive regeneration. A gap found now, while the user is describing the domain, becomes a REQ in one exchange; the same gap found later by `/spec-check` becomes a stale entry in the Q-NNN queue. Same tool, earlier moment.
+
+**Closing gap sweep**: when the clusters are exhausted (before formalizing), run one short red-team moment while the user is still in the conversation. From `/spec-check` Step 4b's category list, keep only the categories this domain plausibly touches; ask at most ~8 questions whose answer would add or change a requirement, each citing the REQ/INV/entity it touches (or "absent"). Answers become REQs/INVs/CONs in the same exchange; what the user can't answer becomes a Q-NNN. Same logic as the early matrix: a gap found now is a requirement in one exchange. The full `--reality` pass at check time is for depth — it shouldn't be the first time these questions are asked.
 
 Write to `specs/<target>.json` as you go. After enough is captured, draft a Quint module in `specs/<target>.qnt` (structure convention: `templates/spec.qnt.template`) — the EARS fields map mechanically: `trigger` → action, `state` → `require` guard, `response` → effect. While formalizing, also draft each requirement's `witness.predicate` (the Quint boolean over state that's true exactly when the behavior has happened — `/spec-check` uses it to produce the witness trace). Show the module for confirmation; offer `/spec-check` next.
 
@@ -164,6 +167,7 @@ Inspect the JSON for gaps:
 | Entities with `states[]` but no matching `state_machines[]` entry | state-machine beat (see below) |
 | `requirements[]` has items without IDs (raw strings) | structure pass |
 | `requirements[]` items have `status: "raw"` | elicit refinement per item |
+| Functional REQs not in any `use_cases[].ids` (or `use_cases[]` empty) | **use-case pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `use_cases[]` entry. Brownfield extracts land here — group extracted REQs into flows during the confirm pass. |
 | Requirements past raw status without `ears` structure | EARS pass: walk each one, fill trigger/state/response (+unwanted) |
 | Requirements without `witness.predicate` (and sidecar exists) | witness pass: draft predicates, confirm, then suggest `/spec-check` |
 | `formal_model.quint_file` set but file missing | formalize: write the sidecar |

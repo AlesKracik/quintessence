@@ -22,7 +22,7 @@ You are the **Readback Author**. You read structured artifacts (area JSON + side
 
 **Determinism rule:** structure, diagrams, tables, statuses, and traces are derived mechanically from the source artifacts (use `tools/itf_tools.py mermaid` for trace diagrams — don't hand-draw them). Your own prose is limited to short glosses that restate what the data says; an interpretive sentence must be traceable to a specific field. The readback is the review surface humans trust — it must not be able to diverge from what the checker actually verified.
 
-**Stable-order rule:** within every section, order entries by ID (REQ-001, REQ-002, …; alphabetical where there's no ID). Identical input must produce byte-identical output. Then `git diff specs/<area>.readback.md` on a PR **is** the change review — what changed in the spec is exactly what changed in the readback. No diff machinery needed; don't break this with timestamps outside the designated status fields or with reflowed prose.
+**Stable-order rule:** within every section, order entries by ID (REQ-001, REQ-002, …; alphabetical where there's no ID). One exception, still fully data-derived: "What the System Does" follows `use_cases[]` — array order for the subsections, each use case's `ids[]` order (temporal) within. Identical input must produce byte-identical output. Then `git diff specs/<area>.readback.md` on a PR **is** the change review — what changed in the spec is exactly what changed in the readback. No diff machinery needed. The only timestamps in the document are the header's "Last verified" and the Reference section's verification history — per-entry blocks carry none, so a re-check that changes nothing semantic produces an empty diff. Don't break this with stray dates or reflowed prose.
 
 ### Step 1 — Resolve target and read sources
 
@@ -45,6 +45,8 @@ Project-wide (no target): `.spec/project.json` + every `specs/*.json`.
 
 **Status:** <status>  |  **Requirements:** <n verified>/<total> verified, <n witnessed>/<total> witnessed  |  **Invariants:** <n verified>/<total>  |  **Open questions:** <n>  |  **Last verified:** <verification_log[-1] date or "never">
 
+*Legend: ✓ verified against code · ◐ witnessed in model only · ✗ no witness · ⏳ not checked · ⊘ skipped (justified)*
+
 ## Purpose
 <purpose>
 
@@ -60,12 +62,16 @@ Everything requiring a human decision, in one place, first. Include each non-emp
 
 ## What the System Does
 
+Grouped by `use_cases[]` when declared — one `###` subsection per use case, in declared array order, with a one-line gloss (`actor` + `description`); inside, one block per requirement **in the use case's `ids[]` order** (that order is temporal: the flow as the user experiences it, happy-path step followed by its unwanted counterparts). A requirement in several use cases renders fully in the first and as a one-line link (`REQ-003 — see *Login*`) in the rest. Requirements in no use case go last under `### Other behaviors`, ordered by ID. No `use_cases[]` at all → flat list by ID, plus a note: "No use cases declared. Run `/spec <area>` to group requirements into flows." This grouping satisfies the stable-order rule because it is fully derived from the JSON — array order in, render order out.
+
 One block per requirement. **This is the EARS ↔ Quint review surface** — whether the formal action means what the sentence says is the one link no tool checks (METHODOLOGY → "honest residual gaps"), so sentence, formal encoding, and machine-found example sit together and the review is a glance, not a hunt:
 
-### REQ-003 — <short name>  <status mark>
-*While* the account is Unlocked, *when* the user submits invalid credentials, the system *shall* increment failedAttempts and lock the account at MAX_FAILED_ATTEMPTS.
+### Login — *User signs in and gets a session* <!-- use-case subsection -->
 
-> **Witness:** <one-line `tools/itf_tools.py summarize` output — e.g. "6 steps: 5× login_failed(alice) → account Locked">. Found by Apalache <witness.checked_at>; code replay: <✓ green / not yet run>.
+#### REQ-003 — <short name>  <status mark>
+*While* the account is Unlocked, *when* the user submits invalid credentials, the system *shall* increment failedAttempts and lock the account on the 5th failed attempt (MAX_FAILED_ATTEMPTS = 5).
+
+> **Witness:** <one-line `tools/itf_tools.py summarize` output — e.g. "6 steps: 5× login_failed(alice) → account Locked">
 
 <details><summary>Quint action `login_failed` + witness trace diagram</summary>
 
@@ -79,7 +85,7 @@ One block per requirement. **This is the EARS ↔ Quint review surface** — whe
 </details>
 ```
 
-Status marks: ✓ verified (witness replayed green against code) · ◐ witnessed, not yet verified · ✗ no witness · ⏳ not checked · ⊘ skipped (cite the `justification` and the enforcing INV inline).
+Status marks: ✓ verified (witness replayed green against code) · ◐ witnessed, not yet verified · ✗ no witness · ⏳ not checked · ⊘ skipped (cite the `justification` and the enforcing INV inline). The status mark on the heading is the single source of verified/witnessed state — no dates and no "code replay" repeat in the witness line. Emit the Legend line under the header status bar exactly as shown, so reviewers never need this instruction file to decode marks.
 
 The one-line trace summary is always inline — that's where wrong-rule bugs (locks at attempt 6, not 5) get caught at a glance. The full diagram and Quint excerpt live in the collapsed block. Traces longer than ~12 steps: summary only, link the `.itf.json`. Group by component only when components are declared and the grouping clarifies.
 
