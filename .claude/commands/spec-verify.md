@@ -86,7 +86,7 @@ Run completeness, correctness, coherence checks against the resolved code/test r
 **Completeness** — for each `traceability[]` entry:
 - Does `code` (e.g., `authService.ts:login`) refer to a real file:symbol in the code root?
 - Does each `tests[]` entry refer to a real test:name in the test root?
-- If `kind == "ui"`: do `ui_components[]` map to real component files (resolve via `architecture.module_layout`)?
+- If the area declares `ui_components[]`: do they map to real component files (resolve via `architecture.module_layout`)?
 - If components are declared: does each component's `implements[]` action have a code mapping?
 
 **Correctness** — for each invariant/requirement with `quint_ref` or `quint_name`:

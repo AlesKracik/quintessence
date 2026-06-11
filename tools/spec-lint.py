@@ -7,8 +7,9 @@ checks cross-file consistency: ID format, broken references, drift between the
 area JSON and its sidecar, missing patterns/protocols, topology orphans,
 unverified critical invariants, unresolved questions, EARS requirement
 structure, witness-trace obligations (every requirement must be
-demonstrably reachable in the model — see METHODOLOGY.md), and change
-manifests (.spec/changes/ — targets and ids must resolve).
+demonstrably reachable in the model — see METHODOLOGY.md), change
+manifests (.spec/changes/ — targets and ids must resolve), and journeys
+(.spec/journeys/ — cross-area step refs must resolve).
 
 This is much smaller than the per-file lint of the previous methodology because
 the new methodology has fewer files: one JSON per area, one sidecar, one project
@@ -161,12 +162,14 @@ def check_area_meta(area_data, area_name, findings):
             "kind=contract requires spans[] listing the participant areas.")
 
     if area_data.get("kind") == "ui":
-        if not area_data.get("screens"):
-            add(findings, FAIL, "meta", "ui-no-screens", area_name,
-                "kind=ui requires screens[].")
-        if not area_data.get("navigation"):
-            add(findings, FAIL, "meta", "ui-no-navigation", area_name,
-                "kind=ui requires navigation[].")
+        add(findings, WARN, "meta", "deprecated-kind-ui", area_name,
+            "kind=ui is deprecated — use kind: area with screens[] + navigation[]; "
+            "UI lint/readback/codegen trigger on block presence, not kind.")
+
+    if area_data.get("screens") and not area_data.get("navigation"):
+        add(findings, FAIL, "meta", "screens-no-navigation", area_name,
+            "screens[] is declared but navigation[] is empty — an interactive "
+            "surface needs its transitions.")
 
 
 def check_ids(area_data, area_name, findings):
@@ -260,34 +263,6 @@ def check_ears(area_data, area_name, findings):
                 f"is an invariant, not a behavior. Move it to invariants[] so "
                 f"Apalache proves it; a witness adds nothing to an always-true "
                 f"statement.", ref=rid)
-
-
-def check_use_cases(area_data, area_name, findings):
-    """use_cases[] integrity: names unique, ids resolve to requirements,
-    no duplicate id within one use case. Membership is optional (cross-
-    cutting REQs may belong to no flow — they render under 'Other
-    behaviors'), so no warning for unassigned requirements."""
-    use_cases = area_data.get("use_cases") or []
-    if not use_cases:
-        return
-    req_ids = {r.get("id") for r in (area_data.get("requirements") or []) if r.get("id")}
-    seen_names = set()
-    for uc in use_cases:
-        name = uc.get("name", "?")
-        if name in seen_names:
-            add(findings, FAIL, "use-cases", "duplicate-use-case", area_name,
-                f"use_cases[] has two entries named '{name}'.", ref=name)
-        seen_names.add(name)
-        seen_ids = set()
-        for iid in uc.get("ids", []) or []:
-            if iid in seen_ids:
-                add(findings, FAIL, "use-cases", "duplicate-id-in-use-case", area_name,
-                    f"use case '{name}' lists '{iid}' twice.", ref=iid)
-            seen_ids.add(iid)
-            if iid not in req_ids:
-                add(findings, FAIL, "use-cases", "dangling-use-case-id", area_name,
-                    f"use case '{name}' references '{iid}' which is not in requirements[].",
-                    ref=iid)
 
 
 def check_witnesses(root, area_data, area_name, findings):
@@ -396,10 +371,12 @@ def check_orphan_actions(area_data, sidecar, area_name, findings):
     quint_ref, a state-machine transition, or lifecycle_actions. An
     unreferenced action is either a missing requirement or dead spec text.
     (Coverage of *referenced* actions is proven by their path-constrained
-    witness traces — no model-checker run needed here.) Functional areas
-    only: UI navigation triggers and contract vals don't map 1:1 to
-    actions."""
-    if area_data.get("kind") != "area":
+    witness traces — no model-checker run needed here.) Skipped for
+    contracts and for areas with navigation[]: contract vals and UI
+    navigation triggers don't map 1:1 to actions."""
+    if area_data.get("kind") == "contract" or area_data.get("kind") == "ui":
+        return
+    if area_data.get("navigation"):
         return
     if not sidecar or "__no_module__" in sidecar:
         return
@@ -547,8 +524,9 @@ def check_components_implementation(area_data, area_name, findings):
 
 
 def check_ui_navigation(area_data, area_name, findings):
-    """All navigation endpoints must reference declared screens."""
-    if area_data.get("kind") != "ui":
+    """All navigation endpoints must reference declared screens. Triggers on
+    block presence — any area may carry screens/navigation."""
+    if not (area_data.get("screens") or area_data.get("navigation")):
         return
     screen_names = {s["name"] for s in (area_data.get("screens") or []) if s.get("name")}
     referenced = set()
@@ -814,6 +792,52 @@ def check_changes(root, all_areas, findings, validator=None):
                         ref=iid)
 
 
+def check_journeys(root, all_areas, findings, validator=None):
+    """Journeys (.spec/journeys/*.json): schema validity, unique names,
+    every step ref resolves — area exists and the qualified ID is in that
+    area's requirements[]. Same reference discipline as cross_refs."""
+    journeys_dir = root / ".spec" / "journeys"
+    if not journeys_dir.exists():
+        return
+    seen_names = set()
+    for p in sorted(journeys_dir.glob("*.json")):
+        jname = f"_journeys/{p.stem}"
+        data = load_json(p)
+        if isinstance(data, dict) and "__parse_error__" in data:
+            add(findings, FAIL, "journeys", "parse-error", jname,
+                f".spec/journeys/{p.name} failed to parse: {data['__parse_error__']}")
+            continue
+        check_schema(data, validator, jname, findings)
+        name = data.get("name")
+        if name:
+            if name in seen_names:
+                add(findings, FAIL, "journeys", "duplicate-journey", jname,
+                    f"Journey name '{name}' is used by more than one file.", ref=name)
+            seen_names.add(name)
+        seen_refs = set()
+        for step in data.get("steps", []) or []:
+            ref = step.get("ref")
+            if not ref or "." not in ref:
+                continue  # schema validation reports malformed refs
+            if ref in seen_refs:
+                add(findings, FAIL, "journeys", "duplicate-step-ref", jname,
+                    f"step ref '{ref}' appears twice in the journey.", ref=ref)
+            seen_refs.add(ref)
+            area, rid = ref.split(".", 1)
+            if area not in all_areas:
+                add(findings, FAIL, "journeys", "unknown-area", jname,
+                    f"step ref '{ref}' — no specs/{area}.json.", ref=ref)
+                continue
+            area_data = all_areas[area]
+            if not isinstance(area_data, dict) or "__parse_error__" in area_data:
+                continue
+            req_ids = {r.get("id") for r in (area_data.get("requirements") or []) if r.get("id")}
+            if rid not in req_ids:
+                add(findings, FAIL, "journeys", "dangling-step-ref", jname,
+                    f"step ref '{ref}' — '{rid}' is not in {area}'s requirements[].",
+                    ref=ref)
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
@@ -831,7 +855,6 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_area_meta(area_data, area_name, findings)
     check_ids(area_data, area_name, findings)
     check_ears(area_data, area_name, findings)
-    check_use_cases(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
     check_quint_refs(area_data, sidecar, area_name, findings)
     check_orphan_actions(area_data, sidecar, area_name, findings)
@@ -957,11 +980,13 @@ def main():
         lint_area(root, a, all_areas[a], sidecars[a], all_areas, catalog, findings,
                   schema_validator)
 
-    # Topology and change-manifest checks run once per project, only on full lint.
+    # Topology, change-manifest, and journey checks run once per project, only on full lint.
     if not args.area:
         check_topology(project_data, all_areas, findings)
         check_changes(root, all_areas, findings,
                       build_schema_validator(root, "change.schema.json"))
+        check_journeys(root, all_areas, findings,
+                       build_schema_validator(root, "journey.schema.json"))
 
     if args.emit_json:
         print(json.dumps({

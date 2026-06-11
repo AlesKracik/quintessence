@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "journey.schema.json",
+  "title": "Cross-Area Journey",
+  "description": "One file per journey at .spec/journeys/<slug>.json. A journey is THE use-case mechanism: a named user-visible flow, steps referencing requirement IDs in qualified <area>.<ID> form, in temporal order. Most journeys live inside one area (a 'login' flow over auth alone is a normal journey); some cross boundaries — same shape either way. Same overlay discipline as change manifests: references only, never content — the requirements stay in their area JSONs; delete every journey and the specs are complete. Captured naturally during elicitation: one story walked with the user = one journey. Documentation/review layer; no formal verification obligation (a joint-reachability witness across modules is a possible later extension).",
+  "type": "object",
+  "required": ["name", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": {
+      "type": "string",
+      "description": "Short flow name, e.g. 'Sign up and buy'. Unique across journeys."
+    },
+    "actor": {
+      "type": "string",
+      "description": "Primary actor driving the journey."
+    },
+    "description": {
+      "type": "string",
+      "description": "One line: what the actor accomplishes end to end."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Temporal order — this order IS the render order in readbacks. Happy-path step followed immediately by its unwanted counterparts.",
+      "items": {
+        "type": "object",
+        "required": ["ref"],
+        "additionalProperties": false,
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*\\.(REQ|UI)(-CONTRACT)?-\\d{3}$",
+            "description": "Qualified requirement reference, <area>.<ID> — same form as cross_refs."
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional gloss for the step in journey context, e.g. 'payment declined counterpart'."
+          }
+        }
+      }
+    }
+  }
+}

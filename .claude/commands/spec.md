@@ -27,11 +27,11 @@ Resolve the change, then the target:
 
 1. `/spec change <slug>` → open `.spec/changes/<slug>.json` (create per `schemas/change.schema.json` if new, with `intent` from the `--` hint or one question; suggest branch `change/<slug>`). Write `last_change: "<slug>"` to `.spec/local.json` (create the file if missing; preserve other fields). Then show the change dashboard (beat below).
 2. Bare `/spec`, active change valid (`last_change` set, manifest exists, status not `landed`/`abandoned`) → **change dashboard** beat.
-3. Explicit `<target>` (area, not `_project`/`_patterns/*`/`_protocols/*`/`_overview`):
+3. Explicit `<target>` (area, not `_project`/`_patterns/*`/`_protocols/*`/`_journeys/*`/`_overview`):
    - active change exists → work on that area within it; register the target in the manifest's `targets[]` if absent.
    - no active change → auto-open one first: `No active change. Name this work? [<target>-updates]` (Enter = default). Create the manifest, set `last_change`, then proceed.
 4. Bare `/spec`, no valid active change: exactly one area → treat as `/spec <that-area>` (rule 3 auto-opens a change); otherwise show the project overview and ask.
-5. `_overview` → project overview: areas with status, open changes (slug, intent, target count, phase summary), open questions, last verification. Catalog targets (`_project`, `_patterns/*`, `_protocols/*`) run their beats without touching any change.
+5. `_overview` → project overview: areas with status, open changes (slug, intent, target count, phase summary), open questions, last verification. Catalog targets (`_project`, `_patterns/*`, `_protocols/*`, `_journeys/*`) run their beats without touching any change.
 
 Then determine what exists:
 
@@ -47,7 +47,7 @@ This determines the entry beat:
 |---|---|
 | No `.spec/project.json` | **bootstrap**: walk project setup |
 | `<target>` is `_project` | **project edit**: architecture defaults, repos, topology |
-| `<target>` is `_patterns/<name>` or `_protocols/<name>` | **catalog edit**: add/edit a catalog file |
+| `<target>` is `_patterns/<name>`, `_protocols/<name>`, or `_journeys/<name>` | **catalog edit**: add/edit a catalog file |
 | `specs/<target>.json` missing, code exists at the area's `code_path` | **brownfield extract** |
 | `specs/<target>.json` missing, no code | **greenfield elicit** |
 | `specs/<target>.json` exists, sections incomplete | **resume**: pick up the next phase |
@@ -89,7 +89,7 @@ Ask only what's needed to start eliciting:
 1. Project name (slug).
 2. Greenfield or existing code?
 3. Repo layout: single-repo (code lives here), multi-repo (code in separate repos), or spec-only. If multi-repo: for each code repo, logical name + URL + default branch → `.spec/project.json` `repos`; prompt user to add per-dev paths to `.spec/local.json` (or do it for them).
-4. Functional areas to specify (comma-separated names). For each: kind (area / contract / ui), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
+4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area that declares `screens[]` + `navigation[]`; `kind: ui` is a deprecated alias), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
 
 **Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-apply` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units; Apalache settings only when a check times out. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
@@ -105,13 +105,15 @@ Print: "Project initialized. Next: `/spec <area>` for each area you declared."
 
 Show current project config; ask which section to edit. Sections: repos, areas index, architecture defaults, topology, Apalache settings. Walk only the chosen section.
 
-#### catalog edit — patterns/protocols
+#### catalog edit — patterns/protocols/journeys
 
-(Runs on `/spec _patterns/<name>` or `/spec _protocols/<name>`.)
+(Runs on `/spec _patterns/<name>`, `/spec _protocols/<name>`, or `/spec _journeys/<name>`.)
+
+For journeys (`schemas/journey.schema.json`, files at `.spec/journeys/<name>.json`): a journey is THE use-case mechanism — a named user-visible flow, steps as qualified `<area>.<ID>` refs in temporal order; most live inside one area, some cross boundaries, same shape either way. Usually journeys are born during elicitation (one story = one journey); this beat is for stitching or editing them directly. Creating one: ask for the actor and the story end to end, then map each step to an existing REQ (offer candidates from the areas' requirements); a step with no matching REQ is a gap — capture it in the owning area first (`/spec <area>`), then finish the journey.
 
 If the file doesn't exist: walk creation per `schemas/pattern.schema.json` or `schemas/protocol.schema.json`. If it exists: show contents, ask which fields to update. Write back. Don't modify any area JSON references (the user opts those in separately).
 
-If the user types `/spec _patterns` or `/spec _protocols` (no name): list cataloged entries with one-line descriptions and ask which to edit (or "new").
+If the user types `/spec _patterns`, `/spec _protocols`, or `/spec _journeys` (no name): list cataloged entries with one-line descriptions and ask which to edit (or "new").
 
 #### brownfield extract
 
@@ -132,7 +134,7 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 - **Purpose**: one sentence on what this area is for.
 - **Domain vocabulary**: entities (with states if applicable), actors, verbs.
 - **State machines**: any entity captured with `states[]` → run the state-machine beat (below) right away, not at resume. The early matrix pass needs `state_machines[]` to exist, and transition capture surfaces missing behaviors while the user is still describing the domain.
-- **Behavior (EARS-structured)**: ask for scenarios as stories ("walk me through a login — then walk me through one going wrong"), not field-by-field. **Each story is a use case**: write a `use_cases[]` entry (name, primary actor, one-line description) and append every REQ drafted from that story to its `ids[]` in the order the story told them — happy-path step, then its unwanted counterparts. This costs nothing at capture time (the story already has a name and an order) and is what makes the readback digestible; reconstructing flows later from a flat ID list is guesswork. From each story, **draft the EARS fields yourself**, render the sentence, and read drafts back in batches of ~5 for the user to confirm or correct — confirm-and-correct converges faster and more accurately than interrogation. The pattern is derived from which fields are filled; never ask the user to pick one. Use targeted questions only for fields the story left open:
+- **Behavior (EARS-structured)**: ask for scenarios as stories ("walk me through a login — then walk me through one going wrong"), not field-by-field. **Each story is a journey**: write `.spec/journeys/<slug>.json` (name, primary actor, one-line description) and append every REQ drafted from that story to `steps[]` as qualified `<area>.<ID>` refs in the order the story told them — happy-path step, then its unwanted counterparts. This costs nothing at capture time (the story already has a name and an order) and is what makes the readback digestible; reconstructing flows later from a flat ID list is guesswork. A story that crosses into another area stays one journey — if the foreign step's REQ doesn't exist yet, note it as a placeholder and capture it in its owning area before the journey lints clean. From each story, **draft the EARS fields yourself**, render the sentence, and read drafts back in batches of ~5 for the user to confirm or correct — confirm-and-correct converges faster and more accurately than interrogation. The pattern is derived from which fields are filled; never ask the user to pick one. Use targeted questions only for fields the story left open:
   - trigger unclear → "What kicks this off?" → `ears.trigger`
   - state unclear → "Always, or only in some state?" → `ears.state`. Phrase it using the entity's **declared state names** ("the Session is Active", not "the user is logged in") — it makes the requirement↔state-machine link reviewable and matrix triage mechanical.
   - `ears.response` is always required.
@@ -167,7 +169,7 @@ Inspect the JSON for gaps:
 | Entities with `states[]` but no matching `state_machines[]` entry | state-machine beat (see below) |
 | `requirements[]` has items without IDs (raw strings) | structure pass |
 | `requirements[]` items have `status: "raw"` | elicit refinement per item |
-| Functional REQs not in any `use_cases[].ids` (or `use_cases[]` empty) | **use-case pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `use_cases[]` entry. Brownfield extracts land here — group extracted REQs into flows during the confirm pass. |
+| Functional REQs not referenced by any journey step (`.spec/journeys/*.json`) | **journey pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `.spec/journeys/<slug>.json`. Brownfield extracts land here — group extracted REQs into flows during the confirm pass. |
 | Requirements past raw status without `ears` structure | EARS pass: walk each one, fill trigger/state/response (+unwanted) |
 | Requirements without `witness.predicate` (and sidecar exists) | witness pass: draft predicates, confirm, then suggest `/spec-check` |
 | `formal_model.quint_file` set but file missing | formalize: write the sidecar |

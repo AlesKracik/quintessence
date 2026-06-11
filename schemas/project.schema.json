@@ -23,7 +23,7 @@
         "additionalProperties": false,
         "properties": {
           "name":        { "type": "string", "description": "Area slug. File is specs/<name>.json." },
-          "kind":        { "type": "string", "enum": ["area", "contract", "ui"] },
+          "kind":        { "type": "string", "enum": ["area", "contract", "ui"], "description": "'ui' is a deprecated alias for area-with-screens; use 'area'." },
           "description": { "type": "string" },
           "code_repo":   { "type": ["string", "null"], "description": "Key from repos[]. null = spec-only." },
           "code_path":   { "type": "string", "description": "Inside the code repo, e.g. 'src/auth/'." },

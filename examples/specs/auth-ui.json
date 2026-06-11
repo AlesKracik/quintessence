@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/area.schema.json",
-  "kind": "ui",
+  "kind": "area",
   "area": "auth-ui",
   "spans": ["auth"],
   "version": "0.1.0",

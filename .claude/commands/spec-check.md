@@ -17,7 +17,7 @@ Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 /spec-check [target] --reality                 # ALSO run the adversarial red-team pass
 ```
 
-`[target]` is optional: without it, **every target of the active change** (`last_change` in `.spec/local.json` → `.spec/changes/<slug>.json`) is checked, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas changed. Explicit `[target]` checks just that one (cascade still applies). Works for any kind: `area`, `contract`, `ui`.
+`[target]` is optional: without it, **every target of the active change** (`last_change` in `.spec/local.json` → `.spec/changes/<slug>.json`) is checked, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas changed. Explicit `[target]` checks just that one (cascade still applies). Works for any kind: `area` (with or without UI blocks), `contract`.
 
 ## Instructions
 
@@ -84,7 +84,7 @@ module auth_probes {
 
 Record the file in `formal_model.probes_file`. The probe module is generated — regenerate, never hand-edit.
 
-**Multi-module areas** (`kind: ui` or `contract`): the probe module imports *every* spanned module and `stepP` is an `any` over all of their wrapped actions, so joint behaviors are explored; predicates range over the joint state. Pattern is in the template.
+**Multi-module areas** (`kind: contract`, or any area whose `spans[]` names other areas — typical for areas with UI blocks): the probe module imports *every* spanned module and `stepP` is an `any` over all of their wrapped actions, so joint behaviors are explored; predicates range over the joint state. Pattern is in the template.
 
 3. **Run each probe**, saving the violation trace:
 

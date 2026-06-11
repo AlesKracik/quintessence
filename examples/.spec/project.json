@@ -17,7 +17,7 @@
     },
     {
       "name": "auth-ui",
-      "kind": "ui",
+      "kind": "area",
       "description": "Login flow UI: Home, Login form, Dashboard, LockedNotice.",
       "code_repo": null,
       "code_path": "src/ui/auth/",

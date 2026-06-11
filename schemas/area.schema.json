@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "area.schema.json",
   "title": "Spec Area (area | contract | ui)",
-  "description": "One JSON file per area at specs/<name>.json. The formal Quint model lives in a sidecar specs/<name>.qnt referenced from formal_model.quint_file. Three kinds supported: 'area' (functional area with code), 'contract' (cross-area agreement, spec-only), 'ui' (interactive surface with screens/navigation). Most fields are optional; required fields are gated by kind. Sections grow conversationally via /spec — empty arrays/objects are valid for incomplete specs.",
+  "description": "One JSON file per area at specs/<name>.json. The formal Quint model lives in a sidecar specs/<name>.qnt referenced from formal_model.quint_file. Two kinds: 'area' (functional, default — may carry UI blocks screens/ui_components/navigation to model an interactive surface) and 'contract' (cross-area agreement, spec-only). 'ui' is a deprecated alias for area-with-screens. Most fields are optional; required fields are gated by kind or block presence. Sections grow conversationally via /spec — empty arrays/objects are valid for incomplete specs.",
   "type": "object",
   "required": ["kind", "area", "version"],
   "additionalProperties": false,
@@ -12,7 +12,7 @@
     "kind": {
       "type": "string",
       "enum": ["area", "contract", "ui"],
-      "description": "area: functional area with code (default). contract: cross-area invariant carrier, spec-only, requires spans[]. ui: interactive surface, requires screens[] + navigation[]."
+      "description": "area: functional area (default) — may carry UI blocks (screens/ui_components/navigation); UI-specific lint, readback, and codegen trigger on block presence, not kind. contract: cross-area invariant carrier, spec-only, requires spans[]. ui: DEPRECATED alias for area-with-screens — accepted, spec-lint warns; use kind: area with screens[] + navigation[] instead."
     },
     "area": {
       "type": "string",
@@ -23,7 +23,7 @@
       "type": "array",
       "items": { "type": "string" },
       "minItems": 1,
-      "description": "Areas this spec depends on. Contracts: the 2+ areas the contract joins (required). UI areas: the area(s) whose state the UI reads (e.g. ['auth'])."
+      "description": "Areas this spec depends on. Contracts: the 2+ areas the contract joins (required). Areas with UI blocks: the area(s) whose state the surface reads (e.g. ['auth'])."
     },
     "version": {
       "type": "string",
@@ -125,26 +125,6 @@
           },
           "quint_ref": { "type": "string", "description": "Name of the Quint action that realizes this requirement." },
           "cross_refs": { "type": "array", "items": { "type": "string" }, "description": "Cross-area references in <area>.<ID> form." }
-        }
-      }
-    },
-
-    "use_cases": {
-      "type": "array",
-      "description": "Named user-visible flows in temporal order — the digestion layer for readbacks. Each use case lists the requirement IDs that make up the flow, in the order they happen (each happy-path step followed immediately by its unwanted counterparts). A requirement may appear in several use cases (shared step); requirements in none render under 'Other behaviors'. References only — requirement content stays in requirements[]. Captured naturally during elicitation: one story walked with the user = one use case.",
-      "items": {
-        "type": "object",
-        "required": ["name", "ids"],
-        "additionalProperties": false,
-        "properties": {
-          "name":        { "type": "string", "description": "Short flow name, e.g. 'Login', 'Account lockout and recovery'. Unique within the area." },
-          "actor":       { "type": "string", "description": "Primary actor, from concepts.actors." },
-          "description": { "type": "string", "description": "One line: what the actor accomplishes." },
-          "ids": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "REQ/UI IDs in temporal order. This order IS the render order in the readback."
-          }
         }
       }
     },
@@ -466,7 +446,7 @@
 
     "screens": {
       "type": "array",
-      "description": "UI only. Each screen is a top-level navigable view.",
+      "description": "Optional on any area. Each screen is a top-level navigable view. Declaring screens[] + navigation[] makes the area an interactive surface: navigation lint, navigation-graph readback, and component codegen activate.",
       "items": {
         "type": "object",
         "required": ["name"],
@@ -481,7 +461,7 @@
     },
     "ui_components": {
       "type": "array",
-      "description": "UI only. Reusable interactive components.",
+      "description": "Reusable interactive components (areas with screens).",
       "items": {
         "type": "object",
         "required": ["name"],
@@ -496,7 +476,7 @@
     },
     "navigation": {
       "type": "array",
-      "description": "UI only. Allowed transitions between screens.",
+      "description": "Allowed transitions between screens (areas with screens). Required when screens[] is declared.",
       "items": {
         "type": "object",
         "required": ["from", "to", "trigger"],
@@ -573,8 +553,8 @@
       "then": { "required": ["spans"], "properties": { "spans": { "minItems": 2 } } }
     },
     {
-      "if":   { "properties": { "kind": { "const": "ui" } } },
-      "then": { "required": ["screens", "navigation"] }
+      "if":   { "required": ["screens"] },
+      "then": { "required": ["navigation"] }
     }
   ]
 }

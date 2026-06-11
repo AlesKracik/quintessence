@@ -23,11 +23,10 @@ flowchart LR
 
 ## Core Concepts
 
-A **spec area** is a JSON file at `specs/<name>.json` plus an optional sidecar `specs/<name>.qnt` holding the Quint formal model. Three kinds of area, all using the same schema:
+A **spec area** is a JSON file at `specs/<name>.json` plus an optional sidecar `specs/<name>.qnt` holding the Quint formal model. Two kinds of area, one schema:
 
-- `kind: "area"` — functional area with code (login, billing, search).
+- `kind: "area"` — functional area with code (login, billing, search). May declare **UI blocks** (`screens[]`, `ui_components[]`, `navigation[]`) to model an interactive surface — the sidecar then models navigation as a Quint state machine, and UI-specific lint, readback, and codegen activate on block presence. (`kind: "ui"` is a deprecated alias for this.)
 - `kind: "contract"` — cross-area invariant carrier (no code; `spans: ["auth", "billing"]`); the sidecar imports the spanned areas' Quint modules and asserts joint invariants.
-- `kind: "ui"` — interactive surface with `screens[]`, `ui_components[]`, `navigation[]`; the sidecar models navigation as a Quint state machine.
 
 A **project** is `.spec/project.json` (areas index, code repo paths, architecture defaults, topology) plus per-area JSON files. Per-developer code-repo paths go in `.spec/local.json` (gitignored).
 
@@ -60,7 +59,7 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 | `/spec-check [target]` | Runs Apalache on the area's sidecar `.qnt` (invariants), discharges witness obligations (per-REQ path-constrained witness traces via a generated `*.probes.qnt` module), then the state×event matrix pass (red-team only with `--reality`). Writes `check_results` and `witness` blocks back into the area JSON; saves ITF traces under `specs/<area>/traces/`. Cascades: on an area target, also checks every contract whose `spans` includes it. |
 | `/spec-verify [target]` | Replays the witness traces against real code through the conformance adapter (a REQ is *verified* only when its trace replays green), runs the area's `test_command`, validates the `traceability[]` table maps to real code/test locations, detects drift (spec-traced files changed outside `/spec-apply`). Appends to `verification_log[]`. |
 | `/spec-apply [target]` | Generates code from the architecture + formal model into the configured paths, plus the conformance adapter and trace-replay harness. Per-component when Layer 1 is declared. Writes `traceability[]` and `conformance`. Refuses on contract targets. |
-| `/spec-readback [target]` | Generates a human-readable Markdown review document with embedded Mermaid diagrams (components, state-machine, navigation, topology, C4 context) and per-requirement witness-trace sequence diagrams rendered deterministically by `tools/itf_tools.py`. Requirements are grouped by `use_cases[]` — user-visible flows in temporal order, captured during elicitation (one story = one use case) — so the review reads as journeys, not an ID-sorted list. Writes `specs/<target>.readback.md` per area and `.spec/readback.md` for the project. |
+| `/spec-readback [target]` | Generates a human-readable Markdown review document with embedded Mermaid diagrams (components, state-machine, navigation, topology, C4 context) and per-requirement witness-trace sequence diagrams rendered deterministically by `tools/itf_tools.py`. Requirements are grouped as journey slices (`.spec/journeys/` — user-visible flows in temporal order, captured during elicitation: one story = one journey), so the review reads as flows, not an ID-sorted list. Writes `specs/<target>.readback.md` per area and `.spec/readback.md` for the project. |
 
 `[target]` is the area name (`auth`, `billing`, `auth-ui`, `user-permission`). Optional on every command — defaults to whatever's inferable from context or asks the user. There is no branch convention; use git however your team uses git.
 
@@ -77,6 +76,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   ├── local.json                ← per-dev code-repo paths + active change (gitignored)
 │   ├── changes/                  ← change manifests: the unit of work (one JSON per change)
 │   │   └── billing-sso.json
+│   ├── journeys/                 ← use cases: qualified <area>.<ID> steps in temporal order
+│   │   └── signup-and-buy.json
 │   ├── readback.md               ← /spec-readback _project generates the project overview here
 │   ├── patterns/                 ← optional Layer 2 catalog (JSON files)
 │   │   └── outbox.json
@@ -86,7 +87,7 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   ├── auth.json                 ← one file per area
 │   ├── auth.qnt                  ←   sidecar: the Quint formal model
 │   ├── auth.probes.qnt           ←   generated witness/coverage probes (/spec-check)
-│   ├── auth-ui.json              ← UI is just another area kind
+│   ├── auth-ui.json              ← interactive surface: an area with screens[] + navigation[]
 │   ├── auth-ui.qnt
 │   ├── billing.json
 │   ├── billing.qnt
@@ -247,11 +248,15 @@ module userPermissionContract {
 
 `/spec-apply` and `/spec-verify` refuse on contract targets (no code).
 
-### `kind: "ui"` — interactive surface
+### UI blocks — interactive surfaces (formerly `kind: "ui"`)
 
-Has `screens[]`, `ui_components[]`, `navigation[]` declarations. The sidecar models navigation as a Quint state machine — `screens` become a variant type, `navigation` entries become actions, auth-required-style invariants are model-checked. UI areas typically have `spans: ["auth"]` if they depend on another area's state (e.g., authentication status).
+An interactive surface is an ordinary `kind: "area"` that declares `screens[]`, `ui_components[]`, `navigation[]` — formally it was never a different object: the sidecar models navigation as a Quint state machine (`screens` become a variant type, `navigation` entries become actions, auth-required-style invariants are model-checked), exactly as any entity state machine. The separate `ui` kind is deprecated; everything UI-specific triggers on block presence:
 
-`/spec-apply` generates UI components (the `module_layout` is configured for component files); `/spec-readback` renders the navigation graph as a Mermaid block embedded inline in the area's `.readback.md`.
+- `spec-lint`: navigation endpoints reference declared screens, isolated screens flagged, screens without navigation FAIL;
+- `/spec-readback`: Navigation graph + Screens table replace the State Machines section;
+- `/spec-apply`: generates UI components (the `module_layout` is configured for component files).
+
+Such areas typically have `spans: ["auth"]` when they depend on another area's state (e.g., authentication status); requirement IDs may use `UI-NNN`.
 
 ---
 
@@ -405,7 +410,7 @@ These run in `tools/spec-lint.py` against every area; structural errors get flag
 
 ### UI areas: same idea, different fields
 
-For `kind: "ui"`, the navigation graph (`screens[]` + `navigation[]`) plays the same role. `spec-lint` enforces the parallel rules: every navigation endpoint references a declared screen, unreachable screens are flagged as isolated, auth-required screens are highlighted in the readback. The Quint sidecar still models the underlying state machine and Apalache verifies invariants like "Dashboard reachable only when authenticated."
+For areas with UI blocks, the navigation graph (`screens[]` + `navigation[]`) plays the same role. `spec-lint` enforces the parallel rules: every navigation endpoint references a declared screen, unreachable screens are flagged as isolated, auth-required screens are highlighted in the readback. The Quint sidecar still models the underlying state machine and Apalache verifies invariants like "Dashboard reachable only when authenticated."
 
 ### When to declare a state machine
 
@@ -505,6 +510,16 @@ Lifecycle is git-shaped, no extra ceremony: slug ↔ suggested branch `change/<s
 
 `spec-lint` validates manifests on every full run: schema, slug↔filename, targets resolve to real specs, no dangling IDs, no code-phase flags on contracts. Landed/abandoned manifests are history and only need to parse — later changes may legitimately remove IDs they reference.
 
+## Journeys: Use Cases in Temporal Order
+
+A **journey** (`.spec/journeys/<slug>.json`, `schemas/journey.schema.json`) is the use-case mechanism: a named user-visible flow whose `steps[]` reference requirement IDs in qualified `<area>.<ID>` form, in the order the user experiences them. Most journeys live inside one area; some cross boundaries — same shape either way, so there is exactly one place flows live. Same overlay discipline as change manifests: references only, never content; delete every journey and the specs stay complete.
+
+Captured for free during elicitation — one story walked with the user = one journey. Edited directly via `/spec _journeys/<name>`. A journey step with no matching REQ is an elicitation gap: capture the requirement in its owning area first.
+
+Readbacks are where journeys pay off: the per-area "What the System Does" groups requirements as **journey slices** (this area's steps in flow order, foreign steps as one-line connectors), and the project-wide readback renders each journey as a step table with status marks and links — review reads as flows a human walks, not ID-sorted lists.
+
+Journeys carry no formal verification obligation (v1 is a documentation/review layer); a joint-reachability witness across modules is a natural later extension. `spec-lint` validates them: unique names, every ref resolves, no duplicate steps.
+
 ---
 
 ## Pipeline (Conversational, Not Ceremonial)
@@ -548,7 +563,7 @@ The methodology doesn't dictate a branch model. Use whatever your team uses. Sug
 | Prefix | Meaning | Used in |
 |---|---|---|
 | `REQ-NNN` | Functional requirement | `requirements[]` |
-| `UI-NNN` | UI behavior requirement | `requirements[]` in `kind: ui` |
+| `UI-NNN` | UI behavior requirement | `requirements[]` in areas with UI blocks |
 | `INV-NNN` | Safety invariant | `invariants[]` |
 | `PROP-NNN` | Liveness property | `properties[]` |
 | `CON-NNN` | Constraint / bound | `constraints[]` |

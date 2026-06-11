@@ -12,7 +12,7 @@ This is the primary artifact for **PR review and stakeholder review** — auto-r
 /spec-readback --all               # both: project overview + every area
 ```
 
-`[target]` is the area name. Works for any kind: `area`, `contract`, `ui`. Without a target, the **active change** (`last_change` in `.spec/local.json`) drives it: regenerate each touched target's readback, plus a change readback at `.spec/changes/<slug>.readback.md` — intent, target table with phase status, the change's IDs rendered as EARS sentences with links into the per-area readbacks. That document is the PR review surface for a spanning change. If no active change, fall back to the project-wide overview readback.
+`[target]` is the area name. Works for any kind: `area` (with or without UI blocks), `contract`. Without a target, the **active change** (`last_change` in `.spec/local.json`) drives it: regenerate each touched target's readback, plus a change readback at `.spec/changes/<slug>.readback.md` — intent, target table with phase status, the change's IDs rendered as EARS sentences with links into the per-area readbacks. That document is the PR review surface for a spanning change. If no active change, fall back to the project-wide overview readback.
 
 ## Instructions
 
@@ -22,13 +22,14 @@ You are the **Readback Author**. You read structured artifacts (area JSON + side
 
 **Determinism rule:** structure, diagrams, tables, statuses, and traces are derived mechanically from the source artifacts (use `tools/itf_tools.py mermaid` for trace diagrams — don't hand-draw them). Your own prose is limited to short glosses that restate what the data says; an interpretive sentence must be traceable to a specific field. The readback is the review surface humans trust — it must not be able to diverge from what the checker actually verified.
 
-**Stable-order rule:** within every section, order entries by ID (REQ-001, REQ-002, …; alphabetical where there's no ID). One exception, still fully data-derived: "What the System Does" follows `use_cases[]` — array order for the subsections, each use case's `ids[]` order (temporal) within. Identical input must produce byte-identical output. Then `git diff specs/<area>.readback.md` on a PR **is** the change review — what changed in the spec is exactly what changed in the readback. No diff machinery needed. The only timestamps in the document are the header's "Last verified" and the Reference section's verification history — per-entry blocks carry none, so a re-check that changes nothing semantic produces an empty diff. Don't break this with stray dates or reflowed prose.
+**Stable-order rule:** within every section, order entries by ID (REQ-001, REQ-002, …; alphabetical where there's no ID). One exception, still fully data-derived: "What the System Does" follows the journeys — `.spec/journeys/` filename order for the subsections, each journey's `steps[]` order (temporal) within. Identical input must produce byte-identical output. Then `git diff specs/<area>.readback.md` on a PR **is** the change review — what changed in the spec is exactly what changed in the readback. No diff machinery needed. The only timestamps in the document are the header's "Last verified" and the Reference section's verification history — per-entry blocks carry none, so a re-check that changes nothing semantic produces an empty diff. Don't break this with stray dates or reflowed prose.
 
 ### Step 1 — Resolve target and read sources
 
 Per-area (`/spec-readback <target>`):
 - `specs/<target>.json` (required) and `specs/<target>.qnt` (sidecar — Quint excerpts, state-machine fallback inference)
 - `.spec/project.json` (resolved architecture, topology context)
+- `.spec/journeys/*.json` (journeys whose steps reference this area — they drive the "What the System Does" grouping)
 - `.spec/patterns/*.json`, `.spec/protocols/*.json` (resolve referenced names to descriptions)
 - For `ui` and `contract` kinds: each `spans` area's JSON for cross-references.
 
@@ -62,11 +63,11 @@ Everything requiring a human decision, in one place, first. Include each non-emp
 
 ## What the System Does
 
-Grouped by `use_cases[]` when declared — one `###` subsection per use case, in declared array order, with a one-line gloss (`actor` + `description`); inside, one block per requirement **in the use case's `ids[]` order** (that order is temporal: the flow as the user experiences it, happy-path step followed by its unwanted counterparts). A requirement in several use cases renders fully in the first and as a one-line link (`REQ-003 — see *Login*`) in the rest. Requirements in no use case go last under `### Other behaviors`, ordered by ID. No `use_cases[]` at all → flat list by ID, plus a note: "No use cases declared. Run `/spec <area>` to group requirements into flows." This grouping satisfies the stable-order rule because it is fully derived from the JSON — array order in, render order out.
+Grouped by **journey slices**: for each `.spec/journeys/*.json` (filename order) with at least one step in this area, a `###` subsection titled with the journey name and gloss (`actor` + `description`); inside, this area's requirements **in the journey's `steps[]` order** (temporal: the flow as the user experiences it, happy-path step followed by its unwanted counterparts). Steps belonging to *other* areas render as one-line italic connectors — `*(step 2: billing.REQ-010 — see [billing](billing.readback.md))*` — so the flow reads continuously without duplicating foreign content. A requirement in several journeys renders fully in the first and as a one-line link (`REQ-003 — see *Login*`) in the rest. Requirements in no journey go last under `### Other behaviors`, ordered by ID. No journeys touching this area → flat list by ID, plus a note: "No journeys reference this area. Run `/spec _journeys/<name>` to group requirements into flows." This grouping satisfies the stable-order rule because it is fully derived from the JSON — file and array order in, render order out.
 
 One block per requirement. **This is the EARS ↔ Quint review surface** — whether the formal action means what the sentence says is the one link no tool checks (METHODOLOGY → "honest residual gaps"), so sentence, formal encoding, and machine-found example sit together and the review is a glance, not a hunt:
 
-### Login — *User signs in and gets a session* <!-- use-case subsection -->
+### Login — *User signs in and gets a session* <!-- journey-slice subsection -->
 
 #### REQ-003 — <short name>  <status mark>
 *While* the account is Unlocked, *when* the user submits invalid credentials, the system *shall* increment failedAttempts and lock the account on the 5th failed attempt (MAX_FAILED_ATTEMPTS = 5).
@@ -165,9 +166,9 @@ Per spanned area, what it must expose / must respect — derived from the sideca
 <details><summary>Decisions, check history</summary>(same shapes as area)</details>
 ```
 
-#### Per-area readback for `kind: "ui"`
+#### Areas with UI blocks (`screens[]` + `navigation[]` declared; includes deprecated `kind: "ui"`)
 
-Same as area, with the State Machines section replaced by **Navigation** + **Screens** (placed right after Needs Your Attention — the navigation graph IS the behavior surface for a UI):
+Same as area, with the State Machines section replaced by **Navigation** + **Screens** (placed right after Needs Your Attention — the navigation graph IS the behavior surface for an interactive area):
 
 ```markdown
 ## Navigation
@@ -248,6 +249,19 @@ Roll-up across areas — anything any area's readback would flag:
 | auth | area | 1.0.0 | approved | service-api | 2026-05-14 ✓ |
 
 Per-area links: [auth](./specs/auth.readback.md), …
+
+## Journeys
+
+One subsection per `.spec/journeys/*.json` (filename order). The project-level "what does this system do for a person" view — steps cross area boundaries:
+
+### Sign up and buy — *User creates an account and completes first purchase*
+
+| # | Step | Area | Status |
+|---|---|---|---|
+| 1 | [UI-001](./specs/auth-ui.readback.md) — opens signup screen | auth-ui | ✓ |
+| 2 | [REQ-003](./specs/auth.readback.md) — <EARS sentence, from the area JSON> | auth | ◐ |
+
+Step rows in `steps[]` order (temporal); sentence pulled from the referenced requirement — never restated; status mark same scheme as per-area readbacks; `note` appended after an em-dash when present. Omit the whole section when `.spec/journeys/` is empty or absent.
 
 ## System Context (C4)
 (graph TB: actors from per-area `concepts.actors`, external systems from `topology.external_systems[]`)
