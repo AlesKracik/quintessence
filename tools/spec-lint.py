@@ -6,8 +6,9 @@ Reads .spec/project.json + each specs/<area>.json (and the .qnt sidecar) and
 checks cross-file consistency: ID format, broken references, drift between the
 area JSON and its sidecar, missing patterns/protocols, topology orphans,
 unverified critical invariants, unresolved questions, EARS requirement
-structure, and witness-trace obligations (every requirement must be
-demonstrably reachable in the model — see METHODOLOGY.md).
+structure, witness-trace obligations (every requirement must be
+demonstrably reachable in the model — see METHODOLOGY.md), and change
+manifests (.spec/changes/ — targets and ids must resolve).
 
 This is much smaller than the per-file lint of the previous methodology because
 the new methodology has fewer files: one JSON per area, one sidecar, one project
@@ -727,6 +728,64 @@ def check_topology(project_data, all_areas, findings):
                     ref=nb[end])
 
 
+def check_changes(root, all_areas, findings, validator=None):
+    """Change manifests (.spec/changes/*.json): schema validity, slug matches
+    filename, targets resolve to real areas, ids resolve in the target's spec,
+    phase flags make sense for the target's kind. Landed/abandoned manifests
+    are history — parse + schema + slug only (their ids may legitimately have
+    been removed by later changes; that's not drift)."""
+    changes_dir = root / ".spec" / "changes"
+    if not changes_dir.exists():
+        return
+    for p in sorted(changes_dir.glob("*.json")):
+        name = f"_changes/{p.stem}"
+        data = load_json(p)
+        if isinstance(data, dict) and "__parse_error__" in data:
+            add(findings, FAIL, "changes", "parse-error", name,
+                f".spec/changes/{p.name} failed to parse: {data['__parse_error__']}")
+            continue
+        check_schema(data, validator, name, findings)
+        if data.get("change") and data["change"] != p.stem:
+            add(findings, FAIL, "changes", "slug-mismatch", name,
+                f"change field is '{data['change']}' but file is .spec/changes/{p.stem}.json.")
+        if data.get("status") in ("landed", "abandoned"):
+            continue
+        for t in data.get("targets", []) or []:
+            tname = t.get("name")
+            if not tname:
+                continue  # schema validation reports the missing name
+            if tname not in all_areas:
+                add(findings, FAIL, "changes", "unknown-target", name,
+                    f"targets[] references '{tname}' which has no specs/{tname}.json.",
+                    ref=tname)
+                continue
+            area_data = all_areas[tname]
+            if not isinstance(area_data, dict) or "__parse_error__" in area_data:
+                continue
+            if t.get("kind") and area_data.get("kind") and t["kind"] != area_data["kind"]:
+                add(findings, WARN, "changes", "kind-mismatch", name,
+                    f"targets[{tname}].kind is '{t['kind']}' but specs/{tname}.json "
+                    f"says '{area_data['kind']}'.",
+                    ref=tname)
+            if area_data.get("kind") == "contract" and (t.get("applied") or t.get("verified")):
+                add(findings, WARN, "changes", "contract-phase-flags", name,
+                    f"targets[{tname}] is a contract but carries applied/verified "
+                    f"flags — contracts are spec-only.",
+                    ref=tname)
+            area_ids = set()
+            for src in ("requirements", "invariants", "properties",
+                        "constraints", "decisions", "open_questions"):
+                for o in area_data.get(src, []) or []:
+                    if o.get("id"):
+                        area_ids.add(o["id"])
+            for iid in t.get("ids", []) or []:
+                if iid not in area_ids:
+                    add(findings, FAIL, "changes", "dangling-id", name,
+                        f"targets[{tname}].ids references '{iid}' which does not "
+                        f"exist in specs/{tname}.json.",
+                        ref=iid)
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
@@ -869,9 +928,11 @@ def main():
         lint_area(root, a, all_areas[a], sidecars[a], all_areas, catalog, findings,
                   schema_validator)
 
-    # Topology check runs once per project, only on full lint.
+    # Topology and change-manifest checks run once per project, only on full lint.
     if not args.area:
         check_topology(project_data, all_areas, findings)
+        check_changes(root, all_areas, findings,
+                      build_schema_validator(root, "change.schema.json"))
 
     if args.emit_json:
         print(json.dumps({

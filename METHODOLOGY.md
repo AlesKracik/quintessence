@@ -74,8 +74,10 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 ├── METHODOLOGY.md
 ├── .spec/
 │   ├── project.json              ← project meta, areas index, repos, architecture defaults, topology
-│   ├── local.json                ← per-dev code-repo paths (gitignored)
-│   ├── readback.md               ← /spec-readback (no target) generates the project overview here
+│   ├── local.json                ← per-dev code-repo paths + active change (gitignored)
+│   ├── changes/                  ← change manifests: the unit of work (one JSON per change)
+│   │   └── billing-sso.json
+│   ├── readback.md               ← /spec-readback _project generates the project overview here
 │   ├── patterns/                 ← optional Layer 2 catalog (JSON files)
 │   │   └── outbox.json
 │   └── protocols/                ← optional Layer 5 catalog (JSON files)
@@ -455,15 +457,53 @@ Spec and code can live in the same repo (single-repo) or in separate repos (mult
   "repo_paths": {
     "service-api":      "/Users/alice/work/service-api",
     "service-pipeline": "/Users/alice/work/service-pipeline"
-  }
+  },
+  "last_change": "billing-sso"
 }
 ```
+
+`last_change` is the **active change** — see "Unit of Work: Changes" below. Per-developer state, which is why it lives in the gitignored `local.json` rather than `project.json`.
 
 When `/spec-apply auth` runs, it resolves `repo_paths.service-api + areas[auth].code_path` → `/Users/alice/work/service-api/src/auth/` and generates code there. `/spec-verify auth` `cd`s into the repo and runs `test_command`.
 
 Audit trail (which code SHA was verified against which spec): recorded in `verification_log[]` of the area JSON, not in git plumbing. Reproducible enough for most teams; teams that need git-level SHA pinning can opt into submodules separately, but they're not built into the methodology.
 
 A **spec-only** project has no `repos` block. `/spec-apply` and `/spec-verify` aren't used; the spec is the deliverable (useful for protocols, formal-methods exercises, cross-team contracts).
+
+---
+
+## Unit of Work: Changes
+
+**The change is the unit of work; the area is the unit of meaning.** Areas and contracts carve the domain into logical spec boundaries, but real work — "billing accounts authenticate via SSO sessions" — routinely cuts across several of them. A **change manifest** at `.spec/changes/<slug>.json` (schema: `schemas/change.schema.json`) makes that unit first-class:
+
+```json
+// .spec/changes/billing-sso.json
+{
+  "change": "billing-sso",
+  "intent": "Billing accounts authenticate via SSO sessions",
+  "status": "in-progress",
+  "targets": [
+    { "name": "auth",            "kind": "area",     "ids": ["REQ-012", "INV-004"], "checked": true, "applied": true, "verified": false },
+    { "name": "billing",         "kind": "area",     "ids": ["REQ-031"],            "checked": true, "applied": false },
+    { "name": "user-permission", "kind": "contract", "auto": true, "ids": ["INV-CONTRACT-002"], "checked": false }
+  ]
+}
+```
+
+The manifest is an **overlay, not a container**: it references IDs and tracks per-target workflow state; the spec content stays in the area JSONs, which remain the single source of truth. Delete every manifest and the specs are still complete — there is no drift surface.
+
+How it drives the commands:
+
+- The **active change** is per-dev sticky state (`last_change` in `.spec/local.json`). `/spec change <slug>` opens or switches; every spec edit happens inside a change — starting an area edit with no active change auto-opens one (one prompt, Enter accepts the default name). A single-area tweak is just the degenerate case: a change with one target.
+- Bare `/spec` shows the **change dashboard**: per-target phase grid (spec / checked / applied / verified) plus the suggested next step.
+- Bare `/spec-check` checks **all** targets of the change, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas moved. Editing a target resets its `checked`/`verified` flags; contracts spanning a touched area join `targets[]` automatically (`auto: true`).
+- Bare `/spec-apply` / `/spec-verify` run every code-bearing target; contracts are skipped (spec-only).
+- Bare `/spec-readback` regenerates the touched targets' readbacks plus a **change readback** (`.spec/changes/<slug>.readback.md`) — intent, target table, the change's IDs rendered as EARS sentences. That one document is the PR review surface for a spanning change.
+- Explicit targets always work as a one-off escape hatch and never alter the active change.
+
+Lifecycle is git-shaped, no extra ceremony: slug ↔ suggested branch `change/<slug>`, commits scoped `spec(<slug>): …`, the manifest travels with the PR, and `status: "landed"` on merge turns it into a changelog entry. `landed`/`abandoned` clears the active change.
+
+`spec-lint` validates manifests on every full run: schema, slug↔filename, targets resolve to real specs, no dangling IDs, no code-phase flags on contracts. Landed/abandoned manifests are history and only need to parse — later changes may legitimately remove IDs they reference.
 
 ---
 

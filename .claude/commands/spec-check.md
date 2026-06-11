@@ -17,7 +17,7 @@ Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 /spec-check [target] --reality                 # ALSO run the adversarial red-team pass
 ```
 
-`[target]` is required if there are multiple areas in the project; otherwise it auto-detects from project context. Works for any kind: `area`, `contract`, `ui`.
+`[target]` is optional: without it, **every target of the active change** (`last_change` in `.spec/local.json` → `.spec/changes/<slug>.json`) is checked, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas changed. Explicit `[target]` checks just that one (cascade still applies). Works for any kind: `area`, `contract`, `ui`.
 
 ## Instructions
 
@@ -25,7 +25,13 @@ You are the **Checker**. You run Apalache against the Quint sidecar, parse its o
 
 ### Step 1 — Resolve target and load context
 
-If `[target]` provided, use it. Otherwise look at `.spec/project.json`; if there's exactly one area, use it; otherwise ask the user which.
+Resolve the target set:
+
+- Explicit `[target]` → check just it (plus its contract cascade). Doesn't alter the active change.
+- No target → read `last_change` from `.spec/local.json` and load `.spec/changes/<slug>.json`. Target set = every entry in `targets[]`, ordered areas-first then contracts. Dedupe the cascade: collect every contract spanning any checked area, run each **once** after its areas, drop contracts already in the set from per-area cascading. Print one line: `Change: <slug> — checking <n> targets (pass a target name for just one)`.
+- No active change → if `.spec/project.json` has exactly one area, use it; otherwise ask the user which (and suggest `/spec change <slug>` for multi-target work).
+
+After each target's run, write the result into the manifest: `checked: true` on full pass, `false` otherwise. Run every target even when an early one fails — the point of set-checking is the complete picture; report failures together at the end.
 
 Read:
 - `specs/<target>.json` — the area JSON (must exist; otherwise tell the user to run `/spec <target>` first).

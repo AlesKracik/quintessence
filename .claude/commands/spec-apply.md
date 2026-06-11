@@ -16,7 +16,13 @@ You are the **Applier**. You translate the formal Quint model into implementatio
 
 ### Step 1 — Resolve target and refuse contracts
 
-If `[target]` not provided and there's one area, use it; else ask.
+Resolve the target set:
+
+- Explicit `[target]` → apply just it. Doesn't alter the active change.
+- No target → read `last_change` from `.spec/local.json`, load `.spec/changes/<slug>.json`. Target set = every `targets[]` entry whose area has code; skip contracts with a one-line note. Print: `Change: <slug> — applying <n> code targets`. Walk targets one at a time — each gets its own architecture resolution, mapping confirmation, and generation pass (Steps 2–5); don't interleave.
+- No active change → if there's exactly one area, use it; else ask.
+
+After each target completes, write `applied: true` into its manifest entry.
 
 Read:
 - `specs/<target>.json`

@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "change.schema.json",
+  "title": "Change Manifest",
+  "description": "One file per unit of work at .spec/changes/<slug>.json. A change is the primary unit of work; areas/contracts remain the logical spec boundary. The manifest references targets and tracks per-target workflow state (checked/applied/verified) — it never duplicates spec content, only IDs. Committed with the PR; status 'landed' on merge makes it a changelog entry. Deleting every manifest leaves the specs complete.",
+  "type": "object",
+  "required": ["change", "intent", "status", "targets"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "change": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Slug. Doubles as the suggested branch name (change/<slug>) and commit scope (spec(<slug>): ...)."
+    },
+    "intent": {
+      "type": "string",
+      "description": "One sentence: what this change accomplishes, in domain terms."
+    },
+    "status": {
+      "enum": ["open", "in-progress", "landed", "abandoned"],
+      "description": "open = created, no spec edits yet; in-progress = edits underway; landed = PR merged; abandoned = dropped without landing."
+    },
+    "created": { "type": "string", "format": "date" },
+    "last_modified": { "type": "string", "format": "date" },
+    "branch": {
+      "type": "string",
+      "description": "Git branch carrying the change, if one was created."
+    },
+    "targets": {
+      "type": "array",
+      "description": "Every area/contract/ui spec this change touches. Contracts spanning a touched area are auto-added (auto: true).",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "description": "Area slug — specs/<name>.json must exist." },
+          "kind": { "enum": ["area", "contract", "ui"] },
+          "auto": {
+            "type": "boolean",
+            "description": "true when pulled in automatically (contract cascade) rather than edited explicitly."
+          },
+          "ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "REQ/INV/PROP/CON/DEC/Q IDs added or modified in this target by this change. References only — content lives in the area JSON."
+          },
+          "checked": { "type": "boolean", "description": "Last /spec-check on this target (at current spec state) passed." },
+          "applied": { "type": "boolean", "description": "/spec-apply has generated/updated code for this change's IDs. N/A for contracts." },
+          "verified": { "type": "boolean", "description": "Last /spec-verify on this target passed. N/A for contracts." }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Cross-target question refs in <area>/Q-NNN form, blocking this change."
+    },
+    "notes": { "type": "string" }
+  }
+}

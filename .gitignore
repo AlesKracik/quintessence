@@ -26,6 +26,10 @@ memory/
 .claude.json.backup
 CLAUDE.local.md
 
+# Per-dev spec state (repo paths, active change). Change manifests in
+# .spec/changes/ ARE checked in — they travel with the PR.
+.spec/local.json
+
 # Python (for tools/spec-lint.py)
 __pycache__/
 *.pyc

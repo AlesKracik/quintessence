@@ -2,29 +2,44 @@
 
 The single entry point for spec work. Detects the current state of the project and the named target, then walks the relevant conversational beat: project setup, area elicitation, vocabulary, structuring, formalization, brownfield extraction, drift codification, catalog editing. Writes `specs/<target>.json` and its `.qnt` sidecar.
 
-There is no separate `/spec-init`, `/spec-propose`, `/spec-explore`, `/spec-analyze`, `/spec-elicit`, `/spec-vocabulary`, `/spec-structure`, `/spec-formalize`, `/spec-architect`, `/spec-pattern`, `/spec-protocol`, `/spec-topology`, `/spec-reconcile`, `/spec-status`, `/spec-approve`, `/spec-sync`. This command subsumes all of them. Use `/spec-check`, `/spec-verify`, `/spec-apply`, `/spec-readback` for the action commands.
+There are no other authoring subcommands — this command subsumes every authoring phase (init, elicit, structure, formalize, reconcile, approve, …); don't invent `/spec-<phase>` names. The only other commands are the four action commands: `/spec-check`, `/spec-verify`, `/spec-apply`, `/spec-readback`.
 
 ## Usage
 ```
-/spec                          # detects state: bootstrap project, show overview, or pick up where you left off
-/spec <target>                 # work on an area (existing or new). target = area slug or "_project" for project-level
+/spec                          # resumes the active change: dashboard + suggested next step; bootstraps if no project yet
+/spec <target>                 # work on an area (existing or new) within the active change. target = area slug or "_project"
 /spec <target> -- <hint>       # supply NL hint up front to skip an opening question
+/spec change <slug> [-- intent]  # open a new change or switch to an existing one
+/spec _overview                # project overview: areas, open changes, status
 ```
+
+**The change is the unit of work; the area is the unit of meaning.** Every spec edit happens inside a *change* — a manifest at `.spec/changes/<slug>.json` (schema: `schemas/change.schema.json`) that references the areas/contracts it touches and tracks their workflow state. Areas remain the logical spec boundary and the single source of truth; the manifest holds only IDs and phase flags, never spec content.
+
+The **active change** is per-dev sticky state: `last_change` in `.spec/local.json` (gitignored). All five spec commands resolve against it — run bare to continue the change, pass an explicit target for a one-off. If an area edit starts with no active change, auto-open one: ask "No active change. Name this work? [<area>-updates]" — Enter accepts the default. One question, then every spec diff is traceable to a manifest.
 
 ## Instructions
 
 You are the **Adaptive Specifier**. Your job is to figure out what beat the user needs and walk them through it — not to ask a fixed sequence of questions. The user should never need to remember "am I in elicit or structure phase?" — you read the area JSON and infer.
 
-### Step 1 — Read state
+### Step 1 — Resolve change and target, read state
 
-Determine what exists:
+Resolve the change, then the target:
 
-1. `.spec/project.json` — does the project exist?
-2. If `<target>` provided:
+1. `/spec change <slug>` → open `.spec/changes/<slug>.json` (create per `schemas/change.schema.json` if new, with `intent` from the `--` hint or one question; suggest branch `change/<slug>`). Write `last_change: "<slug>"` to `.spec/local.json` (create the file if missing; preserve other fields). Then show the change dashboard (beat below).
+2. Bare `/spec`, active change valid (`last_change` set, manifest exists, status not `landed`/`abandoned`) → **change dashboard** beat.
+3. Explicit `<target>` (area, not `_project`/`_patterns/*`/`_protocols/*`/`_overview`):
+   - active change exists → work on that area within it; register the target in the manifest's `targets[]` if absent.
+   - no active change → auto-open one first: `No active change. Name this work? [<target>-updates]` (Enter = default). Create the manifest, set `last_change`, then proceed.
+4. Bare `/spec`, no valid active change: exactly one area → treat as `/spec <that-area>` (rule 3 auto-opens a change); otherwise show the project overview and ask.
+5. `_overview` → project overview: areas with status, open changes (slug, intent, target count, phase summary), open questions, last verification. Catalog targets (`_project`, `_patterns/*`, `_protocols/*`) run their beats without touching any change.
+
+Then determine what exists:
+
+1. `.spec/project.json` — does the project exist? (If not, the **bootstrap** beat runs regardless of target resolution.)
+2. For the resolved target:
    - `specs/<target>.json` — does the area exist?
    - `specs/<target>.qnt` — does the formal model exist?
    - For areas with `code_repo` set: does the code path on disk exist? (Resolve via `.spec/local.json`.)
-3. If no `<target>`: read `.spec/project.json` to enumerate areas; show overview.
 
 This determines the entry beat:
 
@@ -42,6 +57,28 @@ This determines the entry beat:
 ### Step 2 — Run the beat
 
 Each beat is a focused conversational flow. The beats:
+
+#### change dashboard — the resume surface
+
+(Runs on bare `/spec` with an active change, and after `/spec change <slug>`.)
+
+Read the manifest and every referenced area JSON. Print the per-target phase grid, then suggest — don't auto-jump; visibility beats automation when targets interleave:
+
+```
+## Change: billing-sso — "Billing accounts authenticate via SSO sessions"   [in-progress]
+
+Target            kind      ids                    spec      checked   applied   verified
+auth              area      REQ-012, INV-004       complete  ✓         ✓         ✗
+billing           area      REQ-031                draft     ✓         ✗         —
+user-permission   contract  INV-CONTRACT-002 (auto) —        ✗         n/a       n/a
+
+Open questions blocking: auth/Q-009
+
+Next: billing spec has 1 raw requirement — `/spec billing` to finish it,
+or `/spec-check` to re-check the whole set.
+```
+
+Phase flags come from the manifest; spec completeness from the area JSONs (same gap table as the resume beat). When every target is checked and every code target verified, offer: "All green. Mark `landed` after the PR merges, or I can mark it now if it's already in." `landed`/`abandoned` clears `last_change`.
 
 #### bootstrap — first-time project setup
 
@@ -197,7 +234,8 @@ Don't accumulate state in memory. After each meaningful turn:
 - Update `specs/<target>.json` (or `.spec/project.json`, catalog file, etc.)
 - Update `last_modified`
 - Bump `version` only when the user signals a meaningful change (added requirement, modified invariant, etc.) — minor for additions, patch for refinements, major for breaking changes
-- Commit hint: at sensible checkpoints, suggest `git add specs/<target>.json specs/<target>.qnt && git commit -m "spec(<target>): <what>"`
+- **Update the change manifest**: any ID added or modified in `specs/<target>.json` goes into the manifest target's `ids[]`; editing a target resets its `checked`/`verified` flags to false (the spec moved — prior results are stale). When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
+- Commit hint: at sensible checkpoints, suggest `git add specs/<target>.json specs/<target>.qnt .spec/changes/<change>.json && git commit -m "spec(<change>): <what>"`
 
 ### Step 4 — Suggest next action
 

@@ -7,13 +7,16 @@ This is the primary artifact for **PR review and stakeholder review** — auto-r
 ## Usage
 ```
 /spec-readback [target]            # per-area readback
-/spec-readback                     # project-wide overview readback
+/spec-readback                     # change readback: the active change's summary + refreshed per-target readbacks
+/spec-readback _project            # project-wide overview readback
 /spec-readback --all               # both: project overview + every area
 ```
 
-`[target]` is the area name. Works for any kind: `area`, `contract`, `ui`.
+`[target]` is the area name. Works for any kind: `area`, `contract`, `ui`. Without a target, the **active change** (`last_change` in `.spec/local.json`) drives it: regenerate each touched target's readback, plus a change readback at `.spec/changes/<slug>.readback.md` — intent, target table with phase status, the change's IDs rendered as EARS sentences with links into the per-area readbacks. That document is the PR review surface for a spanning change. If no active change, fall back to the project-wide overview readback.
 
 ## Instructions
+
+Target resolution: explicit area `[target]` → per-area readback for just it. No target → read `last_change` from `.spec/local.json`, load `.spec/changes/<slug>.json`, regenerate every touched target's readback and the change readback (format in Step 2); no active change → project-wide readback. `_project` always means project-wide; `--all` means project-wide + every area. None of these alter the active change.
 
 You are the **Readback Author**. You read structured artifacts (area JSON + sidecar + project config) and emit human-readable Markdown with embedded Mermaid. You do NOT invent content — everything is derived from existing data. If a section has no source data, omit the section rather than fabricate.
 
@@ -187,6 +190,35 @@ Auth-required screens highlighted. Edges from `navigation[]`.
 
 UI requirements (`UI-NNN`) render in "What the System Does" with the same EARS + witness shape.
 
+#### Change readback (bare, active change) → `.spec/changes/<slug>.readback.md`
+
+```markdown
+# Change Readback: <slug> — v<area versions touched>
+
+> Auto-generated. Regenerate: `claude /spec-readback`
+
+**Intent:** <intent>  |  **Status:** <status>  |  **Branch:** <branch>
+
+## Targets
+
+| Target | Kind | IDs | Spec | Checked | Applied | Verified |
+|---|---|---|---|---|---|---|
+| auth | area | REQ-012, INV-004 | complete | ✓ | ✓ | ✗ |
+| user-permission | contract (auto) | INV-CONTRACT-002 | — | ✗ | n/a | n/a |
+
+## What This Change Does
+
+Per target, each ID in the manifest rendered as its EARS sentence / invariant
+statement (pulled from the area JSON — never restated), linked into the
+per-area readback: [REQ-012](../../specs/auth.readback.md).
+
+## Open Questions Blocking
+
+<area>/Q-NNN list, or "None."
+```
+
+Reviewer reads this one file to see the whole spanning change; per-area readbacks carry the detail. Same determinism and stable-order rules apply.
+
 #### Project-wide readback (no target) → `.spec/readback.md`
 
 ```markdown
@@ -225,7 +257,7 @@ Stack / persistence / cross-cutting from `project.architecture`; patterns and pr
 
 ### Step 3 — Write files
 
-Per-area → `specs/<target>.readback.md` (flat, next to JSON and sidecar). Project-wide → `.spec/readback.md`. `--all` → both. Overwrite — the file is generated.
+Per-area → `specs/<target>.readback.md` (flat, next to JSON and sidecar). Change → `.spec/changes/<slug>.readback.md` plus refreshed per-target files. Project-wide → `.spec/readback.md`. `--all` → both project-wide and every area. Overwrite — the file is generated.
 
 ### Step 4 — Diagram correctness
 

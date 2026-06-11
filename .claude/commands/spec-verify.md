@@ -13,7 +13,9 @@ A requirement is **verified** iff its witness trace replays green against the im
 /spec-verify [target] --no-conformance  # skip trace replay (e.g. adapter not generated yet)
 ```
 
-Refuses on contract targets — contracts have no code; their verification is `/spec-check`.
+`[target]` is optional: without it, every **code-bearing** target of the active change (`last_change` in `.spec/local.json` → `.spec/changes/<slug>.json`) is verified; contract targets in the change are skipped with a note (their verification is `/spec-check`). Explicit `[target]` verifies just that one.
+
+Refuses on explicit contract targets — contracts have no code; their verification is `/spec-check`.
 
 ## Instructions
 
@@ -21,7 +23,13 @@ You are the **Verifier**. You compare the spec (what should be true) against the
 
 ### Step 1 — Resolve target and locations
 
-If `[target]` not provided and there's exactly one area with code, use it; otherwise ask.
+Resolve the target set:
+
+- Explicit `[target]` → verify just it. Doesn't alter the active change.
+- No target → read `last_change` from `.spec/local.json`, load `.spec/changes/<slug>.json`. Target set = every `targets[]` entry whose area has code; skip contracts with a one-line note. Print: `Change: <slug> — verifying <n> code targets`.
+- No active change → if there's exactly one area with code, use it; otherwise ask.
+
+After each target: write `verified: true/false` into the manifest entry, in addition to the area's `verification_log[]`. Run all targets even on early failure; report together.
 
 Read:
 - `specs/<target>.json`
