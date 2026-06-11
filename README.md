@@ -11,10 +11,10 @@ What you get:
 - A methodology for moving rough requirements → **EARS-structured requirements** → formal Quint specification → Apalache-verified invariants **+ machine-found witness traces per requirement** → generated code **+ conformance replay** (the model's own traces re-run against the implementation) → drift-detection over time, with every requirement traceable to code and tests.
 - **Five Claude Code commands**: `/spec`, `/spec-check`, `/spec-verify`, `/spec-apply`, `/spec-readback`. The first is an adaptive entry point that walks all spec-authoring phases conversationally; the others run Apalache + witness probes, replay traces and run tests, generate code + the conformance adapter, and produce a human-readable Markdown review document with embedded Mermaid diagrams (including witness traces rendered as sequence diagrams).
 - **One JSON file per area** at `specs/<name>.json`, with a Quint sidecar `specs/<name>.qnt`. Two kinds: `area` (functional; declare `screens[]` + `navigation[]` to model an interactive surface formally) and `contract` (cross-area invariants). Requirements group into **journeys** (`.spec/journeys/` — use cases with steps in temporal order, single- or cross-area) — readbacks render flows as a human walks them, not ID-sorted lists.
-- **Changes as the unit of work**: a manifest per change at `.spec/changes/<slug>.json` tracks which areas/contracts a piece of work touches and its check/apply/verify state across them. Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
+- **Changes as the unit of work**: a manifest per change at `.spec/changes/<slug>.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
 - **Anti-vacuity guarantees**: a requirement counts as demonstrated only when the checker produces a witness trace for it; a spec whose invariants pass over an unreachable state space is caught, not celebrated.
 - Six optional architecture layers (stack, components, patterns, ADRs, topology, protocols, diagrams) and a multi-repo story via config-driven paths (no submodules).
-- Python tooling: `spec-lint` (consistency + EARS + witness obligations), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
+- Python tooling: `spec-lint` (consistency + EARS + precision lints + witness obligations), `spec-record` (deterministic check runner — runs the verifier and writes all results back mechanically; the AI never hand-edits a verdict), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
 
 Read [METHODOLOGY.md](METHODOLOGY.md) for the full picture. It travels with every project created from this template.
 
@@ -172,7 +172,7 @@ You want to add the login UI and *prove* Dashboard can never be reached without 
 
 ```
 > /spec auth-ui
-  Kind? > ui
+  Kind? > area — declaring screens + navigation makes it an interactive surface
   Spans which areas? > auth
 
   Screens? > Home, Login, Dashboard (auth-required), LockedNotice
@@ -247,8 +247,8 @@ spec-template/
 ├── README.md                  ← this file (bootstrap replaces it with a project stub)
 ├── METHODOLOGY.md             ← the methodology — stays in every project
 ├── .claude/commands/          ← the 5 /spec-* commands
-├── schemas/                   ← 4 JSON schemas (area, project, pattern, protocol)
-├── tools/                     ← spec-lint, spec-matrix, quint_ir, itf_tools, bootstrap.sh (self-removes)
+├── schemas/                   ← 6 JSON schemas (area, change, journey, project, pattern, protocol)
+├── tools/                     ← spec-lint, spec-record, spec-matrix, quint_ir, itf_tools, bootstrap.sh (self-removes)
 └── examples/                  ← sample auth area + auth-ui area (stripped by bootstrap)
 ```
 

@@ -72,9 +72,10 @@ def load_json(path):
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text())
-    except json.JSONDecodeError as e:
-        # Return a sentinel object with the error embedded.
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        # Return a sentinel object with the error embedded — a broken file
+        # is a FAIL finding, never a crashed lint run.
         return {"__parse_error__": str(e)}
 
 
@@ -99,7 +100,10 @@ except ImportError as e:
 
 # Optional: full JSON Schema validation when the jsonschema lib is installed
 # (CI installs it; locally it's a pip away). Lint is then the single validity
-# authority — no separate schema-validation step anywhere else.
+# authority — no separate schema-validation step anywhere else. Several other
+# checks deliberately defer malformed-shape detection to schema validation,
+# so running without the lib leaves real holes: main() emits a WARN finding
+# whenever it is unavailable, instead of silently skipping.
 try:
     import jsonschema as _jsonschema
 except ImportError:
@@ -162,8 +166,8 @@ def check_area_meta(area_data, area_name, findings):
             "kind=contract requires spans[] listing the participant areas.")
 
     if area_data.get("kind") == "ui":
-        add(findings, WARN, "meta", "deprecated-kind-ui", area_name,
-            "kind=ui is deprecated — use kind: area with screens[] + navigation[]; "
+        add(findings, FAIL, "meta", "removed-kind-ui", area_name,
+            "kind=ui no longer exists — use kind: area with screens[] + navigation[]; "
             "UI lint/readback/codegen trigger on block presence, not kind.")
 
     if area_data.get("screens") and not area_data.get("navigation"):
@@ -265,6 +269,86 @@ def check_ears(area_data, area_name, findings):
                 f"statement.", ref=rid)
 
 
+# Words that make a response untestable. Curated for signal, not coverage —
+# every entry is a word whose presence almost always means the response
+# doesn't say WHAT state results or WHERE it's visible. (ARM-style lint.)
+AMBIGUOUS_TERMS = re.compile(
+    r"\b(gracefully|appropriately?|properly|quickly|efficiently|robustly?|"
+    r"seamlessly?|intuitive(?:ly)?|user-friendly|flexible|timely|"
+    r"as needed|as appropriate|as required|if necessary|if needed|"
+    r"reasonable|sufficient(?:ly)?|adequate(?:ly)?|minimal|optimal|"
+    r"normally|usually|generally|etc\.?|and/or|TBD|TODO)\b",
+    re.IGNORECASE,
+)
+
+
+def check_ambiguity(area_data, area_name, findings):
+    """Vague words in ears.response make the requirement unwitnessable —
+    'handle errors gracefully' can never get a witness.predicate. Flag at
+    lint time so the sharpening happens before formalization, not after a
+    no-witness result."""
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") == "deferred":
+            continue
+        response = (req.get("ears") or {}).get("response") or ""
+        hits = sorted({m.group(0).lower() for m in AMBIGUOUS_TERMS.finditer(response)})
+        if hits:
+            add(findings, WARN, "ears", "ambiguous-response", area_name,
+                f"{rid}.ears.response contains untestable wording: {', '.join(hits)}. "
+                f"Sharpen: what state results, visible where?",
+                ref=rid)
+
+
+def check_state_binding(area_data, area_name, findings):
+    """ears.state should be phrased with a DECLARED entity state name
+    ('the Session is Active', not 'the user is logged in') — that's what
+    makes the requirement↔state-machine link reviewable and matrix triage
+    mechanical. Only fires when the area declares states at all."""
+    declared = set()
+    for ent in (area_data.get("concepts") or {}).get("entities", []) or []:
+        declared.update(ent.get("states") or [])
+    for sm in area_data.get("state_machines", []) or []:
+        declared.update(s.get("name") for s in sm.get("states") or [] if s.get("name"))
+    if not declared:
+        return
+    pattern = re.compile(
+        r"\b(" + "|".join(re.escape(s) for s in sorted(declared)) + r")\b",
+        re.IGNORECASE,
+    )
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") == "deferred":
+            continue
+        state_text = (req.get("ears") or {}).get("state")
+        if state_text and not pattern.search(state_text):
+            add(findings, WARN, "ears", "state-not-bound", area_name,
+                f"{rid}.ears.state ('{state_text}') names no declared entity "
+                f"state ({', '.join(sorted(declared))}). Phrase preconditions "
+                f"with declared state names so the requirement↔state-machine "
+                f"link is checkable.",
+                ref=rid)
+
+
+def check_fit_criteria(area_data, area_name, findings):
+    """Non-functional requirements are exempt from witness obligations, so
+    their precision mechanism is the fit_criterion: metric, target,
+    measurement. 'Fast' is not a requirement until it carries all three."""
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("type") != "non-functional" or req.get("status") == "deferred":
+            continue
+        fc = req.get("fit_criterion") or {}
+        missing = [k for k in ("metric", "target", "measurement") if not fc.get(k)]
+        if missing:
+            severity = WARN if req.get("status", "raw") in EARLY_STATUSES else FAIL
+            add(findings, severity, "ears", "nfr-no-fit-criterion", area_name,
+                f"{rid} is non-functional but fit_criterion is missing "
+                f"{', '.join(missing)} — unmeasurable until it says what is "
+                f"measured, the bound, and how it's measured.",
+                ref=rid)
+
+
 def check_witnesses(root, area_data, area_name, findings):
     """Witness obligations: every claimed behavior must be demonstrable in
     the model. A verified-but-unwitnessed spec can be vacuous (invariants
@@ -273,9 +357,24 @@ def check_witnesses(root, area_data, area_name, findings):
     trace found against an older model proves nothing about this one)."""
     approved = area_data.get("status") == "approved"
     current_sha = _compute_model_sha(root, area_name, area_data)
+    any_witnessed = any(
+        (r.get("witness") or {}).get("status") == "witnessed"
+        for r in area_data.get("requirements", []) or []
+    )
+    if any_witnessed and current_sha is None:
+        add(findings, FAIL, "witness", "model-files-missing", area_name,
+            "Requirements are marked witnessed but the model files can't be "
+            "hashed (sidecar missing, or formal_model.probes_file recorded but "
+            "absent). Freshness is unverifiable — every witness is suspect. "
+            "Restore the files or re-run /spec-check.")
     for req in area_data.get("requirements", []) or []:
         rid = req.get("id", "?")
-        if req.get("status") == "deferred" or req.get("type") == "non-functional":
+        if req.get("status") == "deferred":
+            continue
+        if req.get("type") == "non-functional":
+            # Exempt from witness obligations by design: no reachable state
+            # change to demonstrate. The obligation it carries instead is a
+            # measurable fit_criterion — enforced in check_fit_criteria.
             continue
         witness = req.get("witness") or {}
         predicate = witness.get("predicate")
@@ -285,12 +384,25 @@ def check_witnesses(root, area_data, area_name, findings):
         if wstatus == "skipped":
             # Deliberate opt-out — legitimate for rejection requirements
             # (no state change to witness; an invariant carries the proof).
+            # Only a JUSTIFIED skip discharges the obligation.
             if not witness.get("justification"):
-                add(findings, WARN, "witness", "skipped-no-justification", area_name,
-                    f"{rid}.witness is skipped without a justification. Rejection "
-                    f"requirement? Point at the invariant that enforces it.",
+                add(findings, FAIL, "witness", "skipped-no-justification", area_name,
+                    f"{rid}.witness is skipped without a justification — an "
+                    f"unjustified skip does not discharge the obligation. "
+                    f"Rejection requirement? Point at the invariant that "
+                    f"enforces it.",
                     ref=rid)
             continue
+
+        # Approval gate: every non-deferred functional REQ must be witnessed
+        # or justified-skipped — REGARDLESS of how incomplete its witness
+        # block is. (Checked before any early-return below, so a predicate-less
+        # requirement can't slip through an approved area.)
+        if approved and wstatus != "witnessed":
+            add(findings, FAIL, "witness", "approved-unwitnessed", area_name,
+                f"Area is approved but {rid} witness status is '{wstatus}'. "
+                f"Run /spec-check before approval.",
+                ref=rid)
 
         if not predicate:
             if req.get("status") not in EARLY_STATUSES:
@@ -316,9 +428,10 @@ def check_witnesses(root, area_data, area_name, findings):
                         ref=rid)
                 stamped = witness.get("model_sha")
                 if not stamped:
-                    add(findings, WARN, "witness", "witness-unstamped", area_name,
-                        f"{rid}.witness has no model_sha — freshness can't be checked. "
-                        f"Re-run /spec-check to pin it.",
+                    add(findings, FAIL, "witness", "witness-unstamped", area_name,
+                        f"{rid}.witness has no model_sha — freshness can't be "
+                        f"checked, so the 'every witness fresh' obligation is "
+                        f"unenforceable. Re-run /spec-check to pin it.",
                         ref=rid)
                 elif current_sha and stamped != current_sha:
                     add(findings, FAIL, "witness", "witness-stale", area_name,
@@ -337,11 +450,6 @@ def check_witnesses(root, area_data, area_name, findings):
                 f"{rid}: /spec-check found NO witness — the behavior is unreachable "
                 f"in the model (impossible guard or missing action?). Fix the model "
                 f"or the requirement.",
-                ref=rid)
-        elif approved and wstatus != "witnessed":
-            add(findings, FAIL, "witness", "approved-unwitnessed", area_name,
-                f"Area is approved but {rid} witness status is '{wstatus}'. "
-                f"Run /spec-check before approval.",
                 ref=rid)
 
 
@@ -374,7 +482,7 @@ def check_orphan_actions(area_data, sidecar, area_name, findings):
     witness traces — no model-checker run needed here.) Skipped for
     contracts and for areas with navigation[]: contract vals and UI
     navigation triggers don't map 1:1 to actions."""
-    if area_data.get("kind") == "contract" or area_data.get("kind") == "ui":
+    if area_data.get("kind") == "contract":
         return
     if area_data.get("navigation"):
         return
@@ -568,7 +676,7 @@ def check_state_machines(area_data, sidecar, area_name, findings):
     for sm in machines:
         entity = sm.get("entity", "?")
 
-        if entity and entity_names and entity not in entity_names:
+        if entity and entity not in entity_names:
             add(findings, WARN, "state-machine", "unknown-entity", area_name,
                 f"state_machine for '{entity}' has no matching concepts.entities[] entry.",
                 ref=entity)
@@ -737,9 +845,9 @@ def check_topology(project_data, all_areas, findings):
 def check_changes(root, all_areas, findings, validator=None):
     """Change manifests (.spec/changes/*.json): schema validity, slug matches
     filename, targets resolve to real areas, ids resolve in the target's spec,
-    phase flags make sense for the target's kind. Landed/abandoned manifests
-    are history — parse + schema + slug only (their ids may legitimately have
-    been removed by later changes; that's not drift)."""
+    no stored phase flags (status is derived from area JSONs, never stored).
+    Landed/abandoned manifests are history — parse + schema + slug only (their
+    ids may legitimately have been removed by later changes; that's not drift)."""
     changes_dir = root / ".spec" / "changes"
     if not changes_dir.exists():
         return
@@ -773,10 +881,13 @@ def check_changes(root, all_areas, findings, validator=None):
                     f"targets[{tname}].kind is '{t['kind']}' but specs/{tname}.json "
                     f"says '{area_data['kind']}'.",
                     ref=tname)
-            if area_data.get("kind") == "contract" and (t.get("applied") or t.get("verified")):
-                add(findings, WARN, "changes", "contract-phase-flags", name,
-                    f"targets[{tname}] is a contract but carries applied/verified "
-                    f"flags — contracts are spec-only.",
+            stored_flags = [k for k in ("checked", "applied", "verified") if k in t]
+            if stored_flags:
+                add(findings, FAIL, "changes", "stored-phase-flags", name,
+                    f"targets[{tname}] stores phase flags ({', '.join(stored_flags)}) "
+                    f"— phase status is DERIVED from the area JSONs (witness "
+                    f"freshness, check_results, traceability, verification_log), "
+                    f"never stored. Remove them; the manifest holds membership only.",
                     ref=tname)
             area_ids = set()
             for src in ("requirements", "invariants", "properties",
@@ -855,6 +966,9 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_area_meta(area_data, area_name, findings)
     check_ids(area_data, area_name, findings)
     check_ears(area_data, area_name, findings)
+    check_ambiguity(area_data, area_name, findings)
+    check_state_binding(area_data, area_name, findings)
+    check_fit_criteria(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
     check_quint_refs(area_data, sidecar, area_name, findings)
     check_orphan_actions(area_data, sidecar, area_name, findings)
@@ -971,22 +1085,28 @@ def main():
     schema_validator = build_schema_validator(root)
     findings = []
 
-    # Validate the project config itself (full lint only).
-    if not args.area:
-        check_schema(project_data, build_schema_validator(root, "project.schema.json"),
-                     "_project", findings)
+    if _jsonschema is None:
+        add(findings, WARN, "schema", "jsonschema-unavailable", "_project",
+            "jsonschema lib not installed — schema validation SKIPPED. Other "
+            "checks defer malformed-shape detection to it; install with "
+            "'pip install jsonschema' for full coverage.")
+
+    # Validate the project config itself.
+    check_schema(project_data, build_schema_validator(root, "project.schema.json"),
+                 "_project", findings)
 
     for a in target_areas:
         lint_area(root, a, all_areas[a], sidecars[a], all_areas, catalog, findings,
                   schema_validator)
 
-    # Topology, change-manifest, and journey checks run once per project, only on full lint.
-    if not args.area:
-        check_topology(project_data, all_areas, findings)
-        check_changes(root, all_areas, findings,
-                      build_schema_validator(root, "change.schema.json"))
-        check_journeys(root, all_areas, findings,
-                       build_schema_validator(root, "journey.schema.json"))
+    # Topology, change-manifest, and journey checks run once per project, on
+    # EVERY invocation (they're cheap) — a single-area run must not report
+    # clean while a manifest references a dangling ID in that very area.
+    check_topology(project_data, all_areas, findings)
+    check_changes(root, all_areas, findings,
+                  build_schema_validator(root, "change.schema.json"))
+    check_journeys(root, all_areas, findings,
+                   build_schema_validator(root, "journey.schema.json"))
 
     if args.emit_json:
         print(json.dumps({

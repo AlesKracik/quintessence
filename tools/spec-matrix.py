@@ -5,8 +5,9 @@ spec-matrix.py — Generate state × event coverage matrix for a spec area.
 For each stateful entity, the matrix enumerates (state × event) for the events
 scoped to that entity. Per-entity event scope =
   - triggers in that entity's `state_machines[].transitions[]`, plus
-  - verbs whose `requirements[].quint_ref` matches a verb in scope AND whose
-    requirement text mentions the entity name.
+  - requirements' `quint_ref` events whose requirement TEXT (description AND
+    the ears fields — descriptions are derived and may not exist yet) mentions
+    the entity name.
 
 This avoids a full cartesian (entity × every verb in the project), which would
 mostly emit IMPOSSIBLE-by-construction noise (e.g. `expire_session` on Account).
@@ -16,19 +17,22 @@ Coverage is TRANSITION-PRECISE: only a declared transition for exactly
 does not — "while Active, logout" says nothing about logout on an Expired
 session; surfacing that silence is the point of the matrix.
 
-Cells with no covering transition/REQ are marked `?` for LLM triage (real-gap
-/ impossible / out-of-scope) by /spec-check Step 4a. Triage decisions written
-into covered_by (GAP / IMPOSSIBLE / OUT-OF-SCOPE) survive regeneration; cells
+Uncovered cells are marked `?` for LLM triage (real-gap / impossible /
+out-of-scope) by /spec-check Step 4a. Triage decisions written into
+covered_by (GAP / IMPOSSIBLE / OUT-OF-SCOPE) survive regeneration; cells
 that gain real coverage drop their stale triage automatically. `--strict`
 exits 1 while any `?` remains — the CI completeness gate.
 
 Verbs and Quint actions that aren't scoped to ANY entity are written to
-`specs/<area>.matrix-orphans.txt` as candidate missing entity↔event links.
+`specs/<area>/gen/matrix-orphans.txt` as candidate missing entity↔event links.
 
 Usage:
   tools/spec-matrix.py <area>                # writes specs/<area>/gen/matrix.csv
   tools/spec-matrix.py <area> --stdout       # write to stdout, no file
   tools/spec-matrix.py <area> --strict       # exit 1 while any '?' cell remains
+  tools/spec-matrix.py <area> --record       # also write coverage stats into
+                                             #   specs/<area>.json check_results.matrix
+                                             #   (the reviewable summary; the CSV is gitignored)
   tools/spec-matrix.py <area> --root <path>  # project root (default: cwd)
 
 Outputs land in specs/<area>/gen/ (gitignored — regenerable artifacts).
@@ -39,6 +43,7 @@ import csv
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -124,9 +129,16 @@ def scope_events_per_entity(area_data: dict, all_evt: list) -> dict:
             if trig and trig not in scope[ent]:
                 scope[ent].append(trig)
 
-    # From REQs that name the entity.
+    # From REQs that name the entity. Scan description AND the ears fields —
+    # description is derived from ears and may not exist yet for ears-only
+    # requirements; scanning only it silently drops their events from scope.
     for req in area_data.get("requirements", []) or []:
-        text = (req.get("description") or "")
+        ears = req.get("ears") or {}
+        text = " ".join(filter(None, [
+            req.get("description"),
+            ears.get("state"), ears.get("trigger"),
+            ears.get("feature"), ears.get("response"),
+        ]))
         qref = req.get("quint_ref")
         if not qref or qref not in all_evt:
             continue
@@ -221,11 +233,15 @@ def main():
     p = argparse.ArgumentParser(description="Generate state × event coverage matrix.")
     p.add_argument("area", help="Area name; reads specs/<area>.json")
     p.add_argument("--root", default=".", help="Project root (default: cwd)")
-    p.add_argument("--stdout", action="store_true", help="Write to stdout instead of specs/<area>.matrix.csv")
+    p.add_argument("--stdout", action="store_true", help="Write to stdout instead of specs/<area>/gen/matrix.csv")
     p.add_argument("--strict", action="store_true",
                    help="Exit 1 if any cell is still '?' (untriaged). CI gate: "
                         "every cell must be covered or explicitly triaged as "
                         "GAP / IMPOSSIBLE / OUT-OF-SCOPE.")
+    p.add_argument("--record", action="store_true",
+                   help="Write coverage stats into specs/<area>.json "
+                        "check_results.matrix so readbacks can surface "
+                        "completeness (the CSV itself is gitignored).")
     args = p.parse_args()
 
     root = Path(args.root)
@@ -240,8 +256,11 @@ def main():
     gen_dir = root / "specs" / args.area / "gen"
     out_path = gen_dir / "matrix.csv"
     prior_triage = load_prior_triage(out_path)
-    if not prior_triage:
-        # Legacy flat location (pre-gen/ layout) — carry triage over once.
+    if not out_path.exists():
+        # Legacy flat location (pre-gen/ layout) — carry triage over once,
+        # only when no gen/ matrix exists yet. (A current matrix with zero
+        # triage values is a legitimate state, not a trigger to resurrect
+        # stale pre-migration triage.)
         prior_triage = load_prior_triage(root / "specs" / f"{args.area}.matrix.csv")
 
     if args.stdout:
@@ -271,6 +290,28 @@ def main():
         f"uncovered={stats['uncovered']}",
         file=sys.stderr,
     )
+
+    if args.record:
+        area_path = root / "specs" / f"{args.area}.json"
+        area_full = json.loads(area_path.read_text(encoding="utf-8"))
+        cr = area_full.setdefault("check_results", {})
+        prior_gaps = (cr.get("matrix") or {}).get("gaps")
+        cr["matrix"] = {
+            "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "cells": stats["total"],
+            "covered": stats["covered"],
+            "triaged": stats["triaged"],
+            "uncovered": stats["uncovered"],
+            "orphans": len(orphans),
+        }
+        if prior_gaps:
+            # Q-NNN refs are filed by triage, not by this script — carry them.
+            cr["matrix"]["gaps"] = prior_gaps
+        area_path.write_text(
+            json.dumps(area_full, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(f"recorded check_results.matrix in {area_path}", file=sys.stderr)
 
     if args.strict and stats["uncovered"] > 0:
         print(

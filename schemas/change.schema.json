@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "change.schema.json",
   "title": "Change Manifest",
-  "description": "One file per unit of work at .spec/changes/<slug>.json. A change is the primary unit of work; areas/contracts remain the logical spec boundary. The manifest references targets and tracks per-target workflow state (checked/applied/verified) — it never duplicates spec content, only IDs. Committed with the PR; status 'landed' on merge makes it a changelog entry. Deleting every manifest leaves the specs complete.",
+  "description": "One file per unit of work at .spec/changes/<slug>.json. A change is the primary unit of work; areas/contracts remain the logical spec boundary. The manifest holds membership only — which targets, which IDs. Per-target phase status (checked/applied/verified) is NEVER stored here: it is derived mechanically from the area JSONs (witness model_sha freshness, check_results.ran_at vs last_modified, traceability, verification_log) so it cannot go stale. Committed with the PR; status 'landed' on merge makes it a changelog entry. Deleting every manifest leaves the specs complete.",
   "type": "object",
   "required": ["change", "intent", "status", "targets"],
   "additionalProperties": false,
@@ -29,14 +29,14 @@
     },
     "targets": {
       "type": "array",
-      "description": "Every area/contract/ui spec this change touches. Contracts spanning a touched area are auto-added (auto: true).",
+      "description": "Every area/contract spec this change touches. Contracts spanning a touched area are auto-added (auto: true). Membership and IDs only — phase status is derived from the area JSONs, never stored.",
       "items": {
         "type": "object",
         "required": ["name"],
         "additionalProperties": false,
         "properties": {
           "name": { "type": "string", "description": "Area slug — specs/<name>.json must exist." },
-          "kind": { "enum": ["area", "contract", "ui"] },
+          "kind": { "enum": ["area", "contract"] },
           "auto": {
             "type": "boolean",
             "description": "true when pulled in automatically (contract cascade) rather than edited explicitly."
@@ -45,10 +45,7 @@
             "type": "array",
             "items": { "type": "string" },
             "description": "REQ/INV/PROP/CON/DEC/Q IDs added or modified in this target by this change. References only — content lives in the area JSON."
-          },
-          "checked": { "type": "boolean", "description": "Last /spec-check on this target (at current spec state) passed." },
-          "applied": { "type": "boolean", "description": "/spec-apply has generated/updated code for this change's IDs. N/A for contracts." },
-          "verified": { "type": "boolean", "description": "Last /spec-verify on this target passed. N/A for contracts." }
+          }
         }
       }
     },

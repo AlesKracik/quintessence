@@ -25,7 +25,7 @@ module {{MODULE_NAME}}_probes {
 
   // ----------------------------------------------------------
   // GHOST INSTRUMENTATION
-  // lastAction — which action produced the current state.
+  // _lastAction — which action produced the current state.
   // Param ghosts (one per distinct action parameter) — the
   // arguments that action was called with. The replay harness
   // reads these from the trace; without them it would have to
@@ -33,12 +33,12 @@ module {{MODULE_NAME}}_probes {
   // Every probe run uses:  --init=initP --step=stepP
   // ----------------------------------------------------------
 
-  var lastAction: str
+  var _lastAction: str
   // {{PARAM_GHOSTS}}  e.g.:
-  // var lastUid: str
-  // var lastSid: str
+  // var _lastUid: str
+  // var _lastSid: str
 
-  action initP = all { init, lastAction' = "init" /*, lastUid' = "", ... */ }
+  action initP = all { init, _lastAction' = "init" /*, _lastUid' = "", ... */ }
 
   action stepP = {
     // Mirror the area module's step, tagging each branch with the
@@ -46,19 +46,19 @@ module {{MODULE_NAME}}_probes {
     // branch doesn't use):
     nondet uid = oneOf(USERS)
     any {
-      // all { login(uid, sid), lastAction' = "login",
-      //       lastUid' = uid,  lastSid' = sid },
-      // all { logout(sid),     lastAction' = "logout",
-      //       lastUid' = lastUid, lastSid' = sid },
+      // all { login(uid, sid), _lastAction' = "login",
+      //       _lastUid' = uid,  _lastSid' = sid },
+      // all { logout(sid),     _lastAction' = "logout",
+      //       _lastUid' = _lastUid, _lastSid' = sid },
       // ... one branch per action ...
     }
   }
 
   // ----------------------------------------------------------
   // WITNESS PROBES — one per requirement.
-  // Negation of (witness.predicate AND lastAction == quint_ref).
+  // Negation of (witness.predicate AND _lastAction == quint_ref).
   //
-  // The lastAction conjunct PATH-CONSTRAINS the witness: the
+  // The _lastAction conjunct PATH-CONSTRAINS the witness: the
   // trace must reach the postcondition VIA the requirement's own
   // action — a trace that produces the state through some other
   // mechanism is not accepted as a demonstration. Omit the
@@ -72,7 +72,7 @@ module {{MODULE_NAME}}_probes {
   // /// Witness probe for {{REQ_ID}}: <requirement description>
   // /// predicate: <witness.predicate verbatim>
   // val witness_{{REQ_ID}}: bool =
-  //   not(({{WITNESS_PREDICATE}}) and lastAction == "{{QUINT_REF}}")
+  //   not(({{WITNESS_PREDICATE}}) and _lastAction == "{{QUINT_REF}}")
   //
   // Run with:
   //   quint verify --invariant=witness_{{REQ_ID}} \
@@ -81,7 +81,7 @@ module {{MODULE_NAME}}_probes {
   //     specs/{{AREA}}.probes.qnt
 
   // Action coverage falls out of the witness probes (each is
-  // path-constrained on lastAction == quint_ref, so a witnessed
+  // path-constrained on _lastAction == quint_ref, so a witnessed
   // REQ proves its action fires). Unreferenced actions are
   // flagged statically by spec-lint (orphan-action) — no extra
   // probes needed.
@@ -97,10 +97,10 @@ module {{MODULE_NAME}}_probes {
   //   import auth.* from "./auth"
   //   import authUi.* from "./auth-ui"
   //   action stepP = any {
-  //     all { login(uid, sid),   lastAction' = "auth::login", ... },
-  //     all { submit_success,    lastAction' = "ui::submit_success", ... },
+  //     all { login(uid, sid),   _lastAction' = "auth::login", ... },
+  //     all { submit_success,    _lastAction' = "ui::submit_success", ... },
   //   }
   //   val witness_UI_002: bool =
-  //     not(current == Dashboard and lastAction == "ui::submit_success")
+  //     not(current == Dashboard and _lastAction == "ui::submit_success")
   // ----------------------------------------------------------
 }

@@ -5,11 +5,12 @@
 #
 # Usage:
 #   tools/check-tooling.sh           # warn-only: prints status, exits 0
-#   tools/check-tooling.sh --strict  # exit 1 if any tool is missing
+#   tools/check-tooling.sh --strict  # exit 1 if anything is missing OR Java < 17
 #
 # Used by:
 #   tools/bootstrap.sh              (warn-only, end of bootstrap)
-#   /spec-check                     (--strict, before any quint/apalache call)
+#   Run it manually (or let /spec-check suggest it) when quint/apalache
+#   calls fail — it prints platform-specific install hints.
 
 set -u
 
@@ -63,9 +64,11 @@ if [ ${#missing[@]} -eq 0 ] && [ ${#warn[@]} -eq 0 ]; then
   exit 0
 fi
 
+# NB: all array expansions below use ${arr[*]:-} — bash ≤ 4.3 (macOS default
+# 3.2) treats expanding an empty array under `set -u` as an unbound variable.
 echo
-[ ${#missing[@]} -gt 0 ] && echo "Missing: ${missing[*]}"
-[ ${#warn[@]} -gt 0 ]    && echo "Warnings: ${warn[*]}"
+[ ${#missing[@]} -gt 0 ] && echo "Missing: ${missing[*]:-}"
+[ ${#warn[@]} -gt 0 ]    && echo "Warnings: ${warn[*]:-}"
 echo
 
 # -- Platform detection -----------------------------------------------------
@@ -80,7 +83,7 @@ esac
 # -- Install hints ----------------------------------------------------------
 
 needs_java=0
-case " ${missing[*]} ${warn[*]} " in
+case " ${missing[*]:-} ${warn[*]:-} " in
   *" java "*|*" java-too-old "*) needs_java=1 ;;
 esac
 
@@ -107,14 +110,14 @@ if [ $needs_java -eq 1 ]; then
   echo
 fi
 
-case " ${missing[*]} " in *" quint "*)
+case " ${missing[*]:-} " in *" quint "*)
   echo "Install Quint:"
   echo "  npm install -g @informalsystems/quint"
   echo "  (Verify: quint --version. Other install paths at https://github.com/informalsystems/quint.)"
   echo
 ;; esac
 
-case " ${missing[*]} " in *" apalache "*)
+case " ${missing[*]:-} " in *" apalache "*)
   echo "Install Apalache (JVM-based, requires Java 17+):"
   echo "  Official docs: https://apalache-mc.org/docs/apalache/installation/jvm.html"
   echo
@@ -152,7 +155,9 @@ case " ${missing[*]} " in *" apalache "*)
   echo
 ;; esac
 
-if [ $strict -eq 1 ] && [ ${#missing[@]} -gt 0 ]; then
+# Strict mode fails on warnings too: an Apalache-incompatible JVM (java-too-old)
+# is just as blocking as a missing tool.
+if [ $strict -eq 1 ] && { [ ${#missing[@]} -gt 0 ] || [ ${#warn[@]} -gt 0 ]; }; then
   exit 1
 fi
 exit 0

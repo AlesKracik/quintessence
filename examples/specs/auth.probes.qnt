@@ -7,7 +7,7 @@
 // To prove a behavior is REACHABLE, assert its negation as an
 // invariant — the checker's counterexample IS the witness trace.
 // Each witness probe is PATH-CONSTRAINED: the predicate is
-// conjoined with lastAction == <quint_ref>, so the trace must
+// conjoined with _lastAction == <quint_ref>, so the trace must
 // reach the postcondition via the requirement's own action, not
 // through some unrelated mechanism.
 //
@@ -25,35 +25,35 @@ module auth_probes {
   import auth.* from "./auth"
 
   // -- Ghost instrumentation -----------------------------------
-  // lastAction: which action produced the current state.
-  // lastUid / lastSid: its arguments — the replay harness reads
+  // _lastAction: which action produced the current state.
+  // _lastUid / _lastSid: its arguments — the replay harness reads
   // these instead of inferring call parameters from state diffs.
 
-  var lastAction: str
-  var lastUid: str
-  var lastSid: str
+  var _lastAction: str
+  var _lastUid: str
+  var _lastSid: str
 
   action initP = all {
     init,
-    lastAction' = "init",
-    lastUid'    = "",
-    lastSid'    = "",
+    _lastAction' = "init",
+    _lastUid'    = "",
+    _lastSid'    = "",
   }
 
   action stepP = {
     nondet uid = oneOf(Set("alice", "bob", "charlie"))
     nondet sid = oneOf(Set("s1", "s2", "s3"))
     any {
-      all { login(uid, sid),     lastAction' = "login",
-            lastUid' = uid,      lastSid' = sid },
-      all { logout(sid),         lastAction' = "logout",
-            lastUid' = lastUid,  lastSid' = sid },
-      all { login_failed(uid),   lastAction' = "login_failed",
-            lastUid' = uid,      lastSid' = lastSid },
-      all { expire_session(sid), lastAction' = "expire_session",
-            lastUid' = lastUid,  lastSid' = sid },
-      all { unlock_account(uid), lastAction' = "unlock_account",
-            lastUid' = uid,      lastSid' = lastSid },
+      all { login(uid, sid),     _lastAction' = "login",
+            _lastUid' = uid,      _lastSid' = sid },
+      all { logout(sid),         _lastAction' = "logout",
+            _lastUid' = _lastUid,  _lastSid' = sid },
+      all { login_failed(uid),   _lastAction' = "login_failed",
+            _lastUid' = uid,      _lastSid' = _lastSid },
+      all { expire_session(sid), _lastAction' = "expire_session",
+            _lastUid' = _lastUid,  _lastSid' = sid },
+      all { unlock_account(uid), _lastAction' = "unlock_account",
+            _lastUid' = uid,      _lastSid' = _lastSid },
     }
   }
 
@@ -63,28 +63,28 @@ module auth_probes {
   /// predicate: sessions.keys().exists(sid => sessions.get(sid) == Active)
   val witness_REQ_001: bool =
     not(sessions.keys().exists(sid => sessions.get(sid) == Active)
-        and lastAction == "login")
+        and _lastAction == "login")
 
   /// Witness probe for REQ-002: logout produces a LoggedOut session.
   /// predicate: sessions.keys().exists(sid => sessions.get(sid) == LoggedOut)
   val witness_REQ_002: bool =
     not(sessions.keys().exists(sid => sessions.get(sid) == LoggedOut)
-        and lastAction == "logout")
+        and _lastAction == "logout")
 
   /// Witness probe for REQ-003: repeated failures lock an account.
   /// predicate: accountStatus.keys().exists(uid => accountStatus.get(uid) == Locked)
   val witness_REQ_003: bool =
     not(accountStatus.keys().exists(uid => accountStatus.get(uid) == Locked)
-        and lastAction == "login_failed")
+        and _lastAction == "login_failed")
 
   /// Witness probe for REQ-004: a session can expire.
   /// predicate: sessions.keys().exists(sid => sessions.get(sid) == Expired)
   val witness_REQ_004: bool =
     not(sessions.keys().exists(sid => sessions.get(sid) == Expired)
-        and lastAction == "expire_session")
+        and _lastAction == "expire_session")
 
   // Action coverage falls out of the witness probes: each one is
-  // path-constrained (lastAction == quint_ref), so a witnessed REQ
+  // path-constrained (_lastAction == quint_ref), so a witnessed REQ
   // proves its action fires. Actions referenced by NO requirement
   // are flagged statically by spec-lint (orphan-action).
 }

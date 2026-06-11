@@ -24,9 +24,15 @@ after the trace was found, so the trace proves nothing about the current
 model: STALE, exit 1. Re-run /spec-check to regenerate.
 
 Action labels: if the trace records the acting step (var `mbt::actionTaken`
-from `quint run --mbt`, or a ghost var named `lastAction`), steps are
+from `quint run --mbt`, or a ghost var named `_lastAction`), steps are
 labeled with the action name; otherwise "step N". Override with
 --action-var.
+
+Ghost convention: probe-module bookkeeping vars are underscore-prefixed
+(`_lastAction`, `_lastUid`, ...) so they can never collide with real model
+vars like `lastLoginTime`. Plain `lastAction` is accepted as an action-label
+var for older traces, but only `_last*` / `mbt::*` are filtered from state
+output.
 """
 
 import argparse
@@ -35,17 +41,21 @@ import json
 import sys
 from pathlib import Path
 
-ACTION_VAR_CANDIDATES = ("mbt::actionTaken", "lastAction", "_lastAction")
+ACTION_VAR_CANDIDATES = ("mbt::actionTaken", "_lastAction", "lastAction")
 MAX_NOTE_LEN = 60
-# Ghost vars that carry replay bookkeeping, not model state.
-GHOST_PREFIXES = ("last", "mbt::")
+# Ghost vars that carry replay bookkeeping, not model state. Underscore
+# prefix is the convention precisely so model vars ("lastLoginTime") are
+# never silently dropped from summaries/diagrams.
+GHOST_PREFIXES = ("_last", "mbt::")
 
 
 def compute_model_sha(root, area_name, area_data):
     """Canonical sha256 over the model the witnesses were checked against:
-    bytes of formal_model.quint_file, then formal_model.probes_file (if it
-    exists), both resolved relative to specs/. Returns hex digest or None
-    if the sidecar is missing."""
+    bytes of formal_model.quint_file, then formal_model.probes_file, both
+    resolved relative to specs/. Returns None if the sidecar is missing OR
+    if probes_file is recorded but absent — a half-hashable model must not
+    produce a sha that 'matches', it must fail loudly (witnesses were found
+    via the probes module; without it freshness is unverifiable)."""
     fm = area_data.get("formal_model") or {}
     quint_file = fm.get("quint_file") or f"{area_name}.qnt"
     h = hashlib.sha256()
@@ -56,8 +66,9 @@ def compute_model_sha(root, area_name, area_data):
     probes_file = fm.get("probes_file")
     if probes_file:
         probes = Path(root) / "specs" / probes_file
-        if probes.exists():
-            h.update(probes.read_bytes())
+        if not probes.exists():
+            return None
+        h.update(probes.read_bytes())
     return h.hexdigest()
 
 
@@ -154,7 +165,7 @@ def step_label(state, idx, action_var):
 
 def changed_vars(prev, cur, var_names, action_var):
     """[(name, rendered_new_value)] for vars that differ from prev state.
-    Ghost bookkeeping vars (lastAction/lastUid/..., mbt::*) are skipped —
+    Ghost bookkeeping vars (_lastAction/_lastUid/..., mbt::*) are skipped —
     they label steps, they aren't model state."""
     out = []
     for v in var_names:
@@ -258,14 +269,26 @@ def cmd_status(args):
 
     rows = []
     missing = 0
+    discharged = 0
     for req in area.get("requirements", []) or []:
         rid = req.get("id", "?")
-        if req.get("status") == "deferred":
+        if req.get("status") == "deferred" or req.get("type") == "non-functional":
             continue
         w = req.get("witness") or {}
         trace_rel = w.get("trace")
         status = w.get("status", "not-run")
         detail = ""
+        if status == "skipped":
+            # Justified skip discharges the obligation (rejection requirement —
+            # the proof is an invariant). Unjustified skip is a gate failure.
+            if w.get("justification"):
+                status, detail = "skipped", w["justification"]
+                discharged += 1
+            else:
+                status, detail = "SKIPPED-UNJUSTIFIED", "no justification — does not discharge"
+                missing += 1
+            rows.append((rid, status, trace_rel or "—", detail))
+            continue
         if trace_rel:
             trace_path = root / "specs" / trace_rel
             if not trace_path.exists():
@@ -280,11 +303,15 @@ def cmd_status(args):
                 elif status == "witnessed":
                     stamped = w.get("model_sha")
                     if not stamped:
-                        detail += ", unstamped — re-run /spec-check to pin model_sha"
+                        status = "UNSTAMPED"
+                        detail = "no model_sha — freshness unverifiable; re-run /spec-check to pin"
+                        missing += 1
                     elif current_sha and stamped != current_sha:
                         status = "STALE"
                         detail = "model changed since trace was found — re-run /spec-check"
                         missing += 1
+                    else:
+                        discharged += 1
         elif status == "witnessed":
             status, detail = "MISSING-FILE", "(status says witnessed but no trace recorded)"
             missing += 1
@@ -295,10 +322,10 @@ def cmd_status(args):
         return
     width = max(len(r[0]) for r in rows)
     for rid, status, trace_rel, detail in rows:
-        print(f"{rid:<{width}}  {status:<14} {trace_rel}"
+        print(f"{rid:<{width}}  {status:<20} {trace_rel}"
               + (f"  ({detail})" if detail else ""))
-    unwitnessed = sum(1 for r in rows if r[1] != "witnessed")
-    print(f"\n{len(rows) - unwitnessed}/{len(rows)} requirements witnessed.")
+    print(f"\n{discharged}/{len(rows)} witness obligations discharged "
+          f"(witnessed-and-fresh or justified-skip).")
     if missing:
         sys.exit(1)
 

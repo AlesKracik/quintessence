@@ -21,7 +21,10 @@ Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 
 ## Instructions
 
-You are the **Checker**. You run Apalache against the Quint sidecar, parse its output, translate counterexamples into plain language, and write structured results back into the area JSON's `check_results`.
+You are the **Checker**. The division of labor is strict — mechanism over trust applies to the bookkeeping itself:
+
+- **`tools/spec-record.py check <target>`** runs `quint verify` for every invariant, property, and witness probe, parses outcomes, saves traces, and writes `check_results`, `formal_status`, and the `witness` blocks (status/trace/checked_at/model_sha) into the area JSON **mechanically**. You never hand-edit those fields.
+- **You** do the judgment work it can't: draft missing witness predicates, regenerate the probes module, translate counterexamples into plain language (filling `counterexample.nl_explanation` — the one free-text field), triage the matrix, run the red-team.
 
 ### Step 1 — Resolve target and load context
 
@@ -31,7 +34,7 @@ Resolve the target set:
 - No target → read `last_change` from `.spec/local.json` and load `.spec/changes/<slug>.json`. Target set = every entry in `targets[]`, ordered areas-first then contracts. Dedupe the cascade: collect every contract spanning any checked area, run each **once** after its areas, drop contracts already in the set from per-area cascading. Print one line: `Change: <slug> — checking <n> targets (pass a target name for just one)`.
 - No active change → if `.spec/project.json` has exactly one area, use it; otherwise ask the user which (and suggest `/spec change <slug>` for multi-target work).
 
-After each target's run, write the result into the manifest: `checked: true` on full pass, `false` otherwise. Run every target even when an early one fails — the point of set-checking is the complete picture; report failures together at the end.
+The manifest stores **no phase flags** — "checked" is derived, never written: a target counts as checked when `check_results.ran_at` ≥ the area's `last_modified` and every witness `model_sha` matches `tools/itf_tools.py sha <target>`. Run every target even when an early one fails — the point of set-checking is the complete picture; report failures together at the end.
 
 Read:
 - `specs/<target>.json` — the area JSON (must exist; otherwise tell the user to run `/spec <target>` first).
@@ -40,45 +43,28 @@ Read:
 
 Use `tools/quint_ir.py specs/<target>.qnt --json` to get the structured view of the sidecar (module name, imports, actions, vars, vals) before running Apalache — it errors if the file doesn't parse.
 
-### Step 2 — Run Apalache
+### Step 2 — Prepare predicates and the probe module (judgment work)
 
-For each invariant in `invariants[]` (and each property in `properties[]`) that has a `quint_name` set:
-
-```bash
-quint verify --invariant=<quint_name> --max-steps=<max_steps> specs/<target>.qnt
-```
-
-If `--only` was passed, restrict to those IDs. Honor `--steps` override.
-
-Record per-check:
-- result: `verified` / `counterexample` / `timeout` / `error` / `not-run`
-- duration_s
-- counterexample trace if applicable (save with `--out-itf=specs/<target>/traces/<INV-ID>.cex.itf.json`)
-
-**Properties (PROP-NNN) honesty rule:** Apalache's temporal checking is bounded and often times out on real liveness. Report a PROP result as `verified` ONLY with the bound stated (`verified up to N steps`). If it times out, mark `timeout` and suggest demoting the PROP to a witness-traced scenario (a `run` demonstrating the eventuality once) plus a fairness note — don't leave the user believing unbounded liveness was proven.
-
-### Step 2a — Witness probes (every REQ must be demonstrably reachable)
-
-Skip if `--no-witness` was passed.
+Before the runner can do anything:
 
 1. **Ensure predicates exist.** Each requirement needs `witness.predicate` — a Quint boolean expression over state that is true exactly when the required behavior has occurred (e.g. for "account locks after N failures": `accountStatus.keys().exists(u => accountStatus.get(u) == Locked)`). If missing, draft one from the EARS fields + `quint_ref` and confirm with the user; write it into the area JSON.
 
-2. **Generate/refresh the probe module** at `specs/<target>.probes.qnt` (see `templates/probes.qnt.template`). It imports the area module, instruments steps with ghost vars, and declares one negated probe per requirement:
+2. **Generate/refresh the probe module** at `specs/<target>.probes.qnt` (see `templates/probes.qnt.template`). It imports the area module, instruments steps with ghost vars, and declares one negated probe per requirement, named `witness_<REQ_ID with - → _>`:
 
-   - **Ghost vars**: `lastAction` (which action produced the state) plus one param ghost per distinct action parameter (`lastUid`, `lastSid`, …). `initP`/`stepP` wrap the area's `init`/`step`, tagging every branch. The replay harness reads call parameters from these ghosts — never infer them from state diffs.
-   - **Path-constrained probes**: the probe negates `predicate AND lastAction == <quint_ref>` — the trace must reach the postcondition *via the requirement's own action*. A trace that produces the right state through some other mechanism is not a demonstration of this requirement. Drop the `lastAction` conjunct only when the requirement has no `quint_ref` (rare — e.g. cross-ref requirements).
+   - **Ghost vars** — underscore-prefixed so they can never collide with real model vars: `_lastAction` (which action produced the state) plus one param ghost per distinct action parameter (`_lastUid`, `_lastSid`, …). `initP`/`stepP` wrap the area's `init`/`step`, tagging every branch. The replay harness reads call parameters from these ghosts — never infer them from state diffs.
+   - **Path-constrained probes**: the probe negates `predicate AND _lastAction == <quint_ref>` — the trace must reach the postcondition *via the requirement's own action*. A trace that produces the right state through some other mechanism is not a demonstration of this requirement. Drop the `_lastAction` conjunct only when the requirement has no `quint_ref` (rare — e.g. cross-ref requirements).
 
 ```quint
 module auth_probes {
   import auth.* from "./auth"
-  var lastAction: str
-  var lastUid: str
+  var _lastAction: str
+  var _lastUid: str
   // initP / stepP wrap init / step, tagging branches (see template)
 
   // Witness probe for REQ-003: violated ⇔ behavior happened VIA login_failed
   val witness_REQ_003: bool =
     not(accountStatus.keys().exists(u => accountStatus.get(u) == Locked)
-        and lastAction == "login_failed")
+        and _lastAction == "login_failed")
 }
 ```
 
@@ -86,23 +72,23 @@ Record the file in `formal_model.probes_file`. The probe module is generated —
 
 **Multi-module areas** (`kind: contract`, or any area whose `spans[]` names other areas — typical for areas with UI blocks): the probe module imports *every* spanned module and `stepP` is an `any` over all of their wrapped actions, so joint behaviors are explored; predicates range over the joint state. Pattern is in the template.
 
-3. **Run each probe**, saving the violation trace:
+### Step 2a — Run the recorder (mechanical work)
 
 ```bash
-quint verify --invariant=witness_REQ_003 --max-steps=<max_steps> \
-  --init=initP --step=stepP \
-  --out-itf=specs/<target>/traces/REQ-003.itf.json specs/<target>.probes.qnt
+tools/spec-record.py check <target> [--steps N] [--only INV-001,REQ-003] [--no-witness]
 ```
 
-- **Violation found** → witness exists. Set `witness.status: "witnessed"`, `witness.trace: "<target>/traces/REQ-003.itf.json"`, `witness.checked_at`, and `witness.model_sha` = output of `tools/itf_tools.py sha <target>` (freshness pin — spec-lint FAILs the witness if the model changes afterward). Validate the file: `tools/itf_tools.py validate <trace>`.
-- **No violation up to max_steps** → NO witness. Set `witness.status: "no-witness"` and report loudly: the behavior is unreachable — impossible guard, missing action, or bound too small. Offer: (a) inspect the guard, (b) raise `--steps`, (c) mark `skipped` with `justification` — correct for rejection requirements, where the proof is an invariant, not a trace (see METHODOLOGY → "Rejection requirements").
+The runner does, deterministically: every invariant/property check (`quint verify`, counterexample traces to `specs/<target>/traces/<ID>.cex.itf.json`), every witness probe (`--init=initP --step=stepP`, violation trace = the witness), skip-if-fresh (a REQ already `witnessed` against the current `model_sha` is not re-proven), and all JSON write-backs: `check_results`, `formal_status`, `witness.{status,trace,checked_at,model_sha}`. If it reports `quint` missing, run `tools/check-tooling.sh` for install hints.
 
-4. Witness traces are inputs to `/spec-verify`'s conformance replay and to `/spec-readback`'s sequence diagrams — they are committed artifacts, not temp files.
+Interpret its output:
 
-**Performance — don't re-prove what hasn't changed:**
-- Before running anything, compare `tools/itf_tools.py sha <target>` against the stamped `witness.model_sha` values. If the sha matches and a requirement is already `witnessed`, **skip its probe** — the model is byte-identical to what produced the trace.
-- Batch invariants into one `quint verify` run where your Quint version supports a comma-separated `--invariant` list; fall back to per-invariant runs otherwise.
-- Cascade only to contracts whose `spans` include areas actually changed (git diff against the last check), not every contract in the project.
+- **`NO-WITNESS`** → report loudly: the behavior is unreachable — impossible guard, missing action, or bound too small. Offer: (a) inspect the guard, (b) raise `--steps`, (c) mark `skipped` with `justification` — correct for rejection requirements, where the proof is an invariant, not a trace (see METHODOLOGY → "Rejection requirements"). (a)/(b) are yours to act on; (c) is the one witness field you set by hand, and only with the user's confirmation.
+- **`no-probe` / `no-probes-file`** → go back to Step 2 and regenerate the probes module.
+- **Properties (PROP-NNN) honesty rule:** Apalache's temporal checking is bounded. Report a PROP result as `verified` ONLY with the bound stated (`verified up to N steps`). On `timeout`, suggest demoting the PROP to a witness-traced scenario (a `run` demonstrating the eventuality once) plus a fairness note — don't leave the user believing unbounded liveness was proven.
+
+Witness traces are inputs to `/spec-verify`'s conformance replay and to `/spec-readback`'s sequence diagrams — they are committed artifacts, not temp files.
+
+Cascade economy: cascade only to contracts whose `spans` include areas actually changed (git diff against the last check), not every contract in the project.
 
 (No separate action-coverage pass: witnessed REQs prove their actions fire; `spec-lint` flags unreferenced actions as `orphan-action` statically.)
 
@@ -159,8 +145,10 @@ Always runs (mechanical, fast). Apalache proves invariants hold in modeled trans
 **Build matrix (mechanical).** Run:
 
 ```bash
-tools/spec-matrix.py <target>
+tools/spec-matrix.py <target> --record
 ```
+
+(`--record` writes the coverage counts into the area JSON's `check_results.matrix` — that's how readbacks surface completeness; the CSV itself is gitignored.)
 
 This enumerates (entity, state) × event cells. **Events are scoped per entity** — not a full cartesian. For each entity, scope = triggers in that entity's `state_machines[].transitions[]` plus verbs whose `requirements[]` description text mentions the entity name. This avoids trivial IMPOSSIBLE-by-construction noise like `expire_session` on Account.
 
@@ -207,27 +195,12 @@ For each returned question:
 
 De-dupe against existing `open_questions[]` by semantic similarity before appending — red-team will re-raise prior gaps every run.
 
-### Step 5 — Update the area JSON
+### Step 5 — Fill in the judgment fields
 
-Write `check_results` in `specs/<target>.json` — **invariants and properties only** (witness results live in each requirement's `witness` block; don't store them twice):
+`spec-record` already wrote `check_results`, `formal_status`, and the `witness` blocks. Two things remain yours:
 
-```json
-{
-  "check_results": {
-    "ran_at": "<ISO datetime>",
-    "checks": [
-      { "id": "INV-001", "kind": "invariant", "quint_name": "singleSession", "result": "counterexample", "duration_s": 4.2, "trace": "auth/traces/INV-001.cex.itf.json", "counterexample": { "nl_explanation": "..." } }
-    ]
-  }
-}
-```
-
-Also update each invariant's `formal_status`:
-- result == verified → `formal_status: "verified"`
-- result == counterexample → `formal_status: "counterexample-found"`
-- result == timeout / error → keep prior status; note in `check_results`
-
-And each requirement's `witness` block (`status`, `trace`, `checked_at`, `model_sha`) per Step 2a.
+1. For each `result: "counterexample"` entry in `check_results.checks[]`, write `counterexample.nl_explanation` — the Step 4 translation, condensed to a paragraph. (The runner carries an existing explanation over when the result is unchanged; write it once per new counterexample.)
+2. If matrix triage filed `Q-NNN` gap questions, list their ids in `check_results.matrix.gaps`.
 
 For each unresolved counterexample, append a new `Q-NNN` entry to `open_questions[]`:
 

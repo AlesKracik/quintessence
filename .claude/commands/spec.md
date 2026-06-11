@@ -78,7 +78,14 @@ Next: billing spec has 1 raw requirement — `/spec billing` to finish it,
 or `/spec-check` to re-check the whole set.
 ```
 
-Phase flags come from the manifest; spec completeness from the area JSONs (same gap table as the resume beat). When every target is checked and every code target verified, offer: "All green. Mark `landed` after the PR merges, or I can mark it now if it's already in." `landed`/`abandoned` clears `last_change`.
+The grid is **computed, never stored** — the manifest holds membership only, so status can't go stale. Per target, derive:
+
+- **spec** — completeness from the area JSON (same gap table as the resume beat).
+- **checked** — `check_results.ran_at` ≥ the area's `last_modified` AND every witness `model_sha` matches `tools/itf_tools.py sha <target>` AND no counterexample/no-witness in the results.
+- **applied** — every REQ/INV in the target's `ids[]` has a `traceability[]` entry (n/a for contracts).
+- **verified** — the latest `verification_log[]` entry is a `pass` dated after both the spec's `last_modified` and the recorded `code_sha` still matching (n/a for contracts).
+
+When every target is checked and every code target verified, offer: "All green. Mark `landed` after the PR merges, or I can mark it now if it's already in." `landed`/`abandoned` clears `last_change`.
 
 #### bootstrap — first-time project setup
 
@@ -89,7 +96,7 @@ Ask only what's needed to start eliciting:
 1. Project name (slug).
 2. Greenfield or existing code?
 3. Repo layout: single-repo (code lives here), multi-repo (code in separate repos), or spec-only. If multi-repo: for each code repo, logical name + URL + default branch → `.spec/project.json` `repos`; prompt user to add per-dev paths to `.spec/local.json` (or do it for them).
-4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area that declares `screens[]` + `navigation[]`; `kind: ui` is a deprecated alias), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
+4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area that declares `screens[]` + `navigation[]`), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
 
 **Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-apply` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units; Apalache settings only when a check times out. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
@@ -139,14 +146,16 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
   - state unclear → "Always, or only in some state?" → `ears.state`. Phrase it using the entity's **declared state names** ("the Session is Active", not "the user is logged in") — it makes the requirement↔state-machine link reviewable and matrix triage mechanical.
   - `ears.response` is always required.
 
-  Three checks **at capture time** — each is one question and each kills a class of wrong or missing requirement:
-  1. **Witness test for vagueness.** If you can't sketch a `witness.predicate` for the response (an observable state change or output), the response is too vague to ever be witnessed or verified — sharpen it now ("handle errors gracefully" → what state results, visible where?).
+  Four checks **at capture time** — each is one question and each kills a class of wrong or missing requirement:
+  1. **Witness test for vagueness.** If you can't sketch a `witness.predicate` for the response (an observable state change or output), the response is too vague to ever be witnessed or verified — sharpen it now ("handle errors gracefully" → what state results, visible where?). `spec-lint` backstops this with an ambiguous-wording WARN, but the cheap moment to fix it is now.
   2. **Unwanted counterpart.** For every happy-path REQ: "and if that goes wrong / arrives in the wrong state?" → a counterpart REQ with `ears.unwanted: true` (+ its trigger). This is where most missed requirements live.
   3. **Boundary semantics.** Whenever a REQ references a CON: "at exactly N, or after N?" Encode the answer in the response ("locks the account **on the 5th** failed attempt"), not just the constant — off-by-one is the classic wrong-rule bug witness traces exist to catch; settle it before formalizing.
+  4. **Quantifier scope.** Whenever the response touches a collection: "per user, per session, or globally?" ("at most one active session" — per user or system-wide?). Second-most-common ambiguity after boundaries, and it changes the shape of the Quint state (`int` vs `UserId -> int`); settle it before formalizing.
 
   Store the fields in `requirements[].ears`; render `description` from them ("While `<state>`, when `<trigger>`, the system shall `<response>`."). A requirement that can't be expressed in the fields is usually two requirements or a vague one — split or sharpen. An answer with no trigger/state ("always true") is an invariant — capture it as INV-NNN, not REQ-NNN.
 - **Invariants**: "what must always be true?" Capture INV-NNN candidates with criticality.
 - **Constraints**: numeric thresholds, bounds, max/min — capture CON-NNN (with units!).
+- **Non-functional requirements**: when the user says "fast", "secure", "scalable", capture a REQ with `type: "non-functional"` and immediately pin its `fit_criterion` — metric (what's measured, with units), target (the bound), measurement (how/where it's checked). "Fast" is not a requirement until all three exist; `spec-lint` FAILs an NFR without them past raw status. NFRs carry no witness obligation (nothing reachable to demonstrate) — the fit criterion IS their precision mechanism.
 - **Decisions**: architectural choices being made, with alternatives.
 - **Open questions**: anything the user can't answer yet; mark `Q-NNN` `status: open`.
 
@@ -240,7 +249,7 @@ Don't accumulate state in memory. After each meaningful turn:
 - Update `specs/<target>.json` (or `.spec/project.json`, catalog file, etc.)
 - Update `last_modified`
 - Bump `version` only when the user signals a meaningful change (added requirement, modified invariant, etc.) — minor for additions, patch for refinements, major for breaking changes
-- **Update the change manifest**: any ID added or modified in `specs/<target>.json` goes into the manifest target's `ids[]`; editing a target resets its `checked`/`verified` flags to false (the spec moved — prior results are stale). When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
+- **Update the change manifest**: any ID added or modified in `specs/<target>.json` goes into the manifest target's `ids[]`. (No phase flags to maintain — staleness is automatic: editing the spec bumps `last_modified`/changes the model sha, which un-derives "checked"/"verified".) When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
 - Commit hint: at sensible checkpoints, suggest `git add specs/<target>.json specs/<target>.qnt .spec/changes/<change>.json && git commit -m "spec(<change>): <what>"`
 
 ### Step 4 — Suggest next action

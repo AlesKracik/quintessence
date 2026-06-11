@@ -31,7 +31,7 @@ Per-area (`/spec-readback <target>`):
 - `.spec/project.json` (resolved architecture, topology context)
 - `.spec/journeys/*.json` (journeys whose steps reference this area — they drive the "What the System Does" grouping)
 - `.spec/patterns/*.json`, `.spec/protocols/*.json` (resolve referenced names to descriptions)
-- For `ui` and `contract` kinds: each `spans` area's JSON for cross-references.
+- For contracts and any area with `spans[]`: each spanned area's JSON for cross-references.
 
 Project-wide (no target): `.spec/project.json` + every `specs/*.json`.
 
@@ -44,7 +44,7 @@ Project-wide (no target): `.spec/project.json` + every `specs/*.json`.
 
 > Auto-generated from `specs/<area>.json` by `/spec-readback`. Do not edit; regenerate after spec changes.
 
-**Status:** <status>  |  **Requirements:** <n verified>/<total> verified, <n witnessed>/<total> witnessed  |  **Invariants:** <n verified>/<total>  |  **Open questions:** <n>  |  **Last verified:** <verification_log[-1] date or "never">
+**Status:** <status>  |  **Requirements:** <n verified>/<total> verified, <n witnessed>/<total> witnessed  |  **Invariants:** <n verified>/<total>  |  **Coverage:** <from check_results.matrix: "N cells, N covered, N triaged, N untriaged" — or "matrix not run">  |  **Open questions:** <n>  |  **Last verified:** <verification_log[-1] date or "never">
 
 *Legend: ✓ verified against code · ◐ witnessed in model only · ✗ no witness · ⏳ not checked · ⊘ skipped (justified)*
 
@@ -58,6 +58,7 @@ Everything requiring a human decision, in one place, first. Include each non-emp
 - **Counterexamples** — each `check_results.checks[]` entry with `result: "counterexample"`: what the invariant says, the NL explanation written by `/spec-check`, a brief trace summary.
 - **Unwitnessed requirements** — each REQ with `witness.status: "no-witness"` (behavior unreachable as specified — a spec bug until shown otherwise) or `"not-run"`.
 - **Stale witnesses** — `witness.model_sha` no longer matches `tools/itf_tools.py sha <area>`: the trace proves nothing about the current model.
+- **Coverage gaps** — from `check_results.matrix`: untriaged cells (`uncovered > 0`) or open GAP questions (`gaps[]`); one line with counts and the Q-NNN refs. If the matrix has never been run and the area has `state_machines[]`, say so — silence about coverage is itself a finding.
 - **Open questions** — each `open_questions[]` entry with `status: "open"` or `"deferred"`.
 - **Drift** — if the last `verification_log[]` entry has `drift_detected: true`.
 
@@ -74,11 +75,13 @@ One block per requirement. **This is the EARS ↔ Quint review surface** — whe
 
 > **Witness:** <one-line `tools/itf_tools.py summarize` output — e.g. "6 steps: 5× login_failed(alice) → account Locked">
 
-<details><summary>Quint action `login_failed` + witness trace diagram</summary>
+<details><summary>Quint action `login_failed`, witness predicate + trace diagram</summary>
 
 ```quint
 <verbatim body of the quint_ref action from the sidecar>
 ```
+
+**Witness predicate:** `<witness.predicate verbatim>` — true exactly when the behavior has happened. (Shown here because predicate↔sentence fidelity is human-reviewed, same as action↔sentence.)
 
 ```mermaid
 <output of: tools/itf_tools.py mermaid specs/<area>/traces/REQ-003.itf.json --title "REQ-003 witness">
@@ -89,6 +92,8 @@ One block per requirement. **This is the EARS ↔ Quint review surface** — whe
 Status marks: ✓ verified (witness replayed green against code) · ◐ witnessed, not yet verified · ✗ no witness · ⏳ not checked · ⊘ skipped (cite the `justification` and the enforcing INV inline). The status mark on the heading is the single source of verified/witnessed state — no dates and no "code replay" repeat in the witness line. Emit the Legend line under the header status bar exactly as shown, so reviewers never need this instruction file to decode marks.
 
 The one-line trace summary is always inline — that's where wrong-rule bugs (locks at attempt 6, not 5) get caught at a glance. The full diagram and Quint excerpt live in the collapsed block. Traces longer than ~12 steps: summary only, link the `.itf.json`. Group by component only when components are declared and the grouping clarifies.
+
+Non-functional requirements (`type: "non-functional"`) render with their `fit_criterion` in place of the witness line — `> **Fit:** <metric> — <target> — measured by <measurement>` — no trace block (NFRs carry no witness obligation; the fit criterion is their precision mechanism).
 
 ```markdown
 ## What Must Always Be True
@@ -102,6 +107,14 @@ The one-line trace summary is always inline — that's where wrong-rule bugs (lo
 - **PROP-001 (eventualLogout)** — Every Active session eventually ends. ✓ verified up to N steps
 
 (Always state the bound — bounded liveness is all Apalache gives. Omit section if no properties.)
+
+## Limits and Bounds
+
+| ID | Name | Value | Unit | Referenced by |
+|---|---|---|---|---|
+| CON-001 | MAX_FAILED_ATTEMPTS | 5 | attempts | REQ-003, INV-002 |
+
+(From `constraints[]`; "Referenced by" = REQs/INVs whose description or EARS fields mention the constraint name. Boundary semantics — "on the 5th attempt" vs "after 5" — are the classic wrong-rule bug; this table is where a reviewer confirms every number in one glance. Omit section if no constraints.)
 
 ## State Machines
 
@@ -166,7 +179,7 @@ Per spanned area, what it must expose / must respect — derived from the sideca
 <details><summary>Decisions, check history</summary>(same shapes as area)</details>
 ```
 
-#### Areas with UI blocks (`screens[]` + `navigation[]` declared; includes deprecated `kind: "ui"`)
+#### Areas with UI blocks (`screens[]` + `navigation[]` declared)
 
 Same as area, with the State Machines section replaced by **Navigation** + **Screens** (placed right after Needs Your Attention — the navigation graph IS the behavior surface for an interactive area):
 
@@ -213,11 +226,16 @@ UI requirements (`UI-NNN`) render in "What the System Does" with the same EARS +
 | auth | area | REQ-012, INV-004 | complete | ✓ | ✓ | ✗ |
 | user-permission | contract (auto) | INV-CONTRACT-002 | — | ✗ | n/a | n/a |
 
+(Phase columns are DERIVED at generation time — same rules as the `/spec` change dashboard; the manifest stores membership only.)
+
 ## What This Change Does
 
 Per target, each ID in the manifest rendered as its EARS sentence / invariant
 statement (pulled from the area JSON — never restated), linked into the
-per-area readback: [REQ-012](../../specs/auth.readback.md).
+per-area readback **at its heading anchor** so the link lands on the
+requirement, not the top of the file:
+[REQ-012](../../specs/auth.readback.md#req-012--short-name)
+(GitHub anchor = heading lowercased, punctuation stripped, spaces → dashes).
 
 ## Open Questions Blocking
 

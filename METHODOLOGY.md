@@ -25,7 +25,7 @@ flowchart LR
 
 A **spec area** is a JSON file at `specs/<name>.json` plus an optional sidecar `specs/<name>.qnt` holding the Quint formal model. Two kinds of area, one schema:
 
-- `kind: "area"` — functional area with code (login, billing, search). May declare **UI blocks** (`screens[]`, `ui_components[]`, `navigation[]`) to model an interactive surface — the sidecar then models navigation as a Quint state machine, and UI-specific lint, readback, and codegen activate on block presence. (`kind: "ui"` is a deprecated alias for this.)
+- `kind: "area"` — functional area with code (login, billing, search). May declare **UI blocks** (`screens[]`, `ui_components[]`, `navigation[]`) to model an interactive surface — the sidecar then models navigation as a Quint state machine, and UI-specific lint, readback, and codegen activate on block presence.
 - `kind: "contract"` — cross-area invariant carrier (no code; `spans: ["auth", "billing"]`); the sidecar imports the spanned areas' Quint modules and asserts joint invariants.
 
 A **project** is `.spec/project.json` (areas index, code repo paths, architecture defaults, topology) plus per-area JSON files. Per-developer code-repo paths go in `.spec/local.json` (gitignored).
@@ -109,6 +109,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   └── ...
 ├── schemas/
 │   ├── area.schema.json
+│   ├── change.schema.json
+│   ├── journey.schema.json
 │   ├── project.schema.json
 │   ├── pattern.schema.json
 │   └── protocol.schema.json
@@ -116,7 +118,10 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   └── spec-ci.yml               ← lint → matrix --strict → check → verify gate
 └── tools/
     ├── spec-lint.py              ← consistency checker (incl. EARS + witness obligations)
-    ├── spec-matrix.py            ← state×event coverage matrix (--strict = CI gate)
+    ├── spec-record.py            ← deterministic check runner: quint verify + probe runs,
+    │                                writes check_results / formal_status / witness blocks
+    ├── spec-matrix.py            ← state×event coverage matrix (--strict = CI gate;
+    │                                --record stamps stats into check_results.matrix)
     ├── quint_ir.py               ← typed view of .qnt files (Quint IR, regex fallback)
     ├── itf_tools.py              ← ITF trace validate / summarize / Mermaid / status / sha
     └── bootstrap.sh              ← self-removes after first run
@@ -164,7 +169,7 @@ Required fields: `kind`, `area`, `version`. Everything else is optional and grow
     { "id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 5 }
   ],
   "decisions": [
-    { "id": "DEC-001", "kind": "architecture", "title": "JWT over session cookies", "rationale": "...", "alternatives_considered": [...], "status": "accepted" }
+    { "id": "DEC-001", "kind": "architecture", "title": "JWT over session cookies", "decision": "Use RS256-signed JWTs for session tokens.", "rationale": "...", "alternatives_considered": [...], "status": "accepted" }
   ],
 
   "architecture": {
@@ -224,7 +229,7 @@ module auth {
 
 ---
 
-## The Three Kinds of Area
+## The Two Kinds of Area
 
 ### `kind: "area"` — functional area
 
@@ -248,9 +253,9 @@ module userPermissionContract {
 
 `/spec-apply` and `/spec-verify` refuse on contract targets (no code).
 
-### UI blocks — interactive surfaces (formerly `kind: "ui"`)
+### UI blocks — interactive surfaces
 
-An interactive surface is an ordinary `kind: "area"` that declares `screens[]`, `ui_components[]`, `navigation[]` — formally it was never a different object: the sidecar models navigation as a Quint state machine (`screens` become a variant type, `navigation` entries become actions, auth-required-style invariants are model-checked), exactly as any entity state machine. The separate `ui` kind is deprecated; everything UI-specific triggers on block presence:
+An interactive surface is an ordinary `kind: "area"` that declares `screens[]`, `ui_components[]`, `navigation[]` — formally it is not a different object: the sidecar models navigation as a Quint state machine (`screens` become a variant type, `navigation` entries become actions, auth-required-style invariants are model-checked), exactly as any entity state machine. Everything UI-specific triggers on block presence:
 
 - `spec-lint`: navigation endpoints reference declared screens, isolated screens flagged, screens without navigation FAIL;
 - `/spec-readback`: Navigation graph + Screens table replace the State Machines section;
@@ -282,7 +287,14 @@ Why this works as the precision mechanism:
 - **Completeness is checkable.** Every `state`/`trigger` pair feeds the state×event matrix; every happy-path REQ prompts an unwanted counterpart.
 - **Still plain English.** Stakeholders review the rendered sentence; no notation to learn.
 
-`spec-lint` enforces the three rules that remain: `response` required; `unwanted` requires a `trigger`; no trigger/state/feature at all → WARN "that's an invariant, move it to `invariants[]`" (requirements are behaviors, each demonstrable by a witness trace; always-true statements are Apalache's job).
+`spec-lint` enforces the structural rules: `response` required; `unwanted` requires a `trigger`; no trigger/state/feature at all → WARN "that's an invariant, move it to `invariants[]`" (requirements are behaviors, each demonstrable by a witness trace; always-true statements are Apalache's job). Plus two precision lints:
+
+- **Ambiguity** — untestable words in `response` ("gracefully", "appropriately", "as needed", "TBD", …) → WARN with "sharpen: what state results, visible where?". A response that can't name its resulting state can never get a witness predicate.
+- **State binding** — `ears.state` that names no declared entity state ("the user is logged in" instead of "the Session is Active") → WARN. Phrasing preconditions with declared state names is what makes the requirement↔state-machine link checkable and matrix triage mechanical.
+
+**Non-functional requirements** ("fast", "secure", "scalable") get no witness obligation — there's no reachable state change to demonstrate. Their precision mechanism is the **fit criterion**: `fit_criterion: { metric, target, measurement }`, all three required. `spec-lint` FAILs an NFR without one past raw status; the readback renders it in place of the witness line.
+
+**Contradictory requirements need no special detector** — they surface mechanically: two requirements whose guards conflict make at least one of them unsatisfiable, and the unsatisfiable one comes back `no-witness` from `/spec-check`. Vacuity detection and conflict detection are the same machinery.
 
 ---
 
@@ -294,7 +306,7 @@ The fix: invert the model checker. To prove behavior X is *reachable*, assert "X
 
 Two refinements make the witness actually mean what the requirement says:
 
-- **Path constraint.** The probe negates `predicate AND lastAction == <quint_ref>` — the trace must reach the postcondition *via the requirement's own action*. Without this, a trace that locks the account through some unrelated mechanism would "witness" the lockout requirement.
+- **Path constraint.** The probe negates `predicate AND _lastAction == <quint_ref>` — the trace must reach the postcondition *via the requirement's own action*. Without this, a trace that locks the account through some unrelated mechanism would "witness" the lockout requirement.
 - **Freshness pin.** The witness records `model_sha` (sha256 of `.qnt` + `.probes.qnt`, via `tools/itf_tools.py sha <area>`). If the model changes, the stamp no longer matches and `spec-lint`/`itf_tools status` FAIL the witness — a trace found against last month's model proves nothing about today's.
 
 Each requirement carries a `witness` block:
@@ -309,7 +321,7 @@ Each requirement carries a `witness` block:
 }
 ```
 
-`/spec-check` generates `specs/<area>.probes.qnt`: ghost vars (`lastAction` plus param ghosts like `lastUid` — the replay harness reads call arguments from these), `initP`/`stepP` wrappers, the path-constrained witness probes, and per-action coverage probes. It runs each probe and saves violation traces in ITF format under `specs/<area>/traces/`. Per-area obligations:
+`/spec-check` generates `specs/<area>.probes.qnt`: ghost vars (`_lastAction` plus param ghosts like `_lastUid` — underscore-prefixed so they can never collide with real model vars; the replay harness reads call arguments from these), `initP`/`stepP` wrappers, and the path-constrained witness probes. The runs themselves — and **all result bookkeeping** — are done by `tools/spec-record.py check <area>`: it executes every invariant check and witness probe, saves violation traces in ITF format under `specs/<area>/traces/`, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically. The agent never hand-edits a verification verdict; mechanism-over-trust applies to the ledger too. Per-area obligations:
 
 | Obligation | Mechanism | Failure means |
 |---|---|---|
@@ -321,9 +333,9 @@ Each requirement carries a `witness` block:
 
 **Rejection requirements have no witness — by design.** "If the account is Locked, login shall be rejected" produces no state change; reachability probes can't demonstrate a non-event. The rule: encode the rejection as (or pair it with) the **invariant that stays true** (`noSessionWhileLocked`) and set `witness: { "status": "skipped", "justification": "rejection — enforced by INV-002" }`. Don't delete the requirement and don't force a meaningless predicate — the invariant carries the proof, the justification carries the trace back to it.
 
-`spec-lint` enforces the bookkeeping: `status: approved` is blocked while any requirement is unwitnessed (skipped-with-justification counts as discharged); a recorded trace file that doesn't exist, is invalid ITF, or whose `model_sha` is stale, is a FAIL.
+`spec-lint` enforces the bookkeeping, with no soft-pass paths: `status: approved` is blocked while any requirement is unwitnessed — including requirements whose witness block is empty or predicate-less (skipped-with-justification counts as discharged; skipped **without** justification is itself a FAIL). A recorded trace file that doesn't exist, is invalid ITF, whose `model_sha` is stale, **or that carries no `model_sha` at all** (freshness unverifiable) is a FAIL. If witnesses exist but the model files can't be hashed (probes file recorded but missing), every witness is suspect — FAIL.
 
-Cost control: `/spec-check` skips probes whose `model_sha` already matches (byte-identical model → existing trace still valid), batches invariants per verifier run where the Quint version allows, and cascades only to contracts spanning changed areas.
+Cost control: `spec-record` skips probes whose `model_sha` already matches (byte-identical model → existing trace still valid); `/spec-check` cascades only to contracts spanning changed areas.
 
 One trace, three consumers:
 
@@ -488,27 +500,27 @@ A **spec-only** project has no `repos` block. `/spec-apply` and `/spec-verify` a
   "intent": "Billing accounts authenticate via SSO sessions",
   "status": "in-progress",
   "targets": [
-    { "name": "auth",            "kind": "area",     "ids": ["REQ-012", "INV-004"], "checked": true, "applied": true, "verified": false },
-    { "name": "billing",         "kind": "area",     "ids": ["REQ-031"],            "checked": true, "applied": false },
-    { "name": "user-permission", "kind": "contract", "auto": true, "ids": ["INV-CONTRACT-002"], "checked": false }
+    { "name": "auth",            "kind": "area",     "ids": ["REQ-012", "INV-004"] },
+    { "name": "billing",         "kind": "area",     "ids": ["REQ-031"] },
+    { "name": "user-permission", "kind": "contract", "auto": true, "ids": ["INV-CONTRACT-002"] }
   ]
 }
 ```
 
-The manifest is an **overlay, not a container**: it references IDs and tracks per-target workflow state; the spec content stays in the area JSONs, which remain the single source of truth. Delete every manifest and the specs are still complete — there is no drift surface.
+The manifest is an **overlay, not a container**: it holds membership only — which targets, which IDs. The spec content stays in the area JSONs, which remain the single source of truth. Per-target phase status (checked / applied / verified) is **never stored** — it is derived from the area JSONs each time it's displayed, so it cannot go stale: *checked* = `check_results.ran_at` ≥ `last_modified` and every witness `model_sha` matches the current model; *applied* = the target's REQ/INV ids have `traceability[]` entries; *verified* = the latest `verification_log[]` entry passes and post-dates the spec. Delete every manifest and the specs are still complete — there is no drift surface, including the flags.
 
 How it drives the commands:
 
 - The **active change** is per-dev sticky state (`last_change` in `.spec/local.json`). `/spec change <slug>` opens or switches; every spec edit happens inside a change — starting an area edit with no active change auto-opens one (one prompt, Enter accepts the default name). A single-area tweak is just the degenerate case: a change with one target.
-- Bare `/spec` shows the **change dashboard**: per-target phase grid (spec / checked / applied / verified) plus the suggested next step.
-- Bare `/spec-check` checks **all** targets of the change, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas moved. Editing a target resets its `checked`/`verified` flags; contracts spanning a touched area join `targets[]` automatically (`auto: true`).
+- Bare `/spec` shows the **change dashboard**: per-target phase grid (spec / checked / applied / verified, all computed) plus the suggested next step.
+- Bare `/spec-check` checks **all** targets of the change, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas moved. Contracts spanning a touched area join `targets[]` automatically (`auto: true`).
 - Bare `/spec-apply` / `/spec-verify` run every code-bearing target; contracts are skipped (spec-only).
 - Bare `/spec-readback` regenerates the touched targets' readbacks plus a **change readback** (`.spec/changes/<slug>.readback.md`) — intent, target table, the change's IDs rendered as EARS sentences. That one document is the PR review surface for a spanning change.
 - Explicit targets always work as a one-off escape hatch and never alter the active change.
 
 Lifecycle is git-shaped, no extra ceremony: slug ↔ suggested branch `change/<slug>`, commits scoped `spec(<slug>): …`, the manifest travels with the PR, and `status: "landed"` on merge turns it into a changelog entry. `landed`/`abandoned` clears the active change.
 
-`spec-lint` validates manifests on every full run: schema, slug↔filename, targets resolve to real specs, no dangling IDs, no code-phase flags on contracts. Landed/abandoned manifests are history and only need to parse — later changes may legitimately remove IDs they reference.
+`spec-lint` validates manifests on every run (full or single-area): schema, slug↔filename, targets resolve to real specs, no dangling IDs, no stored phase flags (FAIL — status is derived, never stored). Landed/abandoned manifests are history and only need to parse — later changes may legitimately remove IDs they reference.
 
 ## Journeys: Use Cases in Temporal Order
 
@@ -600,7 +612,11 @@ area.status:          raw → structured → formalized → in-review → approv
 
 ### spec-lint
 
-`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`), witness obligations (no `witness.predicate` → WARN; recorded trace file missing → FAIL; `approved` with unwitnessed requirements → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, drift between architecture and `traceability[]`. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
+`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording WARN on untestable responses; state-binding WARN when `ears.state` names no declared entity state), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; unjustified `skipped` → FAIL; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so (WARN) instead of silently skipping schema validation. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
+
+### spec-record
+
+`tools/spec-record.py check <area>` is the deterministic half of `/spec-check`: it runs `quint verify` for every invariant, property, and witness probe, parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks into the area JSON mechanically — with skip-if-fresh (`model_sha` match → probe not re-run). The agent's role in checking is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes), matrix triage, red-team. A verification verdict is never hand-edited.
 
 Sidecar parsing goes through `tools/quint_ir.py`: the Quint compiler's typed JSON IR when the `quint` CLI is installed, a regex fallback otherwise — so lint never disagrees with the compiler about what's in the model when the CLI is present.
 

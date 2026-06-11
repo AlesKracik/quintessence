@@ -22,7 +22,7 @@ Resolve the target set:
 - No target → read `last_change` from `.spec/local.json`, load `.spec/changes/<slug>.json`. Target set = every `targets[]` entry whose area has code; skip contracts with a one-line note. Print: `Change: <slug> — applying <n> code targets`. Walk targets one at a time — each gets its own architecture resolution, mapping confirmation, and generation pass (Steps 2–5); don't interleave.
 - No active change → if there's exactly one area, use it; else ask.
 
-After each target completes, write `applied: true` into its manifest entry.
+The manifest stores no phase flags — "applied" is derived (every one of the target's manifest `ids[]` that is a REQ/INV has a `traceability[]` entry).
 
 Read:
 - `specs/<target>.json`
@@ -137,7 +137,7 @@ For each component (or the area if monolithic):
 
 2. **Replay harness** — a test file that, for each `*.itf.json` in the traces dir:
    - parses the ITF states (ints arrive as `{"#bigint": "n"}`, maps as `{"#map": [[k,v],...]}`, variants as `{tag, value}` — mirror `tools/itf_tools.py render_value` semantics);
-   - reads the action per step from the `lastAction` ghost var and its parameters from the param ghosts (`lastUid`, `lastSid`, … — written by the probe module's instrumented step; for `quint run --mbt` traces use `mbt::actionTaken`/`mbt::nondetPicks`). Never infer call parameters from state diffs;
+   - reads the action per step from the `_lastAction` ghost var and its parameters from the param ghosts (`_lastUid`, `_lastSid`, … — written by the probe module's instrumented step; for `quint run --mbt` traces use `mbt::actionTaken`/`mbt::nondetPicks`). Never infer call parameters from state diffs;
    - calls the adapter method for each step, then asserts every Quint var getter equals the trace's state under the abstraction (ghost vars are bookkeeping — excluded from the comparison);
    - reports the first diverging step with expected/observed values.
 

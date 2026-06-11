@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "area.schema.json",
-  "title": "Spec Area (area | contract | ui)",
-  "description": "One JSON file per area at specs/<name>.json. The formal Quint model lives in a sidecar specs/<name>.qnt referenced from formal_model.quint_file. Two kinds: 'area' (functional, default — may carry UI blocks screens/ui_components/navigation to model an interactive surface) and 'contract' (cross-area agreement, spec-only). 'ui' is a deprecated alias for area-with-screens. Most fields are optional; required fields are gated by kind or block presence. Sections grow conversationally via /spec — empty arrays/objects are valid for incomplete specs.",
+  "title": "Spec Area (area | contract)",
+  "description": "One JSON file per area at specs/<name>.json. The formal Quint model lives in a sidecar specs/<name>.qnt referenced from formal_model.quint_file. Two kinds: 'area' (functional, default — may carry UI blocks screens/ui_components/navigation to model an interactive surface) and 'contract' (cross-area agreement, spec-only). Most fields are optional; required fields are gated by kind or block presence. Sections grow conversationally via /spec — empty arrays/objects are valid for incomplete specs.",
   "type": "object",
   "required": ["kind", "area", "version"],
   "additionalProperties": false,
@@ -11,8 +11,8 @@
 
     "kind": {
       "type": "string",
-      "enum": ["area", "contract", "ui"],
-      "description": "area: functional area (default) — may carry UI blocks (screens/ui_components/navigation); UI-specific lint, readback, and codegen trigger on block presence, not kind. contract: cross-area invariant carrier, spec-only, requires spans[]. ui: DEPRECATED alias for area-with-screens — accepted, spec-lint warns; use kind: area with screens[] + navigation[] instead."
+      "enum": ["area", "contract"],
+      "description": "area: functional area (default) — may carry UI blocks (screens/ui_components/navigation); UI-specific lint, readback, and codegen trigger on block presence, not kind. contract: cross-area invariant carrier, spec-only, requires spans[]."
     },
     "area": {
       "type": "string",
@@ -83,13 +83,25 @@
           "id": {
             "type": "string",
             "pattern": "^(REQ|UI)(-CONTRACT)?-\\d{3}$",
-            "description": "REQ-NNN for functional behavior; UI-NNN for kind=ui; REQ-CONTRACT-NNN for kind=contract."
+            "description": "REQ-NNN for functional behavior; UI-NNN for areas with UI blocks; REQ-CONTRACT-NNN for kind=contract."
           },
           "description": { "type": "string", "description": "Human-readable rendering. When ears is present this is derived from it; the EARS fields are the source of truth." },
           "type": {
             "type": "string",
             "enum": ["functional", "non-functional"],
-            "default": "functional"
+            "default": "functional",
+            "description": "non-functional requirements are exempt from witness obligations (no reachable state change to demonstrate) but MUST carry fit_criterion — a measurable acceptance bound. spec-lint enforces."
+          },
+          "fit_criterion": {
+            "type": "object",
+            "description": "Measurable acceptance criterion (Planguage-style). Required for type: non-functional — 'fast', 'secure', 'scalable' are not requirements until they carry a metric, a target, and a way to measure. spec-lint FAILs a non-functional requirement without one past raw status.",
+            "additionalProperties": false,
+            "required": ["metric", "target", "measurement"],
+            "properties": {
+              "metric":      { "type": "string", "description": "What is measured, with units. E.g. 'p99 login latency (ms)'." },
+              "target":      { "type": "string", "description": "The bound that must hold. E.g. '< 250ms under 100 rps'." },
+              "measurement": { "type": "string", "description": "How/where it is measured. E.g. 'k6 load test in CI, scenario login-storm'." }
+            }
           },
           "status": {
             "type": "string",
@@ -526,6 +538,20 @@
       "additionalProperties": false,
       "properties": {
         "ran_at": { "type": "string", "format": "date-time" },
+        "matrix": {
+          "type": "object",
+          "description": "State×event coverage stats from the last spec-matrix run (written by spec-matrix --record). Surfaces completeness in readbacks — the gitignored gen/ CSV is the working file, these counts are the reviewable summary.",
+          "additionalProperties": false,
+          "properties": {
+            "ran_at":    { "type": "string", "format": "date-time" },
+            "cells":     { "type": "integer", "minimum": 0 },
+            "covered":   { "type": "integer", "minimum": 0 },
+            "triaged":   { "type": "integer", "minimum": 0 },
+            "uncovered": { "type": "integer", "minimum": 0 },
+            "gaps":      { "type": "array", "items": { "type": "string" }, "description": "Q-NNN ids of open GAP cells, if any were filed." },
+            "orphans":   { "type": "integer", "minimum": 0 }
+          }
+        },
         "checks": {
           "type": "array",
           "items": {
