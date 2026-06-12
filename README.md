@@ -14,7 +14,7 @@ What you get:
 - **Changes as the unit of work**: a manifest per change at `.spec/changes/<slug>.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
 - **Anti-vacuity guarantees**: a requirement counts as demonstrated only when the checker produces a witness trace for it; a spec whose invariants pass over an unreachable state space is caught, not celebrated.
 - Seven optional architecture layers (0–6: stack, components, patterns, ADRs, topology, protocols, readbacks) and a multi-repo story via config-driven paths (no submodules).
-- Python tooling: `spec-lint` (consistency + EARS + precision lints + witness obligations), `spec-record` (deterministic check **and** verify runner — model checking, conformance replay, drift, and every ledger write-back are mechanical; the AI never hand-edits a verdict), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
+- Python tooling: `spec-lint` (consistency + EARS + precision lints + witness obligations), `spec-record` (deterministic check **and** verify runner — model checking, conformance replay, drift, and every ledger write-back are mechanical; the AI never hand-edits a verdict), `spec-readback` (deterministic readback generator — the review document is rendered by code, byte-identical for identical input, so its git diff IS the review), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
 
 Read [METHODOLOGY.md](METHODOLOGY.md) for the full picture. It travels with every project created from this template.
 
@@ -250,7 +250,7 @@ spec-template/
 ├── schemas/                   ← 6 JSON schemas (area, change, journey, project, pattern, protocol)
 ├── templates/                 ← spec.qnt.template, probes.qnt.template (sidecar + probe conventions)
 ├── .github/workflows/         ← spec-ci.yml (lint → matrix → typecheck → quint test; skips pre-bootstrap)
-├── tools/                     ← spec-lint, spec-record, spec-matrix, quint_ir, itf_tools, bootstrap.sh (self-removes)
+├── tools/                     ← spec-lint, spec-record, spec-readback, spec-matrix, quint_ir, itf_tools, bootstrap.sh (self-removes)
 └── examples/                  ← sample auth area + auth-ui area (stripped by bootstrap)
 ```
 

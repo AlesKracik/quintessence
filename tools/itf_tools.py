@@ -215,33 +215,39 @@ def _mermaid_escape(text):
     return text.replace(";", ",")
 
 
-def cmd_mermaid(args):
-    trace, errors = load_trace(args.trace)
-    if errors:
-        for e in errors:
-            print(f"INVALID: {e}", file=sys.stderr)
-        sys.exit(1)
+def mermaid_lines(trace, title=None, actor="Env", action_var=None, show_init=False):
+    """Mermaid sequenceDiagram lines for a loaded trace. Shared by the CLI
+    subcommand and the readback generator — one renderer, one output."""
     var_names = state_vars(trace)
-    action_var = detect_action_var(trace, args.action_var)
-    actor = args.actor
-
+    action_var = detect_action_var(trace, action_var)
     lines = ["sequenceDiagram"]
-    if args.title:
-        lines.append(f"    title {args.title}")
+    if title:
+        lines.append(f"    title {title}")
     lines.append(f"    participant E as {actor}")
     lines.append("    participant S as System")
     prev = None
     for i, s in enumerate(trace["states"]):
         label = step_label(s, i, action_var)
         delta = changed_vars(prev, s, var_names, action_var)
-        if i == 0 and not args.show_init:
+        if i == 0 and not show_init:
             prev = s
             continue
         lines.append(f"    E->>S: {_mermaid_escape(label)}")
         for n, v in delta:
             lines.append(f"    Note over S: {_mermaid_escape(_truncate(f'{n} = {v}'))}")
         prev = s
-    print("\n".join(lines))
+    return lines
+
+
+def cmd_mermaid(args):
+    trace, errors = load_trace(args.trace)
+    if errors:
+        for e in errors:
+            print(f"INVALID: {e}", file=sys.stderr)
+        sys.exit(1)
+    print("\n".join(mermaid_lines(
+        trace, title=args.title, actor=args.actor,
+        action_var=args.action_var, show_init=args.show_init)))
 
 
 def cmd_sha(args):

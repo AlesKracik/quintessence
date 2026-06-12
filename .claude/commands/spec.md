@@ -78,12 +78,13 @@ Next: billing spec has 1 raw requirement — `/spec billing` to finish it,
 or `/spec-check` to re-check the whole set.
 ```
 
-The grid is **computed, never stored** — the manifest holds membership only, so status can't go stale. Per target, derive:
+The grid is **computed, never stored** — the manifest holds membership only, so status can't go stale. Don't derive it by hand:
 
-- **spec** — completeness from the area JSON (same gap table as the resume beat).
-- **checked** — `check_results.ran_at` ≥ the area's `last_modified` AND every witness `model_sha` matches `tools/itf_tools.py sha <target>` AND no counterexample/no-witness in the results.
-- **applied** — every REQ/INV in the target's `ids[]` has a `traceability[]` entry (n/a for contracts).
-- **verified** — the latest `verification_log[]` entry is a `pass` dated after both the spec's `last_modified` and the recorded `code_sha` still matching (n/a for contracts).
+```bash
+tools/spec-readback.py status <slug> --json
+```
+
+returns the derived phase grid (spec / checked / applied / verified per target — rules documented in the tool's docstring and METHODOLOGY → "Unit of Work: Changes"). Render it as the table above and add the suggested next step.
 
 When every target is checked and every code target verified, offer: "All green. Mark `landed` after the PR merges, or I can mark it now if it's already in." `landed`/`abandoned` clears `last_change`.
 
