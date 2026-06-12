@@ -24,8 +24,10 @@ warn=()
 
 if command -v java >/dev/null 2>&1; then
   java_line="$(java -version 2>&1 | head -1)"
-  # Parse the major version. Handles modern (`17.0.8`) and legacy (`1.8.0_392`).
-  major="$(printf '%s\n' "$java_line" | sed -E 's/.*version "?([0-9]+)\..*/\1/')"
+  # Parse the major version: first integer in the line. Handles modern
+  # (`17.0.8`), legacy (`1.8.0_392` → 1, correctly < 17), and dotless GA
+  # builds (`version "21"`). The old dot-requiring sed broke on the latter.
+  major="$(printf '%s\n' "$java_line" | grep -oE '[0-9]+' | head -1)"
   if [ -n "$major" ] && [ "$major" -ge 17 ] 2>/dev/null; then
     echo "✓ java       ${java_line}"
   else

@@ -41,7 +41,6 @@ no-witness, error, or timeout; 2 = setup problem (missing files/tools).
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -89,7 +88,15 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
     """Run one `quint verify`. Returns (result, detail, duration_s) where
     result ∈ verified | counterexample | timeout | error.
     'counterexample' means a violation was found — for witness probes that
-    is the GOOD outcome (the violation trace IS the witness)."""
+    is the GOOD outcome (the violation trace IS the witness).
+
+    Violation detection: the presence of the freshly-written --out-itf file
+    — NOT output-text grepping (any error message containing the word
+    'counterexample' would misclassify). The stale file is deleted before
+    the run so its existence afterwards is unambiguous."""
+    out_path = Path(out_itf) if out_itf else None
+    if out_path and out_path.exists():
+        out_path.unlink()
     cmd = [quint, "verify", f"--invariant={invariant}", f"--max-steps={max_steps}"]
     if init:
         cmd.append(f"--init={init}")
@@ -106,12 +113,12 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
     except subprocess.TimeoutExpired:
         return "timeout", f"timed out after {timeout}s", timeout
     duration = (datetime.now(timezone.utc) - started).total_seconds()
-    out = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode == 0:
         return "verified", "", duration
-    if re.search(r"violation|counterexample|\[violation\]", out, re.IGNORECASE):
+    if out_path and out_path.exists():
         return "counterexample", "", duration
-    # Non-zero without a violation marker: compile/CLI error.
+    # Non-zero without a violation trace: compile/CLI error.
+    out = (proc.stdout or "") + (proc.stderr or "")
     tail = "\n".join(out.strip().splitlines()[-5:])
     return "error", tail, duration
 
@@ -135,7 +142,17 @@ def cmd_check(args):
     apalache = project.get("apalache") or {}
     max_steps = args.steps or apalache.get("max_steps", 10)
     timeout = args.timeout or apalache.get("timeout_seconds", 300)
-    only = set(args.only.split(",")) if args.only else None
+
+    only = None
+    if args.only:
+        only = {t.strip() for t in args.only.split(",") if t.strip()}
+        known = set()
+        for ln in ("invariants", "properties", "requirements"):
+            known.update(i.get("id") for i in area.get(ln, []) or [] if i.get("id"))
+        unknown = only - known
+        if unknown:
+            fail_setup(f"--only references unknown ids: {', '.join(sorted(unknown))}. "
+                       f"Known: {', '.join(sorted(known))}")
 
     quint = find_quint()
     traces_dir = root / "specs" / args.area / "traces"
@@ -203,17 +220,31 @@ def cmd_check(args):
             if (req.get("status") == "deferred"
                     or req.get("type") == "non-functional"):
                 continue
-            witness = req.setdefault("witness", {})
+            witness = req.get("witness") or {}
             if witness.get("status") == "skipped":
+                if not witness.get("justification"):
+                    # Same gate as spec-lint — an unjustified skip must not
+                    # let this runner report green.
+                    print(f"{rid:<12} SKIPPED-UNJUST.  (skip without justification "
+                          f"does not discharge — justify or remove)")
+                    bad += 1
                 continue
             if not witness.get("predicate"):
                 print(f"{rid:<12} no-predicate     (draft one via /spec, then re-run)")
                 bad += 1
                 continue
+            req["witness"] = witness  # persist only for reqs we actually process
             if (witness.get("status") == "witnessed"
                     and current_sha and witness.get("model_sha") == current_sha):
-                print(f"{rid:<12} fresh            (model unchanged — probe skipped)")
-                continue
+                # Fresh by sha — but only if the trace is actually present
+                # and valid; a deleted trace with a surviving stamp is not
+                # fresh, it's gone.
+                t_rel = witness.get("trace")
+                t_path = root / "specs" / t_rel if t_rel else None
+                if t_path and t_path.exists() and not load_trace(t_path)[1]:
+                    print(f"{rid:<12} fresh            (model unchanged — probe skipped)")
+                    continue
+                print(f"{rid:<12} re-proving       (stamp fresh but trace missing/invalid)")
             if probes_ir is None:
                 print(f"{rid:<12} no-probes-file   (regenerate specs/<area>.probes.qnt "
                       f"via /spec-check, then re-run)")
@@ -258,9 +289,17 @@ def cmd_check(args):
                 print(f"{rid:<12} {result:<16} {detail}")
 
     # ── 3. Write back ────────────────────────────────────────────────────
+    # MERGE into the prior ledger, never replace it wholesale: a --only run
+    # (or an all-fresh run) must not erase results it didn't re-derive.
     cr = area.setdefault("check_results", {})
+    new_by_id = {c["id"]: c for c in checks}
+    merged = []
+    for prior in (cr.get("checks") or []):
+        pid = prior.get("id")
+        merged.append(new_by_id.pop(pid) if pid in new_by_id else prior)
+    merged.extend(new_by_id[cid] for cid in [c["id"] for c in checks] if cid in new_by_id)
+    cr["checks"] = merged  # matrix block (spec-matrix --record) is preserved
     cr["ran_at"] = now_iso()
-    cr["checks"] = checks  # matrix block (spec-matrix --record) is preserved
     save_area(area_path, area)
     print(f"\nrecorded check_results + witness blocks in {area_path}")
 

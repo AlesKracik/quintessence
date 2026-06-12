@@ -102,23 +102,42 @@ def _collect_mutations(expr):
     return mutated
 
 
+def _norm_name(s):
+    """Normalization for stem↔module matching: lowercase, alphanumerics only.
+    Makes 'auth.probes' (file stem) match 'auth_probes' (module name) — the
+    underscore/dot mismatch previously sent every probes file to the
+    last-module heuristic."""
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _pick_main(named_modules, qnt_path):
+    """Shared main-module selection for BOTH engines: name matches file stem
+    (normalized), else last module with state vars, else last module.
+    named_modules: [(name, has_vars, payload)]."""
+    stem = _norm_name(qnt_path.stem)
+    main = None
+    for name, _has_vars, payload in named_modules:
+        if _norm_name(name) == stem:
+            main = payload
+    if main is None:
+        with_vars = [p for _n, hv, p in named_modules if hv]
+        main = (with_vars or [p for _n, _hv, p in named_modules])[-1]
+    return main
+
+
 def _normalize_ir(ir_json, qnt_path):
-    """Map the Quint compiler's IR JSON to the normalized shape.
-    Picks the 'main' module: the one whose name matches the file stem,
-    else the last module with state vars, else the last module."""
+    """Map the Quint compiler's IR JSON to the normalized shape."""
     modules = ir_json.get("modules") or []
     if not modules:
         return None
 
-    stem = re.sub(r"[^A-Za-z0-9_]", "", qnt_path.stem)
-    main = None
-    for m in modules:
-        if m.get("name", "").lower() == stem.lower():
-            main = m
-    if main is None:
-        with_vars = [m for m in modules
-                     if any(d.get("kind") == "var" for d in m.get("declarations") or [])]
-        main = (with_vars or modules)[-1]
+    named = [
+        (m.get("name", ""),
+         any(d.get("kind") == "var" for d in m.get("declarations") or []),
+         m)
+        for m in modules
+    ]
+    main = _pick_main(named, Path(qnt_path))
 
     out = {
         "source": "quint-cli",
@@ -232,15 +251,99 @@ def _scan_const_values(text):
     return out
 
 
+def _strip_noise(text):
+    """LENGTH-PRESERVING blanking of // line comments, /* */ block comments,
+    and string-literal contents (quotes kept, body spaced; newlines kept).
+    Brace counting and declaration regexes must run on this — a brace or
+    '//' inside a string or comment otherwise corrupts module spans and
+    action-body attribution. Because offsets are preserved, spans computed
+    on the cleaned text can slice the RAW text when literal content (e.g.
+    import paths) is needed."""
+    out = list(text)
+    i, n = 0, len(text)
+    mode = 0  # 0 normal, 1 line comment, 2 block comment, 3 string
+
+    def blank(idx):
+        if out[idx] != "\n":
+            out[idx] = " "
+
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if mode == 0:
+            if c == "/" and nxt == "/":
+                mode = 1
+                blank(i)
+                blank(i + 1)
+                i += 2
+                continue
+            if c == "/" and nxt == "*":
+                mode = 2
+                blank(i)
+                blank(i + 1)
+                i += 2
+                continue
+            if c == '"':
+                mode = 3
+            i += 1
+        elif mode == 1:
+            if c == "\n":
+                mode = 0
+            else:
+                blank(i)
+            i += 1
+        elif mode == 2:
+            if c == "*" and nxt == "/":
+                mode = 0
+                blank(i)
+                blank(i + 1)
+                i += 2
+                continue
+            blank(i)
+            i += 1
+        else:  # string literal
+            if c == "\\" and i + 1 < n:
+                blank(i)
+                blank(i + 1)
+                i += 2
+                continue
+            if c == '"':
+                mode = 0
+            else:
+                blank(i)
+            i += 1
+    return "".join(out)
+
+
+def _module_spans(clean_text):
+    """[(name, start, end)] for each top-level module, brace-matched over
+    comment/string-stripped text."""
+    spans = []
+    for m in MODULE_RE.finditer(clean_text):
+        depth = 0
+        start = clean_text.index("{", m.start())
+        i = start
+        while i < len(clean_text):
+            if clean_text[i] == "{":
+                depth += 1
+            elif clean_text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        spans.append((m.group(1), m.start(), i + 1))
+    return spans
+
+
 def _parse_action_bodies(text):
-    """Brace-depth-tracked single pass. Returns (mutations, locals)."""
+    """Brace-depth-tracked single pass over ALREADY-STRIPPED text.
+    Returns (mutations, locals)."""
     mutations = {}
     locals_ = set()
     current = None
     action_depth = 0
     depth = 0
-    for raw in text.splitlines():
-        line = raw.split("//", 1)[0]
+    for line in text.splitlines():
         depth_before = depth
 
         action_match = ACTION_RE.match(line)
@@ -271,19 +374,32 @@ def _parse_action_bodies(text):
 
 
 def _parse_via_regex(qnt_path):
-    text = Path(qnt_path).read_text(encoding="utf-8")
-    m = MODULE_RE.search(text)
-    if not m:
+    raw = Path(qnt_path).read_text(encoding="utf-8")
+    clean = _strip_noise(raw)
+    spans = _module_spans(clean)
+    if not spans:
         return None
+    # Same main-module selection as the CLI engine — verdicts must not
+    # depend on which engine parsed the file.
+    named = [
+        (name, bool(VAR_RE.search(clean[start:end])), (name, start, end))
+        for name, start, end in spans
+    ]
+    mod_name, start, end = _pick_main(named, Path(qnt_path))
+    text = clean[start:end]  # scope EVERY scan to the selected module
+
     mutations, action_locals = _parse_action_bodies(text)
     actions = []
     for line in text.splitlines():
-        am = ACTION_RE.match(line.split("//", 1)[0])
+        am = ACTION_RE.match(line)
         if am and am.group(1) not in actions:
             actions.append(am.group(1))
     vals = [n for n in VAL_RE.findall(text) if n not in action_locals]
     imports = []
-    for im in IMPORT_RE.finditer(text):
+    # Import paths live inside string literals, which the cleaned text
+    # blanks — _strip_noise is length-preserving, so slice the RAW text
+    # at the same offsets for this one scan.
+    for im in IMPORT_RE.finditer(raw[start:end]):
         entry = {"module": im.group(1)}
         if im.group(2):
             entry["from"] = im.group(2)
@@ -291,7 +407,7 @@ def _parse_via_regex(qnt_path):
     return {
         "source": "regex",
         "file": str(qnt_path),
-        "module_name": m.group(1),
+        "module_name": mod_name,
         "imports": imports,
         "types": TYPE_RE.findall(text),
         "consts": CONST_RE.findall(text),

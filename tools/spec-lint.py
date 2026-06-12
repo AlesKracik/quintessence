@@ -120,7 +120,7 @@ def build_schema_validator(root, schema_name="area.schema.json"):
         schema_path = Path(__file__).resolve().parent.parent / "schemas" / schema_name
         if not schema_path.exists():
             return None
-    return _jsonschema.Draft7Validator(json.loads(schema_path.read_text()))
+    return _jsonschema.Draft7Validator(json.loads(schema_path.read_text(encoding="utf-8")))
 
 
 def check_schema(area_data, validator, area_name, findings):
@@ -404,13 +404,14 @@ def check_witnesses(root, area_data, area_name, findings):
                 f"Run /spec-check before approval.",
                 ref=rid)
 
-        if not predicate:
-            if req.get("status") not in EARLY_STATUSES:
-                add(findings, WARN, "witness", "no-witness-predicate", area_name,
-                    f"{rid} has no witness.predicate — the behavior can't be "
-                    f"demonstrated reachable. Capture one via /spec, then run /spec-check.",
-                    ref=rid)
-            continue
+        # Trace presence/validity/freshness run UNCONDITIONALLY — they must
+        # not depend on the predicate being present, or deleting the
+        # predicate would silence the freshness FAILs on a witnessed REQ.
+        if not predicate and req.get("status") not in EARLY_STATUSES:
+            add(findings, WARN, "witness", "no-witness-predicate", area_name,
+                f"{rid} has no witness.predicate — the behavior can't be "
+                f"demonstrated reachable. Capture one via /spec, then run /spec-check.",
+                ref=rid)
 
         if trace_rel:
             trace_path = root / "specs" / trace_rel

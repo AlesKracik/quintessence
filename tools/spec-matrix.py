@@ -58,7 +58,7 @@ def load_area(root: Path, area: str) -> dict:
     path = root / "specs" / f"{area}.json"
     if not path.exists():
         sys.exit(f"ERROR: {path} does not exist")
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def discover_qnt_actions(root: Path, area_data: dict, area: str) -> list:
@@ -195,7 +195,7 @@ def load_prior_triage(path: Path) -> dict:
         return {}
     triage = {}
     try:
-        with path.open(newline="") as f:
+        with path.open(newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 covered = (row.get("covered_by") or "").strip()
                 if covered in TRIAGE_VALUES:
@@ -267,7 +267,7 @@ def main():
         stats = emit_csv(rows, scope, idx, sys.stdout, prior_triage)
     else:
         gen_dir.mkdir(parents=True, exist_ok=True)
-        with out_path.open("w", newline="") as f:
+        with out_path.open("w", newline="", encoding="utf-8") as f:
             stats = emit_csv(rows, scope, idx, f, prior_triage)
         print(f"wrote {out_path}", file=sys.stderr)
 
@@ -277,7 +277,8 @@ def main():
                 "# Events declared in concepts.verbs[] / Quint sidecar but not\n"
                 "# scoped to any entity (no transition, no REQ mentions an entity).\n"
                 "# Candidate gaps: should one of these link to an entity?\n\n"
-                + "\n".join(orphans) + "\n"
+                + "\n".join(orphans) + "\n",
+                encoding="utf-8",
             )
             print(f"wrote {orphan_path} ({len(orphans)} orphan events)", file=sys.stderr)
         elif orphan_path.exists():

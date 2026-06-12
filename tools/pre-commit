@@ -15,8 +15,15 @@ fi
 ROOT="$(git rev-parse --show-toplevel)"
 [ -f "$ROOT/tools/spec-lint.py" ] || exit 0
 
-echo "spec-lint: checking specs..."
-if ! "$PYTHON" "$ROOT/tools/spec-lint.py" --no-color --root "$ROOT"; then
+# Lint the STAGED snapshot, not the working tree — otherwise staged-bad /
+# worktree-fixed commits slip through (and clean commits get blocked by
+# unstaged breakage). checkout-index materializes exactly what will commit.
+STAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "$STAGE_DIR"' EXIT
+git checkout-index -a --prefix="$STAGE_DIR/"
+
+echo "spec-lint: checking staged specs..."
+if ! "$PYTHON" "$ROOT/tools/spec-lint.py" --no-color --root "$STAGE_DIR"; then
   echo ""
   echo "spec-lint: FAILED — fix the errors above before committing."
   echo "  To skip (not recommended): git commit --no-verify"

@@ -253,24 +253,36 @@ def cmd_sha(args):
     area = json.loads(area_path.read_text(encoding="utf-8"))
     sha = compute_model_sha(root, args.area, area)
     if sha is None:
-        print(f"ERROR: sidecar for '{args.area}' not found", file=sys.stderr)
+        fm = area.get("formal_model") or {}
+        probes = fm.get("probes_file")
+        if probes and not (root / "specs" / probes).exists():
+            print(f"ERROR: formal_model.probes_file '{probes}' is recorded but "
+                  f"the file is missing — a half-hashable model gets no sha. "
+                  f"Restore it or re-run /spec-check.", file=sys.stderr)
+        else:
+            print(f"ERROR: sidecar for '{args.area}' not found", file=sys.stderr)
         sys.exit(2)
     print(sha)
 
 
-def cmd_status(args):
-    root = Path(args.root)
-    area_path = root / "specs" / f"{args.area}.json"
-    if not area_path.exists():
-        print(f"ERROR: {area_path} not found", file=sys.stderr)
-        sys.exit(2)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
-    current_sha = compute_model_sha(root, args.area, area)
+def witness_status(root, area_name, area_data):
+    """Witness-obligation status for every gating requirement.
+    Returns (rows, missing, discharged) where rows = [(rid, status, trace_rel,
+    detail)] and missing > 0 means the area must NOT be conformance-replayed
+    or treated as fully checked. This is the single implementation behind
+    `itf_tools status` and spec-record's verify preflight.
 
+    Gate semantics: a requirement counts as discharged ONLY when it is
+    witnessed-with-a-fresh-stamped-valid-trace or justified-skipped.
+    Everything else — not-run, no-witness, stale, unstamped, invalid,
+    missing file, unjustified skip, unverifiable model sha — counts
+    against the gate."""
+    root = Path(root)
+    current_sha = compute_model_sha(root, area_name, area_data)
     rows = []
     missing = 0
     discharged = 0
-    for req in area.get("requirements", []) or []:
+    for req in area_data.get("requirements", []) or []:
         rid = req.get("id", "?")
         if req.get("status") == "deferred" or req.get("type") == "non-functional":
             continue
@@ -302,11 +314,19 @@ def cmd_status(args):
                     missing += 1
                 elif status == "witnessed":
                     stamped = w.get("model_sha")
-                    if not stamped:
+                    if current_sha is None:
+                        # Model files unhashable (e.g. probes recorded but
+                        # missing): freshness UNVERIFIABLE — that must gate,
+                        # not silently discharge.
+                        status = "UNVERIFIABLE"
+                        detail = ("model files can't be hashed (probes file "
+                                  "missing?) — freshness unverifiable")
+                        missing += 1
+                    elif not stamped:
                         status = "UNSTAMPED"
                         detail = "no model_sha — freshness unverifiable; re-run /spec-check to pin"
                         missing += 1
-                    elif current_sha and stamped != current_sha:
+                    elif stamped != current_sha:
                         status = "STALE"
                         detail = "model changed since trace was found — re-run /spec-check"
                         missing += 1
@@ -315,7 +335,22 @@ def cmd_status(args):
         elif status == "witnessed":
             status, detail = "MISSING-FILE", "(status says witnessed but no trace recorded)"
             missing += 1
+        if status in ("not-run", "no-witness"):
+            # Undischarged obligations gate the preflight too — "every REQ
+            # witnessed?" must mean what it says.
+            missing += 1
         rows.append((rid, status, trace_rel or "—", detail))
+    return rows, missing, discharged
+
+
+def cmd_status(args):
+    root = Path(args.root)
+    area_path = root / "specs" / f"{args.area}.json"
+    if not area_path.exists():
+        print(f"ERROR: {area_path} not found", file=sys.stderr)
+        sys.exit(2)
+    area = json.loads(area_path.read_text(encoding="utf-8"))
+    rows, missing, discharged = witness_status(root, args.area, area)
 
     if not rows:
         print(f"{args.area}: no requirements declared.")
