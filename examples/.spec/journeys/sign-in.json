@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../schemas/journey.schema.json",
+  "name": "Sign in",
+  "actor": "User",
+  "description": "User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.",
+  "steps": [
+    { "ref": "auth-ui.UI-001" },
+    { "ref": "auth.REQ-001" },
+    { "ref": "auth-ui.UI-002" },
+    { "ref": "auth.REQ-003", "note": "failure branch: repeated bad credentials lock the account" },
+    { "ref": "auth-ui.UI-003", "note": "locked-account counterpart of the submit step" }
+  ]
+}

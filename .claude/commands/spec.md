@@ -13,7 +13,7 @@ There are no other authoring subcommands — this command subsumes every authori
 /spec _overview                # project overview: areas, open changes, status
 ```
 
-**The change is the unit of work; the area is the unit of meaning.** Every spec edit happens inside a *change* — a manifest at `.spec/changes/<slug>.json` (schema: `schemas/change.schema.json`) that references the areas/contracts it touches and tracks their workflow state. Areas remain the logical spec boundary and the single source of truth; the manifest holds only IDs and phase flags, never spec content.
+**The change is the unit of work; the area is the unit of meaning.** Every spec edit happens inside a *change* — a manifest at `.spec/changes/<slug>.json` (schema: `schemas/change.schema.json`) that references the areas/contracts it touches. Areas remain the logical spec boundary and the single source of truth; the manifest holds membership and IDs only — never spec content, never phase flags (status is derived; see the dashboard beat).
 
 The **active change** is per-dev sticky state: `last_change` in `.spec/local.json` (gitignored). All five spec commands resolve against it — run bare to continue the change, pass an explicit target for a one-off. If an area edit starts with no active change, auto-open one: ask "No active change. Name this work? [<area>-updates]" — Enter accepts the default. One question, then every spec diff is traceable to a manifest.
 
@@ -159,7 +159,7 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 - **Decisions**: architectural choices being made, with alternatives.
 - **Open questions**: anything the user can't answer yet; mark `Q-NNN` `status: open`.
 
-**Early matrix pass**: as soon as `state_machines[]` and a first batch of REQs exist, run `tools/spec-matrix.py <target>` and triage the `?` cells in this conversation — classify into the GAP / IMPOSSIBLE / OUT-OF-SCOPE buckets defined in `/spec-check` Step 4a; triage values written into `covered_by` survive regeneration. A gap found now, while the user is describing the domain, becomes a REQ in one exchange; the same gap found later by `/spec-check` becomes a stale entry in the Q-NNN queue. Same tool, earlier moment.
+**Early matrix pass**: as soon as `state_machines[]` and a first batch of REQs exist, run `tools/spec-matrix.py <target>` and triage the `?` cells in this conversation — classify into the GAP / IMPOSSIBLE / OUT-OF-SCOPE buckets defined in `/spec-check` Step 4a, recording each verdict in the area JSON's `matrix_triage[]` (committed — decisions in the gitignored CSV don't survive a clone). A gap found now, while the user is describing the domain, becomes a REQ in one exchange; the same gap found later by `/spec-check` becomes a stale entry in the Q-NNN queue. Same tool, earlier moment.
 
 **Closing gap sweep**: when the clusters are exhausted (before formalizing), run one short red-team moment while the user is still in the conversation. From `/spec-check` Step 4b's category list, keep only the categories this domain plausibly touches; ask at most ~8 questions whose answer would add or change a requirement, each citing the REQ/INV/entity it touches (or "absent"). Answers become REQs/INVs/CONs in the same exchange; what the user can't answer becomes a Q-NNN. Same logic as the early matrix: a gap found now is a requirement in one exchange. The full `--reality` pass at check time is for depth — it shouldn't be the first time these questions are asked.
 

@@ -41,7 +41,7 @@
         "required": ["url"],
         "additionalProperties": false,
         "properties": {
-          "url":            { "type": "string", "description": "Clone URL; informational, used by tools/setup-repos.sh." },
+          "url":            { "type": "string", "description": "Clone URL; informational — shown when a repo checkout is missing from .spec/local.json." },
           "default_branch": { "type": "string", "default": "main" },
           "pr_tool":        { "type": "string", "enum": ["gh", "glab", "none"], "default": "gh" }
         }

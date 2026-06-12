@@ -43,23 +43,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Template-repo guard: before bootstrap there is no .spec/project.json,
+      # so every gate below would fail on its own repo's PRs. Skip cleanly.
+      - name: Detect bootstrapped project
+        id: boot
+        run: |
+          if [ -f .spec/project.json ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "No .spec/project.json — template repo, spec gates skipped."
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.boot.outputs.ok == 'true'
         with:
           python-version: "3.12"
 
       - uses: actions/setup-node@v4
+        if: steps.boot.outputs.ok == 'true'
         with:
           node-version: "20"
 
       - name: Install Quint CLI + jsonschema
+        if: steps.boot.outputs.ok == 'true'
         run: |
           npm install -g @informalsystems/quint
           pip install jsonschema
 
       - name: spec-lint (jsonschema + consistency + EARS + witness obligations + freshness)
+        if: steps.boot.outputs.ok == 'true'
         run: python tools/spec-lint.py --no-color
 
       - name: spec-matrix --strict (state×event completeness gate)
+        if: steps.boot.outputs.ok == 'true'
         run: |
           set -e
           for area in $(python -c "import json; print(' '.join(a['name'] for a in json.load(open('.spec/project.json'))['areas'] if a.get('kind') != 'contract'))"); do
@@ -68,6 +85,7 @@ jobs:
           done
 
       - name: Quint typecheck (sidecars + probe modules)
+        if: steps.boot.outputs.ok == 'true'
         run: |
           set -e
           for f in specs/*.qnt; do
@@ -76,6 +94,7 @@ jobs:
           done
 
       - name: Quint test (run scenarios in the models)
+        if: steps.boot.outputs.ok == 'true'
         run: |
           set -e
           shopt -s nullglob

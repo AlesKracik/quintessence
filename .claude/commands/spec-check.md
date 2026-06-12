@@ -156,12 +156,12 @@ The script writes into `specs/<target>/gen/` (gitignored — regenerable):
 - `specs/<target>/gen/matrix.csv` — columns `entity,state,event,covered_by,behavior`. Cells with no covering transition/REQ are marked `?`.
 - `specs/<target>/gen/matrix-orphans.txt` — events declared in `concepts.verbs[]` or the Quint sidecar but **not scoped to any entity** (no transition references them and no REQ description mentions any entity for them). These are candidates for missing entity↔event links.
 
-Stderr prints `entities=… state_rows=… events=… orphans=… cells=… covered=… triaged=… uncovered=…`. The script makes no judgement — enumeration only. Triage values you write into `covered_by` (GAP / IMPOSSIBLE / OUT-OF-SCOPE) **survive regeneration**; only fresh `?` cells need triage each run. `tools/spec-matrix.py <target> --strict` exits 1 while any `?` remains — that's the CI completeness gate.
+Stderr prints `entities=… state_rows=… events=… orphans=… cells=… covered=… triaged=… uncovered=…`. The script makes no judgement — enumeration only. **Triage decisions live in the area JSON's `matrix_triage[]`** (committed — the CSV is gitignored scratch; a decision recorded only there would vanish on a fresh clone and break the CI gate). `tools/spec-matrix.py <target> --strict` exits 1 while any `?` remains — that's the CI completeness gate.
 
-**Triage `?` cells (LLM).** Read every row where `covered_by == "?"`. Classify each into one of three buckets and rewrite the cell in place:
-1. **Real gap** — behavior matters, spec is silent → set `covered_by: GAP`, fill `behavior` with the unanswered question, AND append `Q-NNN` to `open_questions[]`.
-2. **Impossible transition** — state/event combination cannot occur (e.g. event guarded by other state) → set `covered_by: IMPOSSIBLE`, fill `behavior` with the reason.
-3. **Intentionally out of scope** — covered elsewhere or explicitly excluded → set `covered_by: OUT-OF-SCOPE`, fill `behavior` with pointer (e.g. `see contract X` or `excluded by REQ-099`).
+**Triage `?` cells (LLM).** Read every CSV row where `covered_by == "?"`. Classify each into one of three buckets and append an entry to `matrix_triage[]` in `specs/<target>.json` (`{entity, state, event, verdict, reason}`), then re-run `spec-matrix --record` to refresh the CSV and stats:
+1. **Real gap** — behavior matters, spec is silent → `verdict: GAP`, `reason` = the unanswered question, `question: Q-NNN` AND append that `Q-NNN` to `open_questions[]` with `source: "matrix"`.
+2. **Impossible transition** — state/event combination cannot occur (e.g. event guarded by other state) → `verdict: IMPOSSIBLE`, `reason` = the impossibility argument.
+3. **Intentionally out of scope** — covered elsewhere or explicitly excluded → `verdict: OUT-OF-SCOPE`, `reason` = pointer (e.g. `see contract X` or `lifecycle action, not a transition`).
 
 **Triage orphans (LLM).** Read `specs/<target>/gen/matrix-orphans.txt`. For each orphan event, decide:
 - **Missing link** — event genuinely applies to some entity but neither a transition nor a REQ wires it → append `Q-NNN` with `source: "matrix-orphan"` asking which entity owns this event and what state transitions it should trigger.

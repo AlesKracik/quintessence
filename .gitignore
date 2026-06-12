@@ -36,8 +36,8 @@ __pycache__/
 .venv/
 venv/
 
-# Apalache scratch files (counterexamples and results.json ARE checked in)
-specs/*/apalache/_tmp/
+# Regenerable spec artifacts (witness/counterexample traces ARE checked in under specs/<area>/traces/)
+specs/*/gen/
 *.tla.bak
 
 # Regenerable spec artifacts (tools re-emit these on every run).

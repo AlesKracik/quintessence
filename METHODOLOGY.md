@@ -100,7 +100,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   │   ├── traces/               ←   ITF witness traces, one per REQ (committed)
 │   │   │   └── REQ-003.itf.json
 │   │   ├── gen/                  ←   regenerable artifacts (GITIGNORED):
-│   │   │   ├── matrix.csv        ←     state×event matrix (spec-matrix)
+│   │   │   ├── matrix.csv        ←     state×event matrix VIEW (decisions live in
+│   │   │   │                            the area JSON's committed matrix_triage[])
 │   │   │   ├── matrix-orphans.txt
 │   │   │   └── redteam-backlog.md
 │   │   └── components/           ←   per-component JSON if Layer 1 split into files
@@ -114,8 +115,12 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   ├── project.schema.json
 │   ├── pattern.schema.json
 │   └── protocol.schema.json
+├── templates/
+│   ├── spec.qnt.template         ← sidecar structure convention
+│   └── probes.qnt.template       ← ghost instrumentation + witness probes
 ├── .github/workflows/
-│   └── spec-ci.yml               ← lint → matrix --strict → check → verify gate
+│   └── spec-ci.yml               ← lint → matrix --strict → quint typecheck → quint test
+│                                    (Apalache + conformance replay are agent-driven, not CI)
 └── tools/
     ├── spec-lint.py              ← consistency checker (incl. EARS + witness obligations)
     ├── spec-record.py            ← deterministic check runner: quint verify + probe runs,
@@ -430,7 +435,7 @@ Declare one whenever an entity has a `states[]` list in `concepts.entities[]` th
 
 ---
 
-## Architecture (Six Layers)
+## Architecture (Layers 0–6)
 
 Architecture is **separate from behavior**. The spec says what the system does; architecture says how it's realized. Six layers compose by inheritance; each is optional.
 
@@ -563,7 +568,7 @@ The methodology doesn't dictate a branch model. Use whatever your team uses. Sug
 
 - **Spec changes live in PRs** alongside code changes — reviewers see both diffs together.
 - **Tag spec versions if you want auditability**: `git tag specs/auth/v1.0.0` whenever you bump `area.version` for an important milestone. Optional; nothing requires it.
-- **`/spec-verify` runs in CI** to catch drift before merge. Failing verify = blocking review comment.
+- **Wire `conformance.command` into the code repo's own CI** — the replay harness is an ordinary test file, so model-conformance breakage fails code PRs with no spec tooling installed. Full `/spec-verify` runs (traceability, drift, log) are agent-driven: run before merge or on a schedule; spec-ci.yml deliberately carries only the cheap deterministic gates (lint, matrix, typecheck, quint test).
 - **Branches are optional.** Work on main if your team works on main; work on branches if your team branches. The methodology doesn't care.
 
 ---
@@ -590,7 +595,7 @@ requirement.status:   raw → needs-validation → specified → verified
                                 → deferred (removed)
                       ("verified" = witness trace replays green against code)
 requirement.witness.status: not-run → witnessed | no-witness | skipped
-invariant.formal_status: specified → verified
+invariant.formal_status: specified | not-run → verified
                                   → counterexample-found
                                   → accepted-risk
 area.status:          raw → structured → formalized → in-review → approved

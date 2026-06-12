@@ -13,7 +13,7 @@ What you get:
 - **One JSON file per area** at `specs/<name>.json`, with a Quint sidecar `specs/<name>.qnt`. Two kinds: `area` (functional; declare `screens[]` + `navigation[]` to model an interactive surface formally) and `contract` (cross-area invariants). Requirements group into **journeys** (`.spec/journeys/` — use cases with steps in temporal order, single- or cross-area) — readbacks render flows as a human walks them, not ID-sorted lists.
 - **Changes as the unit of work**: a manifest per change at `.spec/changes/<slug>.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
 - **Anti-vacuity guarantees**: a requirement counts as demonstrated only when the checker produces a witness trace for it; a spec whose invariants pass over an unreachable state space is caught, not celebrated.
-- Six optional architecture layers (stack, components, patterns, ADRs, topology, protocols, diagrams) and a multi-repo story via config-driven paths (no submodules).
+- Seven optional architecture layers (0–6: stack, components, patterns, ADRs, topology, protocols, readbacks) and a multi-repo story via config-driven paths (no submodules).
 - Python tooling: `spec-lint` (consistency + EARS + precision lints + witness obligations), `spec-record` (deterministic check runner — runs the verifier and writes all results back mechanically; the AI never hand-edits a verdict), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
 
 Read [METHODOLOGY.md](METHODOLOGY.md) for the full picture. It travels with every project created from this template.
@@ -248,6 +248,8 @@ spec-template/
 ├── METHODOLOGY.md             ← the methodology — stays in every project
 ├── .claude/commands/          ← the 5 /spec-* commands
 ├── schemas/                   ← 6 JSON schemas (area, change, journey, project, pattern, protocol)
+├── templates/                 ← spec.qnt.template, probes.qnt.template (sidecar + probe conventions)
+├── .github/workflows/         ← spec-ci.yml (lint → matrix → typecheck → quint test; skips pre-bootstrap)
 ├── tools/                     ← spec-lint, spec-record, spec-matrix, quint_ir, itf_tools, bootstrap.sh (self-removes)
 └── examples/                  ← sample auth area + auth-ui area (stripped by bootstrap)
 ```

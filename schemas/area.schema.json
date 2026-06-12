@@ -94,7 +94,7 @@
           },
           "fit_criterion": {
             "type": "object",
-            "description": "Measurable acceptance criterion (Planguage-style). Required for type: non-functional — 'fast', 'secure', 'scalable' are not requirements until they carry a metric, a target, and a way to measure. spec-lint FAILs a non-functional requirement without one past raw status.",
+            "description": "Measurable acceptance criterion (Planguage-style). Required for type: non-functional — 'fast', 'secure', 'scalable' are not requirements until they carry a metric, a target, and a way to measure. spec-lint WARNs while the requirement is in an early status (raw, needs-validation) and FAILs after.",
             "additionalProperties": false,
             "required": ["metric", "target", "measurement"],
             "properties": {
@@ -105,7 +105,7 @@
           },
           "status": {
             "type": "string",
-            "enum": ["raw", "needs-validation", "pending", "specified", "verified", "deferred"],
+            "enum": ["raw", "needs-validation", "specified", "verified", "deferred"],
             "default": "raw"
           },
           "source":    { "type": "string", "description": "elicited | extracted | reconciled | etc." },
@@ -449,9 +449,28 @@
         "properties": {
           "id":         { "type": "string", "pattern": "^Q-\\d{3}$" },
           "question":   { "type": "string" },
+          "source":     { "type": "string", "description": "Where the question came from: matrix, matrix-orphan, red-team:critical, red-team:important, counterexample, elicitation, …" },
           "status":     { "type": "string", "enum": ["open", "deferred", "resolved"], "default": "open" },
           "resolution": { "type": "string" },
           "resolved_at":{ "type": "string", "format": "date-time" }
+        }
+      }
+    },
+
+    "matrix_triage": {
+      "type": "array",
+      "description": "COMMITTED triage decisions for uncovered state×event cells. The matrix CSV under specs/<area>/gen/ is gitignored scratch — decisions recorded only there would vanish on a fresh clone and the --strict CI gate would fail. This section is the durable home; spec-matrix reads it when regenerating and the CSV merely mirrors it.",
+      "items": {
+        "type": "object",
+        "required": ["entity", "state", "event", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "entity":  { "type": "string" },
+          "state":   { "type": "string" },
+          "event":   { "type": "string" },
+          "verdict": { "type": "string", "enum": ["GAP", "IMPOSSIBLE", "OUT-OF-SCOPE"] },
+          "reason":  { "type": "string", "description": "Why: the impossibility argument, the covering artifact, or (for GAP) the unanswered question." },
+          "question": { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For GAP verdicts: the open_questions[] entry tracking it." }
         }
       }
     },

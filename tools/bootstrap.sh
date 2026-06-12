@@ -13,7 +13,7 @@
 #                want to add /spec to an existing codebase.
 #
 # Either mode self-removes tools/bootstrap.sh on success; tools/ itself stays
-# (spec-lint, spec-matrix, quint_ir, itf_tools, hooks installer live there).
+# (spec-lint, spec-record, spec-matrix, quint_ir, itf_tools, hooks installer live there).
 
 set -euo pipefail
 

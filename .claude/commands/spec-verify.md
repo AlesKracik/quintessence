@@ -197,11 +197,8 @@ Show the commit message; wait for confirmation.
 
 ### CI usage
 
-`/spec-verify` is designed to run in CI. Per-PR pipeline:
-1. Check out the PR branch.
-2. Run `/spec-verify <area>` for each area touched by the PR.
-3. Block merge if any returns FAIL or drift_detected.
+The split (rationale: METHODOLOGY → Git Conventions):
 
-For monorepo coverage, iterate over `areas[]` from `.spec/project.json`.
-
-**Conformance belongs in the CODE repo's own CI too.** The replay harness is just a test file — wire `conformance.command` into the code repo's standard test run (it already runs on every code PR). Then a code change that breaks model conformance fails immediately in the code repo, without any spec tooling installed; `/spec-verify` remains the cross-checking layer that also validates traceability and drift.
+- **Code repo CI**: wire `conformance.command` into the standard test run — the replay harness is just a test file, so a code change that breaks model conformance fails immediately on the code PR, with no spec tooling installed.
+- **Spec repo CI** (`spec-ci.yml`): the cheap deterministic gates only — lint, matrix `--strict`, quint typecheck/test.
+- **Full `/spec-verify`** (traceability validation, drift detection, verification log) is agent-driven: run it before merge or on a schedule; it is not part of the shipped CI workflow.

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../schemas/change.schema.json",
+  "change": "initial-auth",
+  "intent": "Initial authentication area and login UI, formally modeled",
+  "status": "landed",
+  "created": "2026-05-12",
+  "last_modified": "2026-05-15",
+  "branch": "change/initial-auth",
+  "targets": [
+    { "name": "auth",    "kind": "area", "ids": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "INV-001", "INV-002", "INV-003", "CON-001", "CON-002", "DEC-001"] },
+    { "name": "auth-ui", "kind": "area", "ids": ["UI-001", "UI-002", "UI-003", "INV-001", "DEC-001"] }
+  ],
+  "notes": "Reference example of a landed change manifest — the changelog entry form."
+}

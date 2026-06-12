@@ -88,13 +88,18 @@ def collect_rows(area_data: dict) -> list:
     return rows
 
 
+# Model plumbing, never domain events — excluding them kills the noise
+# orphans (init/step showed up as "candidate missing entity↔event links").
+PLUMBING_ACTIONS = {"init", "step", "initP", "stepP"}
+
+
 def all_events(area_data: dict, qnt_actions: list) -> list:
     seen = []
     for v in (area_data.get("concepts") or {}).get("verbs", []) or []:
         if v not in seen:
             seen.append(v)
     for a in qnt_actions:
-        if a not in seen:
+        if a not in seen and a not in PLUMBING_ACTIONS:
             seen.append(a)
     return seen
 
@@ -255,13 +260,31 @@ def main():
     idx = build_coverage_index(area_data)
     gen_dir = root / "specs" / args.area / "gen"
     out_path = gen_dir / "matrix.csv"
-    prior_triage = load_prior_triage(out_path)
+
+    # Triage decisions: the COMMITTED area-JSON matrix_triage[] is the
+    # authoritative source (the gen/ CSV is gitignored scratch — triage
+    # living only there evaporates on a fresh clone and breaks --strict
+    # in CI). CSV values are merged in second, for migration only.
+    prior_triage = {}
+    csv_triage = load_prior_triage(out_path)
     if not out_path.exists():
-        # Legacy flat location (pre-gen/ layout) — carry triage over once,
-        # only when no gen/ matrix exists yet. (A current matrix with zero
-        # triage values is a legitimate state, not a trigger to resurrect
-        # stale pre-migration triage.)
-        prior_triage = load_prior_triage(root / "specs" / f"{args.area}.matrix.csv")
+        # Legacy flat location (pre-gen/ layout) — carry over once.
+        csv_triage = load_prior_triage(root / "specs" / f"{args.area}.matrix.csv")
+    prior_triage.update(csv_triage)
+    json_keys = set()
+    for t in area_data.get("matrix_triage", []) or []:
+        key = (t.get("entity"), t.get("state"), t.get("event"))
+        json_keys.add(key)
+        if t.get("verdict") in TRIAGE_VALUES:
+            prior_triage[key] = (t["verdict"], t.get("reason") or "")
+    csv_only = {k for k in csv_triage if k not in json_keys}
+    if csv_only:
+        print(
+            f"NOTE: {len(csv_only)} triage value(s) exist only in the "
+            f"gitignored CSV — move them into specs/{args.area}.json "
+            f"matrix_triage[] or they are lost on a fresh clone.",
+            file=sys.stderr,
+        )
 
     if args.stdout:
         stats = emit_csv(rows, scope, idx, sys.stdout, prior_triage)
@@ -296,7 +319,6 @@ def main():
         area_path = root / "specs" / f"{args.area}.json"
         area_full = json.loads(area_path.read_text(encoding="utf-8"))
         cr = area_full.setdefault("check_results", {})
-        prior_gaps = (cr.get("matrix") or {}).get("gaps")
         cr["matrix"] = {
             "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "cells": stats["total"],
@@ -305,9 +327,14 @@ def main():
             "uncovered": stats["uncovered"],
             "orphans": len(orphans),
         }
-        if prior_gaps:
-            # Q-NNN refs are filed by triage, not by this script — carry them.
-            cr["matrix"]["gaps"] = prior_gaps
+        # GAP question refs derive straight from matrix_triage[] — nothing
+        # to carry by hand.
+        gaps = sorted({
+            t["question"] for t in area_full.get("matrix_triage", []) or []
+            if t.get("verdict") == "GAP" and t.get("question")
+        })
+        if gaps:
+            cr["matrix"]["gaps"] = gaps
         area_path.write_text(
             json.dumps(area_full, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
