@@ -621,7 +621,12 @@ area.status:          raw → structured → formalized → in-review → approv
 
 ### spec-record
 
-`tools/spec-record.py check <area>` is the deterministic half of `/spec-check`: it runs `quint verify` for every invariant, property, and witness probe, parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks into the area JSON mechanically — with skip-if-fresh (`model_sha` match → probe not re-run). The agent's role in checking is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes), matrix triage, red-team. A verification verdict is never hand-edited.
+`tools/spec-record.py` is the deterministic ledger for both machine-checked phases — **no verification verdict in the area JSON is ever hand-edited**:
+
+- `check <area>` — runs `quint verify` for every invariant, property, and witness probe, parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically — with skip-if-fresh (`model_sha` match + valid trace → probe not re-run) and `--only` runs merging into the prior ledger rather than replacing it.
+- `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
+
+The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-verify`.
 
 Sidecar parsing goes through `tools/quint_ir.py`: the Quint compiler's typed JSON IR when the `quint` CLI is installed, a regex fallback otherwise — so lint never disagrees with the compiler about what's in the model when the CLI is present.
 

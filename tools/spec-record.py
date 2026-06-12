@@ -16,8 +16,10 @@ into natural language (the one free-text field this tool never touches:
 counterexample.nl_explanation), and triaging matrix gaps.
 
 Subcommands:
-  check <area> [--root .] [--steps N] [--timeout S]
-               [--only INV-001,REQ-003] [--no-witness] [--json]
+  check  <area> [--root .] [--steps N] [--timeout S]
+                [--only INV-001,REQ-003] [--no-witness] [--json]
+  verify <area> [--root .] [--code-root PATH]
+                [--skip-conformance] [--skip-tests] [--json]
 
 What `check` does, in order:
   1. Invariants + properties (quint_name set): `quint verify
@@ -35,8 +37,25 @@ What `check` does, in order:
      nl_explanation for counterexamples whose result didn't change),
      formal_status per invariant/property, and each witness block.
 
+What `verify` does, in order (the deterministic half of /spec-verify —
+the LLM keeps the judgment dimensions: completeness/correctness/coherence
+reads of the code):
+  1. Witness preflight via itf_tools.witness_status — refuses conformance
+     replay while any obligation is undischarged (stale/missing/not-run).
+  2. Runs conformance.command (trace replay incl. the tampered self-test)
+     and the area's test_command from the code repo root; records exit
+     codes. Counts are facts, not judgments.
+  3. Mechanical drift: git log between the last verification_log entry's
+     code_sha and HEAD, intersected with traceability[] code paths —
+     drift_detected = overall failure AND a traced file changed.
+  4. Appends the verification_log entry (shas via git rev-parse), flips
+     requirements[].status -> "verified" and traceability[].verified for
+     witnessed REQs ONLY when the replay was green, trims the log to the
+     newest 50 entries. No hand-written verdicts anywhere.
+
 Exit codes: 0 = all verified/witnessed/fresh; 1 = any counterexample,
-no-witness, error, or timeout; 2 = setup problem (missing files/tools).
+no-witness, error, timeout, or failed replay/tests; 2 = setup problem
+(missing files/tools).
 """
 
 import argparse
@@ -48,7 +67,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from itf_tools import compute_model_sha, load_trace  # noqa: E402
+from itf_tools import compute_model_sha, load_trace, witness_status  # noqa: E402
 from quint_ir import parse_qnt  # noqa: E402
 
 
@@ -309,6 +328,189 @@ def cmd_check(args):
     sys.exit(1 if bad else 0)
 
 
+# ── verify ───────────────────────────────────────────────────────────────────
+
+def git_head(cwd):
+    try:
+        proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(cwd),
+                              capture_output=True, text=True, timeout=30)
+        return proc.stdout.strip() if proc.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def git_changed_files(cwd, since_sha):
+    try:
+        proc = subprocess.run(["git", "diff", "--name-only", f"{since_sha}..HEAD"],
+                              cwd=str(cwd), capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            return None
+        return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def run_shell(command, cwd, timeout):
+    """Run a project-defined shell command (conformance/test). Returns
+    (exit_code, tail). shell=True on purpose — these are user-authored
+    command lines from project.json/area config."""
+    try:
+        proc = subprocess.run(command, shell=True, cwd=str(cwd),
+                              capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, f"timed out after {timeout}s"
+    out = (proc.stdout or "") + (proc.stderr or "")
+    tail = "\n".join(out.strip().splitlines()[-8:])
+    return proc.returncode, tail
+
+
+def resolve_code_root(root, area_name, project, override=None):
+    """(repo_root, area_entry). repo_root = where conformance/test commands
+    run. Multi-repo: .spec/local.json repo_paths[code_repo]; single-repo:
+    the project root."""
+    entry = next((a for a in project.get("areas", []) or []
+                  if a.get("name") == area_name), {}) or {}
+    if override:
+        return Path(override), entry
+    code_repo = entry.get("code_repo")
+    if code_repo:
+        local = load_json(root / ".spec" / "local.json") or {}
+        repo_path = (local.get("repo_paths") or {}).get(code_repo)
+        if not repo_path:
+            fail_setup(f"area '{area_name}' maps to repo '{code_repo}' but "
+                       f".spec/local.json has no repo_paths entry for it.")
+        return Path(repo_path), entry
+    return Path(root), entry
+
+
+def cmd_verify(args):
+    root = Path(args.root)
+    area_path = root / "specs" / f"{args.area}.json"
+    area = load_json(area_path)
+    if area is None:
+        fail_setup(f"{area_path} not found.")
+    if area.get("kind") == "contract":
+        fail_setup(f"'{args.area}' is a contract — its verification is "
+                   f"/spec-check (spec-record check).")
+
+    project = load_json(root / ".spec" / "project.json") or {}
+    repo_root, entry = resolve_code_root(root, args.area, project, args.code_root)
+    conformance = area.get("conformance") or {}
+    test_command = entry.get("test_command")
+    bad = 0
+    notes = []
+
+    # ── 1. Witness preflight ─────────────────────────────────────────────
+    _rows, missing, discharged = witness_status(root, args.area, area)
+    preflight_ok = missing == 0
+    if not preflight_ok:
+        notes.append(f"witness preflight: {missing} undischarged obligation(s)")
+        print(f"PREFLIGHT: {missing} undischarged witness obligation(s) — "
+              f"conformance replay refused (run itf_tools status / spec-record check).")
+        bad += 1
+
+    # ── 2. Conformance replay ────────────────────────────────────────────
+    conf_result = None  # None = not run
+    traces_replayed = 0
+    if args.skip_conformance:
+        notes.append("conformance: skipped (--skip-conformance)")
+    elif not conformance.get("command"):
+        notes.append("conformance: not set up (run /spec-apply)")
+    elif preflight_ok:
+        traces_dir = root / "specs" / (conformance.get("traces_dir") or f"{args.area}/traces")
+        traces_replayed = len([
+            p for p in (traces_dir.glob("*.itf.json") if traces_dir.exists() else [])
+            if not p.name.startswith("_selftest.") and ".cex." not in p.name
+        ])
+        code, tail = run_shell(conformance["command"], repo_root, args.timeout or 1800)
+        conf_result = (code == 0)
+        if conf_result:
+            print(f"CONFORMANCE: PASS — {traces_replayed} trace(s) replayed green "
+                  f"(incl. tampered self-test asserting failure)")
+        else:
+            bad += 1
+            print(f"CONFORMANCE: FAIL (exit {code})\n{tail}")
+            notes.append(f"conformance failed (exit {code})")
+
+    # ── 3. Test suite ────────────────────────────────────────────────────
+    tests_result = None
+    if args.skip_tests:
+        notes.append("tests: skipped (--skip-tests)")
+    elif not test_command:
+        notes.append("tests: no test_command configured")
+    else:
+        code, tail = run_shell(test_command, repo_root, args.timeout or 1800)
+        tests_result = (code == 0)
+        if tests_result:
+            print("TESTS: PASS")
+        else:
+            bad += 1
+            print(f"TESTS: FAIL (exit {code})\n{tail}")
+            notes.append(f"tests failed (exit {code})")
+
+    # ── 4. Mechanical drift ──────────────────────────────────────────────
+    spec_sha = git_head(root)
+    code_sha = git_head(repo_root)
+    drift = False
+    log = area.get("verification_log") or []
+    prev_sha = next((e.get("code_sha") for e in reversed(log) if e.get("code_sha")), None)
+    if bad and prev_sha and code_sha and prev_sha != code_sha:
+        changed = git_changed_files(repo_root, prev_sha)
+        if changed is not None:
+            traced = set()
+            for t in area.get("traceability", []) or []:
+                code_ref = (t.get("code") or "").split(":", 1)[0]
+                if code_ref:
+                    traced.add(code_ref)
+            drift = any(
+                any(ch.endswith(tr) or tr.endswith(ch) for tr in traced)
+                for ch in changed
+            )
+    if drift:
+        print("DRIFT: traced files changed since last verified code_sha AND "
+              "this run is failing — spec/code divergence. Codify via /spec "
+              "or revert the code.")
+
+    # ── 5. Verdict write-back ────────────────────────────────────────────
+    status = "pass" if bad == 0 else "fail"
+    if conf_result:  # green replay — the only path that flips "verified"
+        witnessed_ids = {
+            r.get("id") for r in area.get("requirements", []) or []
+            if (r.get("witness") or {}).get("status") == "witnessed"
+        }
+        for r in area.get("requirements", []) or []:
+            if r.get("id") in witnessed_ids:
+                r["status"] = "verified"
+        for t in area.get("traceability", []) or []:
+            if t.get("id") in witnessed_ids:
+                t["verified"] = True
+
+    entry_out = {
+        "date": now_iso(),
+        "spec_sha": spec_sha,
+        "code_sha": code_sha,
+        "code_repo": entry.get("code_repo"),
+        "status": status,
+        "drift_detected": drift,
+        "summary": "; ".join(notes) if notes else (
+            f"conformance {traces_replayed} trace(s) green; tests pass"),
+        "conformance": {
+            "traces_replayed": traces_replayed if conf_result is not None else 0,
+            "passed": traces_replayed if conf_result else 0,
+            "failed": 0 if conf_result in (True, None) else traces_replayed,
+            "failed_ids": [],
+        },
+    }
+    log.append(entry_out)
+    area["verification_log"] = log[-50:]  # deterministic cap, newest kept
+    save_area(area_path, area)
+    print(f"\nrecorded verification_log entry ({status}) in {area_path}")
+
+    if args.emit_json:
+        print(json.dumps(entry_out, indent=2))
+    sys.exit(1 if bad else 0)
+
+
 def main():
     p = argparse.ArgumentParser(description="Deterministic check runner + ledger.")
     sub = p.add_subparsers(dest="command", required=True)
@@ -323,6 +525,17 @@ def main():
     pc.add_argument("--json", dest="emit_json", action="store_true",
                     help="Also print a JSON summary.")
     pc.set_defaults(func=cmd_check)
+
+    pv = sub.add_parser("verify", help="Replay conformance + tests; record verification_log.")
+    pv.add_argument("area")
+    pv.add_argument("--root", default=".")
+    pv.add_argument("--code-root", help="Override the resolved code repo root.")
+    pv.add_argument("--timeout", type=int, help="Per-command timeout seconds (default 1800).")
+    pv.add_argument("--skip-conformance", action="store_true")
+    pv.add_argument("--skip-tests", action="store_true")
+    pv.add_argument("--json", dest="emit_json", action="store_true",
+                    help="Also print the recorded entry as JSON.")
+    pv.set_defaults(func=cmd_verify)
 
     args = p.parse_args()
     args.func(args)
