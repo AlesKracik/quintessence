@@ -103,9 +103,11 @@ Ask only what's needed to start eliciting:
 
 Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and an empty `formal_model.quint_file` pointer.
 
+5. **Open the first change** — the change is the unit of work, so bootstrap ends inside one, not before one. Ask: `Name the first change? [initial-spec]` (Enter = default; intent defaults to "Initial specification of <area list>"). Create `.spec/changes/<slug>.json` per `schemas/change.schema.json` with every declared area as a target (`status: "open"`, empty `ids[]`), write `last_change` to `.spec/local.json`, and suggest branch `change/<slug>`.
+
 Install pre-commit hook via `bash tools/setup-hooks.sh` (idempotent).
 
-Print: "Project initialized. Next: `/spec <area>` for each area you declared."
+Print: "Project initialized, change `<slug>` open. Next: `/spec <area>` for each area you declared — edits land in the change; bare `/spec` shows the dashboard."
 
 #### project edit — `.spec/project.json`
 

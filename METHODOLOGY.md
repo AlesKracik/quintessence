@@ -44,7 +44,7 @@ cd my-project
 
 # Start in Claude Code
 /spec                                # adaptive: detects state, walks setup
-# (creates .spec/project.json and the first area)
+# (creates .spec/project.json, opens the first change, scaffolds the areas)
 ```
 
 For an **existing codebase** (brownfield): the same `/spec auth` recognizes that no `specs/auth.json` exists but `src/auth/` has code, and walks extraction. No special command, no separate path.
@@ -518,7 +518,7 @@ The manifest is an **overlay, not a container**: it holds membership only — wh
 
 How it drives the commands:
 
-- The **active change** is per-dev sticky state (`last_change` in `.spec/local.json`). `/spec change <slug>` opens or switches; every spec edit happens inside a change — starting an area edit with no active change auto-opens one (one prompt, Enter accepts the default name). A single-area tweak is just the degenerate case: a change with one target.
+- The **active change** is per-dev sticky state (`last_change` in `.spec/local.json`). `/spec change <slug>` opens or switches; every spec edit happens inside a change — project bootstrap ends by opening the first change (default `initial-spec`, targets = the declared areas), and starting an area edit with no active change auto-opens one (one prompt, Enter accepts the default name). A single-area tweak is just the degenerate case: a change with one target.
 - Bare `/spec` shows the **change dashboard**: per-target phase grid (spec / checked / applied / verified, all computed) plus the suggested next step.
 - Bare `/spec-check` checks **all** targets of the change, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas moved. Contracts spanning a touched area join `targets[]` automatically (`auto: true`).
 - Bare `/spec-apply` / `/spec-verify` run every code-bearing target; contracts are skipped (spec-only).
