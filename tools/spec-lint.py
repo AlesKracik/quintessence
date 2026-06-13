@@ -147,6 +147,7 @@ def parse_sidecar(path):
         "imports":          [i["module"] for i in ir["imports"]],
         "named":            set(ir["vals"]) | set(ir["temporals"]),
         "actions":          set(ir["actions"]),
+        "vars":             set(ir["vars"]),
         "action_mutations": ir["action_mutations"],
         "const_values":     ir.get("const_values") or {},
     }
@@ -291,7 +292,10 @@ def check_ambiguity(area_data, area_name, findings):
     """Vague words in ears.response make the requirement unwitnessable —
     'handle errors gracefully' can never get a witness.predicate. Flag at
     lint time so the sharpening happens before formalization, not after a
-    no-witness result."""
+    no-witness result. WARN during authoring; FAIL once the area reaches
+    in-review/approved — 'approved' must mean precise, not precise-ish."""
+    gating = area_data.get("status") in ("in-review", "approved")
+    severity = FAIL if gating else WARN
     for req in area_data.get("requirements", []) or []:
         rid = req.get("id", "?")
         if req.get("status") == "deferred":
@@ -299,7 +303,7 @@ def check_ambiguity(area_data, area_name, findings):
         response = (req.get("ears") or {}).get("response") or ""
         hits = sorted({m.group(0).lower() for m in AMBIGUOUS_TERMS.finditer(response)})
         if hits:
-            add(findings, WARN, "ears", "ambiguous-response", area_name,
+            add(findings, severity, "ears", "ambiguous-response", area_name,
                 f"{rid}.ears.response contains untestable wording: {', '.join(hits)}. "
                 f"Sharpen: what state results, visible where?",
                 ref=rid)
@@ -317,6 +321,8 @@ def check_state_binding(area_data, area_name, findings):
         declared.update(s.get("name") for s in sm.get("states") or [] if s.get("name"))
     if not declared:
         return
+    gating = area_data.get("status") in ("in-review", "approved")
+    severity = FAIL if gating else WARN
     pattern = re.compile(
         r"\b(" + "|".join(re.escape(s) for s in sorted(declared)) + r")\b",
         re.IGNORECASE,
@@ -327,7 +333,7 @@ def check_state_binding(area_data, area_name, findings):
             continue
         state_text = (req.get("ears") or {}).get("state")
         if state_text and not pattern.search(state_text):
-            add(findings, WARN, "ears", "state-not-bound", area_name,
+            add(findings, severity, "ears", "state-not-bound", area_name,
                 f"{rid}.ears.state ('{state_text}') names no declared entity "
                 f"state ({', '.join(sorted(declared))}). Phrase preconditions "
                 f"with declared state names so the requirement↔state-machine "
@@ -466,6 +472,71 @@ def check_witnesses(root, area_data, area_name, findings):
                 f"{rid}: /spec-check found NO witness — the behavior is unreachable "
                 f"in the model (impossible guard or missing action?). Fix the model "
                 f"or the requirement.",
+                ref=rid)
+
+
+def check_predicate_sanity(area_data, sidecar, sidecars, area_name, findings):
+    """A witness.predicate must be a real postcondition. spec-lint can't judge
+    full semantics, but it kills the two fakes that otherwise sail the whole
+    pipeline as a green 'witnessed':
+
+      - a CONSTANT predicate. `true` makes the probe
+        `not(true and _lastAction == X)` == `not(_lastAction == X)`, which the
+        checker violates the instant action X fires — so the requirement is
+        'witnessed' having demonstrated nothing but that its action runs.
+      - a predicate naming NO state variable — it can't assert an observable
+        state change, so it isn't a postcondition.
+
+    Both degrade the anti-vacuity guarantee ('every claim a witness') to the
+    far weaker 'every action fires'. This check is the backstop."""
+    if not sidecar or sidecar.get("__no_module__"):
+        return
+    # Available state vars: this module's, plus spanned modules' (a contract
+    # or UI predicate ranges over imported state).
+    vars_avail = set(sidecar.get("vars") or set())
+    for span in area_data.get("spans") or []:
+        sp = (sidecars or {}).get(span) or {}
+        vars_avail |= set(sp.get("vars") or set())
+    mutations = sidecar.get("action_mutations") or {}
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") == "deferred" or req.get("type") == "non-functional":
+            continue
+        witness = req.get("witness") or {}
+        if witness.get("status") == "skipped":
+            continue
+        pred = (witness.get("predicate") or "").strip()
+        if not pred:
+            continue  # absence is check_witnesses' job
+        bare = pred
+        while bare.startswith("(") and bare.endswith(")"):
+            bare = bare[1:-1].strip()
+        if bare in ("true", "false"):
+            add(findings, FAIL, "witness", "predicate-constant", area_name,
+                f"{rid}.witness.predicate is the constant `{bare}` — it witnesses "
+                f"nothing (the probe reduces to 'the action fired'). Write a boolean "
+                f"over state that is true exactly when the behavior has occurred.",
+                ref=rid)
+            continue
+        referenced = {v for v in vars_avail if re.search(rf"\b{re.escape(v)}\b", pred)}
+        # Only assert no-state when we actually know the var set — an empty
+        # vars_avail (unparseable spanned sidecar) must not false-FAIL.
+        if vars_avail and not referenced:
+            add(findings, FAIL, "witness", "predicate-no-state", area_name,
+                f"{rid}.witness.predicate references no state variable "
+                f"({', '.join(sorted(vars_avail))}) — it can't be a postcondition. "
+                f"A witness must assert an observable state change.",
+                ref=rid)
+            continue
+        # WARN: predicate names no var the requirement's OWN action assigns —
+        # it may be witnessing a side condition, not this requirement's effect.
+        qref = req.get("quint_ref")
+        assigned = set(mutations.get(qref) or []) if qref else set()
+        if assigned and referenced and not (referenced & assigned):
+            add(findings, WARN, "witness", "predicate-off-action", area_name,
+                f"{rid}.witness.predicate references {sorted(referenced)} but its action "
+                f"`{qref}` assigns {sorted(assigned)} — the predicate may not capture "
+                f"this requirement's own effect. Confirm it's the right postcondition.",
                 ref=rid)
 
 
@@ -981,7 +1052,7 @@ def check_journeys(root, all_areas, findings, validator=None):
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
-              schema_validator=None):
+              schema_validator=None, sidecars=None):
     if area_data is None:
         add(findings, FAIL, "meta", "file-missing", area_name,
             f"specs/{area_name}.area.json (or .contract.json) not found.")
@@ -999,6 +1070,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_state_binding(area_data, area_name, findings)
     check_fit_criteria(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
+    check_predicate_sanity(area_data, sidecar, sidecars, area_name, findings)
     check_quint_refs(area_data, sidecar, area_name, findings)
     check_orphan_actions(area_data, sidecar, area_name, findings)
     check_constraint_values(area_data, sidecar, area_name, findings)
@@ -1140,7 +1212,7 @@ def main():
 
     for a in target_areas:
         lint_area(root, a, all_areas[a], sidecars[a], all_areas, catalog, findings,
-                  schema_validator)
+                  schema_validator, sidecars=sidecars)
 
     # Topology, change-manifest, and journey checks run once per project, on
     # EVERY invocation (they're cheap) — a single-area run must not report

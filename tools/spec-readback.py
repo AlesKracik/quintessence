@@ -265,6 +265,8 @@ def load_journeys(root):
 def attention_items(root, area_name, area):
     """The Needs-Your-Attention list — every entry derived from a field."""
     items = []
+    req_by_id = {r.get("id"): r for r in area.get("requirements", []) or []}
+    constraints = area.get("constraints", []) or []
     cr = area.get("check_results") or {}
     for c in cr.get("checks") or []:
         if c.get("result") == "counterexample":
@@ -280,7 +282,14 @@ def attention_items(root, area_name, area):
                   "MISSING-FILE", "INVALID", "SKIPPED-UNJUSTIFIED"):
             label = {"not-run": "Unchecked requirement",
                      "no-witness": "UNREACHABLE behavior (no witness)"}.get(st, f"Witness {st}")
-            items.append(f"**{label}** — {rid}" + (f": {detail}" if detail else ""))
+            # Render the EARS sentence inline — a reviewer shouldn't have to
+            # scroll to learn what 'UI-001' is.
+            req = req_by_id.get(rid)
+            sentence = resolve_constraints(ears_sentence(req), constraints) if req else ""
+            line = f"**{label}** — {rid}" + (f": {sentence}" if sentence else "")
+            if detail:
+                line += f" _({detail})_" if sentence else f": {detail}"
+            items.append(line)
     matrix = cr.get("matrix")
     if matrix:
         if matrix.get("uncovered", 0) > 0:
@@ -305,6 +314,36 @@ def attention_items(root, area_name, area):
 
 
 # ── Section renderers (area) ─────────────────────────────────────────────────
+
+def ship_verdict(area):
+    """One-line go/no-go above the stats bar — a reviewer should know ship-
+    readiness at a glance, not by doing arithmetic on the header. READY means
+    every behavior is verified against code, every invariant holds, and nothing
+    is open. Deterministic, like everything else in the readback."""
+    reqs = [r for r in area.get("requirements", []) or [] if r.get("status") != "deferred"]
+    invs = area.get("invariants", []) or []
+    if not reqs and not invs:
+        return "**⏳ EMPTY** — no requirements or invariants captured yet."
+    blockers = []
+    n_unver = sum(1 for r in reqs if r.get("status") != "verified")
+    if n_unver:
+        blockers.append(f"{n_unver} of {len(reqs)} requirement(s) not verified against code")
+    n_inv_bad = sum(1 for i in invs
+                    if i.get("formal_status") not in ("verified", "verified-inductive"))
+    if n_inv_bad:
+        blockers.append(f"{n_inv_bad} of {len(invs)} invariant(s) not holding")
+    n_q = sum(1 for q in area.get("open_questions", []) or []
+              if q.get("status", "open") == "open")
+    if n_q:
+        blockers.append(f"{n_q} open question(s)")
+    log = area.get("verification_log") or []
+    if log and log[-1].get("drift_detected"):
+        blockers.append("drift detected")
+    if blockers:
+        return "**⚠ NOT READY** — " + "; ".join(blockers) + "."
+    return ("**✓ READY** — all requirements verified against code, all invariants "
+            "hold (bounded or proven), no open questions.")
+
 
 def header_bar(area, area_name):
     reqs = [r for r in area.get("requirements", []) or [] if r.get("status") != "deferred"]
@@ -688,6 +727,8 @@ def emit_area(root, area_name):
     if area.get("kind") == "contract":
         lines.append(f"**Spans:** {', '.join(area.get('spans') or [])}")
         lines.append("")
+    lines.append(ship_verdict(area))
+    lines.append("")
     lines.append(header_bar(area, area_name))
     lines.append("")
     lines.append(LEGEND)

@@ -170,3 +170,161 @@ def test_nonfunctional_requirement_exempt(tmp_path):
         {"id": "REQ-009", "status": "specified", "type": "non-functional"},
     ])
     assert hits == []
+
+
+# ── Finding A (pass 2): predicate sanity — no fake witnesses ─────────────────
+
+_SIDECAR = {"vars": {"sessions", "accountStatus"},
+            "action_mutations": {"login": ["sessions"], "lock": ["accountStatus"]}}
+
+
+def _sanity_codes(reqs, sidecar=_SIDECAR, sidecars=None, area=None):
+    area = area or {"requirements": reqs}
+    area.setdefault("requirements", reqs)
+    findings = []
+    lint.check_predicate_sanity(area, sidecar, sidecars, "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+@pytest.mark.parametrize("pred", ["true", "false", "  (true) ", "((false))"])
+def test_constant_predicate_fails(pred):
+    codes = _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
+                            "witness": {"predicate": pred}}])
+    assert (lint.FAIL, "predicate-constant") in codes
+
+
+def test_predicate_with_no_state_var_fails():
+    codes = _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
+                            "witness": {"predicate": "1 + 1 == 2"}}])
+    assert (lint.FAIL, "predicate-no-state") in codes
+
+
+def test_good_predicate_clean():
+    assert _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
+                           "witness": {"predicate": "sessions.size() > 0"}}]) == []
+
+
+def test_predicate_off_action_warns():
+    # login assigns `sessions`; a predicate over `accountStatus` may witness a
+    # side condition, not this requirement's effect.
+    codes = _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
+                            "witness": {"predicate": "accountStatus.size() > 0"}}])
+    assert (lint.WARN, "predicate-off-action") in codes
+
+
+def test_predicate_on_action_clean():
+    assert _sanity_codes([{"id": "REQ-1", "quint_ref": "lock",
+                           "witness": {"predicate": "accountStatus.size() > 0"}}]) == []
+
+
+@pytest.mark.parametrize("req", [
+    {"id": "REQ-1", "status": "deferred", "witness": {"predicate": "true"}},
+    {"id": "REQ-1", "type": "non-functional", "witness": {"predicate": "true"}},
+    {"id": "REQ-1", "witness": {"status": "skipped", "predicate": "true"}},
+])
+def test_predicate_sanity_skips(req):
+    assert _sanity_codes([req]) == []
+
+
+def test_predicate_sanity_no_module_returns():
+    assert lint.check_predicate_sanity(
+        {"requirements": [{"id": "R", "witness": {"predicate": "x == 1"}}]},
+        None, None, "a", []) is None
+
+
+def test_no_false_no_state_when_var_set_unknown():
+    codes = _sanity_codes([{"id": "REQ-1", "witness": {"predicate": "foo == 1"}}],
+                          sidecar={"vars": set(), "action_mutations": {}})
+    assert [c for c in codes if c[1] == "predicate-no-state"] == []
+
+
+def test_spanned_vars_unioned():
+    # A contract/UI predicate over an imported area's var must not false-FAIL.
+    codes = _sanity_codes(
+        [{"id": "INV-X", "witness": {"predicate": "billing_accounts.size() > 0"}}],
+        sidecar={"vars": set(), "action_mutations": {}},
+        sidecars={"billing": {"vars": {"billing_accounts"}}},
+        area={"spans": ["billing"]})
+    assert codes == []
+
+
+# ── Finding B (pass 2): precision lints gate at approval ─────────────────────
+
+def _ambiguity_codes(status, response):
+    findings = []
+    lint.check_ambiguity(
+        {"status": status,
+         "requirements": [{"id": "REQ-1", "status": "specified",
+                           "ears": {"response": response}}]},
+        "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+@pytest.mark.parametrize("status,sev", [
+    ("formalized", "warn"), ("structured", "warn"),
+    ("in-review", "fail"), ("approved", "fail"),
+])
+def test_ambiguity_severity_by_status(status, sev):
+    codes = _ambiguity_codes(status, "handle errors gracefully")
+    assert (sev, "ambiguous-response") in codes
+
+
+def test_clean_response_no_ambiguity():
+    assert _ambiguity_codes("approved", "navigate to the Login screen") == []
+
+
+def _state_binding_codes(status):
+    findings = []
+    lint.check_state_binding(
+        {"status": status,
+         "concepts": {"entities": [{"name": "Session", "states": ["Active", "Expired"]}]},
+         "requirements": [{"id": "REQ-1", "status": "specified",
+                           "ears": {"state": "the user is logged in"}}]},
+        "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_state_binding_warns_then_fails_at_approval():
+    assert (lint.WARN, "state-not-bound") in _state_binding_codes("formalized")
+    assert (lint.FAIL, "state-not-bound") in _state_binding_codes("approved")
+
+
+# ── Finding C (pass 2): ship verdict ─────────────────────────────────────────
+
+def test_verdict_empty():
+    assert readback.ship_verdict({}).startswith("**⏳ EMPTY")
+
+
+def test_verdict_not_ready_counts_unverified():
+    v = readback.ship_verdict({"requirements": [{"id": "R", "status": "specified"}]})
+    assert v.startswith("**⚠ NOT READY")
+    assert "1 of 1 requirement(s) not verified" in v
+
+
+def test_verdict_ready_with_inductive():
+    v = readback.ship_verdict({
+        "requirements": [{"id": "R", "status": "verified"}],
+        "invariants": [{"id": "I", "formal_status": "verified-inductive"}],
+        "open_questions": []})
+    assert v.startswith("**✓ READY")
+
+
+def test_verdict_ready_with_bounded_invariant():
+    v = readback.ship_verdict({
+        "requirements": [{"id": "R", "status": "verified"}],
+        "invariants": [{"id": "I", "formal_status": "verified"}]})
+    assert v.startswith("**✓ READY")
+
+
+def test_verdict_blocks_on_open_question():
+    v = readback.ship_verdict({
+        "requirements": [{"id": "R", "status": "verified"}],
+        "open_questions": [{"id": "Q", "status": "open"}]})
+    assert v.startswith("**⚠ NOT READY")
+
+
+def test_verdict_blocks_on_drift():
+    v = readback.ship_verdict({
+        "requirements": [{"id": "R", "status": "verified"}],
+        "verification_log": [{"drift_detected": True}]})
+    assert "drift detected" in v

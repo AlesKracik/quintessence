@@ -47,7 +47,7 @@ Use `tools/quint_ir.py specs/<target>.qnt --json` to get the structured view of 
 
 Before the runner can do anything:
 
-1. **Ensure predicates exist.** Each requirement needs `witness.predicate` — a Quint boolean expression over state that is true exactly when the required behavior has occurred (e.g. for "account locks after N failures": `accountStatus.keys().exists(u => accountStatus.get(u) == Locked)`). If missing, draft one from the EARS fields + `quint_ref` and confirm with the user; write it into the area JSON.
+1. **Ensure predicates exist.** Each requirement needs `witness.predicate` — a Quint boolean expression over state that is true exactly when the required behavior has occurred (e.g. for "account locks after N failures": `accountStatus.keys().exists(u => accountStatus.get(u) == Locked)`). If missing, draft one from the EARS fields + `quint_ref` and confirm with the user; write it into the area JSON. The predicate must be a **real postcondition over state** — `spec-lint` FAILs a constant (`true`) or state-free predicate (it would "witness" merely that the action fired, proving nothing) and WARNs when the predicate names no variable the requirement's own action assigns. Make it reference the state the action changes.
 
 2. **Generate/refresh the probe module** at `specs/<target>.probes.qnt` (see `templates/probes.qnt.template`). It imports the area module, instruments steps with ghost vars, and declares one negated probe per requirement, named `witness_<REQ_ID with - → _>`:
 
