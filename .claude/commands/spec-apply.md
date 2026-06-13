@@ -141,7 +141,7 @@ For each component (or the area if monolithic):
    - calls the adapter method for each step, then asserts every Quint var getter equals the trace's state under the abstraction (ghost vars are bookkeeping — excluded from the comparison);
    - reports the first diverging step with expected/observed values.
 
-3. **Harness self-test** — proof the harness *can* fail. Generate `_selftest.tampered.itf.json` in the traces dir: a copy of one real witness trace with one final-state value deliberately corrupted (e.g. flip `Locked` → `Unlocked`). The harness must include a test asserting that replaying it **fails** (rationale: METHODOLOGY.md → "Conformance"). The `_selftest.` prefix keeps it out of the regular replay loop.
+3. **Harness self-test** — proof the harness *can* fail, on **every** observable var. One corrupted trace only proves the harness catches divergence on the *one* var it flipped — a getter that echoes expectations on a different var would still pass. So generate one tampered trace **per Quint var** in the model: `_selftest.tampered.<var>.itf.json`, each a copy of a real witness trace with that var's final-state value deliberately corrupted (flip a variant like `Locked` → `Unlocked`, perturb an int, drop a map key). The harness must include a test asserting each one **fails** to replay (rationale: METHODOLOGY.md → "Conformance"). This catches a getter that's faithful on a single-tamper test's flipped var but broken on another. The `_selftest.` prefix keeps them out of the regular replay loop.
 
 Write the config into the area JSON:
 

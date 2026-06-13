@@ -85,6 +85,7 @@ Interpret its output:
 - **`NO-WITNESS`** → report loudly: the behavior is unreachable — impossible guard, missing action, or bound too small. Offer: (a) inspect the guard, (b) raise `--steps`, (c) mark `skipped` with `justification` — correct for rejection requirements, where the proof is an invariant, not a trace (see METHODOLOGY → "Rejection requirements"). (a)/(b) are yours to act on; (c) is the one witness field you set by hand, and only with the user's confirmation.
 - **`no-probe` / `no-probes-file`** → go back to Step 2 and regenerate the probes module.
 - **Properties (PROP-NNN) honesty rule:** Apalache's temporal checking is bounded. Report a PROP result as `verified` ONLY with the bound stated (`verified up to N steps`). On `timeout`, suggest demoting the PROP to a witness-traced scenario (a `run` demonstrating the eventuality once) plus a fairness note — don't leave the user believing unbounded liveness was proven.
+- **Invariants (INV-NNN) honesty rule:** by default `quint verify` checks invariants by **bounded** model checking to `max_steps`. `formal_status: "verified"` therefore means *no counterexample within N steps* — NOT a proof, and the readback renders it `✓ (≤N steps)`. When the user wants an unbounded proof for a load-bearing invariant (e.g. an auth guard), set `proof: "inductive"` on it in the area JSON; `spec-record` runs `quint verify --inductive-invariant=<quint_name>` and a pass becomes `verified-inductive` (`✓ proven`). If quint reports the invariant isn't constrained enough ("x is used before it is assigned"), that's an honest non-proof — help the user strengthen the predicate, don't fall back to bounded and call it proven. Suggest upgrading any `critical` invariant the reviewer would read as "always true" to inductive.
 
 Witness traces are inputs to `/spec-verify`'s conformance replay and to `/spec-readback`'s sequence diagrams — they are committed artifacts, not temp files.
 
@@ -221,10 +222,11 @@ Quint file:     specs/auth.qnt (module auth)
 Settings:       max_steps=10, timeout=300s
 
 Formal results (Apalache):
-  ✓ INV-001 singleSession         VERIFIED   (2.3s)
-  ✗ INV-002 noLockedSession       COUNTEREXAMPLE (1.8s)
+  ✓ INV-001 singleSession         VERIFIED (≤10 steps)        (2.3s)   bounded — not a proof
+  ✓ INV-002 guardedDashboard      VERIFIED (inductive)        (2.9s)   proven over all reachable states
+  ✗ INV-003 noLockedSession       COUNTEREXAMPLE              (1.8s)
   ⏱ PROP-001 eventualLogout       TIMEOUT after 300s — bounded liveness only; consider demoting to a witnessed scenario
-  ✓ INV-CONTRACT-001 noOrphan     VERIFIED   (3.1s, via cascade from user-permission)
+  ✓ INV-CONTRACT-001 noOrphan     VERIFIED (≤10 steps)        (3.1s, via cascade from user-permission)
 
 Witness obligations:
   ✓ REQ-001 login reachable        WITNESSED  → auth/traces/REQ-001.itf.json (4 states)

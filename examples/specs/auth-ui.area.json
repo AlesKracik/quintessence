@@ -63,7 +63,7 @@
   ],
 
   "invariants": [
-    { "id": "INV-001", "description": "Dashboard is reachable only when authenticated == true. ('Shall always' statements are invariants, not requirements — Apalache proves them across all reachable states.)", "quint_name": "guardedDashboard", "formal_status": "specified", "criticality": "critical" }
+    { "id": "INV-001", "description": "Dashboard is reachable only when authenticated == true. ('Shall always' statements are invariants, not requirements — Apalache proves them across all reachable states.)", "quint_name": "guardedDashboard", "proof": "inductive", "formal_status": "specified", "criticality": "critical" }
   ],
 
   "decisions": [

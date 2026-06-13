@@ -154,10 +154,17 @@
           },
           "description":   { "type": "string" },
           "quint_name":    { "type": "string", "description": "Name of the Quint `val` or `invariant` that encodes this." },
+          "proof": {
+            "type": "string",
+            "enum": ["bounded", "inductive"],
+            "default": "bounded",
+            "description": "How this invariant is checked. 'bounded' (default): Apalache bounded model check to apalache.max_steps — a ✓ means 'no counterexample within N steps', NOT a proof. 'inductive': Quint runs `--inductive-invariant=<quint_name>` (base case + one-step preservation) — a ✓ means proven across ALL reachable states. Render distinguishes the two (✓ proven vs ✓ (≤N steps))."
+          },
           "formal_status": {
             "type": "string",
-            "enum": ["specified", "verified", "counterexample-found", "accepted-risk", "not-run"],
-            "default": "specified"
+            "enum": ["specified", "verified", "verified-inductive", "counterexample-found", "accepted-risk", "not-run"],
+            "default": "specified",
+            "description": "Written mechanically by spec-record. 'verified' = bounded ✓ (≤max_steps). 'verified-inductive' = proven via inductive invariant (unbounded)."
           },
           "criticality":   { "type": "string", "enum": ["critical", "high", "medium", "low"], "default": "high" },
           "cross_refs":    { "type": "array", "items": { "type": "string" } }
@@ -557,6 +564,7 @@
       "additionalProperties": false,
       "properties": {
         "ran_at": { "type": "string", "format": "date-time" },
+        "max_steps": { "type": "integer", "minimum": 1, "description": "Apalache step bound used for the bounded checks in this run. Drives honest '✓ (≤N steps)' rendering — a bounded ✓ is only valid up to this depth." },
         "matrix": {
           "type": "object",
           "description": "State×event coverage stats from the last spec-matrix run (written by spec-matrix --record). Surfaces completeness in readbacks — the gitignored gen/ CSV is the working file, these counts are the reviewable summary.",
@@ -581,6 +589,7 @@
               "id":              { "type": "string", "description": "INV-NNN or PROP-NNN. Witness results live in requirements[].witness, not here." },
               "kind":            { "type": "string", "enum": ["invariant", "property"], "default": "invariant" },
               "quint_name":      { "type": "string" },
+              "proof":           { "type": "string", "enum": ["bounded", "inductive"], "default": "bounded", "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps." },
               "result":          { "type": "string", "enum": ["verified", "counterexample", "timeout", "error", "not-run"] },
               "duration_s":      { "type": "number" },
               "trace":           { "type": "string", "description": "Counterexample ITF path relative to specs/, if any." },

@@ -413,9 +413,19 @@ def check_witnesses(root, area_data, area_name, findings):
         # not depend on the predicate being present, or deleting the
         # predicate would silence the freshness FAILs on a witnessed REQ.
         if not predicate and req.get("status") not in EARLY_STATUSES:
-            add(findings, WARN, "witness", "no-witness-predicate", area_name,
-                f"{rid} has no witness.predicate — the behavior can't be "
-                f"demonstrated reachable. Capture one via /spec, then run /spec-check.",
+            # Past the draft phase (raw/needs-validation), an absent predicate
+            # is the mechanized vagueness gate: a functional response you can't
+            # write a boolean witness for is too vague to ever be witnessed or
+            # verified ("handle errors gracefully" — what observable state?).
+            # FAIL, not WARN — vagueness must block, not nag. The ambiguous-
+            # wording lint (check_ambiguous) catches phrasing; this catches the
+            # absence. Draft statuses (raw/needs-validation) are exempt so
+            # elicitation isn't blocked mid-capture.
+            add(findings, FAIL, "witness", "no-witness-predicate", area_name,
+                f"{rid} (status '{req.get('status')}') has no witness.predicate — the "
+                f"behavior can't be demonstrated reachable, so it's too vague to verify. "
+                f"Sharpen the response to a named observable state, capture a predicate "
+                f"via /spec, then run /spec-check.",
                 ref=rid)
 
         if trace_rel:
@@ -578,7 +588,7 @@ def check_critical_invariants(area_data, area_name, findings):
     if area_data.get("status") != "approved":
         return
     for inv in area_data.get("invariants", []) or []:
-        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "accepted-risk"):
+        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "verified-inductive", "accepted-risk"):
             add(findings, FAIL, "invariants", "critical-not-verified", area_name,
                 f"Critical invariant {inv.get('id')} has formal_status '{inv.get('formal_status')}' — must be verified before approval.",
                 ref=inv.get("id"))

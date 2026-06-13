@@ -103,11 +103,19 @@ def find_quint():
 
 
 def run_verify(quint, qnt_file, invariant, max_steps, timeout,
-               init=None, step=None, out_itf=None):
+               init=None, step=None, out_itf=None, inductive=False):
     """Run one `quint verify`. Returns (result, detail, duration_s) where
     result ∈ verified | counterexample | timeout | error.
     'counterexample' means a violation was found — for witness probes that
     is the GOOD outcome (the violation trace IS the witness).
+
+    inductive=True checks `invariant` as an INDUCTIVE invariant — quint runs
+    Apalache for the base case (holds in all init states) and the inductive
+    step (holds after one transition from any state satisfying it), proving it
+    over ALL reachable states, not just to a step bound. `verified` here is an
+    unbounded proof; the caller stamps formal_status 'verified-inductive'. An
+    invariant that isn't constrained enough yields a quint error ('x is used
+    before it is assigned') — reported as 'error', not a false proof.
 
     Violation detection: the presence of the freshly-written --out-itf file
     — NOT output-text grepping (any error message containing the word
@@ -116,7 +124,13 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
     out_path = Path(out_itf) if out_itf else None
     if out_path and out_path.exists():
         out_path.unlink()
-    cmd = [quint, "verify", f"--invariant={invariant}", f"--max-steps={max_steps}"]
+    if inductive:
+        # quint orchestrates base + one-step preservation internally.
+        cmd = [quint, "verify", f"--inductive-invariant={invariant}",
+               "--max-steps=1"]
+    else:
+        cmd = [quint, "verify", f"--invariant={invariant}",
+               f"--max-steps={max_steps}"]
     if init:
         cmd.append(f"--init={init}")
     if step:
@@ -193,15 +207,21 @@ def cmd_check(args):
                 continue
             if only and iid not in only:
                 continue
+            # Inductive proof is opt-in per invariant (proof: "inductive").
+            # Default and properties stay bounded — behavior unchanged.
+            inductive = (kind == "invariant" and item.get("proof") == "inductive")
             cex_rel = f"{args.area}/traces/{iid}.cex.itf.json"
             cex_path = root / "specs" / cex_rel
             result, detail, duration = run_verify(
-                quint, qnt_file, qname, max_steps, timeout, out_itf=cex_path
+                quint, qnt_file, qname, max_steps, timeout, out_itf=cex_path,
+                inductive=inductive,
             )
             entry = {
                 "id": iid, "kind": kind, "quint_name": qname,
                 "result": result, "duration_s": round(duration, 1),
             }
+            if inductive:
+                entry["proof"] = "inductive"
             if result == "counterexample":
                 bad += 1
                 entry["trace"] = cex_rel
@@ -213,13 +233,14 @@ def cmd_check(args):
             elif result == "verified":
                 if cex_path.exists():
                     cex_path.unlink()  # stale counterexample of a now-green check
-                item["formal_status"] = "verified"
+                item["formal_status"] = "verified-inductive" if inductive else "verified"
             else:
                 bad += 1
                 entry["error"] = detail
                 # timeout/error: keep the prior formal_status untouched.
             checks.append(entry)
-            print(f"{iid:<12} {result:<16} ({duration:.1f}s)"
+            label = result + (" (inductive)" if inductive and result == "verified" else "")
+            print(f"{iid:<12} {label:<26} ({duration:.1f}s)"
                   + (f"  {detail}" if detail and result == "error" else ""))
 
     # ── 2. Witness probes ────────────────────────────────────────────────
@@ -319,6 +340,7 @@ def cmd_check(args):
     merged.extend(new_by_id[cid] for cid in [c["id"] for c in checks] if cid in new_by_id)
     cr["checks"] = merged  # matrix block (spec-matrix --record) is preserved
     cr["ran_at"] = now_iso()
+    cr["max_steps"] = max_steps  # the bound a bounded ✓ is honest to (readback)
     save_area(area_path, area)
     print(f"\nrecorded check_results + witness blocks in {area_path}")
 
@@ -348,6 +370,18 @@ def git_changed_files(cwd, since_sha):
         return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def path_match(changed, traced):
+    """True iff a git-changed path and a traceability code path point at the
+    same file. Match on whole path SEGMENTS — a bare endswith would pair
+    'src/auth/authStore.ts' with a traced 'store.ts' (…'authStore.ts' ends with
+    'store.ts'), inventing drift. Require equality or a '/'-bounded suffix."""
+    a = changed.replace("\\", "/").lstrip("./")
+    b = traced.replace("\\", "/").lstrip("./")
+    if not a or not b:
+        return False
+    return a == b or a.endswith("/" + b) or b.endswith("/" + a)
 
 
 def run_shell(command, cwd, timeout):
@@ -463,8 +497,7 @@ def cmd_verify(args):
                 if code_ref:
                     traced.add(code_ref)
             drift = any(
-                any(ch.endswith(tr) or tr.endswith(ch) for tr in traced)
-                for ch in changed
+                path_match(ch, tr) for ch in changed for tr in traced
             )
     if drift:
         print("DRIFT: traced files changed since last verified code_sha AND "

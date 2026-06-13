@@ -82,6 +82,30 @@ def status_mark(req):
     return "⏳"
 
 
+def check_bound(area):
+    """Effective Apalache step bound for this area's last check — the depth a
+    bounded ✓ is valid to. None when not recorded (older runs / not yet run)."""
+    b = (area.get("check_results") or {}).get("max_steps")
+    return b if isinstance(b, int) and b > 0 else None
+
+
+def invariant_mark(inv, bound):
+    """Honest render of an invariant's formal status. A bounded model check is
+    NOT a proof — it only says 'no counterexample within N steps' — so a
+    bounded ✓ always carries its depth, distinct from an inductive proof and
+    from the requirement ✓ (which means 'witness replayed green in code')."""
+    st = inv.get("formal_status", "specified")
+    if st == "verified-inductive":
+        return "✓ proven"
+    if st == "verified":
+        return f"✓ (≤{bound} steps)" if bound else "✓ (bounded)"
+    if st == "counterexample-found":
+        return "✗"
+    if st == "accepted-risk":
+        return "⚠ accepted-risk"
+    return "⏳"
+
+
 def ears_sentence(req):
     """Render the EARS sentence from the fields (source of truth); fall back
     to description for unstructured requirements."""
@@ -287,7 +311,9 @@ def header_bar(area, area_name):
     n_ver = sum(1 for r in reqs if r.get("status") == "verified")
     n_wit = sum(1 for r in reqs if (r.get("witness") or {}).get("status") == "witnessed")
     invs = area.get("invariants", []) or []
-    n_inv_ver = sum(1 for i in invs if i.get("formal_status") == "verified")
+    n_inv_proven = sum(1 for i in invs if i.get("formal_status") == "verified-inductive")
+    n_inv_bounded = sum(1 for i in invs if i.get("formal_status") == "verified")
+    bound = check_bound(area)
     matrix = (area.get("check_results") or {}).get("matrix")
     if matrix:
         cov = (f"{matrix.get('cells', 0)} cells, {matrix.get('covered', 0)} covered, "
@@ -298,9 +324,11 @@ def header_bar(area, area_name):
               if q.get("status", "open") == "open")
     log = area.get("verification_log") or []
     last_ver = log[-1]["date"][:10] if log else "never"
+    bsuffix = f" (≤{bound})" if bound else ""
+    inv_cell = f"{n_inv_proven} proven + {n_inv_bounded} bounded{bsuffix} / {len(invs)}"
     return (f"**Status:** {area.get('status', 'raw')}  |  "
             f"**Requirements:** {n_ver}/{len(reqs)} verified, {n_wit}/{len(reqs)} witnessed  |  "
-            f"**Invariants:** {n_inv_ver}/{len(invs)} verified  |  "
+            f"**Invariants:** {inv_cell}  |  "
             f"**Coverage:** {cov}  |  "
             f"**Open questions:** {n_q}  |  "
             f"**Last verified:** {last_ver}")
@@ -425,11 +453,15 @@ def invariants_section(area):
     invs = area.get("invariants", []) or []
     if not invs:
         return []
-    lines = ["## What Must Always Be True", ""]
+    bound = check_bound(area)
+    lines = ["## What Must Always Be True", "",
+             "_Invariant legend: ✓ proven — inductive, holds in ALL reachable states · "
+             "✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, "
+             "NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a "
+             "bounded ✓ by raising the bound or marking the invariant `proof: inductive`._", ""]
     for inv in sorted(invs, key=lambda i: i.get("id", "")):
         st = inv.get("formal_status", "specified")
-        mark = {"verified": "✓", "counterexample-found": "✗",
-                "accepted-risk": "⚠ accepted-risk"}.get(st, "⏳")
+        mark = invariant_mark(inv, bound)
         tail = " — see Needs Your Attention." if st == "counterexample-found" else ""
         lines.append(f"- **{inv.get('id')}** (`{inv.get('quint_name', '—')}`) — "
                      f"{inv.get('description', '')} Criticality: "
@@ -849,8 +881,7 @@ def emit_change(root, slug):
                         sub.append("  </details>")
                 lines.extend(sub)
             elif key == "inv":
-                st = item.get("formal_status", "specified")
-                mark = {"verified": "✓", "counterexample-found": "✗"}.get(st, "⏳")
+                mark = invariant_mark(item, check_bound(area))
                 lines.append(f"- {mark} **{iid}** — {item.get('description', '')}")
             elif key == "con":
                 lines.append(f"- **{iid}** — `{item.get('name')}` = {item.get('value')}"

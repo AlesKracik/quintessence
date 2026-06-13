@@ -19,6 +19,17 @@ flowchart LR
 
 > This document is part of a **template repository**. Projects are created by cloning the template, running `tools/bootstrap.sh` (strips template-only files), then running `/spec` to set up the project. Once bootstrapped, this `METHODOLOGY.md` lives at the root of your project as the canonical reference.
 
+### Two tiers — the precision core stands alone
+
+Most of the value in "vague → bulletproof" lands **before** the model checker. The framework is layered so you can stop at the first tier:
+
+| Tier | What it gives | Tools needed | Commands |
+|---|---|---|---|
+| **1 — Precision core** | EARS-structured requirements (the 4 capture-time checks kill vagueness), state-machine + matrix completeness, the deterministic human-review **readback**, and `spec-lint` gating it all. | Python 3 only — **no Java/Apalache/Quint** | `/spec`, `/spec-readback`, `spec-lint` |
+| **2 — Formal proof** | Quint model, Apalache invariants (bounded or inductive), machine-found witness traces, and conformance replay against code. | + Java 17, Quint, Apalache | `/spec-check`, `/spec-apply`, `/spec-verify` |
+
+Tier 1 is a complete, useful workflow on its own: a team can distill requirements and ship the readback for review in minutes, with zero JVM on-ramp. Tier 2 is opt-in depth for the areas that earn it — the formal machinery proves *internal consistency, reachability, and code-conformance*, but it does **not** invent or correct intent. **The trust boundary is at elicitation** (NL → EARS fields): that step is human + AI judgment, backstopped mechanically by `spec-lint` (a functional requirement with no writable witness predicate FAILs past draft — see "EARS"), the matrix completeness gate, and the optional red-team. Everything downstream of a captured EARS field is mechanized; nothing upstream of it is. Know which tier a claim comes from.
+
 ---
 
 ## Core Concepts
@@ -283,6 +294,7 @@ Free-text requirements can't be checked for completeness — there's no defined 
 | `state` | While `<state>`, the system shall `<response>` (state-driven) | `require` guard + effect |
 | `state` + `trigger` | While `<state>`, when `<trigger>`, … (complex) | guard + action |
 | `trigger` + `unwanted: true` | If `<trigger>`, then the system shall `<response>` (unwanted behavior) | error/rejection action |
+| `state` + `trigger` + `unwanted: true` | While `<state>`, if `<trigger>`, then the system shall `<response>` (unwanted, state-qualified) | guard + error/rejection action |
 | `feature` | Where `<feature>`, the system shall `<response>` (optional) | conditional module |
 | none | The system shall `<response>` (ubiquitous) | **an invariant — move it to `invariants[]`** |
 
@@ -357,7 +369,7 @@ One trace, three consumers:
 
 `/spec-check` proves the *model*; nothing about hand-written tests proves the *code matches the model* — an LLM writing both the spec and the tests that "verify" it is circular. The conformance step closes the loop with the model's own traces:
 
-1. `/spec-apply` generates a **conformance adapter** (one method per Quint action calling the real API; one getter per Quint var returning the abstracted observable code state; a `reset()`) and a **replay harness**. It also generates a **tampered self-test trace** — a copy of one witness trace with a final value deliberately corrupted; the harness must FAIL on it. A harness that passes the tampered trace has a broken adapter (getters echoing expectations, `reset()` not resetting) and all its green results are void.
+1. `/spec-apply` generates a **conformance adapter** (one method per Quint action calling the real API; one getter per Quint var returning the abstracted observable code state; a `reset()`) and a **replay harness**. It also generates **tampered self-test traces — one per observable Quint var** (`_selftest.tampered.<var>.itf.json`), each a copy of a witness trace with that var's final value deliberately corrupted; the harness must FAIL on every one. One tamper would only prove the harness catches divergence on the single var it flipped — a getter echoing expectations on a *different* var would slip through. A harness that passes any tampered trace has a broken adapter (getters echoing expectations, `reset()` not resetting) and all its green results are void.
 2. `/spec-verify` replays every witness trace (refusing stale ones): drive the code step-by-step with the trace's actions and ghost-recorded parameters, after each step assert the code state equals the trace's model state under the adapter mapping.
 3. **A requirement is `verified` if and only if its witness trace replays green against the implementation.**
 
@@ -598,18 +610,21 @@ requirement.status:   raw → needs-validation → specified → verified
                                 → deferred (removed)
                       ("verified" = witness trace replays green against code)
 requirement.witness.status: not-run → witnessed | no-witness | skipped
-invariant.formal_status: specified | not-run → verified
+invariant.formal_status: specified | not-run → verified            (bounded ✓ — valid to max_steps only)
+                                  → verified-inductive   (proven over ALL reachable states; proof: inductive)
                                   → counterexample-found
                                   → accepted-risk
 area.status:          raw → structured → formalized → in-review → approved
                       (approval blocked while any requirement is unwitnessed)
 ```
 
+**`verified` is bounded, not proven.** Apalache by default checks invariants by bounded model checking to `apalache.max_steps` (default 10) — `formal_status: "verified"` means *no counterexample within N steps*, not a proof. The readback renders it honestly as `✓ (≤N steps)`, never a bare `✓`. To get an unbounded proof, mark the invariant `proof: "inductive"`: `spec-record` then runs `quint verify --inductive-invariant=<quint_name>` (base case + one-step preservation), and a pass becomes `verified-inductive`, rendered `✓ proven`. Inductive invariants must be constrained enough (each state var pinned to its domain) or quint reports an error — an honest non-proof, not a false green.
+
 ### What Apalache Verifies
 
 | Property | Verified? |
 |---|---|
-| Safety invariant violations | Yes (bounded model checking) |
+| Safety invariant violations | **Bounded by default** (no counterexample to `max_steps`, rendered `✓ (≤N steps)`); **proven** only for invariants marked `proof: inductive` (rendered `✓ proven`). A bounded ✓ is not a proof — a violation at depth N+1 still ships green. Upgrade load-bearing invariants to inductive. |
 | Behavior reachability (witnesses) | Yes (negated-predicate probes; counterexample = witness trace) |
 | Liveness (eventually X) | **Bounded only.** Temporal checking frequently times out on real models; a PROP result is honest only with its bound stated. Prefer demoting liveness to a witnessed scenario (`run` demonstrating the eventuality once) plus a fairness note. |
 | Action vacuity (dead actions) | Free: path-constrained witnesses prove referenced actions fire; `spec-lint` flags unreferenced ones statically |

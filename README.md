@@ -16,6 +16,8 @@ What you get:
 - Seven optional architecture layers (0–6: stack, components, patterns, ADRs, topology, protocols, readbacks) and a multi-repo story via config-driven paths (no submodules).
 - Python tooling: `spec-lint` (consistency + EARS + precision lints + witness obligations), `spec-record` (deterministic check **and** verify runner — model checking, conformance replay, drift, and every ledger write-back are mechanical; the AI never hand-edits a verdict), `spec-readback` (deterministic readback generator — the review document is rendered by code, byte-identical for identical input, so its git diff IS the review), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
 
+**Two tiers, so the precision core stands alone.** Tier 1 — EARS requirements (vagueness killed at capture), completeness matrix, `spec-lint`, and the deterministic human-review readback — needs **only Python**, no JVM. Tier 2 — Quint + Apalache invariants (bounded *or* inductive), witness traces, conformance replay — is opt-in depth for the areas that earn it. A team can distill requirements and ship the readback in minutes before installing a model checker. The formal layer proves consistency, reachability, and code-conformance; it does not invent intent — the trust boundary is at elicitation, backstopped by lint.
+
 Read [METHODOLOGY.md](METHODOLOGY.md) for the full picture. It travels with every project created from this template.
 
 ---
@@ -208,10 +210,10 @@ module authUi {
 
 ```
 > /spec-check auth-ui
-  ✓ guardedDashboard  VERIFIED — proven across all reachable states.
+  ✓ guardedDashboard  VERIFIED (inductive) — proven across ALL reachable states.
 ```
 
-Machine-checked: no sequence of user actions reaches Dashboard without `authenticated == true`. Not unit tests, not a code-review checklist — a formal property.
+This invariant is marked `proof: inductive` in the area JSON, so `spec-check` runs `quint verify --inductive-invariant=guardedDashboard` (base case + one-step preservation) — an unbounded proof, not a depth-N bounded check. Machine-checked: no sequence of user actions reaches Dashboard without `authenticated == true`. (Left at the default `proof: bounded`, the same invariant would render `✓ (≤10 steps)` — true only to the step limit, honest about it.) Not unit tests, not a code-review checklist — a formal property.
 
 ```
 > /spec-readback auth-ui   # writes specs/auth-ui.readback.md with navigation diagram inline
@@ -219,7 +221,7 @@ Machine-checked: no sequence of user actions reaches Dashboard without `authenti
 > /spec-verify auth-ui     # all UI navigation tests pass
 ```
 
-PR reviewers see the navigation graph render in GitHub and the auth-guard invariant flagged `Status: ✓ verified by Apalache`.
+PR reviewers see the navigation graph render in GitHub and the auth-guard invariant flagged `✓ proven` (inductive — valid across all reachable states, not just to a step bound).
 
 ### What's notable across all six
 
