@@ -150,9 +150,10 @@ Open this directory in Claude Code and run:
 /spec
 \`\`\`
 
-The adaptive entry point walks project setup (areas, repos, architecture
-defaults) and per-area authoring (elicit, vocabulary, structure, formalize)
-conversationally. No fixed phase sequence to memorize.
+The adaptive entry point walks project setup (areas, repos), opens the
+first change (the unit of work), and handles per-area authoring (elicit,
+vocabulary, structure, formalize) conversationally. No fixed phase
+sequence to memorize.
 
 ## The Five Commands
 
@@ -166,9 +167,11 @@ See [METHODOLOGY.md](METHODOLOGY.md) for the complete reference.
 
 ## Layout
 
-- \`specs/<area>.json\` — one file per area (kind: area, contract, or ui)
+- \`specs/<area>.area.json\` / \`specs/<name>.contract.json\` — one file per area/contract (the suffix encodes the kind)
 - \`specs/<area>.qnt\` — the Quint formal model sidecar
 - \`specs/<area>.readback.md\` — auto-generated review document
+- \`specs/changes/<slug>.change.json\` — change manifests (the unit of work)
+- \`specs/journeys/<slug>.journey.json\` — user journeys (use cases in temporal order)
 - \`.spec/project.json\` — project meta, areas index, code-repo paths, architecture defaults, topology
 
 ## Prerequisites
@@ -208,5 +211,5 @@ echo
 echo "Bootstrap complete."
 echo
 echo "Next: open this directory in Claude Code and run /spec"
-echo "  - /spec will ask for the project name, areas, and architecture defaults."
+echo "  - /spec will ask for the project name and areas, then open the first change."
 echo "  - If Quint/Apalache are missing, install them before /spec-check."

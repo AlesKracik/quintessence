@@ -26,7 +26,7 @@ The readback is the review surface humans trust, so it is **rendered by a tool, 
 3. Suggest the commit:
 
 ```bash
-git add specs/<target>.readback.md .spec/readback.md .spec/changes/<slug>.readback.md
+git add specs/<target>.readback.md .spec/readback.md specs/changes/<slug>.readback.md
 git commit -m "spec(<target>): readback — <summary>"
 ```
 
@@ -34,7 +34,7 @@ git commit -m "spec(<target>): readback — <summary>"
 
 **Per-area** (`specs/<area>.readback.md`): header status bar (incl. matrix Coverage) + legend with consequence glosses → Purpose → **⚠ Needs Your Attention** (counterexamples with NL explanations, unchecked/unreachable/stale/unverifiable witnesses, coverage gaps, open questions, drift) → Navigation/Screens/UI Components (areas with UI blocks) → **What the System Does** — requirements grouped as journey slices in temporal order, each block: status mark, `(failure path)` tag for unwanted REQs, EARS sentence with constraint values resolved inline (`MAX_FAILED_ATTEMPTS (= 5, CON-001)`), witness one-liner (`6 steps: login_failed(bob) ×5 → account Locked`), collapsed details with the verbatim Quint action + `file:Lx-Ly` + short model sha, the witness predicate, and the trace sequence diagram (≤12 steps); NFRs render their fit criterion instead → What Must Always Be True / Eventually Happen → **Limits and Bounds** (CON table: value, unit, description, referenced-by, history from landed change manifests) → State Machines → collapsed Reference (concepts, resolved architecture, decisions, resolved questions, traceability, verification history, audit-trail pointer).
 
-**Change** (`.spec/changes/<slug>.readback.md`): intent/status/branch → Targets table with **derived** phase columns (the manifest stores membership only) → attention roll-up scoped to the change's targets → What This Change Does: per manifest ID, the EARS sentence/statement with anchor links into per-area readbacks and the collapsed Quint+predicate inline (the EARS↔Quint review happens on this one page) → blocking questions. Regenerates every touched target's area readback alongside.
+**Change** (`specs/changes/<slug>.readback.md`): intent/status/branch → Targets table with **derived** phase columns (the manifest stores membership only) → attention roll-up scoped to the change's targets → What This Change Does: per manifest ID, the EARS sentence/statement with anchor links into per-area readbacks and the collapsed Quint+predicate inline (the EARS↔Quint review happens on this one page) → blocking questions. Regenerates every touched target's area readback alongside.
 
 **Project** (`.spec/readback.md`): attention roll-up across areas → areas table → journeys as step tables (sentence pulled from the owning area, status marks, anchor links).
 

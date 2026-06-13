@@ -2,21 +2,22 @@
 """
 spec-lint.py — Consistency checker for the spec project.
 
-Reads .spec/project.json + each specs/<area>.json (and the .qnt sidecar) and
+Reads .spec/project.json + each specs/<area>.area.json (or .contract.json —
+the filename suffix encodes the kind) and the .qnt sidecar, and
 checks cross-file consistency: ID format, broken references, drift between the
 area JSON and its sidecar, missing patterns/protocols, topology orphans,
 unverified critical invariants, unresolved questions, EARS requirement
 structure, witness-trace obligations (every requirement must be
 demonstrably reachable in the model — see METHODOLOGY.md), change
-manifests (.spec/changes/ — targets and ids must resolve), and journeys
-(.spec/journeys/ — cross-area step refs must resolve).
+manifests (specs/changes/*.change.json — targets and ids must resolve), and
+journeys (specs/journeys/*.journey.json — cross-area step refs must resolve).
 
 This is much smaller than the per-file lint of the previous methodology because
 the new methodology has fewer files: one JSON per area, one sidecar, one project
 config, two catalogs.
 
 Usage:
-  tools/spec-lint.py                       # lint every area in .spec/project.json
+  tools/spec-lint.py                       # lint every area in .spec/project.json (specs/*.area.json / *.contract.json)
   tools/spec-lint.py <area>                # lint one area
   tools/spec-lint.py --json                # JSON output
   tools/spec-lint.py --strict              # exit 1 on warnings too
@@ -29,6 +30,9 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from itf_tools import area_json_path, changes_dir, journeys_dir  # noqa: E402
 
 # Severity constants.
 PASS = "pass"
@@ -159,7 +163,8 @@ def check_area_meta(area_data, area_name, findings):
 
     if area_data.get("area") and area_data["area"] != area_name:
         add(findings, FAIL, "meta", "name-mismatch", area_name,
-            f"area field is '{area_data['area']}' but file is specs/{area_name}.json.")
+            f"area field is '{area_data['area']}' but file is "
+            f"specs/{area_name}.{area_data.get('kind', 'area')}.json.")
 
     if area_data.get("kind") == "contract" and not area_data.get("spans"):
         add(findings, FAIL, "meta", "contract-no-spans", area_name,
@@ -528,7 +533,7 @@ def check_cross_refs(area_data, all_areas, area_name, findings):
                 other_area, other_id = xref.split(".", 1)
                 if other_area not in all_areas:
                     add(findings, WARN, "cross-refs", "unknown-area", area_name,
-                        f"{item.get('id')}.cross_refs points to area '{other_area}' which has no specs/{other_area}.json.",
+                        f"{item.get('id')}.cross_refs points to area '{other_area}' which has no spec file (specs/{other_area}.area.json or .contract.json).",
                         ref=item.get("id"))
                     continue
                 other = all_areas[other_area]
@@ -551,7 +556,7 @@ def check_contract_spans(area_data, all_areas, area_name, findings):
     for s in area_data.get("spans", []) or []:
         if s not in all_areas:
             add(findings, FAIL, "contract", "missing-span", area_name,
-                f"spans[] references area '{s}' which has no specs/{s}.json.", ref=s)
+                f"spans[] references area '{s}' which has no spec file (specs/{s}.area.json or .contract.json).", ref=s)
 
 
 def check_open_questions(area_data, area_name, findings):
@@ -844,25 +849,31 @@ def check_topology(project_data, all_areas, findings):
 
 
 def check_changes(root, all_areas, findings, validator=None):
-    """Change manifests (.spec/changes/*.json): schema validity, slug matches
-    filename, targets resolve to real areas, ids resolve in the target's spec,
-    no stored phase flags (status is derived from area JSONs, never stored).
+    """Change manifests (specs/changes/*.change.json): schema validity, slug
+    matches filename, targets resolve to real areas, ids resolve in the target's
+    spec, no stored phase flags (status is derived from area JSONs, never stored).
     Landed/abandoned manifests are history — parse + schema + slug only (their
     ids may legitimately have been removed by later changes; that's not drift)."""
-    changes_dir = root / ".spec" / "changes"
-    if not changes_dir.exists():
+    cdir = changes_dir(root)
+    if not cdir.exists():
         return
-    for p in sorted(changes_dir.glob("*.json")):
-        name = f"_changes/{p.stem}"
+    for p in sorted(cdir.glob("*.json")):
+        if not p.name.endswith(".change.json"):
+            add(findings, FAIL, "changes", "bad-filename", f"_changes/{p.stem}",
+                f"specs/changes/{p.name} — change manifests must be named "
+                f"<slug>.change.json.")
+            continue
+        slug = p.name[:-len(".change.json")]
+        name = f"_changes/{slug}"
         data = load_json(p)
         if isinstance(data, dict) and "__parse_error__" in data:
             add(findings, FAIL, "changes", "parse-error", name,
-                f".spec/changes/{p.name} failed to parse: {data['__parse_error__']}")
+                f"specs/changes/{p.name} failed to parse: {data['__parse_error__']}")
             continue
         check_schema(data, validator, name, findings)
-        if data.get("change") and data["change"] != p.stem:
+        if data.get("change") and data["change"] != slug:
             add(findings, FAIL, "changes", "slug-mismatch", name,
-                f"change field is '{data['change']}' but file is .spec/changes/{p.stem}.json.")
+                f"change field is '{data['change']}' but file is specs/changes/{slug}.change.json.")
         if data.get("status") in ("landed", "abandoned"):
             continue
         for t in data.get("targets", []) or []:
@@ -871,7 +882,8 @@ def check_changes(root, all_areas, findings, validator=None):
                 continue  # schema validation reports the missing name
             if tname not in all_areas:
                 add(findings, FAIL, "changes", "unknown-target", name,
-                    f"targets[] references '{tname}' which has no specs/{tname}.json.",
+                    f"targets[] references '{tname}' which has no spec file "
+                    f"(specs/{tname}.area.json or .contract.json).",
                     ref=tname)
                 continue
             area_data = all_areas[tname]
@@ -879,7 +891,7 @@ def check_changes(root, all_areas, findings, validator=None):
                 continue
             if t.get("kind") and area_data.get("kind") and t["kind"] != area_data["kind"]:
                 add(findings, WARN, "changes", "kind-mismatch", name,
-                    f"targets[{tname}].kind is '{t['kind']}' but specs/{tname}.json "
+                    f"targets[{tname}].kind is '{t['kind']}' but {tname}'s spec "
                     f"says '{area_data['kind']}'.",
                     ref=tname)
             stored_flags = [k for k in ("checked", "applied", "verified") if k in t]
@@ -900,24 +912,29 @@ def check_changes(root, all_areas, findings, validator=None):
                 if iid not in area_ids:
                     add(findings, FAIL, "changes", "dangling-id", name,
                         f"targets[{tname}].ids references '{iid}' which does not "
-                        f"exist in specs/{tname}.json.",
+                        f"exist in {tname}'s spec.",
                         ref=iid)
 
 
 def check_journeys(root, all_areas, findings, validator=None):
-    """Journeys (.spec/journeys/*.json): schema validity, unique names,
+    """Journeys (specs/journeys/*.journey.json): schema validity, unique names,
     every step ref resolves — area exists and the qualified ID is in that
     area's requirements[]. Same reference discipline as cross_refs."""
-    journeys_dir = root / ".spec" / "journeys"
-    if not journeys_dir.exists():
+    jdir = journeys_dir(root)
+    if not jdir.exists():
         return
     seen_names = set()
-    for p in sorted(journeys_dir.glob("*.json")):
-        jname = f"_journeys/{p.stem}"
+    for p in sorted(jdir.glob("*.json")):
+        if not p.name.endswith(".journey.json"):
+            add(findings, FAIL, "journeys", "bad-filename", f"_journeys/{p.stem}",
+                f"specs/journeys/{p.name} — journeys must be named "
+                f"<slug>.journey.json.")
+            continue
+        jname = f"_journeys/{p.name[:-len('.journey.json')]}"
         data = load_json(p)
         if isinstance(data, dict) and "__parse_error__" in data:
             add(findings, FAIL, "journeys", "parse-error", jname,
-                f".spec/journeys/{p.name} failed to parse: {data['__parse_error__']}")
+                f"specs/journeys/{p.name} failed to parse: {data['__parse_error__']}")
             continue
         check_schema(data, validator, jname, findings)
         name = data.get("name")
@@ -938,7 +955,8 @@ def check_journeys(root, all_areas, findings, validator=None):
             area, rid = ref.split(".", 1)
             if area not in all_areas:
                 add(findings, FAIL, "journeys", "unknown-area", jname,
-                    f"step ref '{ref}' — no specs/{area}.json.", ref=ref)
+                    f"step ref '{ref}' — no spec file (specs/{area}.area.json "
+                    f"or .contract.json).", ref=ref)
                 continue
             area_data = all_areas[area]
             if not isinstance(area_data, dict) or "__parse_error__" in area_data:
@@ -956,11 +974,11 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
               schema_validator=None):
     if area_data is None:
         add(findings, FAIL, "meta", "file-missing", area_name,
-            f"specs/{area_name}.json not found.")
+            f"specs/{area_name}.area.json (or .contract.json) not found.")
         return
     if isinstance(area_data, dict) and "__parse_error__" in area_data:
         add(findings, FAIL, "meta", "parse-error", area_name,
-            f"specs/{area_name}.json failed to parse: {area_data['__parse_error__']}")
+            f"spec for '{area_name}' failed to parse: {area_data['__parse_error__']}")
         return
 
     check_schema(area_data, schema_validator, area_name, findings)
@@ -1071,12 +1089,27 @@ def main():
     else:
         target_areas = all_area_names
 
-    # Load all areas (needed for cross-ref resolution).
+    # Load all areas (needed for cross-ref resolution). The filename suffix
+    # (.area.json / .contract.json) must match the JSON's kind field.
     all_areas = {}
     sidecars = {}
+    findings = []
     for a in all_area_names:
-        all_areas[a] = load_json(root / "specs" / f"{a}.json")
+        path = area_json_path(root, a)
+        all_areas[a] = load_json(path) if path.exists() else None
         sidecars[a] = parse_sidecar(root / "specs" / f"{a}.qnt")
+        both = [k for k in ("area", "contract")
+                if (root / "specs" / f"{a}.{k}.json").exists()]
+        if len(both) > 1:
+            add(findings, FAIL, "meta", "duplicate-spec-file", a,
+                f"Both specs/{a}.area.json and specs/{a}.contract.json exist — "
+                f"delete one; the suffix encodes the kind.")
+        elif both and isinstance(all_areas[a], dict) \
+                and all_areas[a].get("kind") in ("area", "contract") \
+                and all_areas[a]["kind"] != both[0]:
+            add(findings, FAIL, "meta", "kind-suffix-mismatch", a,
+                f"specs/{a}.{both[0]}.json has kind '{all_areas[a]['kind']}' — "
+                f"rename the file to specs/{a}.{all_areas[a]['kind']}.json.")
 
     catalog = {
         "patterns":  load_catalog(root, "patterns"),
@@ -1084,7 +1117,6 @@ def main():
     }
 
     schema_validator = build_schema_validator(root)
-    findings = []
 
     if _jsonschema is None:
         add(findings, WARN, "schema", "jsonschema-unavailable", "_project",

@@ -1,6 +1,6 @@
 # /spec — Adaptive Spec Authoring
 
-The single entry point for spec work. Detects the current state of the project and the named target, then walks the relevant conversational beat: project setup, area elicitation, vocabulary, structuring, formalization, brownfield extraction, drift codification, catalog editing. Writes `specs/<target>.json` and its `.qnt` sidecar.
+The single entry point for spec work. Detects the current state of the project and the named target, then walks the relevant conversational beat: project setup, area elicitation, vocabulary, structuring, formalization, brownfield extraction, drift codification, catalog editing. Writes `specs/<target>.*.json` and its `.qnt` sidecar.
 
 There are no other authoring subcommands — this command subsumes every authoring phase (init, elicit, structure, formalize, reconcile, approve, …); don't invent `/spec-<phase>` names. The only other commands are the four action commands: `/spec-check`, `/spec-verify`, `/spec-apply`, `/spec-readback`.
 
@@ -13,7 +13,9 @@ There are no other authoring subcommands — this command subsumes every authori
 /spec _overview                # project overview: areas, open changes, status
 ```
 
-**The change is the unit of work; the area is the unit of meaning.** Every spec edit happens inside a *change* — a manifest at `.spec/changes/<slug>.json` (schema: `schemas/change.schema.json`) that references the areas/contracts it touches. Areas remain the logical spec boundary and the single source of truth; the manifest holds membership and IDs only — never spec content, never phase flags (status is derived; see the dashboard beat).
+**File naming:** every spec JSON carries its type in the filename — `specs/<name>.area.json`, `specs/<name>.contract.json`, `specs/changes/<slug>.change.json`, `specs/journeys/<slug>.journey.json`. `specs/<target>.*.json` below means the target's `.area.json` or `.contract.json` file (the suffix must match the JSON's `kind`; `spec-lint` enforces it).
+
+**The change is the unit of work; the area is the unit of meaning.** Every spec edit happens inside a *change* — a manifest at `specs/changes/<slug>.change.json` (schema: `schemas/change.schema.json`) that references the areas/contracts it touches. Areas remain the logical spec boundary and the single source of truth; the manifest holds membership and IDs only — never spec content, never phase flags (status is derived; see the dashboard beat).
 
 The **active change** is per-dev sticky state: `last_change` in `.spec/local.json` (gitignored). All five spec commands resolve against it — run bare to continue the change, pass an explicit target for a one-off. If an area edit starts with no active change, auto-open one: ask "No active change. Name this work? [<area>-updates]" — Enter accepts the default. One question, then every spec diff is traceable to a manifest.
 
@@ -25,7 +27,7 @@ You are the **Adaptive Specifier**. Your job is to figure out what beat the user
 
 Resolve the change, then the target:
 
-1. `/spec change <slug>` → open `.spec/changes/<slug>.json` (create per `schemas/change.schema.json` if new, with `intent` from the `--` hint or one question; suggest branch `change/<slug>`). Write `last_change: "<slug>"` to `.spec/local.json` (create the file if missing; preserve other fields). Then show the change dashboard (beat below).
+1. `/spec change <slug>` → open `specs/changes/<slug>.change.json` (create per `schemas/change.schema.json` if new, with `intent` from the `--` hint or one question; suggest branch `change/<slug>`). Write `last_change: "<slug>"` to `.spec/local.json` (create the file if missing; preserve other fields). Then show the change dashboard (beat below).
 2. Bare `/spec`, active change valid (`last_change` set, manifest exists, status not `landed`/`abandoned`) → **change dashboard** beat.
 3. Explicit `<target>` (area, not `_project`/`_patterns/*`/`_protocols/*`/`_journeys/*`/`_overview`):
    - active change exists → work on that area within it; register the target in the manifest's `targets[]` if absent.
@@ -37,7 +39,7 @@ Then determine what exists:
 
 1. `.spec/project.json` — does the project exist? (If not, the **bootstrap** beat runs regardless of target resolution.)
 2. For the resolved target:
-   - `specs/<target>.json` — does the area exist?
+   - `specs/<target>.*.json` — does the area exist?
    - `specs/<target>.qnt` — does the formal model exist?
    - For areas with `code_repo` set: does the code path on disk exist? (Resolve via `.spec/local.json`.)
 
@@ -48,11 +50,11 @@ This determines the entry beat:
 | No `.spec/project.json` | **bootstrap**: walk project setup |
 | `<target>` is `_project` | **project edit**: architecture defaults, repos, topology |
 | `<target>` is `_patterns/<name>`, `_protocols/<name>`, or `_journeys/<name>` | **catalog edit**: add/edit a catalog file |
-| `specs/<target>.json` missing, code exists at the area's `code_path` | **brownfield extract** |
-| `specs/<target>.json` missing, no code | **greenfield elicit** |
-| `specs/<target>.json` exists, sections incomplete | **resume**: pick up the next phase |
-| `specs/<target>.json` exists, `verification_log` shows drift | **drift codify**: walk the drift items |
-| `specs/<target>.json` exists, all phases complete | **review/idle**: present the readback, offer next action |
+| `specs/<target>.*.json` missing, code exists at the area's `code_path` | **brownfield extract** |
+| `specs/<target>.*.json` missing, no code | **greenfield elicit** |
+| `specs/<target>.*.json` exists, sections incomplete | **resume**: pick up the next phase |
+| `specs/<target>.*.json` exists, `verification_log` shows drift | **drift codify**: walk the drift items |
+| `specs/<target>.*.json` exists, all phases complete | **review/idle**: present the readback, offer next action |
 
 ### Step 2 — Run the beat
 
@@ -101,9 +103,9 @@ Ask only what's needed to start eliciting:
 
 **Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-apply` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units; Apalache settings only when a check times out. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
-Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and an empty `formal_model.quint_file` pointer.
+Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.<kind>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and an empty `formal_model.quint_file` pointer.
 
-5. **Open the first change** — the change is the unit of work, so bootstrap ends inside one, not before one. Ask: `Name the first change? [initial-spec]` (Enter = default; intent defaults to "Initial specification of <area list>"). Create `.spec/changes/<slug>.json` per `schemas/change.schema.json` with every declared area as a target (`status: "open"`, empty `ids[]`), write `last_change` to `.spec/local.json`, and suggest branch `change/<slug>`.
+5. **Open the first change** — the change is the unit of work, so bootstrap ends inside one, not before one. Ask: `Name the first change? [initial-spec]` (Enter = default; intent defaults to "Initial specification of <area list>"). Create `specs/changes/<slug>.change.json` per `schemas/change.schema.json` with every declared area as a target (`status: "open"`, empty `ids[]`), write `last_change` to `.spec/local.json`, and suggest branch `change/<slug>`.
 
 Install pre-commit hook via `bash tools/setup-hooks.sh` (idempotent).
 
@@ -119,7 +121,7 @@ Show current project config; ask which section to edit. Sections: repos, areas i
 
 (Runs on `/spec _patterns/<name>`, `/spec _protocols/<name>`, or `/spec _journeys/<name>`.)
 
-For journeys (`schemas/journey.schema.json`, files at `.spec/journeys/<name>.json`): a journey is THE use-case mechanism — a named user-visible flow, steps as qualified `<area>.<ID>` refs in temporal order; most live inside one area, some cross boundaries, same shape either way. Usually journeys are born during elicitation (one story = one journey); this beat is for stitching or editing them directly. Creating one: ask for the actor and the story end to end, then map each step to an existing REQ (offer candidates from the areas' requirements); a step with no matching REQ is a gap — capture it in the owning area first (`/spec <area>`), then finish the journey.
+For journeys (`schemas/journey.schema.json`, files at `specs/journeys/<name>.journey.json`): a journey is THE use-case mechanism — a named user-visible flow, steps as qualified `<area>.<ID>` refs in temporal order; most live inside one area, some cross boundaries, same shape either way. Usually journeys are born during elicitation (one story = one journey); this beat is for stitching or editing them directly. Creating one: ask for the actor and the story end to end, then map each step to an existing REQ (offer candidates from the areas' requirements); a step with no matching REQ is a gap — capture it in the owning area first (`/spec <area>`), then finish the journey.
 
 If the file doesn't exist: walk creation per `schemas/pattern.schema.json` or `schemas/protocol.schema.json`. If it exists: show contents, ask which fields to update. Write back. Don't modify any area JSON references (the user opts those in separately).
 
@@ -127,24 +129,24 @@ If the user types `/spec _patterns`, `/spec _protocols`, or `/spec _journeys` (n
 
 #### brownfield extract
 
-(Runs when `specs/<target>.json` is missing AND code exists at the area's `code_path`.)
+(Runs when `specs/<target>.*.json` is missing AND code exists at the area's `code_path`.)
 
 Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-path>`. I'll extract a draft spec." Read source files. For each function/class/handler, infer requirements; mark them `source: "extracted"`, `status: "needs-validation"`. Fill EARS fields where the code makes them clear (a guard clause → `ears.state`; an event handler → `ears.trigger`; error paths → `ears.unwanted: true`); leave `ears` off where the code is ambiguous and ask during the confirm pass. Infer types and state (Quint `type` and `var`). Infer guards as candidate invariants.
 
-Write `specs/<target>.json` with the extracted sections. Write `specs/<target>.qnt` with the inferred Quint module skeleton (will need refinement). Present each extracted item one at a time for the user to confirm, edit, or discard.
+Write `specs/<target>.*.json` with the extracted sections. Write `specs/<target>.qnt` with the inferred Quint module skeleton (will need refinement). Present each extracted item one at a time for the user to confirm, edit, or discard.
 
 End with: "Draft spec written. Recommended next: `/spec-check <target>` to verify the Quint compiles, then refine."
 
 #### greenfield elicit
 
-(Runs when `specs/<target>.json` is missing AND no code exists.)
+(Runs when `specs/<target>.*.json` is missing AND no code exists.)
 
 Standard elicitation, organized as conversational clusters (not a rigid order — pick what's needed first):
 
 - **Purpose**: one sentence on what this area is for.
 - **Domain vocabulary**: entities (with states if applicable), actors, verbs.
 - **State machines**: any entity captured with `states[]` → run the state-machine beat (below) right away, not at resume. The early matrix pass needs `state_machines[]` to exist, and transition capture surfaces missing behaviors while the user is still describing the domain.
-- **Behavior (EARS-structured)**: ask for scenarios as stories ("walk me through a login — then walk me through one going wrong"), not field-by-field. **Each story is a journey**: write `.spec/journeys/<slug>.json` (name, primary actor, one-line description) and append every REQ drafted from that story to `steps[]` as qualified `<area>.<ID>` refs in the order the story told them — happy-path step, then its unwanted counterparts. This costs nothing at capture time (the story already has a name and an order) and is what makes the readback digestible; reconstructing flows later from a flat ID list is guesswork. A story that crosses into another area stays one journey — if the foreign step's REQ doesn't exist yet, note it as a placeholder and capture it in its owning area before the journey lints clean. From each story, **draft the EARS fields yourself**, render the sentence, and read drafts back in batches of ~5 for the user to confirm or correct — confirm-and-correct converges faster and more accurately than interrogation. The pattern is derived from which fields are filled; never ask the user to pick one. Use targeted questions only for fields the story left open:
+- **Behavior (EARS-structured)**: ask for scenarios as stories ("walk me through a login — then walk me through one going wrong"), not field-by-field. **Each story is a journey**: write `specs/journeys/<slug>.journey.json` (name, primary actor, one-line description) and append every REQ drafted from that story to `steps[]` as qualified `<area>.<ID>` refs in the order the story told them — happy-path step, then its unwanted counterparts. This costs nothing at capture time (the story already has a name and an order) and is what makes the readback digestible; reconstructing flows later from a flat ID list is guesswork. A story that crosses into another area stays one journey — if the foreign step's REQ doesn't exist yet, note it as a placeholder and capture it in its owning area before the journey lints clean. From each story, **draft the EARS fields yourself**, render the sentence, and read drafts back in batches of ~5 for the user to confirm or correct — confirm-and-correct converges faster and more accurately than interrogation. The pattern is derived from which fields are filled; never ask the user to pick one. Use targeted questions only for fields the story left open:
   - trigger unclear → "What kicks this off?" → `ears.trigger`
   - state unclear → "Always, or only in some state?" → `ears.state`. Phrase it using the entity's **declared state names** ("the Session is Active", not "the user is logged in") — it makes the requirement↔state-machine link reviewable and matrix triage mechanical.
   - `ears.response` is always required.
@@ -166,11 +168,11 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 
 **Closing gap sweep**: when the clusters are exhausted (before formalizing), run one short red-team moment while the user is still in the conversation. From `/spec-check` Step 4b's category list, keep only the categories this domain plausibly touches; ask at most ~8 questions whose answer would add or change a requirement, each citing the REQ/INV/entity it touches (or "absent"). Answers become REQs/INVs/CONs in the same exchange; what the user can't answer becomes a Q-NNN. Same logic as the early matrix: a gap found now is a requirement in one exchange. The full `--reality` pass at check time is for depth — it shouldn't be the first time these questions are asked.
 
-Write to `specs/<target>.json` as you go. After enough is captured, draft a Quint module in `specs/<target>.qnt` (structure convention: `templates/spec.qnt.template`) — the EARS fields map mechanically: `trigger` → action, `state` → `require` guard, `response` → effect. While formalizing, also draft each requirement's `witness.predicate` (the Quint boolean over state that's true exactly when the behavior has happened — `/spec-check` uses it to produce the witness trace). Show the module for confirmation; offer `/spec-check` next.
+Write to `specs/<target>.*.json` as you go. After enough is captured, draft a Quint module in `specs/<target>.qnt` (structure convention: `templates/spec.qnt.template`) — the EARS fields map mechanically: `trigger` → action, `state` → `require` guard, `response` → effect. While formalizing, also draft each requirement's `witness.predicate` (the Quint boolean over state that's true exactly when the behavior has happened — `/spec-check` uses it to produce the witness trace). Show the module for confirmation; offer `/spec-check` next.
 
 #### resume — pick up the next phase
 
-(Runs when `specs/<target>.json` exists but some sections are incomplete.)
+(Runs when `specs/<target>.*.json` exists but some sections are incomplete.)
 
 Inspect the JSON for gaps:
 
@@ -181,7 +183,7 @@ Inspect the JSON for gaps:
 | Entities with `states[]` but no matching `state_machines[]` entry | state-machine beat (see below) |
 | `requirements[]` has items without IDs (raw strings) | structure pass |
 | `requirements[]` items have `status: "raw"` | elicit refinement per item |
-| Functional REQs not referenced by any journey step (`.spec/journeys/*.json`) | **journey pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `.spec/journeys/<slug>.json`. Brownfield extracts land here — group extracted REQs into flows during the confirm pass. |
+| Functional REQs not referenced by any journey step (`specs/journeys/*.journey.json`) | **journey pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `specs/journeys/<slug>.journey.json`. Brownfield extracts land here — group extracted REQs into flows during the confirm pass. |
 | Requirements past raw status without `ears` structure | EARS pass: walk each one, fill trigger/state/response (+unwanted) |
 | Requirements without `witness.predicate` (and sidecar exists) | witness pass: draft predicates, confirm, then suggest `/spec-check` |
 | `formal_model.quint_file` set but file missing | formalize: write the sidecar |
@@ -204,7 +206,7 @@ Spec: <Entity> has states <list>. Let me capture the state machine.
   Any actions that *create* or *destroy* instances (mutate the underlying var but aren't transitions)? > <e.g. login>
   → lifecycle_actions[]
 
-Writing state_machines[<Entity>] in specs/<target>.json.
+Writing state_machines[<Entity>] in specs/<target>.*.json.
 ```
 
 After writing, suggest running `spec-lint` (or `/spec-check`) — the state-machine lints fire immediately if the declared structure conflicts with the Quint sidecar.
@@ -249,11 +251,11 @@ Print a digest:
 
 Don't accumulate state in memory. After each meaningful turn:
 
-- Update `specs/<target>.json` (or `.spec/project.json`, catalog file, etc.)
+- Update `specs/<target>.*.json` (or `.spec/project.json`, catalog file, etc.)
 - Update `last_modified`
 - Bump `version` only when the user signals a meaningful change (added requirement, modified invariant, etc.) — minor for additions, patch for refinements, major for breaking changes
-- **Update the change manifest**: any ID added or modified in `specs/<target>.json` goes into the manifest target's `ids[]`. (No phase flags to maintain — staleness is automatic: editing the spec bumps `last_modified`/changes the model sha, which un-derives "checked"/"verified".) When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
-- Commit hint: at sensible checkpoints, suggest `git add specs/<target>.json specs/<target>.qnt .spec/changes/<change>.json && git commit -m "spec(<change>): <what>"`
+- **Update the change manifest**: any ID added or modified in `specs/<target>.*.json` goes into the manifest target's `ids[]`. (No phase flags to maintain — staleness is automatic: editing the spec bumps `last_modified`/changes the model sha, which un-derives "checked"/"verified".) When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
+- Commit hint: at sensible checkpoints, suggest `git add specs/<target>.*.json specs/<target>.qnt specs/changes/<change>.change.json && git commit -m "spec(<change>): <what>"`
 
 ### Step 4 — Suggest next action
 

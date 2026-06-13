@@ -19,13 +19,13 @@ You are the **Applier**. You translate the formal Quint model into implementatio
 Resolve the target set:
 
 - Explicit `[target]` → apply just it. Doesn't alter the active change.
-- No target → read `last_change` from `.spec/local.json`, load `.spec/changes/<slug>.json`. Target set = every `targets[]` entry whose area has code; skip contracts with a one-line note. Print: `Change: <slug> — applying <n> code targets`. Walk targets one at a time — each gets its own architecture resolution, mapping confirmation, and generation pass (Steps 2–5); don't interleave.
+- No target → read `last_change` from `.spec/local.json`, load `specs/changes/<slug>.change.json`. Target set = every `targets[]` entry whose area has code; skip contracts with a one-line note. Print: `Change: <slug> — applying <n> code targets`. Walk targets one at a time — each gets its own architecture resolution, mapping confirmation, and generation pass (Steps 2–5); don't interleave.
 - No active change → if there's exactly one area, use it; else ask.
 
 The manifest stores no phase flags — "applied" is derived (every one of the target's manifest `ids[]` that is a REQ/INV has a `traceability[]` entry).
 
 Read:
-- `specs/<target>.json`
+- `specs/<target>.*.json`
 - `specs/<target>.qnt`
 - `.spec/project.json`
 - `.spec/local.json`
@@ -45,7 +45,7 @@ is /spec-check. To regenerate code for an area that participates in a contract, 
 Compute the **resolved architecture** at each level:
 
 - Project (`.spec/project.json` `architecture`) → defaults
-- Area (`specs/<target>.json` `architecture`) → overrides
+- Area (`specs/<target>.*.json` `architecture`) → overrides
 - Component (per component, if declared) → finer overrides
 
 For each field: per-component > per-area > project > undefined. Pattern and protocol references **union** across scopes.
@@ -160,7 +160,7 @@ Keep the adapter thin — abstraction mapping only, no logic. If an action can't
 
 ### Step 5 — Update traceability
 
-Write `traceability[]` in `specs/<target>.json`:
+Write `traceability[]` in `specs/<target>.*.json`:
 
 ```json
 [
@@ -199,7 +199,7 @@ Coverage:
   Quint runs → scenario tests: 2/2
   Conformance: adapter covers 5/5 actions, 5/5 vars
 
-specs/auth.json — traceability[] + conformance updated
+specs/auth.area.json — traceability[] + conformance updated
 
 Next: /spec-verify auth — confirm it all matches.
 ```
@@ -207,7 +207,7 @@ Next: /spec-verify auth — confirm it all matches.
 ### Step 7 — Commit
 
 ```bash
-git add specs/<target>.json <code-root>/...
+git add specs/<target>.*.json <code-root>/...
 git commit -m "spec(<target>): apply — <summary>"
 ```
 

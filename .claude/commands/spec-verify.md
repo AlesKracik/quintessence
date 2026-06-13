@@ -13,7 +13,7 @@ A requirement is **verified** iff its witness trace replays green against the im
 /spec-verify [target] --no-conformance  # skip trace replay (e.g. adapter not generated yet)
 ```
 
-`[target]` is optional: without it, every **code-bearing** target of the active change (`last_change` in `.spec/local.json` → `.spec/changes/<slug>.json`) is verified; contract targets in the change are skipped with a note (their verification is `/spec-check`). Explicit `[target]` verifies just that one.
+`[target]` is optional: without it, every **code-bearing** target of the active change (`last_change` in `.spec/local.json` → `specs/changes/<slug>.change.json`) is verified; contract targets in the change are skipped with a note (their verification is `/spec-check`). Explicit `[target]` verifies just that one.
 
 Refuses on explicit contract targets — contracts have no code; their verification is `/spec-check`.
 
@@ -28,13 +28,13 @@ Division of labor, same as `/spec-check`: **`tools/spec-record.py verify <target
 Resolve the target set:
 
 - Explicit `[target]` → verify just it. Doesn't alter the active change.
-- No target → read `last_change` from `.spec/local.json`, load `.spec/changes/<slug>.json`. Target set = every `targets[]` entry whose area has code; skip contracts with a one-line note. Print: `Change: <slug> — verifying <n> code targets`.
+- No target → read `last_change` from `.spec/local.json`, load `specs/changes/<slug>.change.json`. Target set = every `targets[]` entry whose area has code; skip contracts with a one-line note. Print: `Change: <slug> — verifying <n> code targets`.
 - No active change → if there's exactly one area with code, use it; otherwise ask.
 
 Results go into the area's `verification_log[]` only — the manifest stores no phase flags ("verified" is derived from the latest log entry vs current spec/code shas). Run all targets even on early failure; report together.
 
 Read:
-- `specs/<target>.json`
+- `specs/<target>.*.json`
 - `.spec/project.json` (for the area's `code_repo`, `code_path`, `tests_path`, `test_command`)
 - `.spec/local.json` (for the per-dev `repo_paths[code_repo]`)
 
@@ -145,7 +145,7 @@ Two paths:
 ### Step 7 — Commit
 
 ```bash
-git add specs/<target>.json
+git add specs/<target>.*.json
 git commit -m "spec(<target>): verify — <pass|fail>, <summary>"
 ```
 

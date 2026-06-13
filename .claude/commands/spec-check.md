@@ -17,7 +17,7 @@ Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 /spec-check [target] --reality                 # ALSO run the adversarial red-team pass
 ```
 
-`[target]` is optional: without it, **every target of the active change** (`last_change` in `.spec/local.json` → `.spec/changes/<slug>.json`) is checked, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas changed. Explicit `[target]` checks just that one (cascade still applies). Works for any kind: `area` (with or without UI blocks), `contract`.
+`[target]` is optional: without it, **every target of the active change** (`last_change` in `.spec/local.json` → `specs/changes/<slug>.change.json`) is checked, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas changed. Explicit `[target]` checks just that one (cascade still applies). Works for any kind: `area` (with or without UI blocks), `contract`.
 
 ## Instructions
 
@@ -31,13 +31,13 @@ You are the **Checker**. The division of labor is strict — mechanism over trus
 Resolve the target set:
 
 - Explicit `[target]` → check just it (plus its contract cascade). Doesn't alter the active change.
-- No target → read `last_change` from `.spec/local.json` and load `.spec/changes/<slug>.json`. Target set = every entry in `targets[]`, ordered areas-first then contracts. Dedupe the cascade: collect every contract spanning any checked area, run each **once** after its areas, drop contracts already in the set from per-area cascading. Print one line: `Change: <slug> — checking <n> targets (pass a target name for just one)`.
+- No target → read `last_change` from `.spec/local.json` and load `specs/changes/<slug>.change.json`. Target set = every entry in `targets[]`, ordered areas-first then contracts. Dedupe the cascade: collect every contract spanning any checked area, run each **once** after its areas, drop contracts already in the set from per-area cascading. Print one line: `Change: <slug> — checking <n> targets (pass a target name for just one)`.
 - No active change → if `.spec/project.json` has exactly one area, use it; otherwise ask the user which (and suggest `/spec change <slug>` for multi-target work).
 
 The manifest stores **no phase flags** — "checked" is derived, never written: a target counts as checked when `check_results.ran_at` ≥ the area's `last_modified` and every witness `model_sha` matches `tools/itf_tools.py sha <target>`. Run every target even when an early one fails — the point of set-checking is the complete picture; report failures together at the end.
 
 Read:
-- `specs/<target>.json` — the area JSON (must exist; otherwise tell the user to run `/spec <target>` first).
+- `specs/<target>.*.json` — the area JSON (must exist; otherwise tell the user to run `/spec <target>` first).
 - `specs/<target>.qnt` — the Quint sidecar (must exist; otherwise this area isn't formalized yet — tell the user).
 - `.spec/project.json` — for Apalache settings (`timeout_seconds`, `max_steps`).
 
@@ -158,7 +158,7 @@ The script writes into `specs/<target>/gen/` (gitignored — regenerable):
 
 Stderr prints `entities=… state_rows=… events=… orphans=… cells=… covered=… triaged=… uncovered=…`. The script makes no judgement — enumeration only. **Triage decisions live in the area JSON's `matrix_triage[]`** (committed — the CSV is gitignored scratch; a decision recorded only there would vanish on a fresh clone and break the CI gate). `tools/spec-matrix.py <target> --strict` exits 1 while any `?` remains — that's the CI completeness gate.
 
-**Triage `?` cells (LLM).** Read every CSV row where `covered_by == "?"`. Classify each into one of three buckets and append an entry to `matrix_triage[]` in `specs/<target>.json` (`{entity, state, event, verdict, reason}`), then re-run `spec-matrix --record` to refresh the CSV and stats:
+**Triage `?` cells (LLM).** Read every CSV row where `covered_by == "?"`. Classify each into one of three buckets and append an entry to `matrix_triage[]` in `specs/<target>.*.json` (`{entity, state, event, verdict, reason}`), then re-run `spec-matrix --record` to refresh the CSV and stats:
 1. **Real gap** — behavior matters, spec is silent → `verdict: GAP`, `reason` = the unanswered question, `question: Q-NNN` AND append that `Q-NNN` to `open_questions[]` with `source: "matrix"`.
 2. **Impossible transition** — state/event combination cannot occur (e.g. event guarded by other state) → `verdict: IMPOSSIBLE`, `reason` = the impossibility argument.
 3. **Intentionally out of scope** — covered elsewhere or explicitly excluded → `verdict: OUT-OF-SCOPE`, `reason` = pointer (e.g. `see contract X` or `lifecycle action, not a transition`).
@@ -247,7 +247,7 @@ Always end with a concrete suggested next step.
 ### Step 7 — Commit
 
 ```bash
-git add specs/<target>.json specs/<target>.probes.qnt specs/<target>/traces/
+git add specs/<target>.*.json specs/<target>.probes.qnt specs/<target>/traces/
 git commit -m "spec(<target>): check — <summary>"
 ```
 

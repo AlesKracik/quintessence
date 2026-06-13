@@ -3,8 +3,8 @@
 spec-record.py — Deterministic check runner and results ledger.
 
 Runs `quint verify` for an area's invariants, properties, and witness
-probes, parses the outcomes, and writes them back into specs/<area>.json
-(check_results, formal_status, witness blocks) MECHANICALLY.
+probes, parses the outcomes, and writes them back into specs/<area>.area.json
+(or .contract.json — check_results, formal_status, witness blocks) MECHANICALLY.
 
 Why this exists: the methodology's chain is "held by mechanisms, not by
 trust in the AI". That must include the bookkeeping itself — an agent
@@ -67,7 +67,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from itf_tools import compute_model_sha, load_trace, witness_status  # noqa: E402
+from itf_tools import compute_model_sha, load_trace, witness_status, area_json_path  # noqa: E402
 from quint_ir import parse_qnt  # noqa: E402
 
 
@@ -148,7 +148,7 @@ def probe_name(req_id):
 
 def cmd_check(args):
     root = Path(args.root)
-    area_path = root / "specs" / f"{args.area}.json"
+    area_path = area_json_path(root, args.area)
     area = load_json(area_path)
     if area is None:
         fail_setup(f"{area_path} not found. Run /spec {args.area} first.")
@@ -385,7 +385,7 @@ def resolve_code_root(root, area_name, project, override=None):
 
 def cmd_verify(args):
     root = Path(args.root)
-    area_path = root / "specs" / f"{args.area}.json"
+    area_path = area_json_path(root, args.area)
     area = load_json(area_path)
     if area is None:
         fail_setup(f"{area_path} not found.")

@@ -31,7 +31,7 @@ Usage:
   tools/spec-matrix.py <area> --stdout       # write to stdout, no file
   tools/spec-matrix.py <area> --strict       # exit 1 while any '?' cell remains
   tools/spec-matrix.py <area> --record       # also write coverage stats into
-                                             #   specs/<area>.json check_results.matrix
+                                             #   specs/<area>.area.json check_results.matrix
                                              #   (the reviewable summary; the CSV is gitignored)
   tools/spec-matrix.py <area> --root <path>  # project root (default: cwd)
 
@@ -48,6 +48,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from quint_ir import parse_qnt  # noqa: E402
+from itf_tools import area_json_path  # noqa: E402
 
 # Triage values an LLM (or human) writes into the covered_by column during
 # /spec-check Step 4a. Preserved across regenerations.
@@ -55,7 +56,7 @@ TRIAGE_VALUES = {"GAP", "IMPOSSIBLE", "OUT-OF-SCOPE"}
 
 
 def load_area(root: Path, area: str) -> dict:
-    path = root / "specs" / f"{area}.json"
+    path = area_json_path(root, area)
     if not path.exists():
         sys.exit(f"ERROR: {path} does not exist")
     return json.loads(path.read_text(encoding="utf-8"))
@@ -236,7 +237,7 @@ def emit_csv(rows: list, scope: dict, idx: dict, out, prior_triage: dict = None)
 
 def main():
     p = argparse.ArgumentParser(description="Generate state × event coverage matrix.")
-    p.add_argument("area", help="Area name; reads specs/<area>.json")
+    p.add_argument("area", help="Area name; reads specs/<area>.area.json (or .contract.json)")
     p.add_argument("--root", default=".", help="Project root (default: cwd)")
     p.add_argument("--stdout", action="store_true", help="Write to stdout instead of specs/<area>/gen/matrix.csv")
     p.add_argument("--strict", action="store_true",
@@ -244,7 +245,7 @@ def main():
                         "every cell must be covered or explicitly triaged as "
                         "GAP / IMPOSSIBLE / OUT-OF-SCOPE.")
     p.add_argument("--record", action="store_true",
-                   help="Write coverage stats into specs/<area>.json "
+                   help="Write coverage stats into the area's spec JSON "
                         "check_results.matrix so readbacks can surface "
                         "completeness (the CSV itself is gitignored).")
     args = p.parse_args()
@@ -281,7 +282,7 @@ def main():
     if csv_only:
         print(
             f"NOTE: {len(csv_only)} triage value(s) exist only in the "
-            f"gitignored CSV — move them into specs/{args.area}.json "
+            f"gitignored CSV — move them into {args.area}'s spec JSON "
             f"matrix_triage[] or they are lost on a fresh clone.",
             file=sys.stderr,
         )
@@ -316,7 +317,7 @@ def main():
     )
 
     if args.record:
-        area_path = root / "specs" / f"{args.area}.json"
+        area_path = area_json_path(root, args.area)
         area_full = json.loads(area_path.read_text(encoding="utf-8"))
         cr = area_full.setdefault("check_results", {})
         cr["matrix"] = {

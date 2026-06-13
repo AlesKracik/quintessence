@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "change.schema.json",
   "title": "Change Manifest",
-  "description": "One file per unit of work at .spec/changes/<slug>.json. A change is the primary unit of work; areas/contracts remain the logical spec boundary. The manifest holds membership only — which targets, which IDs. Per-target phase status (checked/applied/verified) is NEVER stored here: it is derived mechanically from the area JSONs (witness model_sha freshness, check_results.ran_at vs last_modified, traceability, verification_log) so it cannot go stale. Committed with the PR; status 'landed' on merge makes it a changelog entry. Deleting every manifest leaves the specs complete.",
+  "description": "One file per unit of work at specs/changes/<slug>.change.json. A change is the primary unit of work; areas/contracts remain the logical spec boundary. The manifest holds membership only — which targets, which IDs. Per-target phase status (checked/applied/verified) is NEVER stored here: it is derived mechanically from the area JSONs (witness model_sha freshness, check_results.ran_at vs last_modified, traceability, verification_log) so it cannot go stale. Committed with the PR; status 'landed' on merge makes it a changelog entry. Deleting every manifest leaves the specs complete.",
   "type": "object",
   "required": ["change", "intent", "status", "targets"],
   "additionalProperties": false,
@@ -35,7 +35,7 @@
         "required": ["name"],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string", "description": "Area slug — specs/<name>.json must exist." },
+          "name": { "type": "string", "description": "Area slug — specs/<name>.area.json (or .contract.json) must exist." },
           "kind": { "enum": ["area", "contract"] },
           "auto": {
             "type": "boolean",

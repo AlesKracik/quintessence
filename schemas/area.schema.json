@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "area.schema.json",
   "title": "Spec Area (area | contract)",
-  "description": "One JSON file per area at specs/<name>.json. The formal Quint model lives in a sidecar specs/<name>.qnt referenced from formal_model.quint_file. Two kinds: 'area' (functional, default — may carry UI blocks screens/ui_components/navigation to model an interactive surface) and 'contract' (cross-area agreement, spec-only). Most fields are optional; required fields are gated by kind or block presence. Sections grow conversationally via /spec — empty arrays/objects are valid for incomplete specs.",
+  "description": "One JSON file per area at specs/<name>.area.json (kind area) or specs/<name>.contract.json (kind contract) — the filename suffix encodes the kind and must match it. The formal Quint model lives in a sidecar specs/<name>.qnt referenced from formal_model.quint_file. Two kinds: 'area' (functional, default — may carry UI blocks screens/ui_components/navigation to model an interactive surface) and 'contract' (cross-area agreement, spec-only). Most fields are optional; required fields are gated by kind or block presence. Sections grow conversationally via /spec — empty arrays/objects are valid for incomplete specs.",
   "type": "object",
   "required": ["kind", "area", "version"],
   "additionalProperties": false,
@@ -17,7 +17,7 @@
     "area": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*$",
-      "description": "Slug, also the filename: specs/<area>.json. Examples: auth, billing, auth-ui, user-permission."
+      "description": "Slug, also the filename stem: specs/<area>.<kind>.json. Examples: auth, billing, auth-ui, user-permission."
     },
     "spans": {
       "type": "array",

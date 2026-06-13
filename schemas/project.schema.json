@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "project.schema.json",
   "title": "Spec Project Configuration",
-  "description": "One file at .spec/project.json. Covers project meta, area index, code-repo paths (config-driven, not submodules), project-level architecture defaults inherited by every area, deployment topology, and Apalache settings. Per-dev state (path overrides, active change last_change) goes in .spec/local.json (gitignored). Units of work are change manifests in .spec/changes/ (change.schema.json).",
+  "description": "One file at .spec/project.json. Covers project meta, area index, code-repo paths (config-driven, not submodules), project-level architecture defaults inherited by every area, deployment topology, and Apalache settings. Per-dev state (path overrides, active change last_change) goes in .spec/local.json (gitignored). Units of work are change manifests in specs/changes/ (change.schema.json).",
   "type": "object",
   "required": ["project", "areas"],
   "additionalProperties": false,
@@ -22,7 +22,7 @@
         "required": ["name", "kind"],
         "additionalProperties": false,
         "properties": {
-          "name":        { "type": "string", "description": "Area slug. File is specs/<name>.json." },
+          "name":        { "type": "string", "description": "Area slug. File is specs/<name>.area.json (or .contract.json per kind)." },
           "kind":        { "type": "string", "enum": ["area", "contract", "ui"], "description": "'ui' is a deprecated alias for area-with-screens; use 'area'." },
           "description": { "type": "string" },
           "code_repo":   { "type": ["string", "null"], "description": "Key from repos[]. null = spec-only." },

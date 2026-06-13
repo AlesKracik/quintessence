@@ -10,8 +10,8 @@ What you get:
 
 - A methodology for moving rough requirements → **EARS-structured requirements** → formal Quint specification → Apalache-verified invariants **+ machine-found witness traces per requirement** → generated code **+ conformance replay** (the model's own traces re-run against the implementation) → drift-detection over time, with every requirement traceable to code and tests.
 - **Five Claude Code commands**: `/spec`, `/spec-check`, `/spec-verify`, `/spec-apply`, `/spec-readback`. The first is an adaptive entry point that walks all spec-authoring phases conversationally; the others run Apalache + witness probes, replay traces and run tests, generate code + the conformance adapter, and produce a human-readable Markdown review document with embedded Mermaid diagrams (including witness traces rendered as sequence diagrams).
-- **One JSON file per area** at `specs/<name>.json`, with a Quint sidecar `specs/<name>.qnt`. Two kinds: `area` (functional; declare `screens[]` + `navigation[]` to model an interactive surface formally) and `contract` (cross-area invariants). Requirements group into **journeys** (`.spec/journeys/` — use cases with steps in temporal order, single- or cross-area) — readbacks render flows as a human walks them, not ID-sorted lists.
-- **Changes as the unit of work**: a manifest per change at `.spec/changes/<slug>.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
+- **One JSON file per area** at `specs/<name>.area.json` (or `specs/<name>.contract.json` — the suffix encodes the kind), with a Quint sidecar `specs/<name>.qnt`. Two kinds: `area` (functional; declare `screens[]` + `navigation[]` to model an interactive surface formally) and `contract` (cross-area invariants). Requirements group into **journeys** (`specs/journeys/<slug>.journey.json` — use cases with steps in temporal order, single- or cross-area) — readbacks render flows as a human walks them, not ID-sorted lists.
+- **Changes as the unit of work**: a manifest per change at `specs/changes/<slug>.change.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
 - **Anti-vacuity guarantees**: a requirement counts as demonstrated only when the checker produces a witness trace for it; a spec whose invariants pass over an unreachable state space is caught, not celebrated.
 - Seven optional architecture layers (0–6: stack, components, patterns, ADRs, topology, protocols, readbacks) and a multi-repo story via config-driven paths (no submodules).
 - Python tooling: `spec-lint` (consistency + EARS + precision lints + witness obligations), `spec-record` (deterministic check **and** verify runner — model checking, conformance replay, drift, and every ledger write-back are mechanical; the AI never hand-edits a verdict), `spec-readback` (deterministic readback generator — the review document is rendered by code, byte-identical for identical input, so its git diff IS the review), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
@@ -62,7 +62,7 @@ Spec: No .spec/project.json — let me set up the project.
   Areas? > orders, inventory, notifications
   ...
 ✓ Wrote .spec/project.json
-✓ Scaffolded specs/{orders,inventory,notifications}.json (status: raw)
+✓ Scaffolded specs/{orders,inventory,notifications}.area.json (status: raw)
 
   Name the first change? [initial-spec] > ⏎
 ✓ Opened change initial-spec (targets: orders, inventory, notifications)
@@ -78,13 +78,13 @@ Spec: orders has no requirements yet. Walking elicitation.
   Happy path? > [walks; captures REQ-001..REQ-004]
   Invariants? > [INV-001 "no confirmed order has unreserved inventory", critical]
   ...
-✓ Updated specs/orders.json (status: structured)
+✓ Updated specs/orders.area.json (status: structured)
 
 Ready to formalize. Draft a Quint module?
 > yes
 
 ✓ Wrote specs/orders.qnt
-✓ Updated specs/orders.json (status: formalized)
+✓ Updated specs/orders.area.json (status: formalized)
 
 Next: /spec-check orders
 ```
@@ -109,7 +109,7 @@ Witness obligations:
 > /spec-verify orders     # 12 tests pass; spec ↔ code linked
 ```
 
-End-state for one area: `specs/orders.json` + `specs/orders.qnt` + `specs/orders.readback.md` + actual code in `src/orders/` and `tests/orders/`. PR carries all of it together.
+End-state for one area: `specs/orders.area.json` + `specs/orders.qnt` + `specs/orders.readback.md` + actual code in `src/orders/` and `tests/orders/`. PR carries all of it together.
 
 ### 2. Brownfield — adding spec to existing code
 
@@ -264,8 +264,8 @@ After `tools/bootstrap.sh` runs, `examples/` and this README are gone, and `tool
 Before bootstrapping (or by browsing this repo on GitHub), look at:
 
 - `examples/.spec/project.json` — a real project config with two areas.
-- `examples/specs/auth.json` + `examples/specs/auth.qnt` — login/lockout area, with invariants Apalache verifies.
-- `examples/specs/auth-ui.json` + `examples/specs/auth-ui.qnt` — UI area with navigation modeled as a Quint state machine ("Dashboard is unreachable without auth" is a model-checked invariant).
+- `examples/specs/auth.area.json` + `examples/specs/auth.qnt` — login/lockout area, with invariants Apalache verifies.
+- `examples/specs/auth-ui.area.json` + `examples/specs/auth-ui.qnt` — UI area with navigation modeled as a Quint state machine ("Dashboard is unreachable without auth" is a model-checked invariant).
 
 Reference material, not starter content. The bootstrap removes it.
 

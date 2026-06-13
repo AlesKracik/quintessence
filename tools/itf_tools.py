@@ -48,6 +48,31 @@ MAX_NOTE_LEN = 60
 # never silently dropped from summaries/diagrams.
 GHOST_PREFIXES = ("_last", "mbt::")
 
+# Spec-file layout: every spec JSON carries a type suffix in its filename.
+#   specs/<name>.area.json | specs/<name>.contract.json
+#   specs/changes/<slug>.change.json
+#   specs/journeys/<slug>.journey.json
+AREA_SUFFIXES = ("area", "contract")
+
+
+def area_json_path(root, name):
+    """Resolve specs/<name>.area.json or specs/<name>.contract.json —
+    whichever exists. Falls back to the .area.json path (for new files /
+    error messages) when neither does."""
+    for kind in AREA_SUFFIXES:
+        p = Path(root) / "specs" / f"{name}.{kind}.json"
+        if p.exists():
+            return p
+    return Path(root) / "specs" / f"{name}.area.json"
+
+
+def changes_dir(root):
+    return Path(root) / "specs" / "changes"
+
+
+def journeys_dir(root):
+    return Path(root) / "specs" / "journeys"
+
 
 def compute_model_sha(root, area_name, area_data):
     """Canonical sha256 over the model the witnesses were checked against:
@@ -252,7 +277,7 @@ def cmd_mermaid(args):
 
 def cmd_sha(args):
     root = Path(args.root)
-    area_path = root / "specs" / f"{args.area}.json"
+    area_path = area_json_path(root, args.area)
     if not area_path.exists():
         print(f"ERROR: {area_path} not found", file=sys.stderr)
         sys.exit(2)
@@ -351,7 +376,7 @@ def witness_status(root, area_name, area_data):
 
 def cmd_status(args):
     root = Path(args.root)
-    area_path = root / "specs" / f"{args.area}.json"
+    area_path = area_json_path(root, args.area)
     if not area_path.exists():
         print(f"ERROR: {area_path} not found", file=sys.stderr)
         sys.exit(2)
