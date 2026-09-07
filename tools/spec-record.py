@@ -26,6 +26,12 @@ What `check` does, in order:
      --invariant=<name>` each; counterexample traces saved to
      specs/<area>/traces/<ID>.cex.itf.json. Stale .cex files of
      now-verified checks are removed.
+     1a. OPT-IN SMT backend: an invariant marked `proof: "smt"` is
+     discharged by running z3 over its smt_file, which asserts the
+     NEGATION of the invariant. unsat = no violating assignment
+     exists = proven (modulo the encoding); sat = counterexample;
+     unknown = not-checkable, recorded as an absent answer rather
+     than as a pass.
      1b. OPT-IN structural backend: an invariant marked
      `proof: "structural"` is routed to Alloy instead — `alloy exec
      -c <alloy_command>` over formal_model.alloy_file, verdict read
@@ -39,6 +45,12 @@ What `check` does, in order:
      pinned); no violation = no-witness (vacuity red flag).
      Skip-if-fresh: a requirement already witnessed against the current
      model_sha is not re-proven.
+     2b. Requirements with modality "may" get ONE PROBE PER PERMITTED
+     OUTCOME (witness.outcomes[]) instead of a single witness. A lone
+     trace would only show that one of the allowed behaviors is
+     reachable \u2014 exactly how a permission silently narrows into a
+     requirement. The requirement counts as witnessed only when every
+     declared outcome has its own trace.
   3. Writes check_results (preserving the matrix block and carrying over
      nl_explanation for counterexamples whose result didn't change),
      formal_status per invariant/property, and each witness block.
@@ -67,6 +79,7 @@ no-witness, error, timeout, or failed replay/tests; 2 = setup problem
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -200,6 +213,97 @@ def run_alloy(java, jar, als_file, command, outdir, solver, timeout):
                                       "instance": instance}
 
 
+def find_z3(project):
+    """Resolve the z3 binary for the optional SMT backend."""
+    cfg = project.get("z3") or {}
+    exe = os.environ.get("Z3_BIN") or cfg.get("binary") or shutil.which("z3")
+    if not exe:
+        fail_setup("`z3` not found. Put it on PATH, or set Z3_BIN / z3.binary in "
+                   ".spec/project.json. The SMT backend is optional \u2014 only invariants "
+                   "marked proof: 'smt' need it.")
+    if not shutil.which(exe) and not Path(exe).exists():
+        fail_setup(f"z3 binary not found at {exe}.")
+    return exe
+
+
+def run_smt(z3, smt_file, timeout):
+    """Run one SMT-LIB2 query. Returns (result, detail, duration_s, model).
+
+    The query asserts the NEGATION of the invariant, so the mapping inverts
+    the same way the witness probes do:
+        unsat   -> no violating assignment exists -> verified
+        sat     -> the model IS a counterexample
+        unknown -> the solver declined to decide. Recorded as not-checkable,
+                   never as a pass: an absent answer is not a proof, and
+                   collapsing the two is precisely the dishonesty the result
+                   taxonomy exists to prevent.
+    The verdict is read from the first status token z3 prints, not by
+    searching the whole output for the word 'unsat' \u2014 error text mentioning
+    it would otherwise be misread as success."""
+    started = datetime.now(timezone.utc)
+    try:
+        proc = subprocess.run([z3, "-smt2", str(smt_file)],
+                              capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"timed out after {timeout}s", timeout, None
+    duration = (datetime.now(timezone.utc) - started).total_seconds()
+    out = (proc.stdout or "").strip()
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    status = lines[0] if lines else ""
+    if status == "unsat":
+        return "verified", "", duration, None
+    if status == "sat":
+        return "counterexample", "", duration, "\n".join(lines[1:])
+    if status == "unknown":
+        reason = "\n".join(lines[1:])[:200]
+        return "not-checkable", f"z3 returned unknown{': ' + reason if reason else ''}", duration, None
+    tail = ((proc.stderr or "") + out).strip().splitlines()[-5:]
+    return "error", "\n".join(tail), duration, None
+
+
+def run_smt_check(item, iid, root, area_name, need_z3, timeout):
+    """Check one `proof: "smt"` invariant and return its check_results entry,
+    stamping formal_status the same way every other backend does."""
+    entry = {"id": iid, "kind": "invariant", "backend": "z3", "proof": "smt",
+             "result": "error"}
+    rel = item.get("smt_file")
+    if not rel:
+        entry["error"] = "proof is 'smt' but no smt_file is set \u2014 nothing to solve."
+        print(f"{iid:<12} {'error':<26} no smt_file")
+        return entry
+    smt_path = root / "specs" / rel
+    if not smt_path.exists():
+        entry["error"] = f"smt_file '{rel}' does not exist."
+        print(f"{iid:<12} {'error':<26} missing {rel}")
+        return entry
+
+    z3 = need_z3()
+    result, detail, duration, model = run_smt(z3, smt_path, timeout)
+    entry["result"] = result
+    entry["duration_s"] = round(duration, 1)
+    if result == "verified":
+        item["formal_status"] = "verified-smt"
+        print(f"{iid:<12} {'verified (smt)':<26} ({duration:.1f}s)")
+    elif result == "counterexample":
+        item["formal_status"] = "counterexample-found"
+        gen = root / "specs" / area_name / "gen" / "smt"
+        gen.mkdir(parents=True, exist_ok=True)
+        model_path = gen / f"{iid}.model.txt"
+        model_path.write_text(model or "", encoding="utf-8")
+        entry["instance"] = f"{area_name}/gen/smt/{model_path.name}"
+        print(f"{iid:<12} {'counterexample':<26} ({duration:.1f}s)  "
+              f"model in specs/{area_name}/gen/smt/")
+    elif result == "not-checkable":
+        # An honest non-answer. It must not inherit a previous green.
+        item["formal_status"] = "not-checkable"
+        entry["error"] = detail
+        print(f"{iid:<12} {'not-checkable':<26} {detail}")
+    else:
+        entry["error"] = detail
+        print(f"{iid:<12} {result:<26} {detail}")
+    return entry
+
+
 def find_quint():
     exe = shutil.which("quint")
     if not exe:
@@ -329,6 +433,90 @@ def probe_name(req_id):
     return "witness_" + req_id.replace("-", "_")
 
 
+def outcome_probe_name(req_id, outcome_name):
+    """Probe for one permitted outcome of a `may` requirement. Distinct name
+    per outcome, since each is proven separately."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", outcome_name or "").strip("_")
+    return probe_name(req_id) + "_" + (slug or "outcome")
+
+
+def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_name,
+                        need_quint, max_steps, timeout, current_sha):
+    """Prove each permitted outcome of a `may` requirement separately.
+
+    Returns the number of failures. The requirement is only witnessed when
+    EVERY declared outcome has its own trace: proving one of several allowed
+    behaviors reachable says nothing about whether the others are, which is
+    how a MAY quietly becomes a MUST."""
+    outcomes = witness.get("outcomes") or []
+    if not outcomes:
+        print(f"{rid:<12} no-outcomes      (modality 'may' needs witness.outcomes[])")
+        witness["status"] = "not-run"
+        return 1
+
+    probe_vals = set(probes_ir["vals"]) if probes_ir else set()
+    bad = 0
+    for oc in outcomes:
+        oname = oc.get("name") or "?"
+        label = f"{rid}/{oname}"
+        if not oc.get("predicate"):
+            print(f"{label:<24} no-predicate")
+            bad += 1
+            continue
+        if (oc.get("status") == "witnessed" and current_sha
+                and oc.get("model_sha") == current_sha):
+            t_rel = oc.get("trace")
+            t_path = root / "specs" / t_rel if t_rel else None
+            if t_path and t_path.exists() and not load_trace(t_path)[1]:
+                print(f"{label:<24} fresh")
+                continue
+        pname = outcome_probe_name(rid, oname)
+        if probes_ir is None or pname not in probe_vals:
+            print(f"{label:<24} no-probe         (expected val '{pname}')")
+            bad += 1
+            continue
+        trace_rel = f"{area_name}/traces/{rid}.{re.sub(r'[^A-Za-z0-9]+', '-', oname)}.itf.json"
+        trace_path = root / "specs" / trace_rel
+        result, detail, duration = run_verify(
+            need_quint(), probes_file, pname, max_steps, timeout,
+            init="initP", step="stepP", out_itf=trace_path,
+        )
+        oc["checked_at"] = now_iso()
+        if result == "counterexample":
+            _, errs = load_trace(trace_path)
+            if errs:
+                oc["status"] = "not-run"
+                print(f"{label:<24} error            (invalid trace: {errs[0]})")
+                bad += 1
+                continue
+            oc["status"] = "witnessed"
+            oc["trace"] = trace_rel
+            if current_sha:
+                oc["model_sha"] = current_sha
+            print(f"{label:<24} WITNESSED        \u2192 specs/{trace_rel} ({duration:.1f}s)")
+        elif result == "verified":
+            oc["status"] = "no-witness"
+            oc.pop("model_sha", None)
+            bad += 1
+            print(f"{label:<24} NO-WITNESS       (permitted outcome unreachable \u2014 "
+                  f"the permission is narrower than written)")
+        else:
+            bad += 1
+            print(f"{label:<24} {result:<16} {detail}")
+
+    statuses = [oc.get("status") for oc in outcomes]
+    if all(st == "witnessed" for st in statuses):
+        witness["status"] = "witnessed"
+        if current_sha:
+            witness["model_sha"] = current_sha
+    elif any(st == "no-witness" for st in statuses):
+        witness["status"] = "no-witness"
+    else:
+        witness["status"] = "not-run"
+    witness["checked_at"] = now_iso()
+    return bad
+
+
 def cmd_check(args):
     root = Path(args.root)
     area_path = area_json_path(root, args.area)
@@ -380,6 +568,11 @@ def cmd_check(args):
             tools["alloy"] = find_alloy(project)
         return tools["alloy"]
 
+    def need_z3():
+        if "z3" not in tools:
+            tools["z3"] = find_z3(project)
+        return tools["z3"]
+
     traces_dir = root / "specs" / args.area / "traces"
     traces_dir.mkdir(parents=True, exist_ok=True)
 
@@ -396,10 +589,11 @@ def cmd_check(args):
         for item in area.get(list_name, []) or []:
             iid, qname = item.get("id"), item.get("quint_name")
             structural = (kind == "invariant" and item.get("proof") == "structural")
-            # A structural invariant is carried by an Alloy check, not by a
-            # Quint val, so it legitimately has no quint_name — the presence
-            # gate applies only to the Apalache path.
-            if not iid or (not qname and not structural):
+            smt = (kind == "invariant" and item.get("proof") == "smt")
+            # A structural or SMT invariant is carried by its own sidecar, not
+            # by a Quint val, so it legitimately has no quint_name — the
+            # presence gate applies only to the Apalache path.
+            if not iid or (not qname and not structural and not smt):
                 continue
             if only and iid not in only:
                 continue
@@ -407,6 +601,12 @@ def cmd_check(args):
             # and routes to Alloy instead of Apalache — a different question
             # (relational structure) with a different bound (finite scope,
             # not step depth), so it gets its own status and its own render.
+            if kind == "invariant" and item.get("proof") == "smt":
+                entry = run_smt_check(item, iid, root, args.area, need_z3, timeout)
+                if entry.get("result") != "verified":
+                    bad += 1
+                checks.append(entry)
+                continue
             if structural:
                 entry = run_structural_check(
                     item, iid, als_rel, als_file, root, args.area,
@@ -470,6 +670,22 @@ def cmd_check(args):
                     or req.get("type") == "non-functional"):
                 continue
             witness = req.get("witness") or {}
+            if req.get("modality") == "may":
+                req["witness"] = witness
+                probes_rel_ok = probes_file is not None
+                bad += record_may_outcomes(
+                    req, rid, witness, probes_ir if probes_rel_ok else None,
+                    probes_file, root, args.area, need_quint, max_steps, timeout,
+                    current_sha)
+                continue
+            if req.get("modality") == "forbidden" and witness.get("enforced_by"):
+                # A non-event has no trace; the named invariant carries the
+                # proof and is checked in its own right above.
+                req["witness"] = witness
+                witness["status"] = "skipped"
+                print(f"{rid:<12} forbidden        (enforced by "
+                      f"{witness['enforced_by']})")
+                continue
             if witness.get("status") == "skipped":
                 if not witness.get("justification"):
                     # Same gate as spec-lint — an unjustified skip must not

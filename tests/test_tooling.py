@@ -7,6 +7,11 @@ Covers the deterministic, quint-free logic touched by the robustness pass:
   - the witness-predicate FAIL gate past draft (spec-lint vagueness gate)
   - the opt-in Alloy structural backend (scope-honest rendering, the lint
     gate on proof: "structural", and the receipt.json verdict reader)
+  - declared scope and the anchoring of OUT-OF-SCOPE triage
+  - externals, their outcome-coverage matrix, and assumption annotations
+  - closed-world entities checked against the sidecar's variant type
+  - modality: a witness per permitted outcome, an invariant per prohibition
+  - the semantic diff (spec-diff) and the completeness dimension grid
 
 The tool files use hyphenated names, so they're loaded by path. None of
 these tests need quint/Apalache/Java — they exercise pure Python only.
@@ -15,6 +20,7 @@ Run:  python -m pytest tests/ -q     (from the repo root)
 """
 
 import importlib.util
+import io
 import json
 from pathlib import Path
 
@@ -34,6 +40,9 @@ def _load(modname, filename):
 readback = _load("spec_readback", "spec-readback.py")
 record = _load("spec_record", "spec-record.py")
 lint = _load("spec_lint", "spec-lint.py")
+matrix = _load("spec_matrix", "spec-matrix.py")
+diff = _load("spec_diff", "spec-diff.py")
+quint_ir = _load("quint_ir_mod", "quint_ir.py")
 
 
 # ── Finding 1: honest bounded/inductive invariant rendering ──────────────────
@@ -698,3 +707,616 @@ def test_cmd_check_records_structural_counterexample(tmp_path, monkeypatch):
     # committed, because Alloy's choice among many instances isn't stable.
     assert entry["instance"] == (
         "session-ownership/gen/alloy/noSharedSessions/noSharedSessions-solution-0.xml")
+
+
+# ── Gap A: scope, and the anchoring of OUT-OF-SCOPE triage ──────────────────
+
+def _scope_codes(area):
+    findings = []
+    lint.check_scope(area, "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_out_of_scope_without_ref_warns_while_authoring():
+    codes = _scope_codes({
+        "status": "formalized",
+        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
+                           "verdict": "OUT-OF-SCOPE", "reason": "because"}]})
+    assert (lint.WARN, "out-of-scope-unanchored") in codes
+
+
+@pytest.mark.parametrize("status", ["in-review", "approved"])
+def test_out_of_scope_without_ref_fails_at_review(status):
+    codes = _scope_codes({
+        "status": status,
+        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
+                           "verdict": "OUT-OF-SCOPE"}]})
+    assert (lint.FAIL, "out-of-scope-unanchored") in codes
+
+
+def test_scope_ref_must_resolve():
+    codes = _scope_codes({
+        "status": "formalized",
+        "scope": {"excluded": [{"item": "refunds", "reason": "policy"}]},
+        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
+                           "verdict": "OUT-OF-SCOPE", "scope_ref": "proration"}]})
+    assert (lint.FAIL, "scope-ref-dangling") in codes
+
+
+def test_anchored_out_of_scope_is_clean():
+    assert _scope_codes({
+        "status": "approved",
+        "scope": {"excluded": [{"item": "refunds", "reason": "policy"}]},
+        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
+                           "verdict": "OUT-OF-SCOPE", "scope_ref": "refunds"}]}) == []
+
+
+def test_no_op_needs_a_reason():
+    # A deliberate no-op is a decision; without the reason it is
+    # indistinguishable from an oversight, which is the whole point of triage.
+    codes = _scope_codes({
+        "status": "formalized",
+        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
+                           "verdict": "NO-OP"}]})
+    assert (lint.FAIL, "no-op-without-reason") in codes
+    assert _scope_codes({
+        "status": "formalized",
+        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
+                           "verdict": "NO-OP", "reason": "REQ-003 decided this"}]}) == []
+
+
+def test_verdict_names_the_scope_it_is_relative_to():
+    v = readback.ship_verdict({
+        "requirements": [{"id": "R", "status": "verified"}],
+        "scope": {"included": ["cancellation"]}})
+    assert v.startswith("**✓ READY")
+    assert "scope: cancellation" in v
+
+
+def test_verdict_flags_a_missing_boundary():
+    # READY without a declared boundary is a claim about nothing in particular.
+    v = readback.ship_verdict({"requirements": [{"id": "R", "status": "verified"}]})
+    assert "no scope declared" in v
+
+
+# ── Gap B: externals, outcome coverage, assumptions ─────────────────────────
+
+_EXT = [{"name": "BillingProvider",
+         "outcomes": [{"name": "SUCCESS"}, {"name": "TIMEOUT"}]}]
+
+
+def _ext_codes(area):
+    findings = []
+    lint.check_externals(area, "billing", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_declared_outcome_with_no_handler_warns_then_fails():
+    area = {"status": "formalized", "externals": _EXT, "requirements": []}
+    assert (lint.WARN, "outcome-unhandled") in _ext_codes(area)
+    area["status"] = "approved"
+    assert (lint.FAIL, "outcome-unhandled") in _ext_codes(area)
+
+
+def test_handled_outcomes_are_clean():
+    area = {"status": "approved", "externals": _EXT, "requirements": [
+        {"id": "REQ-001", "error_outcomes": [
+            {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "Cancelled"},
+            {"external": "BillingProvider", "outcome": "TIMEOUT", "effect": "NO_CHANGE"}]}]}
+    assert _ext_codes(area) == []
+
+
+def test_error_outcome_must_name_a_declared_external():
+    area = {"status": "formalized", "externals": _EXT, "requirements": [
+        {"id": "REQ-001", "error_outcomes": [
+            {"external": "Stripe", "outcome": "SUCCESS", "effect": "x"}]}]}
+    assert (lint.FAIL, "unknown-external") in _ext_codes(area)
+
+
+def test_error_outcome_must_name_a_declared_outcome():
+    area = {"status": "formalized", "externals": _EXT, "requirements": [
+        {"id": "REQ-001", "error_outcomes": [
+            {"external": "BillingProvider", "outcome": "EXPLODED", "effect": "x"}]}]}
+    assert (lint.FAIL, "unknown-outcome") in _ext_codes(area)
+
+
+def test_error_outcomes_without_any_external_fail():
+    area = {"status": "formalized", "requirements": [
+        {"id": "REQ-001", "error_outcomes": [
+            {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "x"}]}]}
+    assert (lint.FAIL, "error-outcome-without-external") in _ext_codes(area)
+
+
+def test_open_gap_triage_blocks_approval():
+    area = {"status": "approved", "externals": _EXT,
+            "requirements": [{"id": "REQ-001", "error_outcomes": [
+                {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "x"}]}],
+            "outcome_triage": [{"external": "BillingProvider", "outcome": "TIMEOUT",
+                                "verdict": "GAP", "reason": "unknown"}]}
+    assert (lint.FAIL, "outcome-open-gap") in _ext_codes(area)
+
+
+def test_area_without_externals_is_untouched():
+    assert _ext_codes({"status": "approved", "requirements": [{"id": "REQ-001"}]}) == []
+
+
+def _asm_codes(area, all_areas=None):
+    findings = []
+    lint.check_assumptions(area, all_areas or {}, "billing", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_assumption_affects_must_resolve():
+    area = {"status": "formalized", "invariants": [{"id": "INV-001"}],
+            "assumptions": [{"id": "ASM-001", "statement": "x",
+                             "affects": ["INV-001", "INV-404"]}]}
+    codes = _asm_codes(area)
+    assert codes.count((lint.FAIL, "assumption-affects-dangling")) == 1
+
+
+def test_assumption_external_must_be_declared():
+    area = {"status": "formalized", "externals": _EXT,
+            "assumptions": [{"id": "ASM-001", "statement": "x", "external": "Stripe"}]}
+    assert (lint.FAIL, "assumption-unknown-external") in _asm_codes(area)
+
+
+def test_open_assumption_blocks_approval():
+    area = {"status": "approved",
+            "assumptions": [{"id": "ASM-001", "statement": "x", "status": "open"}]}
+    assert (lint.FAIL, "assumption-open-on-approved") in _asm_codes(area)
+    area["status"] = "formalized"
+    assert _asm_codes(area) == []
+
+
+def test_assumptions_annotate_the_marks_they_bear_on():
+    area = {"assumptions": [{"id": "ASM-001", "statement": "x",
+                             "affects": ["INV-001", "REQ-004"]},
+                            {"id": "ASM-002", "statement": "y", "affects": ["INV-001"]}]}
+    idx = readback.assumption_index(area)
+    assert idx == {"INV-001": ["ASM-001", "ASM-002"], "REQ-004": ["ASM-001"]}
+    assert readback.under_assumptions("✓ proven", idx["INV-001"]) == \
+        "✓ proven · under ASM-001, ASM-002"
+
+
+def test_assumptions_never_qualify_a_failure():
+    # Only ✓-shaped marks rest on assumptions; a counterexample is not
+    # "false, given ASM-001" — it is just false.
+    assert readback.under_assumptions("✗", ["ASM-001"]) == "✗"
+    assert readback.under_assumptions("⏳", ["ASM-001"]) == "⏳"
+    assert readback.under_assumptions("✓ proven", []) == "✓ proven"
+
+
+# ── Gap B/E: the external × outcome matrix axis ─────────────────────────────
+
+def test_outcome_matrix_counts_coverage():
+    area = {"externals": _EXT, "requirements": [
+        {"id": "REQ-001", "error_outcomes": [
+            {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "Cancelled"}]}]}
+    rows = matrix.outcome_rows(area)
+    idx = matrix.outcome_coverage_index(area)
+    assert rows == [("BillingProvider", "SUCCESS"), ("BillingProvider", "TIMEOUT")]
+    assert idx == {("BillingProvider", "SUCCESS"): "REQ-001:Cancelled"}
+
+
+def test_outcome_matrix_emits_and_tallies(tmp_path):
+    area = {"externals": _EXT, "requirements": [
+        {"id": "REQ-001", "error_outcomes": [
+            {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "Cancelled"}]}]}
+    buf = io.StringIO()
+    stats = matrix.emit_outcomes_csv(matrix.outcome_rows(area),
+                                     matrix.outcome_coverage_index(area), {}, buf)
+    assert stats == {"total": 2, "covered": 1, "uncovered": 1, "triaged": 0}
+    assert "REQ-001:Cancelled" in buf.getvalue()
+
+
+def test_outcome_matrix_counts_triage_as_answered():
+    area = {"externals": _EXT, "requirements": []}
+    triage = {("BillingProvider", "TIMEOUT"): ("IMPOSSIBLE", "never happens")}
+    buf = io.StringIO()
+    stats = matrix.emit_outcomes_csv(matrix.outcome_rows(area), {}, triage, buf)
+    assert stats["triaged"] == 1 and stats["uncovered"] == 1
+
+
+# ── Gap C: closed worlds ────────────────────────────────────────────────────
+
+def _closed_codes(area, sidecar):
+    findings = []
+    lint.check_closed_worlds(area, sidecar, "sub", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+_SM = [{"entity": "Subscription", "quint_type": "SubStatus"}]
+
+
+def _closed_area(states, closed=True):
+    return {"concepts": {"entities": [{"name": "Subscription", "states": states,
+                                       "closed": closed}]},
+            "state_machines": _SM}
+
+
+def test_closed_entity_matching_the_model_is_clean():
+    sidecar = {"type_variants": {"SubStatus": ["Active", "Cancelled", "Expired"]}}
+    assert _closed_codes(_closed_area(["Active", "Cancelled", "Expired"]), sidecar) == []
+
+
+def test_closed_entity_catches_a_state_the_model_invented():
+    # The failure this marker exists for: a generated model grows a state
+    # nobody specified, and everything downstream absorbs it silently.
+    sidecar = {"type_variants": {"SubStatus": ["Active", "Cancelled", "Expired", "Paused"]}}
+    codes = _closed_codes(_closed_area(["Active", "Cancelled", "Expired"]), sidecar)
+    assert (lint.FAIL, "closed-world-extra-state") in codes
+
+
+def test_closed_entity_catches_a_state_the_model_lacks():
+    sidecar = {"type_variants": {"SubStatus": ["Active"]}}
+    codes = _closed_codes(_closed_area(["Active", "Cancelled"]), sidecar)
+    assert (lint.FAIL, "closed-world-missing-state") in codes
+
+
+def test_open_entity_is_never_checked():
+    sidecar = {"type_variants": {"SubStatus": ["Active", "Whatever"]}}
+    assert _closed_codes(_closed_area(["Active"], closed=False), sidecar) == []
+
+
+def test_closed_without_state_machine_is_unverifiable_not_verified():
+    area = {"concepts": {"entities": [{"name": "Subscription", "states": ["Active"],
+                                       "closed": True}]}}
+    assert (lint.WARN, "closed-unverifiable") in _closed_codes(area, {"type_variants": {}})
+
+
+def test_closed_without_states_fails():
+    area = {"concepts": {"entities": [{"name": "S", "closed": True}]}}
+    assert (lint.FAIL, "closed-without-states") in _closed_codes(area, {})
+
+
+def test_closed_type_absent_from_sidecar_warns():
+    codes = _closed_codes(_closed_area(["Active"]), {"type_variants": {"Other": ["X"]}})
+    assert (lint.WARN, "closed-type-not-found") in codes
+
+
+def test_quint_ir_extracts_sum_constructors_not_aliases(tmp_path):
+    src = tmp_path / "m.qnt"
+    src.write_text("module m {\n"
+                   "  type UserId = str\n"
+                   "  type SubStatus = Active | Cancelled | Expired\n"
+                   "  type Res = Ok(int) | Err(str)\n"
+                   "  var x: int\n}\n", encoding="utf-8")
+    ir = quint_ir.parse_qnt(src, engine="regex")
+    assert ir["type_variants"]["SubStatus"] == ["Active", "Cancelled", "Expired"]
+    assert ir["type_variants"]["Res"] == ["Ok", "Err"]
+    assert "UserId" not in ir["type_variants"]     # an alias is not a closed set
+
+
+# ── Gap D: modality ─────────────────────────────────────────────────────────
+
+def _modality_codes(reqs, invs=None, status="formalized"):
+    findings = []
+    lint.check_modality({"status": status, "requirements": reqs,
+                         "invariants": invs or [{"id": "INV-002"}]}, "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_forbidden_must_name_its_enforcing_invariant():
+    codes = _modality_codes([{"id": "REQ-006", "status": "specified",
+                              "modality": "forbidden", "witness": {"status": "skipped"}}])
+    assert (lint.FAIL, "forbidden-without-enforcer") in codes
+
+
+def test_forbidden_enforcer_must_exist():
+    codes = _modality_codes([{"id": "REQ-006", "status": "specified",
+                              "modality": "forbidden",
+                              "witness": {"status": "skipped", "enforced_by": "INV-404"}}])
+    assert (lint.FAIL, "forbidden-enforcer-dangling") in codes
+
+
+def test_forbidden_with_enforcer_is_clean():
+    assert _modality_codes([{"id": "REQ-006", "status": "specified",
+                             "modality": "forbidden",
+                             "witness": {"status": "skipped",
+                                         "enforced_by": "INV-002"}}]) == []
+
+
+def test_forbidden_carrying_a_witness_predicate_warns():
+    codes = _modality_codes([{"id": "REQ-006", "status": "specified",
+                              "modality": "forbidden",
+                              "witness": {"status": "skipped", "enforced_by": "INV-002",
+                                          "predicate": "x > 0"}}])
+    assert (lint.WARN, "forbidden-with-predicate") in codes
+
+
+def test_may_needs_a_witness_per_permitted_outcome():
+    # One trace would prove one allowed behavior reachable and say nothing
+    # about the others — a MAY narrowed to a MUST by omission.
+    one = [{"id": "REQ-007", "status": "specified", "modality": "may",
+            "witness": {"outcomes": [{"name": "email", "predicate": "p"}]}}]
+    assert (lint.FAIL, "may-needs-outcomes") in _modality_codes(one)
+    two = [{"id": "REQ-007", "status": "specified", "modality": "may",
+            "witness": {"outcomes": [{"name": "email", "predicate": "p"},
+                                     {"name": "in-app", "predicate": "q"}]}}]
+    assert _modality_codes(two) == []
+
+
+def test_may_outcome_needs_a_predicate():
+    codes = _modality_codes([{"id": "REQ-007", "status": "specified", "modality": "may",
+                              "witness": {"outcomes": [{"name": "a", "predicate": "p"},
+                                                       {"name": "b"}]}}])
+    assert (lint.FAIL, "may-outcome-without-predicate") in codes
+
+
+def test_may_outcomes_must_all_be_witnessed_at_review():
+    reqs = [{"id": "REQ-007", "status": "specified", "modality": "may",
+             "witness": {"outcomes": [{"name": "a", "predicate": "p", "status": "witnessed"},
+                                      {"name": "b", "predicate": "q", "status": "not-run"}]}}]
+    codes = _modality_codes(reqs, status="in-review")
+    assert codes.count((lint.FAIL, "may-outcome-unwitnessed")) == 1
+
+
+def test_may_and_deterministic_contradict():
+    codes = _modality_codes([{"id": "REQ-007", "status": "specified", "modality": "may",
+                              "determinism": "deterministic",
+                              "witness": {"outcomes": [{"name": "a", "predicate": "p"},
+                                                       {"name": "b", "predicate": "q"}]}}])
+    assert (lint.FAIL, "may-but-deterministic") in codes
+
+
+def test_may_predicates_satisfy_the_vagueness_gate(tmp_path):
+    # Regression: the witness gate reads witness.predicate, which a correctly
+    # written 'may' requirement does not have.
+    area = {"kind": "area", "area": "auth", "version": "1.0.0", "status": "formalized",
+            "formal_model": {"quint_file": "auth.qnt"},
+            "requirements": [{"id": "REQ-007", "status": "specified", "modality": "may",
+                              "witness": {"outcomes": [
+                                  {"name": "a", "predicate": "sessions.size() > 0"},
+                                  {"name": "b", "predicate": "sessions.size() > 1"}]}}]}
+    findings = []
+    lint.check_witnesses(tmp_path, area, "auth", findings)
+    assert [f for f in findings if f.check == "no-witness-predicate"] == []
+
+
+def test_may_outcome_predicates_still_get_the_fake_witness_check():
+    codes = _sanity_codes([{"id": "REQ-007", "quint_ref": "login", "modality": "may",
+                            "witness": {"outcomes": [
+                                {"name": "a", "predicate": "sessions.size() > 0"},
+                                {"name": "b", "predicate": "true"}]}}])
+    assert (lint.FAIL, "predicate-constant") in codes
+
+
+def test_may_probe_names_are_distinct_per_outcome():
+    assert record.outcome_probe_name("REQ-007", "in-app") == "witness_REQ_007_in_app"
+    assert record.outcome_probe_name("REQ-007", "email") == "witness_REQ_007_email"
+
+
+# ── Gap H: decision blast radius ────────────────────────────────────────────
+
+def test_decision_affects_must_resolve():
+    findings = []
+    lint.check_decision_affects(
+        {"requirements": [{"id": "REQ-001"}], "invariants": [{"id": "INV-001"}],
+         "decisions": [{"id": "DEC-001", "affects": ["REQ-001", "INV-001", "REQ-999"]}]},
+        {}, "auth", findings)
+    assert [(f.severity, f.check) for f in findings] == \
+        [(lint.FAIL, "decision-affects-dangling")]
+
+
+# ── Gap I: examples ─────────────────────────────────────────────────────────
+
+_EX_SIDECAR = {"actions": {"cancel"}, "runs": {"happy"}, "vars": {"status"},
+               "action_mutations": {}}
+
+
+def _example_codes(examples, area=None):
+    area = area or {}
+    area["examples"] = examples
+    findings = []
+    lint.check_examples(area, _EX_SIDECAR, {}, "sub", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_example_action_must_exist():
+    codes = _example_codes([{"id": "EX-001", "when": {"action": "nope"},
+                             "expect": {"status": "Cancelled"}}])
+    assert (lint.FAIL, "example-action-missing") in codes
+
+
+def test_example_run_must_exist():
+    codes = _example_codes([{"id": "EX-001", "when": {"action": "cancel"},
+                             "expect": {"status": "x"}, "quint_run": "missing"}])
+    assert (lint.FAIL, "example-run-missing") in codes
+
+
+def test_example_refs_must_resolve():
+    codes = _example_codes([{"id": "EX-001", "when": {"action": "cancel"},
+                             "expect": {"status": "x"}, "refs": ["REQ-404"]}],
+                           area={"requirements": [{"id": "REQ-001"}]})
+    assert (lint.FAIL, "example-ref-dangling") in codes
+
+
+def test_example_asserting_nothing_warns():
+    codes = _example_codes([{"id": "EX-001", "when": {"action": "cancel"}, "expect": {}}])
+    assert (lint.WARN, "example-asserts-nothing") in codes
+
+
+def test_good_example_is_clean():
+    assert _example_codes([{"id": "EX-001", "when": {"action": "cancel"},
+                            "expect": {"status": "Cancelled"}, "quint_run": "happy"}]) == []
+
+
+# ── Gap J: the completeness dimension grid ──────────────────────────────────
+
+def _dim_row(area, name):
+    for line in readback.dimensions_section(area):
+        if line.startswith(f"| {name} |"):
+            return line
+    raise AssertionError(f"no row for {name}")
+
+
+def test_unmeasured_dimensions_are_dashes_not_ticks():
+    # The specific dishonesty this guards against: "no external outcome
+    # matrix" rendering as a discharged dimension.
+    area = {"requirements": [{"id": "R", "ears": {"unwanted": True}}]}
+    assert "| — |" in _dim_row(area, "Failure behavior")
+    assert "| — |" in _dim_row(area, "External systems")
+    assert "| — |" in _dim_row(area, "Adversarial review")
+
+
+def test_measured_dimensions_report_their_verdict():
+    area = {"check_results": {"outcomes": {"cells": 4, "covered": 4, "uncovered": 0},
+                              "matrix": {"cells": 12, "covered": 2, "triaged": 10,
+                                         "uncovered": 0}}}
+    assert "| ✓ |" in _dim_row(area, "Failure behavior")
+    assert "| ✓ |" in _dim_row(area, "State space")
+    area["check_results"]["outcomes"]["uncovered"] = 2
+    assert "| ! |" in _dim_row(area, "Failure behavior")
+
+
+def test_open_world_is_not_a_defect_but_half_closed_is():
+    open_world = {"concepts": {"entities": [{"name": "A", "states": ["x"]}]}}
+    assert "| — |" in _dim_row(open_world, "Data model")
+    closed = {"concepts": {"entities": [{"name": "A", "states": ["x"], "closed": True}]}}
+    assert "| ✓ |" in _dim_row(closed, "Data model")
+    mixed = {"concepts": {"entities": [{"name": "A", "states": ["x"], "closed": True},
+                                       {"name": "B", "states": ["y"]}]}}
+    assert "| ! |" in _dim_row(mixed, "Data model")
+
+
+def test_redteam_never_run_is_not_a_pass():
+    ran_clean = {"open_questions": [{"id": "Q-001", "source": "red-team:critical",
+                                     "status": "resolved"}]}
+    assert "| ✓ |" in _dim_row(ran_clean, "Adversarial review")
+    ran_open = {"open_questions": [{"id": "Q-001", "source": "red-team:critical",
+                                    "status": "open"}]}
+    assert "| ! |" in _dim_row(ran_open, "Adversarial review")
+
+
+# ── Gap F: semantic diff ────────────────────────────────────────────────────
+
+def _area(**kw):
+    base = {"area": "auth", "requirements": [], "invariants": [], "constraints": []}
+    base.update(kw)
+    return base
+
+
+def test_diff_reports_a_widened_constraint_with_direction():
+    old = _area(constraints=[{"id": "CON-001", "name": "MAX", "value": 5}])
+    new = _area(constraints=[{"id": "CON-001", "name": "MAX", "value": 7}])
+    rep = diff.diff_area(old, new)
+    entry = rep["domain"][0]
+    assert entry["id"] == "CON-001" and "widened" in entry["now"]
+    assert any("re-run the model" in o for o in rep["obligations"])
+
+
+def test_diff_reports_a_narrowed_constraint():
+    old = _area(constraints=[{"id": "CON-001", "name": "MAX", "value": 7}])
+    new = _area(constraints=[{"id": "CON-001", "name": "MAX", "value": 5}])
+    assert "narrowed" in diff.diff_area(old, new)["domain"][0]["now"]
+
+
+def test_diff_flags_a_may_narrowed_to_a_must():
+    old = _area(requirements=[{"id": "REQ-001", "modality": "may",
+                               "ears": {"response": "r"}}])
+    new = _area(requirements=[{"id": "REQ-001", "modality": "must",
+                               "ears": {"response": "r"}}])
+    notes = [e["note"] for e in diff.diff_area(old, new)["behavior"]]
+    assert any("removes permitted outcomes" in n for n in notes)
+
+
+def test_diff_flags_a_lost_verdict_as_an_obligation():
+    old = _area(invariants=[{"id": "INV-001", "formal_status": "verified"}])
+    new = _area(invariants=[{"id": "INV-001", "formal_status": "not-run"}])
+    rep = diff.diff_area(old, new)
+    assert any(e["note"] == "LOST its verdict" for e in rep["evidence"])
+    assert any("re-establish" in o for o in rep["obligations"])
+
+
+def test_diff_flags_a_lost_witness():
+    old = _area(requirements=[{"id": "REQ-001", "ears": {"response": "r"},
+                               "witness": {"status": "witnessed"}}])
+    new = _area(requirements=[{"id": "REQ-001", "ears": {"response": "r"},
+                               "witness": {"status": "no-witness"}}])
+    rep = diff.diff_area(old, new)
+    assert any(e["note"] == "lost its witness" for e in rep["evidence"])
+
+
+def test_diff_flags_a_new_state_on_a_closed_entity_as_breaking():
+    old = _area(concepts={"entities": [{"name": "S", "states": ["A"], "closed": True}]})
+    new = _area(concepts={"entities": [{"name": "S", "states": ["A", "B"], "closed": True}]})
+    rep = diff.diff_area(old, new)
+    assert "breaking change" in rep["domain"][0]["note"]
+    assert any("S.B" in o for o in rep["obligations"])
+
+
+def test_diff_flags_a_lifted_scope_exclusion():
+    old = _area(scope={"included": ["x"], "excluded": [{"item": "refunds", "reason": "r"}]})
+    new = _area(scope={"included": ["x"], "excluded": []})
+    notes = [e["note"] for e in diff.diff_area(old, new)["boundary"]]
+    assert any("unanchored" in n for n in notes)
+
+
+def test_diff_reports_first_scope_declaration_once():
+    old = _area()
+    new = _area(scope={"included": ["a", "b"], "excluded": [{"item": "c", "reason": "r"}]})
+    boundary = diff.diff_area(old, new)["boundary"]
+    assert len(boundary) == 1 and "scope declared" in boundary[0]["now"]
+
+
+def test_diff_flags_a_new_external_outcome_as_an_obligation():
+    old = _area(externals=[{"name": "P", "outcomes": [{"name": "OK"}]}])
+    new = _area(externals=[{"name": "P", "outcomes": [{"name": "OK"}, {"name": "TIMEOUT"}]}])
+    rep = diff.diff_area(old, new)
+    assert any("P/TIMEOUT" in o for o in rep["obligations"])
+
+
+def test_diff_surfaces_the_decision_blast_radius():
+    old = _area(constraints=[{"id": "CON-001", "name": "MAX", "value": 5}],
+                decisions=[{"id": "DEC-001", "decision": "five", "affects": ["CON-001"]}])
+    new = _area(constraints=[{"id": "CON-001", "name": "MAX", "value": 7}],
+                decisions=[{"id": "DEC-001", "decision": "seven", "affects": ["CON-001"]}])
+    blast = diff.diff_area(old, new)["blast"]
+    assert blast and blast[0]["id"] == "DEC-001" and "CON-001" in blast[0]["affects"]
+
+
+def test_diff_surfaces_a_decision_whose_ground_moved():
+    # The decision text is unchanged, but something it governs is not.
+    old = _area(requirements=[{"id": "REQ-001", "ears": {"response": "old"}}],
+                decisions=[{"id": "DEC-001", "decision": "d", "affects": ["REQ-001"]}])
+    new = _area(requirements=[{"id": "REQ-001", "ears": {"response": "new"}}],
+                decisions=[{"id": "DEC-001", "decision": "d", "affects": ["REQ-001"]}])
+    blast = diff.diff_area(old, new)["blast"]
+    assert blast and blast[0].get("indirect") is True
+
+
+def test_diff_is_silent_when_nothing_semantic_changed():
+    a = _area(requirements=[{"id": "REQ-001", "ears": {"response": "r"}}],
+              last_modified="2026-01-01T00:00:00Z")
+    b = _area(requirements=[{"id": "REQ-001", "ears": {"response": "r"}}],
+              last_modified="2026-09-09T00:00:00Z")   # touched, not changed
+    assert not diff.has_changes(diff.diff_area(a, b))
+
+
+def test_diff_over_real_git_history(tmp_path):
+    import subprocess
+
+    def run(*args):
+        subprocess.run(args, cwd=tmp_path, check=True,
+                       capture_output=True, text=True)
+
+    run("git", "init", "-q")
+    run("git", "config", "user.email", "t@example.com")
+    run("git", "config", "user.name", "t")
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    area = specs / "auth.area.json"
+    area.write_text(json.dumps(_area(
+        constraints=[{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 5}])),
+        encoding="utf-8")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "v1")
+    area.write_text(json.dumps(_area(
+        constraints=[{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 7}])),
+        encoding="utf-8")
+
+    reports = diff.build_reports("HEAD", diff.WORKTREE, tmp_path)
+    assert "auth" in reports
+    assert "widened" in reports["auth"]["domain"][0]["now"]
+    rendered = "\n".join(diff.render(reports, True, "HEAD", diff.WORKTREE))
+    assert "## What Changed" in rendered and "MAX_FAILED_ATTEMPTS" in rendered

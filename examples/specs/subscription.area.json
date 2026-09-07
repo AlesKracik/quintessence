@@ -1,0 +1,543 @@
+{
+  "$schema": "../../schemas/area.schema.json",
+  "kind": "area",
+  "area": "subscription",
+  "version": "0.1.0",
+  "status": "formalized",
+  "last_modified": "2026-05-15T12:00:00Z",
+  "purpose": "Subscription cancellation: stop future billing, preserve access to the end of the paid period, survive a flaky billing provider. This is the methodology's acceptance case — five sentences of prose turned into the decisions the prose leaves open.",
+  "scope": {
+    "included": [
+      "cancellation",
+      "billing suppression",
+      "access until period end"
+    ],
+    "excluded": [
+      {
+        "item": "refunds",
+        "reason": "Product policy: no refunds for the unused period (DEC-001). Nothing here may issue one."
+      },
+      {
+        "item": "proration",
+        "reason": "No mid-period price adjustment exists in this product."
+      },
+      {
+        "item": "reactivation",
+        "reason": "Resubscribing creates a new subscription; owned by the signup area.",
+        "owner": "signup"
+      },
+      {
+        "item": "dunning",
+        "reason": "Retry-and-chase on failed renewal payments is the billing area's job."
+      }
+    ]
+  },
+  "concepts": {
+    "entities": [
+      {
+        "name": "Subscription",
+        "id_field": "customerId",
+        "states": [
+          "Active",
+          "Cancelled",
+          "Expired"
+        ],
+        "closed": true,
+        "description": "CLOSED: exactly these three states exist. 'Paused', 'PendingCancellation' and friends are the states an implementation invents when nobody wrote the list down — the marker is what stops that."
+      }
+    ],
+    "actors": [
+      "Customer",
+      "System",
+      "BillingProvider"
+    ],
+    "verbs": [
+      "cancel_subscription",
+      "cancel_again",
+      "cancel_times_out",
+      "expire_period"
+    ]
+  },
+  "externals": [
+    {
+      "name": "BillingProvider",
+      "kind": "service",
+      "description": "Third-party recurring-billing API. Cancellation is only real once it accepts the request.",
+      "outcomes": [
+        {
+          "name": "SUCCESS",
+          "description": "Future charges stopped.",
+          "terminal": true
+        },
+        {
+          "name": "DECLINED",
+          "description": "Provider refuses the change (e.g. account in arrears).",
+          "terminal": true
+        },
+        {
+          "name": "TIMEOUT",
+          "description": "No answer within the deadline. The request may or may not have been applied."
+        },
+        {
+          "name": "NETWORK_ERROR",
+          "description": "The call never reached the provider."
+        }
+      ]
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "ASM-001",
+      "statement": "BillingProvider eventually responds to a cancellation request, within at most three retry windows.",
+      "kind": "external",
+      "external": "BillingProvider",
+      "affects": [
+        "INV-003",
+        "REQ-004"
+      ],
+      "status": "accepted",
+      "discharged_by": "Synthetic cancellation probe every 5 minutes; pages if a request is unanswered for 15."
+    },
+    {
+      "id": "ASM-002",
+      "statement": "The paid period end is known locally and does not depend on the provider being reachable.",
+      "kind": "environment",
+      "affects": [
+        "REQ-002",
+        "REQ-005"
+      ],
+      "status": "accepted"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "description": "When a customer cancels an Active subscription, the system shall stop future billing.",
+      "status": "specified",
+      "modality": "must",
+      "determinism": "deterministic",
+      "quint_ref": "cancel_subscription",
+      "ears": {
+        "state": "the Subscription is Active",
+        "trigger": "the customer cancels",
+        "response": "stop future billing and mark the Subscription Cancelled"
+      },
+      "witness": {
+        "predicate": "status.keys().exists(c => status.get(c) == Cancelled and not(billingEnabled.get(c)))",
+        "status": "not-run"
+      },
+      "error_outcomes": [
+        {
+          "external": "BillingProvider",
+          "outcome": "SUCCESS",
+          "effect": "Cancelled",
+          "idempotent": true
+        },
+        {
+          "external": "BillingProvider",
+          "outcome": "DECLINED",
+          "effect": "NO_CHANGE — surface the provider's reason to the customer; the subscription stays Active",
+          "idempotent": true
+        }
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "description": "While the paid period has not ended, the system shall keep access available to a cancelled subscriber.",
+      "status": "specified",
+      "modality": "must",
+      "quint_ref": "cancel_subscription",
+      "ears": {
+        "state": "the Subscription is Cancelled and the paid period has not ended",
+        "response": "keep access available"
+      },
+      "witness": {
+        "predicate": "status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))",
+        "status": "not-run"
+      }
+    },
+    {
+      "id": "REQ-003",
+      "description": "When a customer cancels an already-Cancelled subscription, the system shall make no further change.",
+      "status": "specified",
+      "modality": "must",
+      "determinism": "deterministic",
+      "quint_ref": "cancel_again",
+      "ears": {
+        "state": "the Subscription is Cancelled",
+        "trigger": "the customer cancels again",
+        "response": "make no further change and report success"
+      },
+      "witness": {
+        "predicate": "status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))",
+        "status": "not-run"
+      }
+    },
+    {
+      "id": "REQ-004",
+      "description": "If the billing provider does not respond in time, then the system shall leave the subscription Active.",
+      "status": "specified",
+      "modality": "must",
+      "quint_ref": "cancel_times_out",
+      "ears": {
+        "state": "the Subscription is Active",
+        "trigger": "the billing provider times out during cancellation",
+        "unwanted": true,
+        "response": "leave the Subscription Active and billing enabled"
+      },
+      "witness": {
+        "predicate": "status.keys().exists(c => lastBillingResult.get(c) == Timeout and status.get(c) == Active)",
+        "status": "not-run"
+      },
+      "error_outcomes": [
+        {
+          "external": "BillingProvider",
+          "outcome": "TIMEOUT",
+          "effect": "NO_CHANGE — the subscription stays Active and billable; retry",
+          "idempotent": true
+        },
+        {
+          "external": "BillingProvider",
+          "outcome": "NETWORK_ERROR",
+          "effect": "NO_CHANGE — the request never landed; retry",
+          "idempotent": true
+        }
+      ]
+    },
+    {
+      "id": "REQ-005",
+      "description": "When the paid period ends for a cancelled subscription, the system shall withdraw access.",
+      "status": "specified",
+      "modality": "must",
+      "quint_ref": "expire_period",
+      "ears": {
+        "state": "the Subscription is Cancelled",
+        "trigger": "the paid period ends",
+        "response": "withdraw access and mark the Subscription Expired"
+      },
+      "witness": {
+        "predicate": "status.keys().exists(c => status.get(c) == Expired and not(accessUntilPeriodEnd.get(c)))",
+        "status": "not-run"
+      }
+    },
+    {
+      "id": "REQ-006",
+      "description": "The system shall never issue a refund for the unused part of a paid period.",
+      "status": "specified",
+      "modality": "forbidden",
+      "quint_ref": "cancel_subscription",
+      "ears": {
+        "trigger": "a subscription is cancelled mid-period",
+        "unwanted": true,
+        "response": "issue no refund"
+      },
+      "witness": {
+        "status": "skipped",
+        "enforced_by": "INV-002",
+        "justification": "A prohibition has no witness trace — there is no reachable state in which 'no refund happened' becomes visible. INV-002 carries the proof."
+      }
+    },
+    {
+      "id": "REQ-007",
+      "description": "When a cancellation succeeds, the system shall confirm it to the customer.",
+      "status": "specified",
+      "modality": "may",
+      "determinism": "nondeterministic",
+      "quint_ref": "cancel_subscription",
+      "ears": {
+        "trigger": "a cancellation succeeds",
+        "response": "confirm to the customer by email or in-app notice"
+      },
+      "witness": {
+        "status": "not-run",
+        "outcomes": [
+          {
+            "name": "email",
+            "predicate": "status.keys().exists(c => status.get(c) == Cancelled)",
+            "status": "not-run"
+          },
+          {
+            "name": "in-app",
+            "predicate": "status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))",
+            "status": "not-run"
+          }
+        ]
+      }
+    }
+  ],
+  "invariants": [
+    {
+      "id": "INV-001",
+      "description": "A cancelled or expired subscription is never billed again.",
+      "quint_name": "noBillingAfterCancel",
+      "proof": "inductive",
+      "formal_status": "specified",
+      "criticality": "critical"
+    },
+    {
+      "id": "INV-002",
+      "description": "No refund is ever issued for the unused period.",
+      "quint_name": "noRefundIssued",
+      "formal_status": "specified",
+      "criticality": "high"
+    },
+    {
+      "id": "INV-003",
+      "description": "A timed-out cancellation leaves the subscription Active and billable.",
+      "quint_name": "timeoutLeavesActive",
+      "formal_status": "specified",
+      "criticality": "critical"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "CON-001",
+      "name": "BILLING_TIMEOUT_SECONDS",
+      "value": 30,
+      "unit": "seconds",
+      "description": "How long the system waits for the provider before treating the call as TIMEOUT."
+    },
+    {
+      "id": "CON-002",
+      "name": "MAX_CANCEL_RETRIES",
+      "value": 3,
+      "description": "Retry budget after TIMEOUT or NETWORK_ERROR. Bounds ASM-001."
+    }
+  ],
+  "decisions": [
+    {
+      "id": "DEC-001",
+      "kind": "scope",
+      "title": "No refunds on cancellation",
+      "decision": "Cancellation stops future billing and preserves access to the end of the paid period. No money is returned.",
+      "rationale": "Product policy; the paid period has already been delivered as access.",
+      "alternatives_considered": [
+        {
+          "option": "Prorated refund of the unused days",
+          "reason_rejected": "Support and accounting cost outweighs the churn benefit at this price point."
+        }
+      ],
+      "affects": [
+        "REQ-006",
+        "INV-002",
+        "REQ-002"
+      ],
+      "status": "accepted",
+      "decided_at": "2026-05-15T12:00:00Z"
+    }
+  ],
+  "state_machines": [
+    {
+      "entity": "Subscription",
+      "quint_var": "status",
+      "quint_type": "SubStatus",
+      "initial_state": "Active",
+      "states": [
+        {
+          "name": "Active",
+          "description": "Billing runs; access granted."
+        },
+        {
+          "name": "Cancelled",
+          "description": "Billing stopped; access survives to the end of the paid period."
+        },
+        {
+          "name": "Expired",
+          "terminal": true,
+          "description": "Paid period over; access withdrawn."
+        }
+      ],
+      "transitions": [
+        {
+          "from": "Active",
+          "to": "Cancelled",
+          "trigger": "cancel_subscription",
+          "actor": "Customer",
+          "quint_action": "cancel_subscription"
+        },
+        {
+          "from": "Cancelled",
+          "to": "Expired",
+          "trigger": "expire_period",
+          "actor": "System",
+          "quint_action": "expire_period"
+        }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "id": "EX-001",
+      "title": "Cancel mid-period: billing stops, access stays",
+      "given": {
+        "status": "Active",
+        "billingEnabled": true
+      },
+      "when": {
+        "action": "cancel_subscription",
+        "args": {
+          "c": "alice"
+        }
+      },
+      "expect": {
+        "status": "Cancelled",
+        "billingEnabled": false,
+        "accessUntilPeriodEnd": true
+      },
+      "refs": [
+        "REQ-001",
+        "REQ-002"
+      ],
+      "quint_run": "cancelHappyPath",
+      "source": "elicited"
+    },
+    {
+      "id": "EX-002",
+      "title": "Cancelling twice is harmless",
+      "given": {
+        "status": "Cancelled",
+        "accessUntilPeriodEnd": true
+      },
+      "when": {
+        "action": "cancel_again",
+        "args": {
+          "c": "alice"
+        }
+      },
+      "expect": {
+        "status": "Cancelled",
+        "accessUntilPeriodEnd": true
+      },
+      "refs": [
+        "REQ-003"
+      ],
+      "quint_run": "doubleCancelIsHarmless",
+      "source": "elicited"
+    },
+    {
+      "id": "EX-003",
+      "title": "Provider times out: nothing moves",
+      "given": {
+        "status": "Active",
+        "billingEnabled": true
+      },
+      "when": {
+        "action": "cancel_times_out",
+        "args": {
+          "c": "alice"
+        }
+      },
+      "expect": {
+        "status": "Active",
+        "billingEnabled": true
+      },
+      "refs": [
+        "REQ-004",
+        "INV-003"
+      ],
+      "source": "regression-for-REQ-004"
+    }
+  ],
+  "outcome_triage": [],
+  "open_questions": [
+    {
+      "id": "Q-001",
+      "question": "After MAX_CANCEL_RETRIES exhausted TIMEOUTs, does the subscription stay Active forever, or does an operator get paged? ASM-001 assumes the provider answers eventually; nothing here says what happens if it does not.",
+      "status": "open",
+      "source": "elicitation"
+    }
+  ],
+  "formal_model": {
+    "quint_file": "subscription.qnt"
+  },
+  "check_results": {
+    "outcomes": {
+      "ran_at": "2026-09-07T16:19:39+00:00",
+      "cells": 4,
+      "covered": 4,
+      "triaged": 0,
+      "uncovered": 0
+    },
+    "matrix": {
+      "ran_at": "2026-09-07T16:20:49+00:00",
+      "cells": 12,
+      "covered": 2,
+      "triaged": 10,
+      "uncovered": 0,
+      "orphans": 0
+    }
+  },
+  "matrix_triage": [
+    {
+      "entity": "Subscription",
+      "state": "Active",
+      "event": "cancel_again",
+      "verdict": "IMPOSSIBLE",
+      "reason": "cancel_again's guard requires the Subscription to be Cancelled."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Active",
+      "event": "cancel_times_out",
+      "verdict": "NO-OP",
+      "reason": "REQ-004: the provider timing out deliberately changes nothing — the subscription stays Active and billable. INV-003 is the proof."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Active",
+      "event": "expire_period",
+      "verdict": "IMPOSSIBLE",
+      "reason": "expire_period's guard requires the Subscription to be Cancelled; an Active subscription renews rather than expiring."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_subscription",
+      "verdict": "IMPOSSIBLE",
+      "reason": "cancel_subscription's guard requires Active; the repeat path is cancel_again."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_again",
+      "verdict": "NO-OP",
+      "reason": "REQ-003: cancelling twice is harmless and changes nothing."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_times_out",
+      "verdict": "IMPOSSIBLE",
+      "reason": "The provider is only called from the Active state; there is no second call to time out."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_subscription",
+      "verdict": "OUT-OF-SCOPE",
+      "scope_ref": "reactivation",
+      "reason": "Acting on an Expired subscription is a resubscribe, which belongs to the signup area."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_again",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Expired is terminal; cancel_again's guard requires Cancelled."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_times_out",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Expired is terminal and the provider is not called from it."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "expire_period",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Already Expired; expire_period's guard requires Cancelled."
+    }
+  ]
+}

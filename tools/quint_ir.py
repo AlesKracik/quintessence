@@ -16,6 +16,7 @@ Normalized output (same shape from both engines):
     "module_name": "auth",
     "imports":     [{"module": "billing", "from": "./billing"}, ...],
     "types":       ["SessionStatus", ...],
+    "type_variants": {"SessionStatus": ["Active", "Expired", ...], ...},
     "consts":      ["MAX_FAILED_ATTEMPTS", ...],
     "vars":        ["sessions", ...],
     "actions":     ["login", ...],
@@ -102,6 +103,34 @@ def _collect_mutations(expr):
     return mutated
 
 
+def _sum_variants(type_node):
+    """Constructor labels of a Quint sum type, or [] for any other type.
+
+    Shape-tolerant on purpose: the compiler's IR spells a variant row as
+    {kind: "sum", fields: {kind: "row", fields: [{fieldName: "Active", ...}]}},
+    but the nesting has moved between Quint versions and a KeyError here
+    would take down every lint run. Anything unrecognized yields [], which
+    the caller treats as 'no constructor list available' rather than as
+    'the type has no constructors' \u2014 an unchecked CLOSED entity is reported
+    as unverifiable, never as verified."""
+    if not isinstance(type_node, dict):
+        return []
+    if type_node.get("kind") != "sum":
+        return []
+    row = type_node.get("fields")
+    if isinstance(row, dict):
+        row = row.get("fields")
+    if not isinstance(row, list):
+        return []
+    names = []
+    for f in row:
+        if isinstance(f, dict):
+            label = f.get("fieldName") or f.get("name")
+            if label:
+                names.append(label)
+    return names
+
+
 def _norm_name(s):
     """Normalization for stem↔module matching: lowercase, alphanumerics only.
     Makes 'auth.probes' (file stem) match 'auth_probes' (module name) — the
@@ -145,6 +174,7 @@ def _normalize_ir(ir_json, qnt_path):
         "module_name": main.get("name"),
         "imports": [],
         "types": [],
+        "type_variants": {},
         "consts": [],
         "vars": [],
         "actions": [],
@@ -165,6 +195,9 @@ def _normalize_ir(ir_json, qnt_path):
                 out["imports"].append(entry)
         elif kind == "typedef":
             out["types"].append(name)
+            variants = _sum_variants(d.get("type"))
+            if variants:
+                out["type_variants"][name] = variants
         elif kind == "const":
             out["consts"].append(name)
         elif kind == "var":
@@ -223,6 +256,12 @@ ACTION_RE   = re.compile(r"^\s*action\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:\(=]")
 VAR_RE      = re.compile(r"^\s*var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", re.MULTILINE)
 CONST_RE    = re.compile(r"^\s*const\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", re.MULTILINE)
 TYPE_RE     = re.compile(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", re.MULTILINE)
+# `type Status = Active | Locked(int) | Expired`, possibly wrapped across
+# lines. Stops at the next top-level declaration keyword or a blank line.
+TYPE_BODY_RE = re.compile(
+    r"^[ \t]*type[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*=(?P<body>[^\n]*(?:\n[ \t]*\|[^\n]*)*)",
+    re.MULTILINE)
+VARIANT_RE  = re.compile(r"^[ \t]*([A-Z][A-Za-z0-9_]*)")
 VAL_RE      = re.compile(r"^\s*(?:val|invariant)\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", re.MULTILINE)
 TEMPORAL_RE = re.compile(r"^\s*temporal\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", re.MULTILINE)
 RUN_RE      = re.compile(r"^\s*run\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", re.MULTILINE)
@@ -248,6 +287,25 @@ def _scan_const_values(text):
             out[name] = raw[1:-1]
         else:
             out[name] = int(raw)
+    return out
+
+
+def _scan_type_variants(text):
+    """Regex-engine twin of _sum_variants. Only sum types (a body containing
+    `|`) yield entries; aliases like `type UserId = str` are not variant
+    types and must not be reported as a one-constructor closed set."""
+    out = {}
+    for m in TYPE_BODY_RE.finditer(text):
+        body = m.group("body")
+        if "|" not in body:
+            continue
+        names = []
+        for alt in body.split("|"):
+            hit = VARIANT_RE.match(alt.strip("\r\n").lstrip())
+            if hit:
+                names.append(hit.group(1))
+        if names:
+            out[m.group(1)] = names
     return out
 
 
@@ -410,6 +468,7 @@ def _parse_via_regex(qnt_path):
         "module_name": mod_name,
         "imports": imports,
         "types": TYPE_RE.findall(text),
+        "type_variants": _scan_type_variants(text),
         "consts": CONST_RE.findall(text),
         "vars": VAR_RE.findall(text),
         "actions": actions,

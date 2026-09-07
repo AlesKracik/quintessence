@@ -6,6 +6,7 @@
 
 - **auth** — 7 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Open coverage GAPs … — see [auth](./specs/auth.readback.md)
 - **auth-ui** — 3 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement — see [auth-ui](./specs/auth-ui.readback.md)
+- **subscription** — 7 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [subscription](./specs/subscription.readback.md)
 
 ## Areas
 
@@ -14,6 +15,7 @@
 | [auth](./specs/auth.readback.md) | area | 0.2.0 | formalized | never |
 | [auth-ui](./specs/auth-ui.readback.md) | area | 0.1.0 | formalized | never |
 | [session-ownership](./specs/session-ownership.readback.md) | contract | 1.0.0 | formalized | never |
+| [subscription](./specs/subscription.readback.md) | area | 0.1.0 | formalized | never |
 
 ## Journeys
 

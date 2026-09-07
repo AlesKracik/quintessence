@@ -27,6 +27,15 @@
       "name": "session-ownership",
       "kind": "contract",
       "description": "Structural agreement between auth and auth-ui, checked by the optional Alloy backend."
+    },
+    {
+      "name": "subscription",
+      "kind": "area",
+      "description": "The methodology's acceptance case: cancellation, failure behavior, and the decisions the prose leaves open.",
+      "code_repo": null,
+      "code_path": "src/subscription/",
+      "tests_path": "tests/subscription/",
+      "test_command": "pnpm test subscription"
     }
   ],
   "architecture": {

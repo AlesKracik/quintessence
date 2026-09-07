@@ -15,16 +15,16 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
 
 ## ⚠ Needs Your Attention
 
-- **auth** — **Unchecked requirement** — REQ-001
-- **auth** — **Unchecked requirement** — REQ-002
-- **auth** — **Unchecked requirement** — REQ-004
+- **auth** — **Unchecked requirement** — REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
+- **auth** — **Unchecked requirement** — REQ-002: While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
+- **auth** — **Unchecked requirement** — REQ-004: While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
 - **auth** — **Open coverage GAPs** — Q-003 (spec is silent on triaged-real cells).
 - **auth** — **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **auth** — **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
 - **auth** — **Open question** — Q-003: State×event gap: when Account=Locked and login_failed fires, the spec is silent (REQ-003 covers Unlocked only). Should attempts against a locked account be counted toward anything, ignored, or raise an alert? _(source: matrix)_
-- **auth-ui** — **Unchecked requirement** — UI-001
-- **auth-ui** — **Unchecked requirement** — UI-002
-- **auth-ui** — **Unchecked requirement** — UI-003
+- **auth-ui** — **Unchecked requirement** — UI-001: While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
+- **auth-ui** — **Unchecked requirement** — UI-002: While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
+- **auth-ui** — **Unchecked requirement** — UI-003: While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 
 ## What This Change Does
 

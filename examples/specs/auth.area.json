@@ -6,6 +6,28 @@
   "status": "formalized",
   "last_modified": "2026-05-15T12:00:00Z",
   "purpose": "Authenticate users; manage session lifecycle; lock accounts after repeated failed attempts.",
+  "scope": {
+    "included": [
+      "password login",
+      "session lifecycle",
+      "account lockout"
+    ],
+    "excluded": [
+      {
+        "item": "service-accounts",
+        "reason": "Machine identities authenticate via mTLS, not passwords; resolved in Q-001.",
+        "owner": "platform"
+      },
+      {
+        "item": "password-reset",
+        "reason": "Owned by the account-recovery area; this area only consumes the resulting credential change."
+      },
+      {
+        "item": "mfa",
+        "reason": "Deferred until after the first release; no requirement here may assume a second factor."
+      }
+    ]
+  },
   "concepts": {
     "entities": [
       {
@@ -232,15 +254,15 @@
       "entity": "Session",
       "state": "Active",
       "event": "login",
-      "verdict": "OUT-OF-SCOPE",
-      "reason": "login creates a NEW Session (lifecycle action); concurrent-login semantics are enforced by INV-001 atMostOneActiveSession"
+      "verdict": "IMPOSSIBLE",
+      "reason": "login creates a NEW Session (lifecycle action); concurrent-login semantics are enforced by INV-001 atMostOneActiveSession — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
     },
     {
       "entity": "Session",
       "state": "Expired",
       "event": "login",
-      "verdict": "OUT-OF-SCOPE",
-      "reason": "login creates a new Session; it never transitions an existing Expired one"
+      "verdict": "IMPOSSIBLE",
+      "reason": "login creates a new Session; it never transitions an existing Expired one — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
     },
     {
       "entity": "Session",
@@ -260,8 +282,8 @@
       "entity": "Session",
       "state": "LoggedOut",
       "event": "login",
-      "verdict": "OUT-OF-SCOPE",
-      "reason": "login creates a new Session; it never transitions an existing LoggedOut one"
+      "verdict": "IMPOSSIBLE",
+      "reason": "login creates a new Session; it never transitions an existing LoggedOut one — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
     },
     {
       "entity": "Session",

@@ -48,6 +48,8 @@ ID_PATTERNS = {
     "CON":  re.compile(r"^CON(-CONTRACT)?-\d{3}$"),
     "DEC":  re.compile(r"^DEC-\d{3}$"),
     "Q":    re.compile(r"^Q-\d{3}$"),
+    "ASM":  re.compile(r"^ASM-\d{3}$"),
+    "EX":   re.compile(r"^EX-\d{3}$"),
 }
 
 
@@ -147,6 +149,8 @@ def parse_sidecar(path):
         "imports":          [i["module"] for i in ir["imports"]],
         "named":            set(ir["vals"]) | set(ir["temporals"]),
         "actions":          set(ir["actions"]),
+        "runs":             set(ir.get("runs") or []),
+        "type_variants":    ir.get("type_variants") or {},
         "vars":             set(ir["vars"]),
         "action_mutations": ir["action_mutations"],
         "const_values":     ir.get("const_values") or {},
@@ -188,6 +192,7 @@ def check_ids(area_data, area_name, findings):
     for list_name, prefix in [
         ("requirements", "REQ"), ("invariants", "INV"), ("properties", "PROP"),
         ("constraints", "CON"), ("decisions", "DEC"), ("open_questions", "Q"),
+        ("assumptions", "ASM"), ("examples", "EX"),
     ]:
         for item in area_data.get(list_name, []) or []:
             iid = item.get("id")
@@ -389,6 +394,15 @@ def check_witnesses(root, area_data, area_name, findings):
             continue
         witness = req.get("witness") or {}
         predicate = witness.get("predicate")
+        if not predicate and req.get("modality") == "may":
+            # A 'may' requirement carries one predicate per permitted outcome
+            # instead of a single one; the gate is satisfied when they exist
+            # (check_modality enforces that there are at least two, each with
+            # a predicate). Reading only witness.predicate here would FAIL
+            # every correctly-written permission.
+            outs = witness.get("outcomes") or []
+            if outs and all(o.get("predicate") for o in outs):
+                predicate = outs[0]["predicate"]
         trace_rel = witness.get("trace")
         wstatus = witness.get("status", "not-run")
 
@@ -505,39 +519,51 @@ def check_predicate_sanity(area_data, sidecar, sidecars, area_name, findings):
         witness = req.get("witness") or {}
         if witness.get("status") == "skipped":
             continue
-        pred = (witness.get("predicate") or "").strip()
-        if not pred:
-            continue  # absence is check_witnesses' job
-        bare = pred
-        while bare.startswith("(") and bare.endswith(")"):
-            bare = bare[1:-1].strip()
-        if bare in ("true", "false"):
-            add(findings, FAIL, "witness", "predicate-constant", area_name,
-                f"{rid}.witness.predicate is the constant `{bare}` — it witnesses "
-                f"nothing (the probe reduces to 'the action fired'). Write a boolean "
-                f"over state that is true exactly when the behavior has occurred.",
-                ref=rid)
-            continue
-        referenced = {v for v in vars_avail if re.search(rf"\b{re.escape(v)}\b", pred)}
-        # Only assert no-state when we actually know the var set — an empty
-        # vars_avail (unparseable spanned sidecar) must not false-FAIL.
-        if vars_avail and not referenced:
-            add(findings, FAIL, "witness", "predicate-no-state", area_name,
-                f"{rid}.witness.predicate references no state variable "
-                f"({', '.join(sorted(vars_avail))}) — it can't be a postcondition. "
-                f"A witness must assert an observable state change.",
-                ref=rid)
-            continue
-        # WARN: predicate names no var the requirement's OWN action assigns —
-        # it may be witnessing a side condition, not this requirement's effect.
-        qref = req.get("quint_ref")
-        assigned = set(mutations.get(qref) or []) if qref else set()
-        if assigned and referenced and not (referenced & assigned):
-            add(findings, WARN, "witness", "predicate-off-action", area_name,
-                f"{rid}.witness.predicate references {sorted(referenced)} but its action "
-                f"`{qref}` assigns {sorted(assigned)} — the predicate may not capture "
-                f"this requirement's own effect. Confirm it's the right postcondition.",
-                ref=rid)
+        # A 'may' requirement keeps one predicate per permitted outcome. Each
+        # gets the same scrutiny as a single one, or `true` would sail through
+        # simply by being written a level deeper.
+        preds = [(rid, (witness.get("predicate") or "").strip())]
+        for oc in (witness.get("outcomes") or []):
+            preds.append((f"{rid}/{oc.get('name', '?')}",
+                          (oc.get("predicate") or "").strip()))
+        for label, pred in preds:
+            if pred:
+                sanity_one_predicate(label, pred, req, vars_avail, mutations,
+                                     area_name, findings)
+
+
+def sanity_one_predicate(rid, pred, req, vars_avail, mutations, area_name, findings):
+    """The two fakes, checked against one predicate."""
+    bare = pred
+    while bare.startswith("(") and bare.endswith(")"):
+        bare = bare[1:-1].strip()
+    if bare in ("true", "false"):
+        add(findings, FAIL, "witness", "predicate-constant", area_name,
+            f"{rid}.witness.predicate is the constant `{bare}` — it witnesses "
+            f"nothing (the probe reduces to 'the action fired'). Write a boolean "
+            f"over state that is true exactly when the behavior has occurred.",
+            ref=rid)
+        return
+    referenced = {v for v in vars_avail if re.search(rf"\b{re.escape(v)}\b", pred)}
+    # Only assert no-state when we actually know the var set — an empty
+    # vars_avail (unparseable spanned sidecar) must not false-FAIL.
+    if vars_avail and not referenced:
+        add(findings, FAIL, "witness", "predicate-no-state", area_name,
+            f"{rid}.witness.predicate references no state variable "
+            f"({', '.join(sorted(vars_avail))}) — it can't be a postcondition. "
+            f"A witness must assert an observable state change.",
+            ref=rid)
+        return
+    # WARN: predicate names no var the requirement's OWN action assigns —
+    # it may be witnessing a side condition, not this requirement's effect.
+    qref = req.get("quint_ref")
+    assigned = set(mutations.get(qref) or []) if qref else set()
+    if assigned and referenced and not (referenced & assigned):
+        add(findings, WARN, "witness", "predicate-off-action", area_name,
+            f"{rid}.witness.predicate references {sorted(referenced)} but its action "
+            f"`{qref}` assigns {sorted(assigned)} — the predicate may not capture "
+            f"this requirement's own effect. Confirm it's the right postcondition.",
+            ref=rid)
 
 
 def check_constraint_values(area_data, sidecar, area_name, findings):
@@ -704,6 +730,375 @@ def check_alloy_backend(root, area_data, area_name, findings):
                 f"{iid}.alloy_command '{command}' declares no `for` scope, so Alloy "
                 f"silently uses its default of 3. State the scope explicitly.",
                 ref=iid)
+
+
+def local_ids(area_data):
+    """Every ID this area declares, for resolving intra-area references."""
+    out = set()
+    for src in ("requirements", "invariants", "properties", "constraints",
+                "decisions", "open_questions", "assumptions", "examples"):
+        for item in area_data.get(src, []) or []:
+            if item.get("id"):
+                out.add(item["id"])
+    return out
+
+
+def resolve_ref(ref, area_data, all_areas):
+    """True when `ref` names something real, in this area or another
+    (qualified '<area>.<ID>' form). Unknown areas resolve as True so a
+    partially-checked-out multi-repo project doesn't produce noise."""
+    if "." in ref:
+        other_area, other_id = ref.split(".", 1)
+        other = (all_areas or {}).get(other_area)
+        if not isinstance(other, dict) or "__parse_error__" in other:
+            return True
+        return other_id in local_ids(other)
+    return ref in local_ids(area_data)
+
+
+def at_review(area_data):
+    """Precision lints WARN while authoring and FAIL once the area is up for
+    review \u2014 'approved' has to mean precise, not precise-ish."""
+    return area_data.get("status") in ("in-review", "approved")
+
+
+def check_scope(area_data, area_name, findings):
+    """Gap A. Completeness is only meaningful relative to a declared boundary.
+
+    An OUT-OF-SCOPE triage verdict with nothing to point at is an assertion
+    that cannot be reviewed \u2014 the one escape hatch in the completeness gate
+    would otherwise absorb every awkward cell. Requiring a scope_ref turns it
+    into a reference to a boundary someone agreed to."""
+    scope = area_data.get("scope") or {}
+    excluded = {e.get("item") for e in (scope.get("excluded") or []) if e.get("item")}
+    review = at_review(area_data)
+
+    for list_name, label in (("matrix_triage", "state\u00d7event"),
+                             ("outcome_triage", "external\u00d7outcome")):
+        for cell in area_data.get(list_name, []) or []:
+            if cell.get("verdict") == "NO-OP" and not cell.get("reason"):
+                where = (f"{cell.get('entity')}/{cell.get('state')}/{cell.get('event')}"
+                         if list_name == "matrix_triage"
+                         else f"{cell.get('external')}/{cell.get('outcome')}")
+                add(findings, FAIL, "scope", "no-op-without-reason", area_name,
+                    f"{label} cell {where} is triaged NO-OP but gives no reason. A "
+                    f"deliberate no-op is a decision — say which requirement made it, "
+                    f"or it is indistinguishable from an oversight.", ref=where)
+            if cell.get("verdict") != "OUT-OF-SCOPE":
+                continue
+            where = (f"{cell.get('entity')}/{cell.get('state')}/{cell.get('event')}"
+                     if list_name == "matrix_triage"
+                     else f"{cell.get('external')}/{cell.get('outcome')}")
+            ref = cell.get("scope_ref")
+            if not ref:
+                add(findings, FAIL if review else WARN, "scope", "out-of-scope-unanchored",
+                    area_name,
+                    f"{label} cell {where} is triaged OUT-OF-SCOPE but names no "
+                    f"scope_ref. Declare the boundary in scope.excluded[] and point at it.",
+                    ref=where)
+            elif ref not in excluded:
+                add(findings, FAIL, "scope", "scope-ref-dangling", area_name,
+                    f"{label} cell {where} has scope_ref '{ref}', which is not in "
+                    f"scope.excluded[] (declared: {', '.join(sorted(excluded)) or 'none'}).",
+                    ref=where)
+
+
+def check_externals(area_data, area_name, findings):
+    """Gaps B + E. An external system with declared outcomes creates one
+    obligation per outcome: some requirement says what happens, or triage says
+    why it cannot. Integration failure modes are where real-world semantics go
+    missing, so they get the same completeness treatment as state\u00d7event."""
+    externals = area_data.get("externals", []) or []
+    if not externals and not (area_data.get("outcome_triage") or []):
+        for req in area_data.get("requirements", []) or []:
+            if req.get("error_outcomes"):
+                add(findings, FAIL, "externals", "error-outcome-without-external",
+                    area_name,
+                    f"{req.get('id', '?')} declares error_outcomes but the area declares "
+                    f"no externals[]. Declare the dependency and its outcomes first.",
+                    ref=req.get("id"))
+        return
+
+    declared = {}
+    for ext in externals:
+        name = ext.get("name")
+        if not name:
+            continue
+        if name in declared:
+            add(findings, FAIL, "externals", "duplicate-external", area_name,
+                f"External '{name}' is declared twice.", ref=name)
+        outcomes, seen = [], set()
+        for oc in ext.get("outcomes", []) or []:
+            oname = oc.get("name")
+            if not oname:
+                continue
+            if oname in seen:
+                add(findings, FAIL, "externals", "duplicate-outcome", area_name,
+                    f"External '{name}' declares outcome '{oname}' twice.", ref=name)
+            seen.add(oname)
+            outcomes.append(oname)
+        declared[name] = outcomes
+
+    covered = set()
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        for eo in req.get("error_outcomes", []) or []:
+            ext_name, outcome = eo.get("external"), eo.get("outcome")
+            if ext_name not in declared:
+                add(findings, FAIL, "externals", "unknown-external", area_name,
+                    f"{rid}.error_outcomes references external '{ext_name}', which is "
+                    f"not declared in externals[].", ref=rid)
+                continue
+            if outcome not in declared[ext_name]:
+                add(findings, FAIL, "externals", "unknown-outcome", area_name,
+                    f"{rid}.error_outcomes references '{ext_name}/{outcome}', which is not "
+                    f"a declared outcome of that external "
+                    f"(declared: {', '.join(declared[ext_name]) or 'none'}).", ref=rid)
+                continue
+            covered.add((ext_name, outcome))
+
+    triaged = {}
+    for cell in area_data.get("outcome_triage", []) or []:
+        ext_name, outcome = cell.get("external"), cell.get("outcome")
+        if ext_name not in declared:
+            add(findings, FAIL, "externals", "triage-unknown-external", area_name,
+                f"outcome_triage references external '{ext_name}', which is not declared.",
+                ref=ext_name)
+            continue
+        if outcome not in declared[ext_name]:
+            add(findings, FAIL, "externals", "triage-unknown-outcome", area_name,
+                f"outcome_triage references '{ext_name}/{outcome}', which is not a declared "
+                f"outcome of that external.", ref=ext_name)
+            continue
+        triaged[(ext_name, outcome)] = cell.get("verdict")
+
+    # The completeness gate itself: every declared outcome is handled, triaged,
+    # or \u2014 while the area is still being authored \u2014 flagged as unfinished.
+    review = at_review(area_data)
+    for ext_name, outcomes in declared.items():
+        for outcome in outcomes:
+            cell = (ext_name, outcome)
+            if cell in covered:
+                continue
+            verdict = triaged.get(cell)
+            if verdict is None:
+                add(findings, FAIL if review else WARN, "externals", "outcome-unhandled",
+                    area_name,
+                    f"{ext_name}/{outcome} is declared but no requirement handles it and "
+                    f"no outcome_triage entry explains why. What does the system do?",
+                    ref=f"{ext_name}/{outcome}")
+            elif verdict == "GAP":
+                add(findings, FAIL if review else WARN, "externals", "outcome-open-gap",
+                    area_name,
+                    f"{ext_name}/{outcome} is triaged GAP \u2014 an acknowledged hole in the "
+                    f"failure behavior. Resolve it before approval.",
+                    ref=f"{ext_name}/{outcome}")
+
+
+def check_assumptions(area_data, all_areas, area_name, findings):
+    """Gap B. An assumption is what the spec relies on but does not establish.
+    Left implicit, it turns every result that depends on it into an overclaim;
+    written down, it can be pointed at from the readback's \u2713."""
+    assumptions = area_data.get("assumptions", []) or []
+    if not assumptions:
+        return
+    ext_names = {e.get("name") for e in (area_data.get("externals") or []) if e.get("name")}
+    approved = area_data.get("status") == "approved"
+
+    for asm in assumptions:
+        aid = asm.get("id", "?")
+        if not asm.get("statement"):
+            add(findings, FAIL, "assumptions", "assumption-empty", area_name,
+                f"{aid} has no statement.", ref=aid)
+        ext = asm.get("external")
+        if ext and ext not in ext_names:
+            add(findings, FAIL, "assumptions", "assumption-unknown-external", area_name,
+                f"{aid}.external '{ext}' is not a declared external.", ref=aid)
+        for target in asm.get("affects", []) or []:
+            if not resolve_ref(target, area_data, all_areas):
+                add(findings, FAIL, "assumptions", "assumption-affects-dangling", area_name,
+                    f"{aid}.affects references '{target}', which does not exist.", ref=aid)
+        if approved and asm.get("status", "accepted") == "open":
+            add(findings, FAIL, "assumptions", "assumption-open-on-approved", area_name,
+                f"{aid} is still 'open' on an approved area \u2014 an undecided assumption is "
+                f"an undecided specification.", ref=aid)
+
+
+def check_closed_worlds(area_data, sidecar, area_name, findings):
+    """Gap C. `closed: true` says states[] is exhaustive. The claim is only
+    worth anything if the model is held to it \u2014 otherwise a generated model
+    (or generated code) quietly grows a state nobody specified, which is one
+    of the specific ways LLM-assisted work drifts."""
+    entities = ((area_data.get("concepts") or {}).get("entities") or [])
+    closed = [e for e in entities if e.get("closed")]
+    if not closed:
+        return
+    variants = (sidecar or {}).get("type_variants") or {}
+    quint_types = {}
+    for sm in area_data.get("state_machines", []) or []:
+        if sm.get("entity") and sm.get("quint_type"):
+            quint_types[sm["entity"]] = sm["quint_type"]
+
+    for ent in closed:
+        name = ent.get("name", "?")
+        states = [s for s in (ent.get("states") or []) if s]
+        if not states:
+            add(findings, FAIL, "closed-world", "closed-without-states", area_name,
+                f"Entity '{name}' is marked closed but declares no states[] \u2014 an "
+                f"exhaustive list of nothing.", ref=name)
+            continue
+        qtype = quint_types.get(name)
+        if not qtype:
+            add(findings, WARN, "closed-world", "closed-unverifiable", area_name,
+                f"Entity '{name}' is marked closed but no state_machines[] entry gives its "
+                f"quint_type, so the model cannot be held to the list. Declare the state "
+                f"machine, or drop the closed marker.", ref=name)
+            continue
+        if not sidecar or "__no_module__" in sidecar:
+            continue
+        if qtype not in variants:
+            add(findings, WARN, "closed-world", "closed-type-not-found", area_name,
+                f"Entity '{name}' is closed and names quint_type '{qtype}', but no variant "
+                f"type by that name was found in the sidecar \u2014 the claim is unchecked.",
+                ref=name)
+            continue
+        declared, modelled = set(states), set(variants[qtype])
+        extra = sorted(modelled - declared)
+        missing = sorted(declared - modelled)
+        if extra:
+            add(findings, FAIL, "closed-world", "closed-world-extra-state", area_name,
+                f"Entity '{name}' is CLOSED over {sorted(declared)}, but the sidecar type "
+                f"'{qtype}' also has {extra}. Either the state is real (add it to the JSON "
+                f"and to whatever else the addition implies) or the model invented it.",
+                ref=name)
+        if missing:
+            add(findings, FAIL, "closed-world", "closed-world-missing-state", area_name,
+                f"Entity '{name}' declares states {missing} that the sidecar type '{qtype}' "
+                f"does not have. A closed set must match the model exactly.", ref=name)
+
+
+def check_modality(area_data, area_name, findings):
+    """Gap D. MUST / MAY / FORBIDDEN decide what discharging the requirement
+    means, so each needs its own evidence:
+
+      must      \u2014 one witness trace (the existing obligation).
+      may       \u2014 one witness PER permitted outcome. A single trace would show
+                   that one allowed behavior is reachable, which is exactly how
+                   a permission silently narrows into a requirement.
+      forbidden \u2014 no witness can exist for a non-event, so it must name the
+                   invariant carrying the proof, as an ID rather than prose.
+    """
+    inv_ids = {i.get("id") for i in (area_data.get("invariants") or []) if i.get("id")}
+    review = at_review(area_data)
+    draft = ("raw", "needs-validation")
+
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        modality = req.get("modality", "must")
+        witness = req.get("witness") or {}
+        early = req.get("status", "raw") in draft
+
+        if req.get("determinism") == "deterministic" and modality == "may":
+            add(findings, FAIL, "modality", "may-but-deterministic", area_name,
+                f"{rid} is modality 'may' (several outcomes permitted) but declares "
+                f"determinism 'deterministic' (exactly one observable result). Pick one.",
+                ref=rid)
+
+        if modality == "forbidden":
+            enforced = witness.get("enforced_by")
+            if not enforced:
+                if not early:
+                    add(findings, FAIL, "modality", "forbidden-without-enforcer", area_name,
+                        f"{rid} is modality 'forbidden' but names no witness.enforced_by. "
+                        f"A non-event has no witness trace \u2014 the proof has to be the "
+                        f"invariant that stays true.", ref=rid)
+            elif enforced not in inv_ids:
+                add(findings, FAIL, "modality", "forbidden-enforcer-dangling", area_name,
+                    f"{rid}.witness.enforced_by '{enforced}' is not a declared invariant.",
+                    ref=rid)
+            if witness.get("predicate"):
+                add(findings, WARN, "modality", "forbidden-with-predicate", area_name,
+                    f"{rid} is 'forbidden' but carries a witness predicate. A forbidden "
+                    f"behavior that IS witnessed is a contradiction \u2014 if the predicate is "
+                    f"right, the requirement is not forbidden.", ref=rid)
+
+        elif modality == "may":
+            outcomes = witness.get("outcomes") or []
+            if len(outcomes) < 2:
+                add(findings, WARN if early else FAIL, "modality", "may-needs-outcomes",
+                    area_name,
+                    f"{rid} is modality 'may' but declares {len(outcomes)} witness "
+                    f"outcome(s). A permission needs a witness per permitted outcome "
+                    f"(at least two), or it is indistinguishable from a 'must'.", ref=rid)
+            names = set()
+            for oc in outcomes:
+                oname = oc.get("name")
+                if oname in names:
+                    add(findings, FAIL, "modality", "duplicate-may-outcome", area_name,
+                        f"{rid} declares witness outcome '{oname}' twice.", ref=rid)
+                names.add(oname)
+                if not oc.get("predicate"):
+                    add(findings, FAIL, "modality", "may-outcome-without-predicate",
+                        area_name,
+                        f"{rid} witness outcome '{oname}' has no predicate \u2014 nothing to "
+                        f"prove reachable.", ref=rid)
+                elif review and oc.get("status") != "witnessed":
+                    add(findings, FAIL, "modality", "may-outcome-unwitnessed", area_name,
+                        f"{rid} witness outcome '{oname}' is '{oc.get('status', 'not-run')}'. "
+                        f"Every permitted outcome must be demonstrated before approval.",
+                        ref=rid)
+
+        elif witness.get("status") == "skipped" and witness.get("justification") and review:
+            # The old free-text escape hatch still works, but at review time say
+            # so: an ID can be checked, a sentence cannot.
+            add(findings, WARN, "modality", "untyped-skip-justification", area_name,
+                f"{rid} skips its witness with a prose justification. If this is a "
+                f"rejection requirement, set modality 'forbidden' and "
+                f"witness.enforced_by so the link to the enforcing invariant is checkable.",
+                ref=rid)
+
+
+def check_decision_affects(area_data, all_areas, area_name, findings):
+    """Gap H. A decision's blast radius is what makes reversing it tractable:
+    when D-017 flips, these are the obligations back in play. A dangling entry
+    means the radius is already wrong."""
+    for dec in area_data.get("decisions", []) or []:
+        for target in dec.get("affects", []) or []:
+            if not resolve_ref(target, area_data, all_areas):
+                add(findings, FAIL, "decisions", "decision-affects-dangling", area_name,
+                    f"{dec.get('id', '?')}.affects references '{target}', which does not "
+                    f"exist.", ref=dec.get("id"))
+
+
+def check_examples(area_data, sidecar, all_areas, area_name, findings):
+    """Gap I. Author-written examples are seeds and regressions, never proof \u2014
+    but a broken one is worse than none, so the references have to hold."""
+    examples = area_data.get("examples", []) or []
+    if not examples:
+        return
+    have_module = sidecar and "__no_module__" not in sidecar
+    for ex in examples:
+        eid = ex.get("id", "?")
+        action = (ex.get("when") or {}).get("action")
+        if not action:
+            add(findings, FAIL, "examples", "example-without-action", area_name,
+                f"{eid}.when declares no action.", ref=eid)
+        elif have_module and action not in sidecar["actions"]:
+            add(findings, FAIL, "examples", "example-action-missing", area_name,
+                f"{eid}.when.action '{action}' has no matching action in the sidecar.",
+                ref=eid)
+        if not (ex.get("expect") or {}):
+            add(findings, WARN, "examples", "example-asserts-nothing", area_name,
+                f"{eid} has an empty expect block \u2014 it exercises the action but claims "
+                f"nothing about the result.", ref=eid)
+        run = ex.get("quint_run")
+        if run and have_module and run not in (sidecar.get("runs") or []):
+            add(findings, FAIL, "examples", "example-run-missing", area_name,
+                f"{eid}.quint_run '{run}' has no matching run in the sidecar.", ref=eid)
+        for target in ex.get("refs", []) or []:
+            if not resolve_ref(target, area_data, all_areas):
+                add(findings, FAIL, "examples", "example-ref-dangling", area_name,
+                    f"{eid}.refs references '{target}', which does not exist.", ref=eid)
 
 
 def check_cross_refs(area_data, all_areas, area_name, findings):
@@ -1181,6 +1576,13 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_constraint_values(area_data, sidecar, area_name, findings)
     check_formal_model_consistency(area_data, sidecar, area_name, findings)
     check_alloy_backend(root, area_data, area_name, findings)
+    check_scope(area_data, area_name, findings)
+    check_externals(area_data, area_name, findings)
+    check_assumptions(area_data, all_areas, area_name, findings)
+    check_closed_worlds(area_data, sidecar, area_name, findings)
+    check_modality(area_data, area_name, findings)
+    check_decision_affects(area_data, all_areas, area_name, findings)
+    check_examples(area_data, sidecar, all_areas, area_name, findings)
     check_cross_refs(area_data, all_areas, area_name, findings)
     check_contract_spans(area_data, all_areas, area_name, findings)
     check_open_questions(area_data, area_name, findings)

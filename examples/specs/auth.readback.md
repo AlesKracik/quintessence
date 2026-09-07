@@ -12,6 +12,16 @@
 
 Authenticate users; manage session lifecycle; lock accounts after repeated failed attempts.
 
+## Scope
+
+**In scope:** password login, session lifecycle, account lockout
+
+**Deliberately out of scope** — these are decisions, not oversights:
+
+- **service-accounts** — Machine identities authenticate via mTLS, not passwords; resolved in Q-001. _(owned by platform)_
+- **password-reset** — Owned by the account-recovery area; this area only consumes the resulting credential change.
+- **mfa** — Deferred until after the first release; no requirement here may assume a second factor.
+
 ## ⚠ Needs Your Attention
 
 - **Unchecked requirement** — REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
@@ -211,6 +221,23 @@ stateDiagram-v2
   Unlocked --> Locked: login_failed (System)
   Locked --> Unlocked: unlock_account (Admin)
 ```
+
+## Completeness by Dimension
+
+_One number would hide which half is missing. Each row is derived from declared obligations: ✓ discharged, ! outstanding, — nothing declared (which may itself be the gap)._
+
+| Dimension | | Obligations |
+|---|---|---|
+| Data model | — | 3 entities, 2 stateful, 0 closed |
+| State space | ✓ | 4/13 cells covered, 9 triaged, 0 untriaged |
+| Operations | ! | 1/4 requirements with a discharged witness |
+| Failure behavior | — | 1 unwanted-path requirement(s); no external outcome matrix — unmeasured |
+| External systems | — | none declared — if the area calls anything, this is a gap |
+| Assumptions | — | none recorded |
+| Temporal behavior | — | none declared |
+| Examples | — | none written |
+| Invariants | ! | 0/3 holding |
+| Adversarial review | — | never run — `/spec-check --reality` |
 
 ## Reference
 

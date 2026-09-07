@@ -5,7 +5,11 @@
 #                             EARS structure, witness obligations (trace
 #                             present, valid ITF, fresh model_sha)
 #   2. spec-matrix --strict — state×event completeness: every cell covered or
-#                             explicitly triaged (GAP / IMPOSSIBLE / OUT-OF-SCOPE)
+#                             explicitly triaged (GAP / IMPOSSIBLE / NO-OP /
+#                             OUT-OF-SCOPE)
+#   2b. spec-matrix --outcomes --strict — external×outcome completeness: every
+#                             declared failure mode of every dependency is
+#                             handled by a requirement or triaged
 #   3. quint typecheck      — sidecars and probe modules still compile
 #   4. quint test           — the model's `run` scenarios still pass
 #
@@ -84,6 +88,15 @@ jobs:
           for area in $(python -c "import json; print(' '.join(a['name'] for a in json.load(open('.spec/project.json'))['areas'] if a.get('kind') != 'contract'))"); do
             echo "── matrix: $area"
             python tools/spec-matrix.py "$area" --stdout --strict > /dev/null
+          done
+
+      - name: spec-matrix --outcomes --strict (failure-behavior completeness gate)
+        if: steps.boot.outputs.ok == 'true'
+        run: |
+          set -e
+          for area in $(python -c "import json; print(' '.join(a['name'] for a in json.load(open('.spec/project.json'))['areas'] if a.get('kind') != 'contract'))"); do
+            echo "── outcomes: $area"
+            python tools/spec-matrix.py "$area" --outcomes --stdout --strict > /dev/null
           done
 
       - name: Quint typecheck (sidecars + probe modules)

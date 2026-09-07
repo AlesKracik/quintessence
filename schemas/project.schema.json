@@ -145,6 +145,15 @@
         "max_steps":       { "type": "integer", "minimum": 1, "default": 10 }
       }
     },
+    "z3": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OPTIONAL SMT backend. Present only when some invariant declares proof: \"smt\". Absent = the backend is off and nothing about the existing paths changes.",
+      "properties": {
+        "binary":          { "type": "string", "description": "Path to the z3 executable. Overridden per-developer by Z3_BIN in the environment; falls back to whatever `z3` is on PATH." },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300, "description": "Wall-clock cap enforced by spec-record." }
+      }
+    },
     "alloy": {
       "type": "object",
       "additionalProperties": false,

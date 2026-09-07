@@ -4,7 +4,7 @@
 
 **Spans:** auth, auth-ui
 
-**✓ READY** — all requirements verified against code, all invariants hold (bounded, in scope, or proven), no open questions.
+**✓ READY** — all requirements verified against code, all invariants hold (bounded, in scope, or proven), no open questions — NOTE: no scope declared, so 'complete' has no boundary to be complete against.
 
 **Status:** formalized  |  **Requirements:** 0/0 verified, 0/0 witnessed  |  **Invariants:** 0 proven + 0 bounded + 2 in-scope / 2  |  **Coverage:** matrix not run  |  **Open questions:** 0  |  **Last verified:** never
 
@@ -26,6 +26,23 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 - **INV-CONTRACT-001** (`noSharedSessions`) — No two sessions belong to the same account. Criticality: critical. ✓ (scope: 4 Session, 4 Account, 4 Screen)
 - **INV-CONTRACT-002** (`everyGuardedScreenHasAnOwner`) — Every auth-required screen trusts a session that has an owning account — no guarded screen dangles. Criticality: high. ✓ (scope: 4 Session, 4 Account, 4 Screen)
+
+## Completeness by Dimension
+
+_One number would hide which half is missing. Each row is derived from declared obligations: ✓ discharged, ! outstanding, — nothing declared (which may itself be the gap)._
+
+| Dimension | | Obligations |
+|---|---|---|
+| Data model | — | no entities declared |
+| State space | — | matrix not run |
+| Operations | — | no requirements |
+| Failure behavior | — | 0 unwanted-path requirement(s); no external outcome matrix — unmeasured |
+| External systems | — | none declared — if the area calls anything, this is a gap |
+| Assumptions | — | none recorded |
+| Temporal behavior | — | none declared |
+| Examples | — | none written |
+| Invariants | ✓ | 2/2 holding |
+| Adversarial review | — | never run — `/spec-check --reality` |
 
 ## Reference
 

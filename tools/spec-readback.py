@@ -100,6 +100,33 @@ def check_scopes(area):
     return out
 
 
+def assumption_index(area):
+    """ID -> [ASM-NNN, ...] for everything an assumption bears on.
+
+    A result that depends on an unstated assumption overclaims; one that
+    depends on a STATED assumption should still not read as unconditional.
+    So every mark whose ID appears in some assumptions[].affects carries the
+    assumption with it \u2014 the same honesty rule as the step bound and the
+    Alloy scope, applied to the environment rather than to the search."""
+    out = {}
+    for asm in area.get("assumptions", []) or []:
+        aid = asm.get("id")
+        if not aid:
+            continue
+        for target in asm.get("affects", []) or []:
+            out.setdefault(target, []).append(aid)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def under_assumptions(mark, asms):
+    """Qualify a mark with the assumptions it rests on. Only ✓-shaped marks
+    are qualified: a counterexample or an unchecked item makes no claim that
+    an assumption could be propping up."""
+    if not asms or not mark.startswith("\u2713"):
+        return mark
+    return f"{mark} \u00b7 under {', '.join(asms)}"
+
+
 def invariant_mark(inv, bound, scope=None):
     """Honest render of an invariant's formal status. A bounded model check is
     NOT a proof — it only says 'no counterexample within N steps' — so a
@@ -115,6 +142,10 @@ def invariant_mark(inv, bound, scope=None):
         return f"✓ (≤{bound} steps)" if bound else "✓ (bounded)"
     if st == "verified-in-scope":
         return f"✓ (scope: {scope})" if scope else "✓ (in scope)"
+    if st == "verified-smt":
+        return "✓ (smt)"
+    if st == "not-checkable":
+        return "⊘ not checkable by this backend"
     if st == "counterexample-found":
         return "✗"
     if st == "accepted-risk":
@@ -318,6 +349,15 @@ def attention_items(root, area_name, area):
         items.append("**Coverage unknown** — state machines declared but the "
                      "state×event matrix has never been recorded (run "
                      "`tools/spec-matrix.py` with `--record`).")
+    outcomes = (area.get("check_results") or {}).get("outcomes") or {}
+    if outcomes.get("uncovered"):
+        items.append(f"**Unhandled failure behavior** — {outcomes['uncovered']} declared "
+                     f"external outcome(s) have no requirement saying what happens and no "
+                     f"triage saying why not. Run `tools/spec-matrix.py <area> --outcomes`.")
+    for asm in area.get("assumptions", []) or []:
+        if asm.get("status", "accepted") == "open":
+            items.append(f"**Open assumption** — {asm.get('id')}: {asm.get('statement')} "
+                         f"(undecided: results that depend on it are provisional)")
     for q in area.get("open_questions", []) or []:
         if q.get("status", "open") in ("open", "deferred"):
             src = f" _(source: {q['source']})_" if q.get("source") else ""
@@ -346,7 +386,7 @@ def ship_verdict(area):
         blockers.append(f"{n_unver} of {len(reqs)} requirement(s) not verified against code")
     n_inv_bad = sum(1 for i in invs
                     if i.get("formal_status") not in ("verified", "verified-inductive",
-                                                      "verified-in-scope"))
+                                                      "verified-in-scope", "verified-smt"))
     if n_inv_bad:
         blockers.append(f"{n_inv_bad} of {len(invs)} invariant(s) not holding")
     n_q = sum(1 for q in area.get("open_questions", []) or []
@@ -356,10 +396,23 @@ def ship_verdict(area):
     log = area.get("verification_log") or []
     if log and log[-1].get("drift_detected"):
         blockers.append("drift detected")
+    outcomes = (area.get("check_results") or {}).get("outcomes") or {}
+    if outcomes.get("uncovered"):
+        blockers.append(f"{outcomes['uncovered']} external outcome(s) with no "
+                        f"declared behavior")
     if blockers:
         return "**⚠ NOT READY** — " + "; ".join(blockers) + "."
+    # "Closed" is only ever closed relative to a boundary. Saying which one
+    # keeps READY from reading as a claim about everything.
+    scope = area.get("scope") or {}
+    if scope.get("included"):
+        rel = " — scope: " + ", ".join(scope["included"])
+    elif scope.get("excluded"):
+        rel = " — relative to the declared scope"
+    else:
+        rel = " — NOTE: no scope declared, so 'complete' has no boundary to be complete against"
     return ("**✓ READY** — all requirements verified against code, all invariants "
-            "hold (bounded, in scope, or proven), no open questions.")
+            "hold (bounded, in scope, or proven), no open questions" + rel + ".")
 
 
 def header_bar(area, area_name):
@@ -418,6 +471,37 @@ def render_requirement(root, area, req, constraints, rendered_full):
         lines.append("")
         return lines
     w = req.get("witness") or {}
+    modality = req.get("modality", "must")
+    if modality == "forbidden":
+        enforced = w.get("enforced_by")
+        lines.append("> **Forbidden** — this must never happen, so there is no trace to "
+                     "find. The proof is the invariant that stays true"
+                     + (f": **{enforced}**." if enforced else " (none named yet)."))
+        lines.append("")
+    elif modality == "may":
+        lines.append("> **Permitted, not required** — the system MAY do any of the "
+                     "following, and the choice is not this spec's to make. Each needs "
+                     "its own witness, or the permission has quietly become a rule:")
+        for oc in (w.get("outcomes") or []):
+            ocm = {"witnessed": "◐", "no-witness": "✗"}.get(oc.get("status"), "⏳")
+            trace = ""
+            if oc.get("trace") and oc.get("status") == "witnessed":
+                trace = f" — {witness_one_liner(root, oc['trace'])}"
+            lines.append(f">   - {ocm} **{oc.get('name', '?')}**: "
+                         f"`{oc.get('predicate', '?')}`{trace}")
+        if not (w.get("outcomes") or []):
+            lines.append(">   - _no permitted outcomes declared yet_")
+        lines.append("")
+    if req.get("determinism") == "nondeterministic" and modality != "may":
+        lines.append("> **Nondeterministic** — more than one result is legal here by "
+                     "design; do not read the witness as the only allowed outcome.")
+        lines.append("")
+    for eo in req.get("error_outcomes", []) or []:
+        idem = " (safe to retry)" if eo.get("idempotent") else ""
+        lines.append(f"> **On {eo.get('external')}/{eo.get('outcome')}:** "
+                     f"{eo.get('effect')}{idem}")
+    if req.get("error_outcomes"):
+        lines.append("")
     if w.get("status") == "skipped" and w.get("justification"):
         lines.append(f"> **Witness skipped:** {w['justification']}")
         lines.append("")
@@ -517,6 +601,7 @@ def invariants_section(area):
         return []
     bound = check_bound(area)
     scopes = check_scopes(area)
+    asms = assumption_index(area)
     legend = ("_Invariant legend: ✓ proven — inductive, holds in ALL reachable states · "
               "✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, "
               "NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a "
@@ -532,7 +617,9 @@ def invariants_section(area):
         tail = " — see Needs Your Attention." if st == "counterexample-found" else ""
         # A structural invariant has no Quint name — it points at the Alloy
         # check that carries it, so the reader can find the actual assertion.
-        name = inv.get("quint_name") or inv.get("alloy_command") or "—"
+        mark = under_assumptions(mark, asms.get(inv.get("id")))
+        name = (inv.get("quint_name") or inv.get("alloy_command")
+                or inv.get("smt_file") or "—")
         lines.append(f"- **{inv.get('id')}** (`{name}`) — "
                      f"{inv.get('description', '')} Criticality: "
                      f"{inv.get('criticality', 'high')}. {mark}{tail}")
@@ -743,6 +830,204 @@ def reference_section(root, area, project):
     return lines
 
 
+def scope_section(area):
+    """Gap A. Printed before anything claims completeness, because every such
+    claim below is relative to this boundary."""
+    scope = area.get("scope") or {}
+    inc, exc = scope.get("included") or [], scope.get("excluded") or []
+    if not inc and not exc:
+        return []
+    lines = ["## Scope", ""]
+    if inc:
+        lines += ["**In scope:** " + ", ".join(inc), ""]
+    if exc:
+        lines += ["**Deliberately out of scope** — these are decisions, not oversights:", ""]
+        for e in exc:
+            owner = f" _(owned by {e['owner']})_" if e.get("owner") else ""
+            lines.append(f"- **{e.get('item')}** — {e.get('reason', '')}{owner}")
+        lines.append("")
+    return lines
+
+
+def externals_section(area):
+    """Gap B + E. One row per outcome the outside world can produce, with what
+    this area does about it. The unhappy rows are the point."""
+    externals = area.get("externals", []) or []
+    assumptions = area.get("assumptions", []) or []
+    if not externals and not assumptions:
+        return []
+    lines = ["## What the Outside World Can Do", ""]
+    if externals:
+        handled = {}
+        for req in area.get("requirements", []) or []:
+            for eo in req.get("error_outcomes", []) or []:
+                handled.setdefault((eo.get("external"), eo.get("outcome")), []).append(
+                    (req.get("id"), eo.get("effect"), eo.get("idempotent")))
+        triage = {(t.get("external"), t.get("outcome")): t
+                  for t in area.get("outcome_triage", []) or []}
+        lines += ["| Dependency | Outcome | What we do | Where |", "|---|---|---|---|"]
+        for ext in externals:
+            for oc in ext.get("outcomes", []) or []:
+                key = (ext.get("name"), oc.get("name"))
+                rows = handled.get(key)
+                if rows:
+                    effect = "; ".join(
+                        f"{eff}{' (retry-safe)' if idem else ''}" for _, eff, idem in rows)
+                    where = ", ".join(rid for rid, _, _ in rows)
+                elif key in triage:
+                    t = triage[key]
+                    effect = f"_{t.get('verdict')}_ — {t.get('reason', '')}"
+                    where = t.get("question") or t.get("scope_ref") or "—"
+                else:
+                    effect = "**⚠ nothing specified**"
+                    where = "—"
+                lines.append(f"| {ext.get('name')} | {oc.get('name')} | {effect} | {where} |")
+        lines.append("")
+    if assumptions:
+        lines += ["**Assumptions this specification rests on.** Results that depend on "
+                  "them are annotated `under ASM-NNN` \u2014 they hold if the assumption "
+                  "does, and not otherwise.", ""]
+        for asm in sorted(assumptions, key=lambda a: a.get("id", "")):
+            state = asm.get("status", "accepted")
+            badge = {"accepted": "", "open": " **(OPEN \u2014 undecided)**",
+                     "retired": " _(retired)_"}.get(state, "")
+            disch = (asm.get("discharged_by") or "").rstrip()
+            checked = (f" Checked in production by: {disch}"
+                       + ("" if disch.endswith((".", "!", "?")) else ".")
+                       if disch else " _Believed, not checked._")
+            affects = (" Bears on: " + ", ".join(asm["affects"]) + "."
+                       if asm.get("affects") else "")
+            lines.append(f"- **{asm.get('id')}**{badge} — {asm.get('statement')}"
+                         f"{affects}{checked}")
+        lines.append("")
+    return lines
+
+
+def examples_section(area):
+    """Gap I. Concrete cases the author wrote down. Seeds and regressions \u2014
+    the proof of reachability is still the machine-found witness trace."""
+    examples = area.get("examples", []) or []
+    if not examples:
+        return []
+    lines = ["## Worked Examples", "",
+             "_Author-written scenarios: illustration and regression pins, not proof. "
+             "A witness trace shows a behavior is reachable at all; an example only "
+             "asserts the one case somebody thought of._", ""]
+    for ex in sorted(examples, key=lambda e: e.get("id", "")):
+        title = ex.get("title") or ex.get("id")
+        lines.append(f"**{ex.get('id')} — {title}**")
+        lines.append("")
+        given = ex.get("given") or {}
+        if given:
+            lines.append("- Given: " + ", ".join(f"`{k}` = `{v}`" for k, v in given.items()))
+        when = ex.get("when") or {}
+        args = when.get("args") or {}
+        arglist = ", ".join(f"{k}={v}" for k, v in args.items())
+        lines.append(f"- When: `{when.get('action', '?')}({arglist})`")
+        expect = ex.get("expect") or {}
+        if expect:
+            lines.append("- Expect: " + ", ".join(f"`{k}` = `{v}`" for k, v in expect.items()))
+        if ex.get("refs"):
+            lines.append("- Illustrates: " + ", ".join(ex["refs"]))
+        lines.append("")
+    return lines
+
+
+def dimensions_section(area):
+    """Gap J. Completeness is multidimensional, so it is reported per dimension
+    with the obligations behind each \u2014 never as one number. Every row is
+    derived from what the spec actually declares; a dash means the dimension
+    has no inputs yet, which is itself information."""
+    reqs = [r for r in area.get("requirements", []) or [] if r.get("status") != "deferred"]
+    invs = area.get("invariants", []) or []
+    cr = area.get("check_results") or {}
+    matrix, outcomes = cr.get("matrix") or {}, cr.get("outcomes") or {}
+    entities = ((area.get("concepts") or {}).get("entities") or [])
+    externals = area.get("externals", []) or []
+    assumptions = area.get("assumptions", []) or []
+    examples = area.get("examples", []) or []
+    props = area.get("properties", []) or []
+    unwanted = [r for r in reqs if (r.get("ears") or {}).get("unwanted")]
+    witnessed = [r for r in reqs
+                 if (r.get("witness") or {}).get("status") in ("witnessed", "skipped")]
+    closed = [e for e in entities if e.get("closed")]
+    all_redteam = [q for q in area.get("open_questions", []) or []
+                   if str(q.get("source", "")).startswith("red-team")]
+    open_redteam = [q for q in all_redteam if q.get("status", "open") == "open"]
+    stateful = [e for e in entities if e.get("states")]
+    n_inv_ok = sum(1 for i in invs
+                   if i.get("formal_status") in ("verified", "verified-inductive",
+                                                 "verified-in-scope", "verified-smt",
+                                                 "accepted-risk"))
+
+    def row(name, ok, detail):
+        mark = "\u2713" if ok is True else ("!" if ok is False else "\u2014")
+        return f"| {name} | {mark} | {detail} |"
+
+    # A dimension is ✓ only when its obligations are discharged, ! only when
+    # something is outstanding, and — when nothing has been declared to
+    # measure. An open world is a legitimate choice, not a defect; a half-
+    # pinned one (some entities closed, some not) is the signal worth raising.
+    if not stateful:
+        data_model = None
+    elif len(closed) == len(stateful):
+        data_model = True
+    elif closed:
+        data_model = False
+    else:
+        data_model = None
+
+    rows = [
+        row("Data model", data_model,
+            f"{len(entities)} entities, {len(stateful)} stateful, {len(closed)} closed"
+            if entities else "no entities declared"),
+        row("State space",
+            (matrix.get("uncovered") == 0) if matrix else None,
+            f"{matrix.get('covered', 0)}/{matrix.get('cells', 0)} cells covered, "
+            f"{matrix.get('triaged', 0)} triaged, {matrix.get('uncovered', 0)} untriaged"
+            if matrix else "matrix not run"),
+        row("Operations",
+            (len(witnessed) == len(reqs)) if reqs else None,
+            f"{len(witnessed)}/{len(reqs)} requirements with a discharged witness"
+            if reqs else "no requirements"),
+        # Unwanted-path requirements are evidence somebody thought about
+        # failure, not evidence the failure space is covered. Without the
+        # outcome matrix this dimension is unmeasured, never discharged.
+        row("Failure behavior",
+            (outcomes.get("uncovered") == 0) if outcomes else None,
+            f"{outcomes.get('covered', 0)}/{outcomes.get('cells', 0)} external outcomes "
+            f"handled, {outcomes.get('uncovered', 0)} unspecified"
+            if outcomes else f"{len(unwanted)} unwanted-path requirement(s); no external "
+                             f"outcome matrix \u2014 unmeasured"),
+        row("External systems",
+            bool(externals) or None,
+            f"{len(externals)} declared, "
+            f"{sum(len(e.get('outcomes') or []) for e in externals)} outcomes"
+            if externals else "none declared \u2014 if the area calls anything, this is a gap"),
+        row("Assumptions",
+            all(a.get("status", "accepted") != "open" for a in assumptions) if assumptions
+            else None,
+            f"{len(assumptions)} recorded, "
+            f"{sum(1 for a in assumptions if a.get('status') == 'open')} open"
+            if assumptions else "none recorded"),
+        row("Temporal behavior", bool(props) or None,
+            f"{len(props)} liveness propert(ies)" if props else "none declared"),
+        row("Examples", bool(examples) or None,
+            f"{len(examples)} worked example(s)" if examples else "none written"),
+        row("Invariants", (n_inv_ok == len(invs)) if invs else None,
+            f"{n_inv_ok}/{len(invs)} holding" if invs else "none declared"),
+        # Never run and run-clean are different states; only the second is ✓.
+        row("Adversarial review", (not open_redteam) if all_redteam else None,
+            f"{len(open_redteam)} open of {len(all_redteam)} red-team question(s)"
+            if all_redteam else "never run \u2014 `/spec-check --reality`"),
+    ]
+    return ["## Completeness by Dimension", "",
+            "_One number would hide which half is missing. Each row is derived from "
+            "declared obligations: \u2713 discharged, ! outstanding, \u2014 nothing declared "
+            "(which may itself be the gap)._", "",
+            "| Dimension | | Obligations |", "|---|---|---|"] + rows + [""]
+
+
 def emit_area(root, area_name):
     area_path = area_json_path(root, area_name)
     area = load_json(area_path)
@@ -766,6 +1051,7 @@ def emit_area(root, area_name):
     lines.append("")
     if area.get("purpose"):
         lines += ["## Purpose", "", area["purpose"], ""]
+    lines += scope_section(area)
     items = attention_items(root, area_name, area)
     lines.append("## ⚠ Needs Your Attention")
     lines.append("")
@@ -777,9 +1063,12 @@ def emit_area(root, area_name):
     lines += ui_sections(area)
     lines += what_the_system_does(root, area_name, area, journeys)
     lines += invariants_section(area)
+    lines += externals_section(area)
+    lines += examples_section(area)
     lines += limits_section(root, area_name, area)
     if not area.get("screens"):
         lines += state_machines_section(area)
+    lines += dimensions_section(area)
     lines += reference_section(root, area, project)
     write_doc(Path(root) / "specs" / f"{area_name}.readback.md", lines)
 
@@ -864,7 +1153,31 @@ def cmd_status(args):
     print(json.dumps(out, indent=2))
 
 
-def emit_change(root, slug):
+def what_changed_section(root, since, targets):
+    """Gap F. The semantic diff, rendered into the PR's review surface.
+
+    OPT-IN via --since, and deliberately so: the readback's guarantee is that
+    identical input yields byte-identical output, and a diff depends on a
+    second input — the revision being compared against. Naming that revision
+    keeps the guarantee (same input + same ref = same bytes) instead of
+    quietly making the document depend on ambient repo state."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "spec_diff", Path(__file__).parent / "spec-diff.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception as exc:                      # tool missing or unloadable
+        return ["## What Changed", "",
+                f"_Semantic diff unavailable: {exc}_", ""]
+    reports = mod.build_reports(since, mod.WORKTREE, Path(root))
+    if targets:
+        reports = {k: v for k, v in reports.items() if k in targets}
+    return mod.render(reports, True, since, mod.WORKTREE)
+
+
+def emit_change(root, slug, since=None):
     slug, manifest = load_change(root, slug)
     grid = change_grid(root, manifest)
     lines = [f"# Change Readback: {slug}", "",
@@ -889,6 +1202,9 @@ def emit_change(root, slug):
     lines.append("_(Phase columns are derived from the area JSONs at generation time — "
                  "the manifest stores membership only.)_")
     lines.append("")
+    if since:
+        targets = {t.get("name") for t, _a, _p in grid if t.get("name")}
+        lines += what_changed_section(root, since, targets)
 
     # Attention roll-up scoped to the change's targets — the PR surface must
     # show a broken invariant even when the phase row looks half-green.
@@ -1056,7 +1372,11 @@ def main():
     pc = sub.add_parser("change", help="Change readback + refreshed target readbacks.")
     pc.add_argument("slug", nargs="?")
     pc.add_argument("--root", default=".")
-    pc.set_defaults(func=lambda a: emit_change(Path(a.root), a.slug))
+    pc.add_argument("--since", metavar="REF",
+                    help="Include a 'What Changed' section: the semantic diff of this "
+                         "change's targets against REF (a tag, sha, or branch). Naming "
+                         "the ref keeps the output reproducible.")
+    pc.set_defaults(func=lambda a: emit_change(Path(a.root), a.slug, a.since))
 
     pp = sub.add_parser("project", help="Project-wide readback.")
     pp.add_argument("--root", default=".")

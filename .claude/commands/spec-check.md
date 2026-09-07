@@ -1,6 +1,6 @@
 # /spec-check — Apalache Model Checker + Witness Obligations + Reality-Gap Sweep
 
-Run Apalache on area's Quint sidecar, discharge witness obligations (every requirement demonstrated reachable), then the state×event matrix pass. Adversarial red-team runs only with `--reality` — it's per-revision work, not per-run (you re-run check 5× while fixing a counterexample; don't regenerate 25 questions each time). Write findings back into area JSON. Cascade Apalache to every contract whose `spans` includes target area.
+Run Apalache on area's Quint sidecar, discharge witness obligations (every requirement demonstrated reachable), then the state×event and external×outcome matrix passes. Adversarial red-team runs only with `--reality` — it's per-revision work, not per-run (you re-run check 5× while fixing a counterexample; don't regenerate 25 questions each time). Write findings back into area JSON. Cascade Apalache to every contract whose `spans` includes target area.
 
 Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 1. **Invariants hold** — Apalache finds no counterexample.
@@ -181,6 +181,17 @@ Format gap question:
   "status": "open"
 }
 ```
+
+### Step 4a-bis — External × outcome completeness
+
+Run `tools/spec-matrix.py <target> --outcomes --record` whenever the area declares `externals[]`. Every declared outcome must be handled by some requirement's `error_outcomes[]` or triaged in `outcome_triage[]`. Triage the uncovered cells with the same four verdicts as the state×event pass:
+
+- `IMPOSSIBLE` — the outcome cannot reach this area (say why).
+- `NO-OP` — it happens and deliberately changes nothing. Name the requirement that decided that; a NO-OP without a reason FAILs lint.
+- `OUT-OF-SCOPE` — cite the `scope.excluded[]` item covering it (`scope_ref`).
+- `GAP` — a real hole. File a `Q-NNN` and link it.
+
+An unhandled TIMEOUT is the single most common real-world semantic hole; this pass exists to make it impossible to ship one silently.
 
 ### Step 4b — Adversarial red-team
 

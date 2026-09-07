@@ -128,6 +128,23 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 - **INV-001** (`guardedDashboard`) — Dashboard is reachable only when authenticated == true. ('Shall always' statements are invariants, not requirements — Apalache proves them across all reachable states.) Criticality: critical. ⏳
 
+## Completeness by Dimension
+
+_One number would hide which half is missing. Each row is derived from declared obligations: ✓ discharged, ! outstanding, — nothing declared (which may itself be the gap)._
+
+| Dimension | | Obligations |
+|---|---|---|
+| Data model | — | no entities declared |
+| State space | — | matrix not run |
+| Operations | ! | 0/3 requirements with a discharged witness |
+| Failure behavior | — | 1 unwanted-path requirement(s); no external outcome matrix — unmeasured |
+| External systems | — | none declared — if the area calls anything, this is a gap |
+| Assumptions | — | none recorded |
+| Temporal behavior | — | none declared |
+| Examples | — | none written |
+| Invariants | ! | 0/1 holding |
+| Adversarial review | — | never run — `/spec-check --reality` |
+
 ## Reference
 
 <details><summary>Concepts, architecture, decisions, resolved questions, traceability, verification history</summary>

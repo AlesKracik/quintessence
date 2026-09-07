@@ -26,8 +26,17 @@ exits 1 while any `?` remains — the CI completeness gate.
 Verbs and Quint actions that aren't scoped to ANY entity are written to
 `specs/<area>/gen/matrix-orphans.txt` as candidate missing entity↔event links.
 
+A SECOND axis covers failure behavior: external x outcome. Every outcome an
+externals[] dependency can produce is a cell, covered when some requirement
+names it in error_outcomes[] and otherwise needing triage in outcome_triage[].
+Integration failures are where real-world semantics most often go missing, so
+they get the same "covered or explicitly triaged" discipline as state x event
+rather than being left to whoever remembers to ask "and if it times out?".
+
 Usage:
   tools/spec-matrix.py <area>                # writes specs/<area>/gen/matrix.csv
+  tools/spec-matrix.py <area> --outcomes     # the external x outcome axis instead
+                                             #   (specs/<area>/gen/outcomes.csv)
   tools/spec-matrix.py <area> --stdout       # write to stdout, no file
   tools/spec-matrix.py <area> --strict       # exit 1 while any '?' cell remains
   tools/spec-matrix.py <area> --record       # also write coverage stats into
@@ -52,7 +61,7 @@ from itf_tools import area_json_path  # noqa: E402
 
 # Triage values an LLM (or human) writes into the covered_by column during
 # /spec-check Step 4a. Preserved across regenerations.
-TRIAGE_VALUES = {"GAP", "IMPOSSIBLE", "OUT-OF-SCOPE"}
+TRIAGE_VALUES = {"GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"}
 
 
 def load_area(root: Path, area: str) -> dict:
@@ -235,6 +244,118 @@ def emit_csv(rows: list, scope: dict, idx: dict, out, prior_triage: dict = None)
     return stats
 
 
+def outcome_rows(area_data: dict) -> list:
+    """(external, outcome) for every declared outcome, in declaration order."""
+    rows = []
+    for ext in area_data.get("externals", []) or []:
+        name = ext.get("name")
+        if not name:
+            continue
+        for oc in ext.get("outcomes", []) or []:
+            if oc.get("name"):
+                rows.append((name, oc["name"]))
+    return rows
+
+
+def outcome_coverage_index(area_data: dict) -> dict:
+    """(external, outcome) -> "REQ-003:NO_CHANGE" for every handled cell.
+
+    Coverage is EFFECT-PRECISE, mirroring the transition-precision of the
+    state x event axis: a requirement merely mentioning the dependency covers
+    nothing. It has to say what happens for that specific outcome."""
+    idx = {}
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        for eo in req.get("error_outcomes", []) or []:
+            key = (eo.get("external"), eo.get("outcome"))
+            if None in key:
+                continue
+            label = f"{rid}:{eo.get('effect', '?')}"
+            idx.setdefault(key, []).append(label)
+    return {k: " ".join(v) for k, v in idx.items()}
+
+
+def emit_outcomes_csv(rows: list, idx: dict, triage: dict, out) -> dict:
+    w = csv.writer(out)
+    w.writerow(["external", "outcome", "covered_by", "behavior"])
+    stats = {"total": 0, "covered": 0, "uncovered": 0, "triaged": 0}
+    for key in rows:
+        stats["total"] += 1
+        covered = idx.get(key)
+        if covered:
+            stats["covered"] += 1
+            w.writerow([key[0], key[1], covered, ""])
+        elif key in triage:
+            stats["triaged"] += 1
+            w.writerow([key[0], key[1], triage[key][0], triage[key][1]])
+        else:
+            stats["uncovered"] += 1
+            w.writerow([key[0], key[1], "?", ""])
+    return stats
+
+
+def run_outcomes(args, root, area_data) -> int:
+    """The external x outcome pass. Same contract as the state x event pass:
+    --strict fails while any cell is untriaged, --record stamps the reviewable
+    summary into check_results.outcomes."""
+    rows = outcome_rows(area_data)
+    idx = outcome_coverage_index(area_data)
+    triage = {}
+    for t in area_data.get("outcome_triage", []) or []:
+        if t.get("verdict") in TRIAGE_VALUES:
+            triage[(t.get("external"), t.get("outcome"))] = (
+                t["verdict"], t.get("reason") or "")
+
+    gen_dir = root / "specs" / args.area / "gen"
+    if args.stdout:
+        stats = emit_outcomes_csv(rows, idx, triage, sys.stdout)
+    else:
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        out_path = gen_dir / "outcomes.csv"
+        with out_path.open("w", newline="", encoding="utf-8") as f:
+            stats = emit_outcomes_csv(rows, idx, triage, f)
+        print(f"wrote {out_path}", file=sys.stderr)
+
+    print(
+        f"externals={len({r[0] for r in rows})} cells={stats['total']} "
+        f"covered={stats['covered']} triaged={stats['triaged']} "
+        f"uncovered={stats['uncovered']}",
+        file=sys.stderr,
+    )
+
+    if args.record:
+        area_path = area_json_path(root, args.area)
+        area_full = json.loads(area_path.read_text(encoding="utf-8"))
+        cr = area_full.setdefault("check_results", {})
+        cr["outcomes"] = {
+            "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "cells": stats["total"],
+            "covered": stats["covered"],
+            "triaged": stats["triaged"],
+            "uncovered": stats["uncovered"],
+        }
+        gaps = sorted({
+            t["question"] for t in area_full.get("outcome_triage", []) or []
+            if t.get("verdict") == "GAP" and t.get("question")
+        })
+        if gaps:
+            cr["outcomes"]["gaps"] = gaps
+        area_path.write_text(
+            json.dumps(area_full, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(f"recorded check_results.outcomes in {area_path}", file=sys.stderr)
+
+    if args.strict and stats["uncovered"] > 0:
+        print(
+            f"STRICT: {stats['uncovered']} declared outcome(s) neither handled by a "
+            f"requirement nor triaged. What does the system do?",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description="Generate state × event coverage matrix.")
     p.add_argument("area", help="Area name; reads specs/<area>.area.json (or .contract.json)")
@@ -248,10 +369,18 @@ def main():
                    help="Write coverage stats into the area's spec JSON "
                         "check_results.matrix so readbacks can surface "
                         "completeness (the CSV itself is gitignored).")
+    p.add_argument("--outcomes", action="store_true",
+                   help="Run the external × outcome axis instead of state × event: "
+                        "every declared externals[] outcome must be handled by a "
+                        "requirement's error_outcomes[] or triaged in outcome_triage[].")
     args = p.parse_args()
 
     root = Path(args.root)
     area_data = load_area(root, args.area)
+
+    if args.outcomes:
+        sys.exit(run_outcomes(args, root, area_data))
+
     qnt_actions = discover_qnt_actions(root, area_data, args.area)
 
     rows = collect_rows(area_data)

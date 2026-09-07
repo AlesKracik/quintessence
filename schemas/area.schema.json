@@ -41,6 +41,33 @@
       "description": "One paragraph: what this area is responsible for."
     },
 
+    "scope": {
+      "type": "object",
+      "description": "The declared semantic boundary. Completeness is only meaningful relative to a boundary: without one, 'closed' is an unbounded claim nobody can check, and every OUT-OF-SCOPE triage verdict is an unfalsifiable assertion. Declaring it turns both into checkable statements — the readback's ship verdict reads 'READY relative to this scope', and spec-lint requires an OUT-OF-SCOPE cell to name the exclusion that covers it.",
+      "additionalProperties": false,
+      "properties": {
+        "included": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capabilities this area is answerable for, in domain words (cart, checkout, payment authorization)."
+        },
+        "excluded": {
+          "type": "array",
+          "description": "Capabilities deliberately NOT covered. Each needs a reason: an exclusion without one is indistinguishable from an oversight.",
+          "items": {
+            "type": "object",
+            "required": ["item", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "item":     { "type": "string", "description": "Referenced by matrix_triage[].scope_ref and outcome_triage[].scope_ref." },
+              "reason":   { "type": "string", "description": "Why it is out: owned by another area, deferred, or genuinely not this product's job." },
+              "owner":    { "type": "string", "description": "The area or team that owns it instead, when there is one." }
+            }
+          }
+        }
+      }
+    },
+
     "concepts": {
       "type": "object",
       "description": "Vocabulary: entities, actors, verbs. The 'what we're talking about' layer that informs the formal model.",
@@ -56,7 +83,8 @@
               "name":        { "type": "string" },
               "id_field":    { "type": "string" },
               "states":      { "type": "array", "items": { "type": "string" }, "description": "If stateful, the possible states." },
-              "description": { "type": "string" }
+              "description": { "type": "string" },
+              "closed":      { "type": "boolean", "default": false, "description": "CLOSED WORLD: states[] is exhaustive — no other externally meaningful state exists, and no other may be invented downstream. spec-lint then requires the sidecar's variant type to have exactly these constructors (no more, no fewer), so an LLM adding a state to the model, or code adding one to an enum, is caught rather than absorbed. Leave false/absent for a set that is genuinely open to extension." }
             }
           }
         },
@@ -69,6 +97,101 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Domain actions: login, charge, expire, etc. Loose — gets refined into Quint actions during formalization."
+        }
+      }
+    },
+
+    "externals": {
+      "type": "array",
+      "description": "External systems this area depends on, with the FULL set of outcomes each can produce. Declaring them turns 'what if the payment provider times out?' from a question nobody asked into a matrix cell that must be covered or triaged. An external with no declared outcomes is an idealized dependency — the most common place real-world semantics go missing.",
+      "items": {
+        "type": "object",
+        "required": ["name", "outcomes"],
+        "additionalProperties": false,
+        "properties": {
+          "name":        { "type": "string", "description": "PaymentProvider, EmailGateway, ClockService." },
+          "kind":        { "type": "string", "enum": ["service", "queue", "storage", "clock", "human", "other"], "default": "service" },
+          "description": { "type": "string" },
+          "outcomes": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Every outcome the dependency can produce, INCLUDING the unhappy ones (DECLINED, TIMEOUT, NETWORK_ERROR, DUPLICATE). Each becomes a row in the external×outcome completeness matrix.",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "additionalProperties": false,
+              "properties": {
+                "name":        { "type": "string", "description": "SUCCESS, DECLINED, TIMEOUT, ..." },
+                "description": { "type": "string" },
+                "terminal":    { "type": "boolean", "default": false, "description": "True when the outcome ends the interaction (no retry/poll can follow)." }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "assumptions": {
+      "type": "array",
+      "description": "Environment facts the specification RELIES ON but does not establish. First-class because a verification result that depends on an unstated assumption overclaims: the readback annotates every invariant an assumption bears on, so a ✓ reads 'holds, given ASM-001' rather than 'holds'. Never silently treat an external system as ideal — write the idealization down here.",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement"],
+        "additionalProperties": false,
+        "properties": {
+          "id":        { "type": "string", "pattern": "^ASM-\\d{3}$" },
+          "statement": { "type": "string", "description": "The assumed fact, stated so it could in principle be falsified. 'PaymentProvider eventually responds', not 'PaymentProvider is reliable'." },
+          "kind":      { "type": "string", "enum": ["environment", "external", "platform", "human", "other"], "default": "environment" },
+          "external":  { "type": "string", "description": "The externals[].name this assumption is about, when it is about one." },
+          "affects":   { "type": "array", "items": { "type": "string" }, "description": "IDs whose verification depends on this assumption (INV-NNN, PROP-NNN, REQ-NNN). The single direction of the link — invariants do not list their assumptions, so there is one source of truth. Drives the readback's 'under ASM-NNN' annotation." },
+          "status":    { "type": "string", "enum": ["accepted", "open", "retired"], "default": "accepted" },
+          "discharged_by": { "type": "string", "description": "How the assumption is monitored or tested in the real system, if it is (an alert, a contract test). Absent means: believed, not checked." }
+        }
+      }
+    },
+
+    "outcome_triage": {
+      "type": "array",
+      "description": "COMMITTED triage for external×outcome cells no requirement handles — the failure-behavior twin of matrix_triage. Same verdicts, same durability rationale: the generated view under specs/<area>/gen/ is gitignored scratch, this is the reviewable home.",
+      "items": {
+        "type": "object",
+        "required": ["external", "outcome", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "external":  { "type": "string" },
+          "outcome":   { "type": "string" },
+          "verdict":   { "type": "string", "enum": ["GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"], "description": "GAP: a real hole, tracked by a question. IMPOSSIBLE: the cell cannot occur (a guard forbids it). NO-OP: the event CAN occur here and deliberately changes nothing — the third answer a closed specification needs, and the one most often left implicit; name the requirement that decided it in `reason`. OUT-OF-SCOPE: outside the declared boundary, and must cite the scope.excluded[] entry that covers it." },
+          "reason":    { "type": "string", "description": "Why: the impossibility argument, the covering artifact, or (for GAP) the unanswered question." },
+          "scope_ref": { "type": "string", "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item that covers this cell." },
+          "question":  { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For GAP verdicts: the open_questions[] entry tracking it." }
+        }
+      }
+    },
+
+    "examples": {
+      "type": "array",
+      "description": "Author-written concrete scenarios: given → when → expect. SEEDS AND REGRESSIONS, never the proof — a machine-found witness trace demonstrates that a behavior is reachable, while an example only asserts one case the author had in mind. Their value is brownfield capture (write down what production is known to do before any model exists) and pinning a case a counterexample once broke. Compiled to a Quint `run` and replayed through the same conformance harness as witness traces.",
+      "items": {
+        "type": "object",
+        "required": ["id", "when", "expect"],
+        "additionalProperties": false,
+        "properties": {
+          "id":     { "type": "string", "pattern": "^EX-\\d{3}$" },
+          "title":  { "type": "string" },
+          "given":  { "type": "object", "additionalProperties": true, "description": "Starting state as var → value, in the model's own vocabulary. Absent means the initial state." },
+          "when":   {
+            "type": "object",
+            "required": ["action"],
+            "additionalProperties": false,
+            "properties": {
+              "action": { "type": "string", "description": "Quint action name — must exist in the sidecar." },
+              "args":   { "type": "object", "additionalProperties": true }
+            }
+          },
+          "expect": { "type": "object", "additionalProperties": true, "description": "Expected resulting state as var → value." },
+          "refs":   { "type": "array", "items": { "type": "string" }, "description": "Requirement/invariant IDs this example illustrates." },
+          "quint_run": { "type": "string", "description": "Name of the generated `run` in the sidecar, once formalized." },
+          "source": { "type": "string", "description": "elicited | extracted-from-production | regression-for-<ID> | etc." }
         }
       }
     },
@@ -108,6 +231,38 @@
             "enum": ["raw", "needs-validation", "specified", "verified", "deferred"],
             "default": "raw"
           },
+          "modality": {
+            "type": "string",
+            "enum": ["must", "may", "forbidden"],
+            "default": "must",
+            "description": "The deontic force, which decides what counts as discharging the requirement. 'must': exactly this outcome is required — one witness trace. 'may': the system is PERMITTED several outcomes and the choice is not the spec's to make — needs a witness per permitted outcome (witness.outcomes[]), so that a nondeterministic allowance is not silently narrowed to whichever branch the implementer picked. 'forbidden': the behavior must never occur — no witness can exist for a non-event, so it must name the invariant that enforces it (witness.enforced_by).",
+            "$comment": "MAY quietly becoming MUST is one of the specific failure modes this field exists to prevent."
+          },
+          "determinism": {
+            "type": "string",
+            "enum": ["deterministic", "nondeterministic", "unspecified"],
+            "default": "unspecified",
+            "description": "Whether equivalent inputs in equivalent states must produce one observable result. 'deterministic' is a checkable claim; 'nondeterministic' says the latitude is intentional; 'unspecified' says nobody has decided — which is fine early and a gap later. modality 'may' implies nondeterministic."
+          },
+          "error_outcomes": {
+            "type": "array",
+            "description": "How this requirement responds to each external outcome it can meet. This is what makes the external×outcome matrix computable: a cell is covered when some requirement names it here. Failure behavior stops being an afterthought precisely when it has to be written down per outcome.",
+            "items": {
+              "type": "object",
+              "required": ["external", "outcome", "effect"],
+              "additionalProperties": false,
+              "properties": {
+                "external": { "type": "string", "description": "externals[].name." },
+                "outcome":  { "type": "string", "description": "One of that external's declared outcomes[].name." },
+                "effect": {
+                  "type": "string",
+                  "description": "What the system does: 'NO_CHANGE' (transaction rolled back, nothing observable happened), a declared entity state the subject moves to (e.g. 'Pending'), 'RETRY', or 'error:<code>'. Free-form but conventional; the point is that SOMETHING is written for every outcome."
+                },
+                "idempotent": { "type": "boolean", "description": "True when repeating the operation after this outcome is safe — the field that turns 'is a retry harmful?' from tribal knowledge into spec." },
+                "note":     { "type": "string" }
+              }
+            }
+          },
           "source":    { "type": "string", "description": "elicited | extracted | reconciled | etc." },
           "ears": {
             "type": "object",
@@ -131,6 +286,24 @@
               "trace":      { "type": "string", "description": "ITF trace path relative to specs/, e.g. 'auth/traces/REQ-003.itf.json'. Written by /spec-check." },
               "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "skipped"], "default": "not-run" },
               "justification": { "type": "string", "description": "Required when status is 'skipped'. Typical case: a rejection requirement ('shall be rejected') has no state change to witness — pair it with the invariant that stays true and point here, e.g. 'rejection — enforced by INV-002 noSessionWhileLocked'." },
+              "enforced_by": { "type": "string", "pattern": "^INV(-CONTRACT)?-\\d{3}$", "description": "For modality 'forbidden': the invariant that carries the proof, as an ID rather than prose. Typing the old free-text justification means the link is checkable — spec-lint FAILs a dangling reference instead of trusting a sentence." },
+              "outcomes": {
+                "type": "array",
+                "description": "For modality 'may': one entry per PERMITTED outcome, each with its own predicate and its own machine-found trace. A single trace would only prove that one of the allowed behaviors is reachable, which is exactly how a MAY silently degrades into a MUST.",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "predicate"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name":       { "type": "string", "description": "Short label for this permitted outcome (used to name its probe)." },
+                    "predicate":  { "type": "string", "description": "Quint boolean expression true exactly when THIS outcome happened." },
+                    "trace":      { "type": "string", "description": "ITF trace path relative to specs/." },
+                    "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness"], "default": "not-run" },
+                    "checked_at": { "type": "string", "format": "date-time" },
+                    "model_sha":  { "type": "string" }
+                  }
+                }
+              },
               "checked_at": { "type": "string", "format": "date-time" },
               "model_sha":  { "type": "string", "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one." }
             }
@@ -156,19 +329,23 @@
           "quint_name":    { "type": "string", "description": "Name of the Quint `val` or `invariant` that encodes this." },
           "proof": {
             "type": "string",
-            "enum": ["bounded", "inductive", "structural"],
+            "enum": ["bounded", "inductive", "structural", "smt"],
             "default": "bounded",
-            "description": "How this invariant is checked. 'bounded' (default): Apalache bounded model check to apalache.max_steps — a ✓ means 'no counterexample within N steps', NOT a proof. 'inductive': Quint runs `--inductive-invariant=<quint_name>` (base case + one-step preservation) — a ✓ means proven across ALL reachable states. 'structural': checked by the Alloy backend over the finite scope declared in the .als command — a ✓ means 'no counterexample within that scope', a different bound from the step bound. Render distinguishes all three (✓ proven vs ✓ (≤N steps) vs ✓ (scope: …))."
+            "description": "How this invariant is checked. 'bounded' (default): Apalache bounded model check to apalache.max_steps — a ✓ means 'no counterexample within N steps', NOT a proof. 'inductive': Quint runs `--inductive-invariant=<quint_name>` (base case + one-step preservation) — a ✓ means proven across ALL reachable states. 'structural': checked by the Alloy backend over the finite scope declared in the .als command — a ✓ means 'no counterexample within that scope', a different bound from the step bound. 'smt': discharged by an SMT solver over the query in smt_file — no state machine, no trace, just a theory-level fact (arithmetic, data consistency); unsat on the negation means proven modulo the encoding, and 'unknown' is reported as not-checkable rather than as a pass. Render distinguishes all four (✓ proven vs ✓ (≤N steps) vs ✓ (scope: …) vs ✓ (smt))."
           },
           "alloy_command": {
             "type": "string",
             "description": "Required when proof is 'structural': the name of the `check` command in formal_model.alloy_file that encodes this invariant. spec-record runs it via `alloy exec -c <name>` and reads the verdict from receipt.json."
           },
+          "smt_file": {
+            "type": "string",
+            "description": "Required when proof is 'smt': path (relative to specs/) of the SMT-LIB2 query asserting the NEGATION of this invariant. `unsat` = no violating assignment exists = the invariant holds; `sat` = the model is a counterexample; `unknown` = the solver could not decide, recorded as not-checkable rather than quietly as a pass."
+          },
           "formal_status": {
             "type": "string",
-            "enum": ["specified", "verified", "verified-inductive", "verified-in-scope", "counterexample-found", "accepted-risk", "not-run"],
+            "enum": ["specified", "verified", "verified-inductive", "verified-in-scope", "verified-smt", "counterexample-found", "accepted-risk", "not-checkable", "not-run"],
             "default": "specified",
-            "description": "Written mechanically by spec-record. 'verified' = bounded ✓ (≤max_steps). 'verified-inductive' = proven via inductive invariant (unbounded). 'verified-in-scope' = Alloy found no counterexample within the declared finite scope — bounded by structure, not by steps."
+            "description": "Written mechanically by spec-record. 'verified' = bounded ✓ (≤max_steps). 'verified-inductive' = proven via inductive invariant (unbounded). 'verified-in-scope' = Alloy found no counterexample within the declared finite scope — bounded by structure, not by steps. 'verified-smt' = an SMT solver proved the negation unsatisfiable, valid modulo the encoding. 'not-checkable' = the chosen backend returned no verdict (SMT 'unknown'); an absent answer, never a pass."
           },
           "criticality":   { "type": "string", "enum": ["critical", "high", "medium", "low"], "default": "high" },
           "cross_refs":    { "type": "array", "items": { "type": "string" } }
@@ -232,6 +409,11 @@
                 "reason_rejected": { "type": "string" }
               }
             }
+          },
+          "affects": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "IDs this decision governs (REQ-NNN, INV-NNN, CON-NNN, or <area>.<ID> across areas). When the decision changes, this is the blast radius — the list spec-diff reads to say which obligations a reversal puts back in play. spec-lint FAILs a dangling reference."
           },
           "status":        { "type": "string", "enum": ["proposed", "accepted", "deprecated", "superseded"] },
           "superseded_by": { "type": "string" },
@@ -483,8 +665,9 @@
           "entity":  { "type": "string" },
           "state":   { "type": "string" },
           "event":   { "type": "string" },
-          "verdict": { "type": "string", "enum": ["GAP", "IMPOSSIBLE", "OUT-OF-SCOPE"] },
+          "verdict": { "type": "string", "enum": ["GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"], "description": "GAP: a real hole, tracked by a question. IMPOSSIBLE: the cell cannot occur (a guard forbids it). NO-OP: the event CAN occur here and deliberately changes nothing — the third answer a closed specification needs, and the one most often left implicit; name the requirement that decided it in `reason`. OUT-OF-SCOPE: outside the declared boundary, and must cite the scope.excluded[] entry that covers it." },
           "reason":  { "type": "string", "description": "Why: the impossibility argument, the covering artifact, or (for GAP) the unanswered question." },
+          "scope_ref": { "type": "string", "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item that covers this cell. Without it, 'out of scope' is an assertion; with it, it is a reference to a boundary someone reviewed." },
           "question": { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For GAP verdicts: the open_questions[] entry tracking it." }
         }
       }
@@ -573,6 +756,20 @@
       "properties": {
         "ran_at": { "type": "string", "format": "date-time" },
         "max_steps": { "type": "integer", "minimum": 1, "description": "Apalache step bound used for the bounded checks in this run. Drives honest '✓ (≤N steps)' rendering — a bounded ✓ is only valid up to this depth." },
+        "outcomes": {
+          "type": "object",
+          "description": "External×outcome coverage stats from the last spec-matrix --outcomes run. The failure-behavior twin of `matrix`: same shape, same purpose — make the completeness of the unhappy paths visible in the readback instead of leaving it to memory.",
+          "additionalProperties": false,
+          "properties": {
+            "ran_at":    { "type": "string", "format": "date-time" },
+            "cells":     { "type": "integer", "minimum": 0 },
+            "covered":   { "type": "integer", "minimum": 0 },
+            "triaged":   { "type": "integer", "minimum": 0 },
+            "uncovered": { "type": "integer", "minimum": 0 },
+            "gaps":      { "type": "array", "items": { "type": "string" }, "description": "Q-NNN ids of open GAP cells, if any were filed." }
+          }
+        },
+
         "matrix": {
           "type": "object",
           "description": "State×event coverage stats from the last spec-matrix run (written by spec-matrix --record). Surfaces completeness in readbacks — the gitignored gen/ CSV is the working file, these counts are the reviewable summary.",
@@ -597,13 +794,13 @@
               "id":              { "type": "string", "description": "INV-NNN or PROP-NNN. Witness results live in requirements[].witness, not here." },
               "kind":            { "type": "string", "enum": ["invariant", "property"], "default": "invariant" },
               "quint_name":      { "type": "string" },
-              "proof":           { "type": "string", "enum": ["bounded", "inductive", "structural"], "default": "bounded", "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps; 'structural' results come from the Alloy backend and are valid only within this entry's `scope`." },
-              "backend":         { "type": "string", "enum": ["apalache", "alloy"], "default": "apalache", "description": "Which validator produced this result. 'alloy' entries are scope-bounded, not step-bounded — their honesty suffix comes from `scope`, not check_results.max_steps." },
+              "proof":           { "type": "string", "enum": ["bounded", "inductive", "structural", "smt"], "default": "bounded", "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps; 'structural' results come from the Alloy backend and are valid only within this entry's `scope`." },
+              "backend":         { "type": "string", "enum": ["apalache", "alloy", "z3"], "default": "apalache", "description": "Which validator produced this result. 'alloy' entries are scope-bounded, not step-bounded — their honesty suffix comes from `scope`, not check_results.max_steps." },
               "alloy_command":   { "type": "string", "description": "For backend 'alloy': the .als check command that was run." },
               "scope":           { "type": "string", "description": "For backend 'alloy': the finite scope the verdict is valid within, echoed from the run's receipt.json (e.g. '3 Account, 3 User'). A ✓ outside this scope was never checked." },
               "solver":          { "type": "string", "description": "For backend 'alloy': the SAT solver id used (pinned via .spec/project.json alloy.solver). Recorded because a scope-bounded ✓ is only reproducible against a named solver." },
               "instance":        { "type": "string", "description": "For backend 'alloy': repo-relative path of the counterexample instance XML. Written under specs/<area>/gen/ — GITIGNORED and regenerable, because Alloy picks one instance out of many and its choice is not stable across solver/tool versions. The verdict is committed; the instance is not." },
-              "result":          { "type": "string", "enum": ["verified", "counterexample", "timeout", "error", "not-run"] },
+              "result":          { "type": "string", "enum": ["verified", "counterexample", "timeout", "error", "not-checkable", "not-run"] },
               "duration_s":      { "type": "number" },
               "trace":           { "type": "string", "description": "Counterexample ITF path relative to specs/, if any." },
               "counterexample":  { "type": "object", "additionalProperties": true, "description": "NL explanation of the counterexample (nl_explanation). The raw trace lives in the file at `trace`, not inline." }
