@@ -281,7 +281,7 @@
   "extraction_triage": [
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "102f8240",
+      "fingerprint": "7a79ddd2",
       "line": 22,
       "kind": "branch",
       "snippet": "if (cart.status === \"checked_out\") {",
@@ -293,7 +293,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "ca6300b4",
+      "fingerprint": "979e2ec6",
       "line": 23,
       "kind": "early-exit",
       "snippet": "throw new Error(\"cart is closed\");",
@@ -304,7 +304,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "f5742212",
+      "fingerprint": "feb2962c",
       "line": 26,
       "kind": "branch",
       "snippet": "if (cart.items.length >= MAX_ITEMS) {",
@@ -316,7 +316,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "728444f3",
+      "fingerprint": "680cf81a",
       "line": 27,
       "kind": "early-exit",
       "snippet": "throw new Error(\"cart is full\");",
@@ -326,7 +326,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "0ad60ceb",
+      "fingerprint": "f7c321c7",
       "line": 31,
       "kind": "branch",
       "snippet": "if (existing) {",
@@ -338,7 +338,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "577f2715",
+      "fingerprint": "4498986c",
       "line": 39,
       "kind": "early-exit",
       "snippet": "return cart;",
@@ -347,7 +347,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "a2c443fe",
+      "fingerprint": "7c1c06be",
       "line": 45,
       "kind": "branch",
       "snippet": "if (cart.items.length === 0) {",
@@ -357,7 +357,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "7d648654",
+      "fingerprint": "5958b57b",
       "line": 45,
       "kind": "guard-literal",
       "snippet": "0 in if (cart.items.length === 0) {",
@@ -367,7 +367,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "c7768565",
+      "fingerprint": "8ebb77b4",
       "line": 46,
       "kind": "early-exit",
       "snippet": "throw new Error(\"cart is empty\");",
@@ -377,7 +377,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "d440624f",
+      "fingerprint": "1b0fcb6c",
       "line": 51,
       "kind": "branch",
       "snippet": "if (result.status === \"declined\") {",
@@ -388,7 +388,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "c376fc9f",
+      "fingerprint": "9be7e534",
       "line": 52,
       "kind": "early-exit",
       "snippet": "return { ok: false, reason: \"declined\" };",
@@ -399,7 +399,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "5521a968",
+      "fingerprint": "a442fd3a",
       "line": 56,
       "kind": "early-exit",
       "snippet": "return { ok: true };",
@@ -410,8 +410,8 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "f47481e8",
-      "line": 58,
+      "fingerprint": "29c8191a",
+      "line": 57,
       "kind": "error-handler",
       "snippet": "} catch (err) {",
       "verdict": "MAPPED",
@@ -421,7 +421,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "8d577ca8",
+      "fingerprint": "bb8ba768",
       "line": 61,
       "kind": "early-exit",
       "snippet": "return { ok: false, reason: \"unavailable\" };",
@@ -432,7 +432,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "8afb3db2",
+      "fingerprint": "9cd8004a",
       "line": 67,
       "kind": "branch",
       "snippet": "if (!cart) {",
@@ -441,7 +441,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "7ea7055b",
+      "fingerprint": "dc6f1e95",
       "line": 68,
       "kind": "early-exit",
       "snippet": "return null;",
@@ -450,7 +450,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "27cef06c",
+      "fingerprint": "b732cb0a",
       "line": 72,
       "kind": "early-exit",
       "snippet": "return cart;",
@@ -460,7 +460,7 @@
     },
     {
       "file": "code/legacy-cart/cart.js",
-      "fingerprint": "3abecdb3",
+      "fingerprint": "837e0a83",
       "line": 77,
       "kind": "early-exit",
       "snippet": "return cart.items.reduce((sum, i) => sum + i.qty, 0);",
@@ -530,7 +530,7 @@
   },
   "check_results": {
     "extraction": {
-      "ran_at": "2026-09-07T18:06:41+00:00",
+      "ran_at": "2026-09-07T19:43:01+00:00",
       "sites": 18,
       "mapped": 9,
       "triaged": 9,

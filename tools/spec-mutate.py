@@ -251,11 +251,16 @@ def collect_mutants(files, operators, limit, seed):
         if per_file.get(m["file"], 0) < quota:
             picked.append(m)
             per_file[m["file"]] = per_file.get(m["file"], 0) + 1
+    # Top up by identity, not by dict equality: `m not in picked` compares
+    # every field of every dict against every pick, which is quadratic on a
+    # real codebase.
+    chosen = {id(m) for m in picked}
     for m in found:
         if len(picked) >= limit:
             break
-        if m not in picked:
+        if id(m) not in chosen:
             picked.append(m)
+            chosen.add(id(m))
     return picked[:limit]
 
 

@@ -100,7 +100,7 @@ try:
     from quint_ir import parse_qnt as _ir_parse_qnt
     # Shared rejection definition — lint, spec-record and the readback must
     # not disagree about which requirements owe a refusal artifact.
-    from itf_tools import is_rejection
+    from itf_tools import is_rejection, witness_entries
     from itf_tools import compute_model_sha as _compute_model_sha
     from itf_tools import load_trace as _load_trace
 except ImportError as e:
@@ -407,8 +407,11 @@ def check_witnesses(root, area_data, area_name, findings):
             outs = witness.get("outcomes") or []
             if outs and all(o.get("predicate") for o in outs):
                 predicate = outs[0]["predicate"]
-        trace_rel = witness.get("trace")
         wstatus = witness.get("status", "not-run")
+        # A `may` requirement's traces live one per permitted outcome; reading
+        # only witness.trace would FAIL every correctly written permission.
+        entries = witness_entries(req)
+        per_outcome = len(entries) > 1 or bool(witness.get("outcomes"))
 
         if wstatus == "skipped":
             # Deliberate opt-out — legitimate for rejection requirements
@@ -452,38 +455,42 @@ def check_witnesses(root, area_data, area_name, findings):
                 f"via /spec, then run /spec-check.",
                 ref=rid)
 
-        if trace_rel:
-            trace_path = root / "specs" / trace_rel
-            if not trace_path.exists():
-                add(findings, FAIL, "witness", "witness-trace-missing", area_name,
-                    f"{rid}.witness.trace '{trace_rel}' does not exist under specs/. "
-                    f"Re-run /spec-check to regenerate it.",
-                    ref=rid)
-            elif wstatus == "witnessed":
-                _, trace_errs = _load_trace(trace_path)
-                if trace_errs:
-                    add(findings, FAIL, "witness", "witness-trace-invalid", area_name,
-                        f"{rid}.witness.trace '{trace_rel}' is not a valid ITF trace: "
-                        f"{trace_errs[0]}",
-                        ref=rid)
-                stamped = witness.get("model_sha")
-                if not stamped:
-                    add(findings, FAIL, "witness", "witness-unstamped", area_name,
-                        f"{rid}.witness has no model_sha — freshness can't be "
-                        f"checked, so the 'every witness fresh' obligation is "
-                        f"unenforceable. Re-run /spec-check to pin it.",
-                        ref=rid)
-                elif current_sha and stamped != current_sha:
-                    add(findings, FAIL, "witness", "witness-stale", area_name,
-                        f"{rid}.witness.model_sha doesn't match the current model "
-                        f"(.qnt/.probes.qnt changed since the trace was found). "
-                        f"The trace proves nothing about the current model — "
-                        f"re-run /spec-check.",
-                        ref=rid)
-        elif wstatus == "witnessed":
-            add(findings, FAIL, "witness", "witnessed-without-trace", area_name,
-                f"{rid}.witness.status is 'witnessed' but no trace file is recorded.",
-                ref=rid)
+        for label, entry in entries:
+            # For a `must` requirement this loop runs once over the witness
+            # itself, so the single-witness behaviour is unchanged. For a
+            # `may` it runs once per permitted outcome, where the traces
+            # actually live.
+            e_trace = entry.get("trace")
+            e_status = entry.get("status", "not-run") if per_outcome else wstatus
+            if e_trace:
+                trace_path = root / "specs" / e_trace
+                if not trace_path.exists():
+                    add(findings, FAIL, "witness", "witness-trace-missing", area_name,
+                        f"{label}.witness.trace '{e_trace}' does not exist under "
+                        f"specs/. Re-run /spec-check to regenerate it.", ref=rid)
+                elif e_status == "witnessed":
+                    _, trace_errs = _load_trace(trace_path)
+                    if trace_errs:
+                        add(findings, FAIL, "witness", "witness-trace-invalid",
+                            area_name,
+                            f"{label}.witness.trace '{e_trace}' is not a valid ITF "
+                            f"trace: {trace_errs[0]}", ref=rid)
+                    stamped = entry.get("model_sha")
+                    if not stamped:
+                        add(findings, FAIL, "witness", "witness-unstamped", area_name,
+                            f"{label}.witness has no model_sha — freshness can't be "
+                            f"checked, so the 'every witness fresh' obligation is "
+                            f"unenforceable. Re-run /spec-check to pin it.", ref=rid)
+                    elif current_sha and stamped != current_sha:
+                        add(findings, FAIL, "witness", "witness-stale", area_name,
+                            f"{label}.witness.model_sha doesn't match the current "
+                            f"model (.qnt/.probes.qnt changed since the trace was "
+                            f"found). The trace proves nothing about the current "
+                            f"model — re-run /spec-check.", ref=rid)
+            elif e_status == "witnessed":
+                add(findings, FAIL, "witness", "witnessed-without-trace", area_name,
+                    f"{label}.witness.status is 'witnessed' but no trace file is "
+                    f"recorded.", ref=rid)
 
         if wstatus == "no-witness":
             add(findings, FAIL, "witness", "no-witness-found", area_name,

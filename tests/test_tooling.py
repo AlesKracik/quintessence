@@ -17,6 +17,9 @@ Covers the deterministic, quint-free logic touched by the robustness pass:
   - spec-mutate (do the gates fail?) and spec-separation (claims vs code)
   - brownfield fidelity: the substitution boundary, extraction site detection
     and its ledger, provenance, and the differential/extraction dimensions
+  - the self-review regressions: per-outcome witness traces (they broke lint
+    AND the verify preflight), the audit before traceability exists, site
+    fingerprint collisions, and spec-diff's modality rendering
 
 The tool files use hyphenated names, so they're loaded by path. None of
 these tests need quint/Apalache/Java — they exercise pure Python only.
@@ -1624,7 +1627,7 @@ def test_traced_files_only(tmp_path):
     assert [f.name for f in files] == ["authService.ts"]
 
 
-def test_mutant_application_always_restores(tmp_path):
+def test_mutant_application_always_restores(tmp_path, monkeypatch):
     target = tmp_path / "code.js"
     original = "if (n >= 5) { return 1; }\n"
     target.write_text(original, encoding="utf-8")
@@ -1636,7 +1639,9 @@ def test_mutant_application_always_restores(tmp_path):
         seen["during"] = target.read_text(encoding="utf-8")
         return 1
 
-    mutate.run_gate = fake_run
+    # monkeypatch, not assignment: a bare `mutate.run_gate = fake_run` leaks
+    # the stub into every later test in the session.
+    monkeypatch.setattr(mutate, "run_gate", fake_run)
     code = mutate.apply_and_run(
         {"file": str(target), "start": start, "end": end, "replacement": repl},
         "gate", tmp_path, 10)
@@ -1751,7 +1756,7 @@ def test_separation_end_to_end_over_git(tmp_path):
     run("git", "add", "-A")
     files, before, after = sep.changed_files(
         type("A", (), {"range": None, "rev": None})(), tmp_path)
-    traced = sep.traced_paths(tmp_path, before)
+    traced = sep.traced_paths(tmp_path)
     impl = [f for f in files if not f.startswith("specs/")
             and sep.touches_implementation(f, traced)]
     claim_changed = [f for f in files if f.startswith("specs/")
@@ -2161,3 +2166,186 @@ def test_cart_example_ledger_covers_every_site():
     assert report["problems"] == []
     assert report["stale"] == []
     assert report["mapped"] > 0 and report["triaged"] > 0
+
+
+# ── Regressions from the self-review ────────────────────────────────────────
+
+def _may_area(root, outcomes):
+    (root / "specs" / "a" / "traces").mkdir(parents=True, exist_ok=True)
+    (root / "specs" / "a.qnt").write_text("module a { var x: int }", encoding="utf-8")
+    for oc in outcomes:
+        if oc.get("trace"):
+            (root / "specs" / oc["trace"]).write_text(
+                json.dumps({"vars": ["x"], "states": [{"x": 1}]}), encoding="utf-8")
+    return {"kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
+            "formal_model": {"quint_file": "a.qnt"},
+            "requirements": [{"id": "REQ-007", "status": "specified", "modality": "may",
+                              "quint_ref": "x",
+                              "witness": {"status": "witnessed", "outcomes": outcomes}}]}
+
+
+def test_may_requirement_with_per_outcome_traces_passes_lint(tmp_path):
+    """A `may` requirement keeps its traces per permitted outcome and has no
+    top-level witness.trace. Reading only that field FAILed every correctly
+    discharged permission with 'witnessed-without-trace'."""
+    outcomes = [
+        {"name": "email", "predicate": "p", "status": "witnessed",
+         "trace": "a/traces/REQ-007.email.itf.json"},
+        {"name": "in-app", "predicate": "q", "status": "witnessed",
+         "trace": "a/traces/REQ-007.in-app.itf.json"},
+    ]
+    area = _may_area(tmp_path, outcomes)
+    sha = itf.compute_model_sha(tmp_path, "a", area)
+    for oc in outcomes:
+        oc["model_sha"] = sha
+    findings = []
+    lint.check_witnesses(tmp_path, area, "a", findings)
+    assert findings == []
+
+
+def test_may_requirement_discharges_the_verify_preflight(tmp_path):
+    """The same defect in witness_status made spec-record verify refuse
+    conformance replay permanently for any area with a permission."""
+    outcomes = [
+        {"name": "email", "predicate": "p", "status": "witnessed",
+         "trace": "a/traces/REQ-007.email.itf.json"},
+        {"name": "in-app", "predicate": "q", "status": "witnessed",
+         "trace": "a/traces/REQ-007.in-app.itf.json"},
+    ]
+    area = _may_area(tmp_path, outcomes)
+    sha = itf.compute_model_sha(tmp_path, "a", area)
+    for oc in outcomes:
+        oc["model_sha"] = sha
+    rows, missing, discharged = itf.witness_status(tmp_path, "a", area)
+    assert (missing, discharged) == (0, 1)
+    assert rows[0][1] == "witnessed"
+
+
+def test_partially_witnessed_permission_still_gates(tmp_path):
+    """Proving one of several allowed behaviors reachable says nothing about
+    the others, so one green outcome must not discharge the requirement."""
+    outcomes = [
+        {"name": "email", "predicate": "p", "status": "witnessed",
+         "trace": "a/traces/REQ-007.email.itf.json"},
+        {"name": "in-app", "predicate": "q", "status": "no-witness"},
+    ]
+    area = _may_area(tmp_path, outcomes)
+    outcomes[0]["model_sha"] = itf.compute_model_sha(tmp_path, "a", area)
+    rows, missing, discharged = itf.witness_status(tmp_path, "a", area)
+    assert missing == 1 and discharged == 0
+    assert "in-app" in rows[0][3]
+
+
+def test_stale_outcome_trace_is_caught(tmp_path):
+    outcomes = [
+        {"name": "email", "predicate": "p", "status": "witnessed",
+         "trace": "a/traces/REQ-007.email.itf.json", "model_sha": "0" * 64},
+        {"name": "in-app", "predicate": "q", "status": "witnessed",
+         "trace": "a/traces/REQ-007.in-app.itf.json", "model_sha": "0" * 64},
+    ]
+    area = _may_area(tmp_path, outcomes)
+    findings = []
+    lint.check_witnesses(tmp_path, area, "a", findings)
+    assert any(f.check == "witness-stale" for f in findings)
+
+
+def test_must_requirement_witness_handling_is_unchanged(tmp_path):
+    (tmp_path / "specs" / "a" / "traces").mkdir(parents=True)
+    (tmp_path / "specs" / "a.qnt").write_text("module a { var x: int }", encoding="utf-8")
+    area = {"kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
+            "formal_model": {"quint_file": "a.qnt"},
+            "requirements": [{"id": "REQ-001", "status": "specified", "quint_ref": "x",
+                              "witness": {"status": "witnessed", "predicate": "p"}}]}
+    findings = []
+    lint.check_witnesses(tmp_path, area, "a", findings)
+    assert any(f.check == "witnessed-without-trace" for f in findings)
+
+
+def test_witness_entries_handles_both_shapes():
+    single = itf.witness_entries({"id": "REQ-001", "witness": {"trace": "t"}})
+    assert [label for label, _ in single] == ["REQ-001"]
+    multi = itf.witness_entries({"id": "REQ-007", "witness": {"outcomes": [
+        {"name": "a"}, {"name": "b"}]}})
+    assert [label for label, _ in multi] == ["REQ-007/a", "REQ-007/b"]
+
+
+def test_extract_audit_runs_before_traceability_exists(tmp_path):
+    """The brownfield beat says to run the audit DURING extraction, but
+    traceability[] is written by /spec-apply, which has not run yet. Hard-
+    requiring it made the documented workflow unexecutable."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.js").write_text(
+        "function f(x) {\n  if (x > 1) {\n    return 1;\n  }\n  return 0;\n}\n",
+        encoding="utf-8")
+    area = {"kind": "area", "area": "a", "version": "1.0.0"}   # no traceability yet
+    assert mutate.traced_files(area, tmp_path) == []
+    files = sorted(f for f in (tmp_path / "src").rglob("*")
+                   if f.is_file() and f.suffix in audit.SOURCE_SUFFIXES)
+    assert files, "the code_path fallback must find the source"
+    sites = audit.scan_file(files[0], tmp_path)
+    assert any(s["kind"] == "branch" for s in sites)
+
+
+def test_identical_statements_in_the_same_function_are_distinct_sites(tmp_path):
+    """The first fix keyed sites on the enclosing declaration, which only
+    disambiguated ACROSS functions — two identical statements in one function
+    still collided, and one ledger row silently claimed both decisions."""
+    src = ("function first(cart) {\n"
+           "  if (a) {\n    return cart;\n  }\n"
+           "  if (b) {\n    return cart;\n  }\n"
+           "  return cart;\n}\n")
+    path = tmp_path / "x.js"
+    path.write_text(src, encoding="utf-8")
+    returns = [s for s in audit.scan_file(path, tmp_path) if s["snippet"] == "return cart;"]
+    assert len(returns) == 3
+    assert len({s["fingerprint"] for s in returns}) == 3
+
+
+def test_site_owner_prefers_the_callable_over_a_local(tmp_path):
+    """Keying on the nearest declaration of ANY kind meant a local `const cart`
+    owned the sites below it, so renaming a local invalidated unrelated rows."""
+    src = ("function handler(id) {\n"
+           "  const cart = load(id);\n"
+           "  if (cart.open) {\n    return 1;\n  }\n"
+           "  return 0;\n}\n")
+    path = tmp_path / "x.js"
+    path.write_text(src, encoding="utf-8")
+    assert {s["owner"] for s in audit.scan_file(path, tmp_path)} == {"handler"}
+
+
+def test_renaming_a_local_does_not_move_the_fingerprints(tmp_path):
+    a = ("function handler(id) {\n  const cart = load(id);\n"
+         "  if (ok) {\n    return 1;\n  }\n}\n")
+    b = ("function handler(id) {\n  const basket = load(id);\n"
+         "  if (ok) {\n    return 1;\n  }\n}\n")
+    (tmp_path / "a.js").write_text(a, encoding="utf-8")
+    (tmp_path / "b.js").write_text(b, encoding="utf-8")
+    fa = [s["fingerprint"] for s in audit.scan_file(tmp_path / "a.js", tmp_path)]
+    fb = [s["fingerprint"] for s in audit.scan_file(tmp_path / "b.js", tmp_path)]
+    # Same sites, different FILE names, so compare the owner-and-text part by
+    # recomputing against one file name.
+    assert len(fa) == len(fb)
+    same = [audit.fingerprint("x.js", s["kind"], s["snippet"], s["owner"], 0)
+            for s in audit.scan_file(tmp_path / "a.js", tmp_path)]
+    other = [audit.fingerprint("x.js", s["kind"], s["snippet"], s["owner"], 0)
+             for s in audit.scan_file(tmp_path / "b.js", tmp_path)]
+    assert same == other
+
+
+def test_diff_renders_a_removed_determinism_without_None():
+    """`x or 'must' if c else x` parses as `(x or 'must') if c else x`, which
+    rendered a removed determinism as 'determinism=None'."""
+    old = {"area": "a", "requirements": [
+        {"id": "R", "ears": {"response": "r"}, "determinism": "deterministic"}]}
+    new = {"area": "a", "requirements": [{"id": "R", "ears": {"response": "r"}}]}
+    entries = diff.diff_area(old, new)["behavior"]
+    assert entries and "None" not in entries[0]["now"]
+    assert entries[0]["now"] == "determinism=unspecified"
+
+
+def test_diff_still_defaults_modality_to_must():
+    old = {"area": "a", "requirements": [{"id": "R", "ears": {"response": "r"}}]}
+    new = {"area": "a", "requirements": [
+        {"id": "R", "ears": {"response": "r"}, "modality": "may"}]}
+    entries = diff.diff_area(old, new)["behavior"]
+    assert entries[0]["was"] == "modality=must"

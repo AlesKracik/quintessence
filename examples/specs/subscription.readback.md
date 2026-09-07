@@ -30,7 +30,7 @@ Subscription cancellation: stop future billing, preserve access to the end of th
 - **Unchecked requirement** — REQ-003: While the Subscription is Cancelled, when the customer cancels again, the system shall make no further change and report success.
 - **Unchecked requirement** — REQ-004: While the Subscription is Active, if the billing provider times out during cancellation, then the system shall leave the Subscription Active and billing enabled.
 - **Unchecked requirement** — REQ-005: While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired.
-- **Unchecked requirement** — REQ-007: When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice.
+- **Unchecked requirement** — REQ-007: When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice. _(REQ-007/email)_
 - **Open question** — Q-001: After MAX_CANCEL_RETRIES exhausted TIMEOUTs, does the subscription stay Active forever, or does an operator get paged? ASM-001 assumes the provider answers eventually; nothing here says what happens if it does not. _(source: elicitation)_
 
 ## What the System Does

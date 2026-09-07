@@ -165,10 +165,14 @@ def changed_files(args, root):
     return [p for p in out.splitlines() if p], "HEAD", None
 
 
-def traced_paths(root, before_rev):
+def traced_paths(root):
     """Implementation files any area's traceability[] points at, plus the
     conformance adapter and harness. Spec-adjacent files are excluded: a
-    change to specs/ is a spec change by definition."""
+    change to specs/ is a spec change by definition.
+
+    Read from the WORKING TREE, deliberately: a commit that adds traceability
+    for a file and edits that file in the same breath is the case this rule
+    exists to catch, and reading the old revision would miss it."""
     paths = set()
     specs = root / "specs"
     if not specs.exists():
@@ -221,7 +225,7 @@ def main():
     if not files:
         sys.exit(0)
 
-    traced = traced_paths(root, before_rev)
+    traced = traced_paths(root)
     spec_files = [f for f in files if f.startswith("specs/") and f.endswith(".json")]
     impl_files = [f for f in files
                   if not f.startswith("specs/") and not f.startswith(".spec/")

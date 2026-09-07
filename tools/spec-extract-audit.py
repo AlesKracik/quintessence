@@ -27,6 +27,11 @@ Sites are keyed by a FINGERPRINT of their normalized text, not by line number:
 a ledger keyed on line numbers rots on the first reformat, and a rotted ledger
 is worse than none because it looks complete.
 
+Changing how a fingerprint is computed invalidates every committed ledger, so
+that is a breaking change to this tool. It degrades safely rather than
+silently: every previously-triaged row then matches no site and is reported as
+stale, which is the loud failure you want, not a quiet one.
+
 Honest limits: this is a regex scanner over masked source, not a parser. It
 finds the shapes that carry behavior in mainstream languages and will miss
 exotic control flow. Under-counting sites means the audit is optimistic — so
@@ -39,8 +44,9 @@ Usage:
   tools/spec-extract-audit.py <area> --emit       # print triage stubs to paste
   tools/spec-extract-audit.py <area> --json
 
-Exit codes: 0 = every site claimed, 1 = unclaimed sites (with --strict),
-2 = setup problem.
+Exit codes: 0 = clean, 1 = with --strict, any unclaimed site, any ledger
+problem (a MAPPED row pointing at nothing, an unanchored OUT-OF-SCOPE), or any
+stale row whose site no longer exists. 2 = setup problem.
 """
 
 import argparse
@@ -69,6 +75,11 @@ traced_files = _mutate.traced_files
 
 # ── Site detection ──────────────────────────────────────────────────────────
 
+# Scanned when falling back to code_path. Deliberately narrow: a regex site
+# scanner over an unknown file type produces noise, not findings.
+SOURCE_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".py", ".rb", ".go", ".java",
+                   ".kt", ".cs", ".rs", ".php", ".scala", ".swift", ".m", ".mjs"}
+
 SITE_PATTERNS = [
     # A branch is a place the program chose. Each one either realizes a
     # requirement or is something the spec has decided not to care about.
@@ -96,6 +107,9 @@ def normalize(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "do", "else",
+            "try", "with", "await", "typeof", "new", "case"}
+
 DECL_RE = re.compile(
     r"^[ \t]*(?:export\s+)?(?:async\s+)?"
     r"(?:function\s+(?P<fn>[A-Za-z_$][\w$]*)"
@@ -117,22 +131,30 @@ def enclosing_name(text, index):
     is a changed site worth re-confirming."""
     best = ""
     for m in DECL_RE.finditer(text, 0, index):
-        name = (m.group("fn") or m.group("py") or m.group("cls")
-                or m.group("assigned") or m.group("method"))
-        if name and name not in ("if", "for", "while", "switch", "catch", "return"):
+        # Prefer a real callable: `const cart = ...` is a local variable, and
+        # keying sites on it means renaming a local invalidates unrelated
+        # decisions. Fall back to it only when nothing better has been seen.
+        callable_name = m.group("fn") or m.group("py") or m.group("cls") or m.group("method")
+        name = callable_name or m.group("assigned")
+        if not name or name in KEYWORDS:
+            continue
+        if callable_name or not best:
             best = name
     return best
 
 
-def fingerprint(file_rel, kind, text, owner=""):
+def fingerprint(file_rel, kind, text, owner="", nth=0):
     """Stable id for a site: file + owner + kind + normalized text.
 
     Includes the file, so moving a guard between modules reads as a new site
     needing a fresh decision. Excludes the line number, so reformatting does
-    not. Includes the enclosing declaration, so two identical statements in
-    different functions stay two sites."""
+    not. Includes the enclosing callable and an occurrence index within it, so
+    two identical statements stay two sites whether they sit in different
+    functions or the same one \u2014 one ledger row claiming both decisions is a
+    silent merge, and silent merges are what this ledger exists to prevent."""
     h = hashlib.sha256()
-    h.update(f"{file_rel}\x00{owner}\x00{kind}\x00{normalize(text)}".encode("utf-8"))
+    h.update(f"{file_rel}\x00{owner}\x00{kind}\x00{normalize(text)}\x00{nth}"
+             .encode("utf-8"))
     return h.hexdigest()[:8]
 
 
@@ -153,6 +175,12 @@ def scan_file(path, repo_root):
         rel = path.name
 
     sites, spans = [], []
+    # Occurrence counter per (owner, kind, text). Two identical statements in
+    # the same function are still two decisions, and one ledger row claiming
+    # both is exactly the silent merge this is here to prevent. Scoped to the
+    # owner rather than the file, so inserting a site elsewhere does not
+    # renumber \u2014 which is what makes a positional component tolerable at all.
+    occurrences = {}
     for kind, regex in SITE_PATTERNS:
         for m in regex.finditer(masked):
             start, end = m.start(), m.end()
@@ -163,10 +191,13 @@ def scan_file(path, repo_root):
             if not snippet:
                 continue
             owner = enclosing_name(text, start)
+            key = (owner, kind, normalize(snippet))
+            nth = occurrences.get(key, 0)
+            occurrences[key] = nth + 1
             sites.append({
                 "file": rel, "kind": kind, "line": line_of(text, start),
                 "owner": owner, "snippet": snippet[:160],
-                "fingerprint": fingerprint(rel, kind, snippet, owner),
+                "fingerprint": fingerprint(rel, kind, snippet, owner, nth),
             })
             # A literal inside a condition is a threshold someone chose. It
             # gets its own site, because "the branch is specified" and "the
@@ -175,11 +206,15 @@ def scan_file(path, repo_root):
             if cond:
                 for lit in LITERAL_RE.finditer(cond.group(1)):
                     key = f"{snippet}::{lit.group(1)}"
+                    lit_key = (owner, "guard-literal", normalize(key))
+                    lit_nth = occurrences.get(lit_key, 0)
+                    occurrences[lit_key] = lit_nth + 1
                     sites.append({
                         "file": rel, "kind": "guard-literal",
                         "line": line_of(text, start), "owner": owner,
                         "snippet": f"{lit.group(1)} in {snippet[:120]}",
-                        "fingerprint": fingerprint(rel, "guard-literal", key, owner),
+                        "fingerprint": fingerprint(rel, "guard-literal", key, owner,
+                                                   lit_nth),
                     })
     return sites
 
@@ -262,6 +297,10 @@ def main():
     p.add_argument("area")
     p.add_argument("--root", default=".")
     p.add_argument("--code-root", help="Override the resolved code repo root.")
+    p.add_argument("--code-path",
+                   help="Directory to scan when traceability[] is empty (during a "
+                        "brownfield extraction it always is). Defaults to the area's "
+                        "code_path.")
     p.add_argument("--strict", action="store_true",
                    help="Exit 1 while any site is unclaimed or triaged GAP.")
     p.add_argument("--record", action="store_true",
@@ -296,10 +335,22 @@ def main():
         repo_root = root
 
     files = traced_files(area, repo_root)
+    source = "traceability[]"
     if not files:
-        print(f"ERROR: no traceability[] code files found under {repo_root}. "
-              f"Extraction coverage needs to know which files realize this area.",
-              file=sys.stderr)
+        # traceability[] is written by /spec-apply, which has not run during a
+        # brownfield EXTRACTION \u2014 exactly when this audit is most useful. Fall
+        # back to the area's declared code_path so the documented workflow is
+        # actually executable.
+        code_path = args.code_path or entry.get("code_path")
+        if code_path:
+            base = repo_root / code_path
+            files = sorted(f for f in base.rglob("*")
+                           if f.is_file() and f.suffix in SOURCE_SUFFIXES)
+            source = f"code_path {code_path}"
+    if not files:
+        print(f"ERROR: no source files found under {repo_root}. Set the area's "
+              f"code_path in .spec/project.json, pass --code-path, or run "
+              f"/spec-apply so traceability[] exists.", file=sys.stderr)
         sys.exit(2)
 
     sites = []
@@ -311,7 +362,7 @@ def main():
         print(json.dumps({**report, "unclaimed_sites": report["unclaimed_sites"]}, indent=2))
     else:
         print(f"extraction audit {args.area}: {report['sites']} site(s) across "
-              f"{len(files)} traced file(s)")
+              f"{len(files)} file(s) from {source}")
         print(f"  mapped {report['mapped']}   triaged {report['triaged']}   "
               f"unclaimed {report['unclaimed']}")
         for site in report["unclaimed_sites"][:25]:

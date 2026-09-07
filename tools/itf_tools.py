@@ -55,6 +55,26 @@ GHOST_PREFIXES = ("_last", "mbt::")
 AREA_SUFFIXES = ("area", "contract")
 
 
+def witness_entries(req):
+    """Every witness-bearing entry of a requirement, as (label, entry).
+
+    A `must` requirement carries one witness with one trace. A `may`
+    requirement carries one per PERMITTED OUTCOME, in witness.outcomes[], and
+    nothing on the witness itself \u2014 so a consumer that reads only
+    witness.trace sees a fully discharged permission as a missing trace. That
+    was a spurious FAIL in lint and, worse, a permanent refusal in the
+    /spec-verify preflight.
+
+    Shared here for the same reason is_rejection() is: the gate, the ledger
+    and the readback must agree on what "witnessed" means."""
+    w = req.get("witness") or {}
+    rid = req.get("id", "?")
+    outcomes = w.get("outcomes") or []
+    if outcomes:
+        return [(f"{rid}/{o.get('name', '?')}", o) for o in outcomes]
+    return [(rid, w)]
+
+
 def is_rejection(req):
     """True when a requirement forbids a behavior rather than requiring one.
 
@@ -340,6 +360,11 @@ def witness_status(root, area_name, area_data):
         if req.get("status") == "deferred" or req.get("type") == "non-functional":
             continue
         w = req.get("witness") or {}
+        # A permission is discharged only when EVERY permitted outcome is:
+        # proving one of several allowed behaviors reachable says nothing
+        # about the others.
+        entries = witness_entries(req)
+        multi = len(entries) > 1 or (w.get("outcomes") or [])
         trace_rel = w.get("trace")
         status = w.get("status", "not-run")
         detail = ""
@@ -354,45 +379,63 @@ def witness_status(root, area_name, area_data):
                 missing += 1
             rows.append((rid, status, trace_rel or "—", detail))
             continue
-        if trace_rel:
-            trace_path = root / "specs" / trace_rel
-            if not trace_path.exists():
-                status, detail = "MISSING-FILE", str(trace_path)
-                missing += 1
-            else:
-                t, errs = load_trace(trace_path)
-                detail = f"{len(t['states'])} states" if not errs else f"invalid: {errs[0]}"
-                if errs:
-                    status = "INVALID"
-                    missing += 1
-                elif status == "witnessed":
-                    stamped = w.get("model_sha")
-                    if current_sha is None:
-                        # Model files unhashable (e.g. probes recorded but
-                        # missing): freshness UNVERIFIABLE — that must gate,
-                        # not silently discharge.
-                        status = "UNVERIFIABLE"
-                        detail = ("model files can't be hashed (probes file "
-                                  "missing?) — freshness unverifiable")
-                        missing += 1
-                    elif not stamped:
-                        status = "UNSTAMPED"
-                        detail = "no model_sha — freshness unverifiable; re-run /spec-check to pin"
-                        missing += 1
-                    elif stamped != current_sha:
-                        status = "STALE"
-                        detail = "model changed since trace was found — re-run /spec-check"
-                        missing += 1
-                    else:
-                        discharged += 1
-        elif status == "witnessed":
-            status, detail = "MISSING-FILE", "(status says witnessed but no trace recorded)"
+        worst_status, worst_detail, entry_traces, bad_entries = None, "", [], 0
+        for label, entry in entries:
+            e_status = entry.get("status", "not-run") if multi else status
+            e_trace = entry.get("trace") if multi else trace_rel
+            e_detail = ""
+            ok = False
+            if e_trace:
+                entry_traces.append(e_trace)
+                trace_path = root / "specs" / e_trace
+                if not trace_path.exists():
+                    e_status, e_detail = "MISSING-FILE", str(trace_path)
+                else:
+                    t, errs = load_trace(trace_path)
+                    e_detail = (f"{len(t['states'])} states" if not errs
+                                else f"invalid: {errs[0]}")
+                    if errs:
+                        e_status = "INVALID"
+                    elif e_status == "witnessed":
+                        stamped = entry.get("model_sha")
+                        if current_sha is None:
+                            # Model files unhashable (e.g. probes recorded but
+                            # missing): freshness UNVERIFIABLE \u2014 that must gate,
+                            # not silently discharge.
+                            e_status = "UNVERIFIABLE"
+                            e_detail = ("model files can't be hashed (probes file "
+                                        "missing?) \u2014 freshness unverifiable")
+                        elif not stamped:
+                            e_status = "UNSTAMPED"
+                            e_detail = ("no model_sha \u2014 freshness unverifiable; "
+                                        "re-run /spec-check to pin")
+                        elif stamped != current_sha:
+                            e_status = "STALE"
+                            e_detail = ("model changed since trace was found \u2014 "
+                                        "re-run /spec-check")
+                        else:
+                            ok = True
+            elif e_status == "witnessed":
+                e_status = "MISSING-FILE"
+                e_detail = "(status says witnessed but no trace recorded)"
+            if not ok:
+                bad_entries += 1
+                if worst_status is None:
+                    worst_status, worst_detail = e_status, e_detail
+                    if multi:
+                        worst_detail = f"{label}: {e_detail}" if e_detail else label
+
+        if bad_entries:
             missing += 1
-        if status in ("not-run", "no-witness"):
-            # Undischarged obligations gate the preflight too — "every REQ
-            # witnessed?" must mean what it says.
-            missing += 1
-        rows.append((rid, status, trace_rel or "—", detail))
+            status = worst_status or "not-run"
+            detail = worst_detail
+        else:
+            discharged += 1
+            status = "witnessed"
+            detail = (f"{len(entries)} permitted outcome(s) witnessed" if multi
+                      else worst_detail or detail)
+        shown = ", ".join(entry_traces) if multi else (trace_rel or "\u2014")
+        rows.append((rid, status, shown or "\u2014", detail))
     return rows, missing, discharged
 
 

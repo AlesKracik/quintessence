@@ -149,13 +149,17 @@ def diff_requirements(old, new, out):
                 "note": "meaning changed",
             })
             out["obligations"].append(f"{rid}: witness must be re-found for the new wording")
-        for field, label in (("modality", "modality"), ("determinism", "determinism")):
+        for field, label, default in (("modality", "modality", "must"),
+                                      ("determinism", "determinism", "unspecified")):
             av, bv = a.get(field), b.get(field)
             if av != bv and (av or bv):
+                # Each field's own default, and parenthesised: `x or 'must' if
+                # c else x` parses as `(x or 'must') if c else x`, which
+                # rendered a removed determinism as "determinism=None".
                 out["behavior"].append({
                     "id": rid, "kind": "changed",
-                    "was": f"{label}={av or 'must' if field == 'modality' else av}",
-                    "now": f"{label}={bv or 'must' if field == 'modality' else bv}",
+                    "was": f"{label}={av or default}",
+                    "now": f"{label}={bv or default}",
                     "note": ("a MAY narrowed to a MUST removes permitted outcomes"
                              if bv == "must" and av == "may" else
                              "a MUST widened to a MAY needs a witness per outcome"
