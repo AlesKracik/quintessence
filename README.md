@@ -13,10 +13,11 @@ What you get:
 - **One JSON file per area** at `specs/<name>.area.json` (or `specs/<name>.contract.json` — the suffix encodes the kind), with a Quint sidecar `specs/<name>.qnt`. Two kinds: `area` (functional; declare `screens[]` + `navigation[]` to model an interactive surface formally) and `contract` (cross-area invariants). Requirements group into **journeys** (`specs/journeys/<slug>.journey.json` — use cases with steps in temporal order, single- or cross-area) — readbacks render flows as a human walks them, not ID-sorted lists.
 - **Changes as the unit of work**: a manifest per change at `specs/changes/<slug>.change.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
 - **Anti-vacuity guarantees**: a requirement counts as demonstrated only when the checker produces a witness trace for it; a spec whose invariants pass over an unreachable state space is caught, not celebrated.
+- **One backend per question class.** Apalache checks behavior over traces; the optional Alloy backend checks structure over a finite scope. An invariant marked `proof: "structural"` routes to Alloy and renders as `✓ (scope: 4 Session, 4 Account)` — a third kind of ✓, never collapsed into the bounded `✓ (≤N steps)` or the inductive `✓ proven`. Witnesses and conformance replay stay Quint's: a snapshot cannot drive code step by step.
 - Seven optional architecture layers (0–6: stack, components, patterns, ADRs, topology, protocols, readbacks) and a multi-repo story via config-driven paths (no submodules).
 - Python tooling: `spec-lint` (consistency + EARS + precision lints + witness obligations), `spec-record` (deterministic check **and** verify runner — model checking, conformance replay, drift, and every ledger write-back are mechanical; the AI never hand-edits a verdict), `spec-readback` (deterministic readback generator — the review document is rendered by code, byte-identical for identical input, so its git diff IS the review), `spec-matrix` (state×event completeness with a `--strict` CI gate), `quint_ir` (typed view of `.qnt` files), `itf_tools` (witness-trace validate/summarize/Mermaid), and a ready-made CI workflow.
 
-**Two tiers, so the precision core stands alone.** Tier 1 — EARS requirements (vagueness killed at capture), completeness matrix, `spec-lint`, and the deterministic human-review readback — needs **only Python**, no JVM. Tier 2 — Quint + Apalache invariants (bounded *or* inductive), witness traces, conformance replay — is opt-in depth for the areas that earn it. A team can distill requirements and ship the readback in minutes before installing a model checker. The formal layer proves consistency, reachability, and code-conformance; it does not invent intent — the trust boundary is at elicitation, backstopped by lint.
+**Two tiers, so the precision core stands alone.** Tier 1 — EARS requirements (vagueness killed at capture), completeness matrix, `spec-lint`, and the deterministic human-review readback — needs **only Python**, no JVM. Tier 2 — Quint + Apalache invariants (bounded *or* inductive), witness traces, conformance replay — is opt-in depth for the areas that earn it. A further opt-in inside Tier 2: **Alloy as a structural backend** for contracts whose obligations are relational rather than temporal (referential integrity, cardinality, ownership) — off by default, and worth turning on only once a project has several such contracts. A team can distill requirements and ship the readback in minutes before installing a model checker. The formal layer proves consistency, reachability, and code-conformance; it does not invent intent — the trust boundary is at elicitation, backstopped by lint.
 
 Read [METHODOLOGY.md](METHODOLOGY.md) for the full picture. It travels with every project created from this template.
 
@@ -239,6 +240,7 @@ PR reviewers see the navigation graph render in GitHub and the auth-guard invari
 - **[Claude Code](https://claude.com/claude-code)** — to run the `/spec-*` commands.
 - **[Apalache](https://apalache-mc.org/)** — symbolic model checker for Quint. Used by `/spec-check`. Requires Java 17+. See the [JVM install guide](https://apalache-mc.org/docs/apalache/installation/jvm.html) or run `tools/check-tooling.sh` for platform-specific install hints.
 - **Python 3** — for the `tools/` scripts (lint, matrix, ITF trace tooling).
+- **[Alloy](https://alloytools.org/) 6.2+** — *optional*. Only needed for invariants marked `proof: "structural"`. Uses the same Java 17+ as Apalache, so the only new artifact is `org.alloytools.alloy.dist.jar`; point `ALLOY_JAR` (or `alloy.jar_path` in `.spec/project.json`) at it. 6.2 is the floor because that release introduced the command-line interface.
 - **Git** — but no branch ceremony; use git however your team uses git.
 
 ---
@@ -251,7 +253,7 @@ spec-template/
 ├── METHODOLOGY.md             ← the methodology — stays in every project
 ├── .claude/commands/          ← the 5 /spec-* commands
 ├── schemas/                   ← 6 JSON schemas (area, change, journey, project, pattern, protocol)
-├── templates/                 ← spec.qnt.template, probes.qnt.template (sidecar + probe conventions)
+├── templates/                 ← spec.qnt.template, probes.qnt.template, contract.als.template
 ├── .github/workflows/         ← spec-ci.yml (lint → matrix → typecheck → quint test; skips pre-bootstrap)
 ├── tools/                     ← spec-lint, spec-record, spec-readback, spec-matrix, quint_ir, itf_tools, bootstrap.sh (self-removes)
 └── examples/                  ← sample auth area + auth-ui area (stripped by bootstrap)
@@ -268,6 +270,7 @@ Before bootstrapping (or by browsing this repo on GitHub), look at:
 - `examples/.spec/project.json` — a real project config with two areas.
 - `examples/specs/auth.area.json` + `examples/specs/auth.qnt` — login/lockout area, with invariants Apalache verifies.
 - `examples/specs/auth-ui.area.json` + `examples/specs/auth-ui.qnt` — UI area with navigation modeled as a Quint state machine ("Dashboard is unreachable without auth" is a model-checked invariant).
+- `examples/specs/session-ownership.contract.json` + `examples/specs/session-ownership.als` — a contract using the optional Alloy backend: relational invariants checked over a declared finite scope, rendered honestly as `✓ (scope: …)`.
 
 Reference material, not starter content. The bootstrap removes it.
 

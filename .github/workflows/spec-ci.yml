@@ -13,7 +13,9 @@
 # verdicts here never depend on the lossy regex fallback.
 #
 # Apalache model checking (/spec-check) and conformance replay (/spec-verify)
-# are heavier and agent-driven; run them locally or scheduled. ALSO wire each
+# are heavier and agent-driven; run them locally or scheduled. The optional
+# Alloy backend is agent-driven for the same reason and needs no jar here:
+# spec-lint's gate on proof: "structural" invariants is regex-only Python. ALSO wire each
 # area's conformance.command into the CODE repo's own CI — the replay harness
 # is an ordinary test file and needs no spec tooling.
 #

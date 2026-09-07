@@ -1,0 +1,76 @@
+// ============================================================
+// Alloy structural sidecar: {{AREA}}
+// Companion JSON: specs/{{AREA}}.contract.json (v{{VERSION}})
+// Last modified: {{DATE}}
+//
+// OPTIONAL — the structural backend. Only areas that declare
+// formal_model.alloy_file use this file at all.
+//
+// Division of labour, deliberately strict:
+//   Quint/Apalache  → BEHAVIOUR. Actions, traces, reachability,
+//                     witnesses, conformance replay.
+//   Alloy           → STRUCTURE. Cardinality, referential
+//                     integrity, ownership, role lattices —
+//                     relational facts that hold of every legal
+//                     configuration, with no notion of time.
+//
+// Do NOT model state transitions here (Alloy 6 can, but two
+// models of the same behaviour give two answers, and then the
+// spec has no single source of truth). If the question mentions
+// "after", "then", or "eventually", it belongs in the .qnt.
+//
+// Each INV-* routed here sets, in the area JSON:
+//     "proof": "structural", "alloy_command": "<check name>"
+// spec-record runs `alloy exec -c <check name>` and records the
+// verdict; spec-lint FAILs if the named check is not below.
+// ============================================================
+
+module {{MODULE_NAME}}
+
+// ------------------------------------------------------------
+// SIGNATURES
+// One sig per entity in concepts.entities[]. Keep the names
+// identical to the JSON — reviewers read them side by side.
+// ------------------------------------------------------------
+
+// {{SIGNATURES}}
+// Example:
+//   sig User {}
+//   sig Account { owner: one User }
+//
+// `one`/`lone`/`some`/`set` on a field IS the cardinality
+// constraint — most referential-integrity bugs die here.
+
+// ------------------------------------------------------------
+// FACTS
+// Assumptions about every legal structure. A fact silently
+// removes counterexamples, so anything that is really an
+// environment assumption belongs in the area JSON too, where a
+// reviewer can see it.
+// ------------------------------------------------------------
+
+// {{FACTS}}
+
+// ------------------------------------------------------------
+// ASSERTIONS + CHECKS — one pair per structural INV-*
+//
+// ALWAYS declare the scope explicitly. With no `for` clause
+// Alloy silently uses 3, and a bound nobody wrote down is a
+// bound nobody reviewed — spec-lint WARNs, and FAILs at review.
+//
+// The optional `expect 0` makes the CLI exit non-zero when a
+// counterexample turns up, so the check also works as a plain
+// CI assertion without any spec tooling installed.
+// ------------------------------------------------------------
+
+// {{ASSERTIONS}}
+// Example:
+//   assert noOrphanAccounts {
+//     all a: Account | a.owner in User
+//   }
+//   check noOrphanAccounts for 3 Account, 3 User expect 0
+//
+// A ✓ here means: no counterexample EXISTS AT THIS SIZE. It is
+// not a proof. Widening the scope strengthens the claim; the
+// readback always prints the scope next to the ✓ so the claim
+// and its bound travel together.

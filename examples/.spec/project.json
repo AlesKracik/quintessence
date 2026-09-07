@@ -4,7 +4,6 @@
   "description": "Example project demonstrating the new methodology shape: one JSON per area + Quint sidecar.",
   "version": "0.1.0",
   "last_modified": "2026-05-15T12:00:00Z",
-
   "areas": [
     {
       "name": "auth",
@@ -23,9 +22,13 @@
       "code_path": "src/ui/auth/",
       "tests_path": "tests/ui/auth/",
       "test_command": "pnpm test ui/auth"
+    },
+    {
+      "name": "session-ownership",
+      "kind": "contract",
+      "description": "Structural agreement between auth and auth-ui, checked by the optional Alloy backend."
     }
   ],
-
   "architecture": {
     "stack": {
       "language": "TypeScript",
@@ -41,23 +44,25 @@
       "client": "Prisma"
     },
     "module_layout": {
-      "types_file":   "src/{area}/types.ts",
-      "store_file":   "src/{area}/{area}Store.ts",
+      "types_file": "src/{area}/types.ts",
+      "store_file": "src/{area}/{area}Store.ts",
       "service_file": "src/{area}/{area}Service.ts",
-      "test_dir":     "tests/{area}/"
+      "test_dir": "tests/{area}/"
     },
     "conventions": {
-      "file_naming":     "camelCase",
-      "type_naming":     "PascalCase",
+      "file_naming": "camelCase",
+      "type_naming": "PascalCase",
       "function_naming": "camelCase",
       "constant_naming": "SCREAMING_SNAKE_CASE"
     },
     "cross_cutting": {
-      "logging": { "library": "pino", "format": "json" },
+      "logging": {
+        "library": "pino",
+        "format": "json"
+      },
       "tracing": "OpenTelemetry"
     }
   },
-
   "apalache": {
     "timeout_seconds": 300,
     "max_steps": 10

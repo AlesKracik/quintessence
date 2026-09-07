@@ -24,6 +24,7 @@ Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 You are the **Checker**. The division of labor is strict — mechanism over trust applies to the bookkeeping itself:
 
 - **`tools/spec-record.py check <target>`** runs `quint verify` for every invariant, property, and witness probe, parses outcomes, saves traces, and writes `check_results`, `formal_status`, and the `witness` blocks (status/trace/checked_at/model_sha) into the area JSON **mechanically**. You never hand-edit those fields.
+- **Structural invariants route to Alloy instead**, when an invariant carries `proof: "structural"` and the area declares `formal_model.alloy_file` (see METHODOLOGY.md → "The Structural Backend: Alloy"). Same runner, same rule that you never write the verdict: it runs `alloy exec -c <alloy_command>` and reads the outcome from the run's `receipt.json`. A pass is `verified-in-scope` — bounded by the scope declared in the `.als`, not by `max_steps` — and renders as `✓ (scope: …)`, never a bare ✓. Off entirely unless an area opts in; if no `alloy_file` is declared, nothing about this command changes.
 - **You** do the judgment work it can't: draft missing witness predicates, regenerate the probes module, translate counterexamples into plain language (filling `counterexample.nl_explanation` — the one free-text field), triage the matrix, run the red-team.
 
 ### Step 1 — Resolve target and load context
@@ -227,6 +228,9 @@ Formal results (Apalache):
   ✗ INV-003 noLockedSession       COUNTEREXAMPLE              (1.8s)
   ⏱ PROP-001 eventualLogout       TIMEOUT after 300s — bounded liveness only; consider demoting to a witnessed scenario
   ✓ INV-CONTRACT-001 noOrphan     VERIFIED (≤10 steps)        (3.1s, via cascade from user-permission)
+
+Structural results (Alloy — only when an invariant declares proof: "structural"):
+  ✓ INV-CONTRACT-002 noSharedSess  VERIFIED IN SCOPE           (0.4s)   4 Session, 4 Account — not a proof
 
 Witness obligations:
   ✓ REQ-001 login reachable        WITNESSED  → auth/traces/REQ-001.itf.json (4 states)

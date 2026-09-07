@@ -89,16 +89,32 @@ def check_bound(area):
     return b if isinstance(b, int) and b > 0 else None
 
 
-def invariant_mark(inv, bound):
+def check_scopes(area):
+    """Per-invariant finite scope from the last Alloy run, keyed by ID. A
+    structural ✓ is bounded by scope the way a bounded ✓ is bounded by depth,
+    so the scope has to reach the renderer or the mark would overclaim."""
+    out = {}
+    for c in ((area.get("check_results") or {}).get("checks") or []):
+        if c.get("backend") == "alloy" and c.get("id") and c.get("scope"):
+            out[c["id"]] = c["scope"]
+    return out
+
+
+def invariant_mark(inv, bound, scope=None):
     """Honest render of an invariant's formal status. A bounded model check is
     NOT a proof — it only says 'no counterexample within N steps' — so a
     bounded ✓ always carries its depth, distinct from an inductive proof and
-    from the requirement ✓ (which means 'witness replayed green in code')."""
+    from the requirement ✓ (which means 'witness replayed green in code').
+    A structural ✓ carries its Alloy scope for the same reason: it says 'no
+    counterexample among structures this size', which is a different claim
+    again."""
     st = inv.get("formal_status", "specified")
     if st == "verified-inductive":
         return "✓ proven"
     if st == "verified":
         return f"✓ (≤{bound} steps)" if bound else "✓ (bounded)"
+    if st == "verified-in-scope":
+        return f"✓ (scope: {scope})" if scope else "✓ (in scope)"
     if st == "counterexample-found":
         return "✗"
     if st == "accepted-risk":
@@ -329,7 +345,8 @@ def ship_verdict(area):
     if n_unver:
         blockers.append(f"{n_unver} of {len(reqs)} requirement(s) not verified against code")
     n_inv_bad = sum(1 for i in invs
-                    if i.get("formal_status") not in ("verified", "verified-inductive"))
+                    if i.get("formal_status") not in ("verified", "verified-inductive",
+                                                      "verified-in-scope"))
     if n_inv_bad:
         blockers.append(f"{n_inv_bad} of {len(invs)} invariant(s) not holding")
     n_q = sum(1 for q in area.get("open_questions", []) or []
@@ -342,7 +359,7 @@ def ship_verdict(area):
     if blockers:
         return "**⚠ NOT READY** — " + "; ".join(blockers) + "."
     return ("**✓ READY** — all requirements verified against code, all invariants "
-            "hold (bounded or proven), no open questions.")
+            "hold (bounded, in scope, or proven), no open questions.")
 
 
 def header_bar(area, area_name):
@@ -352,6 +369,7 @@ def header_bar(area, area_name):
     invs = area.get("invariants", []) or []
     n_inv_proven = sum(1 for i in invs if i.get("formal_status") == "verified-inductive")
     n_inv_bounded = sum(1 for i in invs if i.get("formal_status") == "verified")
+    n_inv_scoped = sum(1 for i in invs if i.get("formal_status") == "verified-in-scope")
     bound = check_bound(area)
     matrix = (area.get("check_results") or {}).get("matrix")
     if matrix:
@@ -365,6 +383,11 @@ def header_bar(area, area_name):
     last_ver = log[-1]["date"][:10] if log else "never"
     bsuffix = f" (≤{bound})" if bound else ""
     inv_cell = f"{n_inv_proven} proven + {n_inv_bounded} bounded{bsuffix} / {len(invs)}"
+    if n_inv_scoped:
+        # Only shown when structural checks exist, so the bar of an
+        # Apalache-only area renders exactly as it did before.
+        inv_cell = (f"{n_inv_proven} proven + {n_inv_bounded} bounded{bsuffix} "
+                    f"+ {n_inv_scoped} in-scope / {len(invs)}")
     return (f"**Status:** {area.get('status', 'raw')}  |  "
             f"**Requirements:** {n_ver}/{len(reqs)} verified, {n_wit}/{len(reqs)} witnessed  |  "
             f"**Invariants:** {inv_cell}  |  "
@@ -493,16 +516,24 @@ def invariants_section(area):
     if not invs:
         return []
     bound = check_bound(area)
-    lines = ["## What Must Always Be True", "",
-             "_Invariant legend: ✓ proven — inductive, holds in ALL reachable states · "
-             "✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, "
-             "NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a "
-             "bounded ✓ by raising the bound or marking the invariant `proof: inductive`._", ""]
+    scopes = check_scopes(area)
+    legend = ("_Invariant legend: ✓ proven — inductive, holds in ALL reachable states · "
+              "✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, "
+              "NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a "
+              "bounded ✓ by raising the bound or marking the invariant `proof: inductive`._")
+    if scopes:
+        legend = legend[:-1] + (" · ✓ (scope: …) — Alloy found no counterexample among "
+                                "structures that size; outside that scope it was never "
+                                "checked, so widen the scope in the .als to strengthen it._")
+    lines = ["## What Must Always Be True", "", legend, ""]
     for inv in sorted(invs, key=lambda i: i.get("id", "")):
         st = inv.get("formal_status", "specified")
-        mark = invariant_mark(inv, bound)
+        mark = invariant_mark(inv, bound, scopes.get(inv.get("id")))
         tail = " — see Needs Your Attention." if st == "counterexample-found" else ""
-        lines.append(f"- **{inv.get('id')}** (`{inv.get('quint_name', '—')}`) — "
+        # A structural invariant has no Quint name — it points at the Alloy
+        # check that carries it, so the reader can find the actual assertion.
+        name = inv.get("quint_name") or inv.get("alloy_command") or "—"
+        lines.append(f"- **{inv.get('id')}** (`{name}`) — "
                      f"{inv.get('description', '')} Criticality: "
                      f"{inv.get('criticality', 'high')}. {mark}{tail}")
     lines.append("")

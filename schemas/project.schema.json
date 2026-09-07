@@ -144,6 +144,16 @@
         "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300 },
         "max_steps":       { "type": "integer", "minimum": 1, "default": 10 }
       }
+    },
+    "alloy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OPTIONAL structural backend. Present only when some area declares formal_model.alloy_file. Absent = Alloy is off and nothing about the existing Apalache path changes. Requires Alloy 6.2+ (its CLI was introduced there) and the same JVM 17+ Apalache already needs.",
+      "properties": {
+        "jar_path":        { "type": "string", "description": "Path to org.alloytools.alloy.dist.jar. Overridden per-developer by ALLOY_JAR in the environment, which is where a machine-specific path belongs." },
+        "solver":          { "type": "string", "default": "sat4j", "description": "SAT solver id passed to `alloy exec -s`. Pinned because a scope-bounded verdict is only reproducible against a named solver; sat4j is the pure-Java default and needs no native library." },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300, "description": "Wall-clock cap enforced by spec-record. The Alloy CLI has no timeout flag of its own." }
+      }
     }
   }
 }

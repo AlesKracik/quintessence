@@ -1,0 +1,63 @@
+{
+  "$schema": "../../schemas/area.schema.json",
+  "kind": "contract",
+  "area": "session-ownership",
+  "version": "1.0.0",
+  "status": "formalized",
+  "last_modified": "2026-05-15T12:00:00Z",
+
+  "spans": ["auth", "auth-ui"],
+
+  "purpose": "Joint structural agreement between auth and auth-ui: how sessions, accounts and guarded screens may be wired together, independent of any sequence of events. Demonstrates the OPTIONAL Alloy backend — invariants marked proof: 'structural' are checked over a finite scope by Alloy instead of over traces by Apalache.",
+
+  "invariants": [
+    {
+      "id": "INV-CONTRACT-001",
+      "description": "No two sessions belong to the same account.",
+      "proof": "structural",
+      "alloy_command": "noSharedSessions",
+      "formal_status": "verified-in-scope",
+      "criticality": "critical"
+    },
+    {
+      "id": "INV-CONTRACT-002",
+      "description": "Every auth-required screen trusts a session that has an owning account — no guarded screen dangles.",
+      "proof": "structural",
+      "alloy_command": "everyGuardedScreenHasAnOwner",
+      "formal_status": "verified-in-scope",
+      "criticality": "high"
+    }
+  ],
+
+  "formal_model": {
+    "alloy_file": "session-ownership.als"
+  },
+
+  "check_results": {
+    "ran_at": "2026-05-15T12:00:00Z",
+    "checks": [
+      {
+        "id": "INV-CONTRACT-001",
+        "kind": "invariant",
+        "backend": "alloy",
+        "proof": "structural",
+        "alloy_command": "noSharedSessions",
+        "scope": "4 Session, 4 Account, 4 Screen",
+        "solver": "sat4j",
+        "result": "verified",
+        "duration_s": 0.4
+      },
+      {
+        "id": "INV-CONTRACT-002",
+        "kind": "invariant",
+        "backend": "alloy",
+        "proof": "structural",
+        "alloy_command": "everyGuardedScreenHasAnOwner",
+        "scope": "4 Session, 4 Account, 4 Screen",
+        "solver": "sat4j",
+        "result": "verified",
+        "duration_s": 0.3
+      }
+    ]
+  }
+}

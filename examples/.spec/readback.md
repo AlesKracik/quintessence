@@ -13,6 +13,7 @@
 |---|---|---|---|---|
 | [auth](./specs/auth.readback.md) | area | 0.2.0 | formalized | never |
 | [auth-ui](./specs/auth-ui.readback.md) | area | 0.1.0 | formalized | never |
+| [session-ownership](./specs/session-ownership.readback.md) | contract | 1.0.0 | formalized | never |
 
 ## Journeys
 

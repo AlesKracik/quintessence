@@ -62,6 +62,32 @@ else
   missing+=("apalache")
 fi
 
+# -- Alloy (OPTIONAL structural backend) ------------------------------------
+# Never counted as missing: the Alloy backend is opt-in per invariant
+# (proof: "structural") and most projects never turn it on. Reported only so
+# a project that DID turn it on can see whether the jar resolves. Needs the
+# same JVM 17+ as Apalache, plus Alloy 6.2+ — its CLI arrived in 6.2.0.
+
+alloy_jar="${ALLOY_JAR:-}"
+if [ -z "$alloy_jar" ] && [ -f .spec/project.json ] && command -v python3 >/dev/null 2>&1; then
+  alloy_jar="$(python3 -c 'import json,sys
+try:
+    print((json.load(open(".spec/project.json")).get("alloy") or {}).get("jar_path") or "")
+except Exception:
+    print("")' 2>/dev/null)"
+fi
+
+if [ -n "$alloy_jar" ]; then
+  if [ -f "$alloy_jar" ]; then
+    echo "✓ alloy      ${alloy_jar}  (optional structural backend)"
+  else
+    echo "⚠ alloy      configured but not found at ${alloy_jar}"
+    warn+=("alloy-jar-missing")
+  fi
+else
+  echo "— alloy      not configured  (optional; only needed for proof: \"structural\" invariants)"
+fi
+
 if [ ${#missing[@]} -eq 0 ] && [ ${#warn[@]} -eq 0 ]; then
   exit 0
 fi
@@ -111,6 +137,15 @@ if [ $needs_java -eq 1 ]; then
   esac
   echo
 fi
+
+case " ${warn[*]:-} " in *" alloy-jar-missing "*)
+  echo "Install Alloy (optional — structural backend, needs Alloy 6.2+ for its CLI):"
+  echo "  Download org.alloytools.alloy.dist.jar from"
+  echo "    https://github.com/AlloyTools/org.alloytools.alloy/releases"
+  echo "  Then set ALLOY_JAR=/path/to/org.alloytools.alloy.dist.jar"
+  echo "  (or alloy.jar_path in .spec/project.json). Verify: java -jar \"\$ALLOY_JAR\" help"
+  echo
+;; esac
 
 case " ${missing[*]:-} " in *" quint "*)
   echo "Install Quint:"

@@ -26,6 +26,12 @@ What `check` does, in order:
      --invariant=<name>` each; counterexample traces saved to
      specs/<area>/traces/<ID>.cex.itf.json. Stale .cex files of
      now-verified checks are removed.
+     1b. OPT-IN structural backend: an invariant marked
+     `proof: "structural"` is routed to Alloy instead — `alloy exec
+     -c <alloy_command>` over formal_model.alloy_file, verdict read
+     from the run's receipt.json (empty solution[] = no counterexample
+     within the scope declared in the .als). Off unless an area
+     declares alloy_file; nothing about the Apalache path changes.
   2. Witness probes (unless --no-witness): for every requirement with a
      witness.predicate (not skipped/deferred/non-functional), runs the
      probe `witness_<ID>` from the probes module with --init=initP
@@ -60,6 +66,7 @@ no-witness, error, timeout, or failed replay/tests; 2 = setup problem
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -93,6 +100,104 @@ def save_area(path, data):
     Path(path).write_text(
         json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+
+
+def find_alloy(project):
+    """Resolve (java, alloy_jar) for the optional structural backend.
+
+    Alloy shares Apalache's JVM 17+ requirement, so the only new artifact is
+    the jar. Machine-specific paths belong in the environment (ALLOY_JAR),
+    with .spec/project.json alloy.jar_path as the committed fallback."""
+    java = shutil.which("java")
+    if not java:
+        fail_setup("`java` not on PATH — the Alloy backend needs JVM 17+ "
+                   "(the same one Apalache needs). Run tools/check-tooling.sh.")
+    jar = os.environ.get("ALLOY_JAR") or ((project.get("alloy") or {}).get("jar_path"))
+    if not jar:
+        fail_setup("No Alloy jar configured. Set ALLOY_JAR, or alloy.jar_path in "
+                   ".spec/project.json, to org.alloytools.alloy.dist.jar (6.2+ — "
+                   "the CLI this runner drives was introduced in 6.2.0).")
+    jar_path = Path(jar).expanduser()
+    if not jar_path.exists():
+        fail_setup(f"Alloy jar not found at {jar_path}.")
+    return java, str(jar_path)
+
+
+def read_alloy_receipt(outdir, command):
+    """Extract (result, detail, scope, solver, instance_name) for one command
+    from an `alloy exec` run directory.
+
+    The verdict comes from receipt.json — the structured DTO the CLI writes
+    per run — never from stdout text, the same discipline the Quint path
+    follows by detecting violations through the ITF file's presence rather
+    than by grepping output for the word 'counterexample'.
+
+    Alloy semantics are inverted for `check`: SATISFIABLE means an instance
+    violating the assertion was found, i.e. a counterexample. An empty
+    solution[] means none exists *within the declared scope* — bounded by
+    structure, which is why the caller stamps 'verified-in-scope' and the
+    scope string travels with the verdict instead of being dropped."""
+    receipt = Path(outdir) / "receipt.json"
+    if not receipt.exists():
+        return "error", "alloy wrote no receipt.json (run failed before solving)", None, None, None
+    try:
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return "error", f"unreadable receipt.json: {exc}", None, None, None
+    solver = data.get("solver")
+    commands = data.get("commands") or {}
+    entry = commands.get(command)
+    if entry is None:
+        known = ", ".join(sorted(commands)) or "none"
+        return ("error",
+                f"no command '{command}' in the .als (commands found: {known})",
+                None, solver, None)
+    scopes = entry.get("scopes") or []
+    scope = ", ".join(str(x) for x in scopes) or (entry.get("scope") or None)
+    if not (entry.get("solution") or []):
+        return "verified", "", scope, solver, None
+    return "counterexample", "", scope, solver, f"{command}-solution-0.xml"
+
+
+def run_alloy(java, jar, als_file, command, outdir, solver, timeout):
+    """Run one Alloy `check` command headless. Returns
+    (result, detail, duration_s, meta) using run_verify's result vocabulary
+    (verified | counterexample | timeout | error) so the caller's bookkeeping
+    stays backend-agnostic.
+
+    Flags deliberately NOT passed: -d/--depth and -y/--ymmetry. In Alloy
+    6.2's CLI the symmetry option reads depth() rather than ymmetry(), so -y
+    is ignored and -d silently changes symmetry breaking as well; taking the
+    defaults keeps runs reproducible. -f recreates the output directory so a
+    stale instance from an earlier run can never be read as this run's.
+
+    The Alloy CLI has no timeout flag, so the cap is enforced here —
+    exactly as it already is for quint."""
+    outdir = Path(outdir)
+    if outdir.exists():
+        shutil.rmtree(outdir, ignore_errors=True)
+    outdir.mkdir(parents=True, exist_ok=True)
+    cmd = [java, "-jar", jar, "exec",
+           "-c", command,
+           "-t", "xml",
+           "-o", str(outdir),
+           "-f", "-q",
+           "-s", solver,
+           str(als_file)]
+    started = datetime.now(timezone.utc)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"timed out after {timeout}s", timeout, {}
+    duration = (datetime.now(timezone.utc) - started).total_seconds()
+    result, detail, scope, solver_used, instance = read_alloy_receipt(outdir, command)
+    if result == "error" and proc.returncode != 0:
+        out = (proc.stdout or "") + (proc.stderr or "")
+        tail = "\n".join(out.strip().splitlines()[-5:])
+        detail = tail or detail
+    return result, detail, duration, {"scope": scope,
+                                      "solver": solver_used or solver,
+                                      "instance": instance}
 
 
 def find_quint():
@@ -156,6 +261,70 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
     return "error", tail, duration
 
 
+def run_structural_check(item, iid, als_rel, als_file, root, area_name,
+                         need_alloy, solver, timeout):
+    """Check one `proof: "structural"` invariant through the Alloy backend and
+    return its check_results entry, mutating item["formal_status"] the same way
+    the Apalache path does. Verdicts stay mechanical: the agent never writes one.
+
+    Two ways this returns 'error' before Alloy is ever launched — both are
+    configuration mistakes that must not read as green:
+      - the invariant declares no alloy_command (nothing to run);
+      - the area declares no alloy_file (nowhere to run it).
+
+    The instance XML goes under specs/<area>/gen/ (gitignored): Alloy returns
+    one satisfying instance out of many and that choice is not stable across
+    solver or tool versions, so committing it would churn diffs and imply a
+    canonicity the tool does not provide. The verdict, its scope and its solver
+    are committed instead — enough to re-derive the run.
+    """
+    entry = {"id": iid, "kind": "invariant", "backend": "alloy",
+             "proof": "structural", "result": "error"}
+    command = item.get("alloy_command")
+    if not command:
+        entry["error"] = ("proof is 'structural' but no alloy_command is set "
+                          "— nothing to run.")
+        print(f"{iid:<12} {'error':<26} no alloy_command")
+        return entry
+    entry["alloy_command"] = command
+    if not als_rel:
+        entry["error"] = ("proof is 'structural' but formal_model.alloy_file "
+                          "is not set — no .als to run it against.")
+        print(f"{iid:<12} {'error':<26} no formal_model.alloy_file")
+        return entry
+
+    java, jar = need_alloy()
+    outdir = root / "specs" / area_name / "gen" / "alloy" / command
+    result, detail, duration, meta = run_alloy(
+        java, jar, als_file, command, outdir, solver, timeout)
+    entry["result"] = result
+    entry["duration_s"] = round(duration, 1)
+    if meta.get("scope"):
+        entry["scope"] = meta["scope"]
+    if meta.get("solver"):
+        entry["solver"] = meta["solver"]
+
+    if result == "verified":
+        # Scope-bounded, not proven: a different bound from the step bound,
+        # so it gets its own status rather than borrowing 'verified'.
+        item["formal_status"] = "verified-in-scope"
+        scope = meta.get("scope") or "declared scope"
+        print(f"{iid:<12} {'verified (in scope)':<26} ({duration:.1f}s)  {scope}")
+    elif result == "counterexample":
+        item["formal_status"] = "counterexample-found"
+        if meta.get("instance"):
+            rel = f"{area_name}/gen/alloy/{command}/{meta['instance']}"
+            entry["instance"] = rel
+        print(f"{iid:<12} {'counterexample':<26} ({duration:.1f}s)  "
+              f"instance in specs/{area_name}/gen/alloy/{command}/")
+    else:
+        # timeout/error: leave the prior formal_status untouched, exactly as
+        # the Apalache path does — an unfinished run is not a new verdict.
+        entry["error"] = detail
+        print(f"{iid:<12} {result:<26} {detail}")
+    return entry
+
+
 def probe_name(req_id):
     return "witness_" + req_id.replace("-", "_")
 
@@ -168,13 +337,23 @@ def cmd_check(args):
         fail_setup(f"{area_path} not found. Run /spec {args.area} first.")
     fm = area.get("formal_model") or {}
     qnt_file = root / "specs" / (fm.get("quint_file") or f"{args.area}.qnt")
-    if not qnt_file.exists():
+    als_rel = fm.get("alloy_file")
+    als_file = root / "specs" / als_rel if als_rel else None
+    if not qnt_file.exists() and not (als_file and als_file.exists()):
+        # An area with a structural sidecar and no Quint model is legitimate
+        # (a purely relational contract); an area with neither is not
+        # formalized at all.
         fail_setup(f"{qnt_file} not found — the area isn't formalized yet.")
+    if als_rel and not als_file.exists():
+        fail_setup(f"{als_file} not found — formal_model.alloy_file points at nothing.")
 
     project = load_json(root / ".spec" / "project.json") or {}
     apalache = project.get("apalache") or {}
     max_steps = args.steps or apalache.get("max_steps", 10)
     timeout = args.timeout or apalache.get("timeout_seconds", 300)
+    alloy_cfg = project.get("alloy") or {}
+    alloy_solver = alloy_cfg.get("solver", "sat4j")
+    alloy_timeout = args.timeout or alloy_cfg.get("timeout_seconds", 300)
 
     only = None
     if args.only:
@@ -187,7 +366,20 @@ def cmd_check(args):
             fail_setup(f"--only references unknown ids: {', '.join(sorted(unknown))}. "
                        f"Known: {', '.join(sorted(known))}")
 
-    quint = find_quint()
+    tools = {}
+
+    def need_quint():
+        """Resolved on first use so a purely structural area doesn't require
+        quint on PATH, and an Apalache-only area never requires the Alloy jar."""
+        if "quint" not in tools:
+            tools["quint"] = find_quint()
+        return tools["quint"]
+
+    def need_alloy():
+        if "alloy" not in tools:
+            tools["alloy"] = find_alloy(project)
+        return tools["alloy"]
+
     traces_dir = root / "specs" / args.area / "traces"
     traces_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,9 +395,26 @@ def cmd_check(args):
     for list_name, kind in (("invariants", "invariant"), ("properties", "property")):
         for item in area.get(list_name, []) or []:
             iid, qname = item.get("id"), item.get("quint_name")
-            if not iid or not qname:
+            structural = (kind == "invariant" and item.get("proof") == "structural")
+            # A structural invariant is carried by an Alloy check, not by a
+            # Quint val, so it legitimately has no quint_name — the presence
+            # gate applies only to the Apalache path.
+            if not iid or (not qname and not structural):
                 continue
             if only and iid not in only:
+                continue
+            # Structural proof is opt-in per invariant (proof: "structural")
+            # and routes to Alloy instead of Apalache — a different question
+            # (relational structure) with a different bound (finite scope,
+            # not step depth), so it gets its own status and its own render.
+            if structural:
+                entry = run_structural_check(
+                    item, iid, als_rel, als_file, root, args.area,
+                    need_alloy, alloy_solver, alloy_timeout,
+                )
+                if entry.get("result") != "verified":
+                    bad += 1
+                checks.append(entry)
                 continue
             # Inductive proof is opt-in per invariant (proof: "inductive").
             # Default and properties stay bounded — behavior unchanged.
@@ -213,7 +422,7 @@ def cmd_check(args):
             cex_rel = f"{args.area}/traces/{iid}.cex.itf.json"
             cex_path = root / "specs" / cex_rel
             result, detail, duration = run_verify(
-                quint, qnt_file, qname, max_steps, timeout, out_itf=cex_path,
+                need_quint(), qnt_file, qname, max_steps, timeout, out_itf=cex_path,
                 inductive=inductive,
             )
             entry = {
@@ -300,7 +509,7 @@ def cmd_check(args):
             trace_rel = f"{args.area}/traces/{rid}.itf.json"
             trace_path = root / "specs" / trace_rel
             result, detail, duration = run_verify(
-                quint, probes_file, pname, max_steps, timeout,
+                need_quint(), probes_file, pname, max_steps, timeout,
                 init="initP", step="stepP", out_itf=trace_path,
             )
             witness["checked_at"] = now_iso()

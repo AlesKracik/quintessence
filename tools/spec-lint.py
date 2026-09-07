@@ -601,6 +601,111 @@ def check_formal_model_consistency(area_data, sidecar, area_name, findings):
             "formal_model.quint_file is set but the sidecar is missing or has no module declaration.")
 
 
+ALS_COMMAND_RE = re.compile(
+    r"^\s*(?P<kind>check|run)\s+(?P<name>[A-Za-z_][A-Za-z_0-9']*)\b(?P<rest>.*)$")
+
+
+def parse_als(text):
+    """Static view of an Alloy sidecar: {name: {"kind", "scope"}} for every
+    NAMED check/run command. Regex-only and deterministic, deliberately
+    mirroring quint_ir's fallback role — lint must stay Python-only (Tier 1),
+    and the runner never relies on this: it reads verdicts from the CLI's own
+    receipt.json. scope is None when the command declares no `for` clause,
+    which matters because Alloy then silently defaults to scope 3.
+
+    Anonymous commands (`check { ... } for 3`) are skipped: an invariant has
+    to name the command it maps to, so an unnamed one can carry no ID."""
+    out = {}
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("--") or stripped.startswith("//"):
+            continue
+        m = ALS_COMMAND_RE.match(line)
+        if not m:
+            continue
+        rest = m.group("rest")
+        fm = re.search(r"\bfor\b(?P<scope>[^{]*)$", rest)
+        scope = fm.group("scope").strip() if fm else None
+        out[m.group("name")] = {"kind": m.group("kind"), "scope": scope or None}
+    return out
+
+
+def check_alloy_backend(root, area_data, area_name, findings):
+    """The optional structural backend, gated so it can never silently
+    half-work: an invariant claiming `proof: structural` must actually resolve
+    to a runnable Alloy command, or its status would be decided by nothing.
+
+    Deliberately not checked here: whether the Alloy assertion means the same
+    thing as the invariant's prose. That is the same human-reviewed step the
+    Quint mapping has, and pretending otherwise would fake a guarantee."""
+    fm = area_data.get("formal_model") or {}
+    als_rel = fm.get("alloy_file")
+    invs = area_data.get("invariants", []) or []
+    structural = [i for i in invs if i.get("proof") == "structural"]
+
+    if not structural and not als_rel:
+        return
+
+    commands, als_text = {}, None
+    if als_rel:
+        als_path = root / "specs" / als_rel
+        if not als_path.exists():
+            add(findings, FAIL, "alloy", "alloy-file-missing", area_name,
+                f"formal_model.alloy_file '{als_rel}' does not exist.")
+        else:
+            try:
+                als_text = als_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                add(findings, FAIL, "alloy", "alloy-file-unreadable", area_name,
+                    f"formal_model.alloy_file '{als_rel}' could not be read: {exc}")
+            else:
+                commands = parse_als(als_text)
+
+    if als_rel and not structural:
+        add(findings, WARN, "alloy", "alloy-file-unused", area_name,
+            f"formal_model.alloy_file '{als_rel}' is declared but no invariant has "
+            f"proof: 'structural' — nothing routes to the Alloy backend.")
+
+    approved = area_data.get("status") in ("in-review", "approved")
+    for inv in structural:
+        iid = inv.get("id", "?")
+        command = inv.get("alloy_command")
+        if not command:
+            add(findings, FAIL, "alloy", "structural-without-command", area_name,
+                f"{iid} has proof: 'structural' but no alloy_command — there is "
+                f"nothing for the backend to run.", ref=iid)
+            continue
+        if not als_rel:
+            add(findings, FAIL, "alloy", "structural-without-sidecar", area_name,
+                f"{iid} has proof: 'structural' but the area declares no "
+                f"formal_model.alloy_file.", ref=iid)
+            continue
+        if als_text is None:
+            continue  # sidecar problem already reported
+        entry = commands.get(command)
+        if entry is None:
+            known = ", ".join(sorted(commands)) or "none"
+            add(findings, FAIL, "alloy", "alloy-command-missing", area_name,
+                f"{iid}.alloy_command '{command}' has no matching named check/run "
+                f"in {als_rel} (found: {known}).", ref=iid)
+            continue
+        if entry["kind"] != "check":
+            add(findings, FAIL, "alloy", "alloy-command-not-check", area_name,
+                f"{iid}.alloy_command '{command}' is a `run`, not a `check`. An "
+                f"invariant is refuted by finding a counterexample; a `run` "
+                f"finding an instance would report the opposite verdict.", ref=iid)
+            continue
+        if entry["scope"] is None:
+            # Alloy falls back to scope 3, and a bound nobody wrote down is a
+            # bound nobody reviewed. Same escalation shape as the precision
+            # lints: WARN while authoring, FAIL once the area is up for review.
+            sev = FAIL if approved else WARN
+            add(findings, sev, "alloy", "alloy-scope-implicit", area_name,
+                f"{iid}.alloy_command '{command}' declares no `for` scope, so Alloy "
+                f"silently uses its default of 3. State the scope explicitly.",
+                ref=iid)
+
+
 def check_cross_refs(area_data, all_areas, area_name, findings):
     """cross_refs of form '<area>.<ID>' should resolve."""
     for list_name in ("requirements", "invariants", "properties"):
@@ -659,7 +764,7 @@ def check_critical_invariants(area_data, area_name, findings):
     if area_data.get("status") != "approved":
         return
     for inv in area_data.get("invariants", []) or []:
-        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "verified-inductive", "accepted-risk"):
+        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "verified-inductive", "verified-in-scope", "accepted-risk"):
             add(findings, FAIL, "invariants", "critical-not-verified", area_name,
                 f"Critical invariant {inv.get('id')} has formal_status '{inv.get('formal_status')}' — must be verified before approval.",
                 ref=inv.get("id"))
@@ -1075,6 +1180,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_orphan_actions(area_data, sidecar, area_name, findings)
     check_constraint_values(area_data, sidecar, area_name, findings)
     check_formal_model_consistency(area_data, sidecar, area_name, findings)
+    check_alloy_backend(root, area_data, area_name, findings)
     check_cross_refs(area_data, all_areas, area_name, findings)
     check_contract_spans(area_data, all_areas, area_name, findings)
     check_open_questions(area_data, area_name, findings)

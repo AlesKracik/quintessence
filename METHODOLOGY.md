@@ -94,6 +94,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   ├── auth.area.json            ← one file per area (suffix = kind)
 │   ├── auth.qnt                  ←   sidecar: the Quint formal model
 │   ├── auth.probes.qnt           ←   generated witness/coverage probes (/spec-check)
+│   ├── session-ownership.contract.json ← contract using the OPTIONAL structural backend
+│   ├── session-ownership.als     ←   Alloy sidecar: relational checks, scope-bounded
 │   ├── auth-ui.area.json         ← interactive surface: an area with screens[] + navigation[]
 │   ├── auth-ui.qnt
 │   ├── billing.area.json
@@ -129,7 +131,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   └── protocol.schema.json
 ├── templates/
 │   ├── spec.qnt.template         ← sidecar structure convention
-│   └── probes.qnt.template       ← ghost instrumentation + witness probes
+│   ├── probes.qnt.template       ← ghost instrumentation + witness probes
+│   └── contract.als.template     ← OPTIONAL Alloy structural sidecar
 ├── .github/workflows/
 │   └── spec-ci.yml               ← lint → matrix --strict → quint typecheck → quint test
 │                                    (Apalache + conformance replay are agent-driven, not CI)
@@ -271,6 +274,8 @@ module userPermissionContract {
 `/spec-check` cascades automatically — running it on `auth` also checks every contract whose `spans` includes `auth`. A contract failure means an area change broke a joint invariant; either fix the area or evolve the contract (it's another spec change).
 
 `/spec-apply` and `/spec-verify` refuse on contract targets (no code).
+
+A contract whose obligations are **relational rather than temporal** ("every Account has an owner", "no two Sessions share an Account") pays a state-space product in Apalache for a fact that has nothing to do with time. Such invariants can opt into the structural backend instead — see "The Structural Backend: Alloy (Optional)". Off by default; most projects never need it.
 
 ### UI blocks — interactive surfaces
 
@@ -450,6 +455,118 @@ Declare one whenever an entity has a `states[]` list in `concepts.entities[]` th
 
 ---
 
+## The Structural Backend: Alloy (Optional)
+
+**Off by default, and most projects should leave it off.** Apalache answers "over all reachable *traces*, does this hold?" Alloy answers "over all *structures* of this size, does this hold?" Those are different questions, and the second one only becomes expensive enough to be worth a second tool when a project accumulates real relational obligations — which in practice means **cross-area contracts**.
+
+### The gate — when to turn it on
+
+Turn Alloy on only when both are true:
+
+1. You have **contracts carrying relational obligations** — referential integrity ("every `billing.Account.userId` exists in `auth.users`"), cardinality ("no account has two active sessions"), ownership and role structure, containment hierarchies. One such contract does not pay for a second sidecar language; several do.
+2. Those obligations are **costing you in Apalache** — a contract sidecar importing two areas makes Apalache explore the *product* of two state machines to establish a fact that has nothing to do with time.
+
+If a typical project here has zero or one contract, Alloy is dead weight. Say so and skip it; the framework is complete without it.
+
+### The division of labour — one backend per question class
+
+| | Quint + Apalache | Alloy |
+|---|---|---|
+| Question | over all reachable **traces** | over all **structures** in scope N |
+| Native to | state machines, actions, guards, counters | cardinality, referential integrity, ownership, transitive closure |
+| Output | ITF trace (a run) | instance (a snapshot) |
+| Bound | step depth (`≤N steps`) or inductive (proven) | finite scope (`scope: 3 Account, 3 User`) |
+
+**Behaviour stays in Quint. Structure goes to Alloy. Never both on the same claim** — two models of the same thing produce two answers, and then the spec has no single source of truth. Alloy 6 *can* model mutable state and temporal properties; do not use it for that here.
+
+Two things Alloy is deliberately **not** wired into:
+
+- **Witness obligations.** An Alloy instance is a snapshot, not a trace — there is no step sequence, so nothing demonstrates a behaviour happening. Every requirement's witness stays Quint's job.
+- **Conformance replay.** The harness drives code step by step from a trace's actions and ghost-recorded parameters. A snapshot cannot drive anything.
+
+So the Alloy backend strengthens the *invariant* half of a contract only. That is the whole of its remit.
+
+### How it is wired
+
+An invariant opts in with `proof: "structural"` and names the Alloy `check` that carries it:
+
+```json
+{
+  "id": "INV-CONTRACT-001",
+  "description": "No two sessions belong to the same account.",
+  "proof": "structural",
+  "alloy_command": "noSharedSessions",
+  "criticality": "critical"
+}
+```
+
+with the area pointing at its structural sidecar (alongside the Quint one, or instead of it for a purely relational contract):
+
+```json
+"formal_model": { "alloy_file": "session-ownership.als" }
+```
+
+and the sidecar declaring the check with an **explicit scope**:
+
+```alloy
+assert noSharedSessions {
+  all disj s1, s2: Session | s1.owner != s2.owner
+}
+check noSharedSessions for 4 Session, 4 Account expect 0
+```
+
+`spec-record check` then runs `alloy exec -c noSharedSessions -t xml -s <solver>` and reads the verdict from the run's `receipt.json` — the CLI's own structured output, never from stdout text, the same discipline the Quint path follows by detecting violations through the ITF file's presence. An empty `solution[]` means no counterexample exists **within the declared scope**; the invariant is stamped `verified-in-scope` and the scope string is recorded with it.
+
+Project config pins the jar and the solver (a scope-bounded verdict is only reproducible against a named solver):
+
+```json
+// .spec/project.json
+"alloy": { "jar_path": "/opt/alloy/org.alloytools.alloy.dist.jar", "solver": "sat4j", "timeout_seconds": 300 }
+```
+
+`ALLOY_JAR` in the environment overrides `jar_path`, which is where a machine-specific path belongs. Requires **Alloy 6.2+** — its command-line interface was introduced there — and the same **JVM 17+** Apalache already needs, so the only new artifact is the jar. `tools/check-tooling.sh` reports it, never as missing: it is optional by construction.
+
+### A scope-bounded ✓ is a third kind of ✓
+
+The readback never collapses the three:
+
+| Mark | Means |
+|---|---|
+| `✓ proven` | inductive — holds in ALL reachable states |
+| `✓ (≤N steps)` | bounded model check to depth N — not a proof |
+| `✓ (scope: 4 Session, 4 Account)` | no counterexample among structures **that size** — not a proof |
+
+Alloy's small-scope hypothesis (most bugs show up in small instances) is a good heuristic, not a theorem. Widening the scope in the `.als` strengthens the claim; the scope travels next to the mark so the claim and its bound are never separated.
+
+### What lint enforces (no jar needed)
+
+Tier 1 stays Python-only, so `spec-lint` reads the `.als` with a regex scanner and gates the wiring:
+
+| Severity | Check |
+|---|---|
+| FAIL | `proof: "structural"` with no `alloy_command` — nothing to run |
+| FAIL | `proof: "structural"` with no `formal_model.alloy_file` — nowhere to run it |
+| FAIL | `alloy_command` names no check in the `.als` |
+| FAIL | `alloy_command` names a `run` rather than a `check` — a `run` reports the opposite verdict |
+| WARN → FAIL at `in-review`/`approved` | the check declares no `for` scope, so Alloy silently uses 3 — a bound nobody wrote down is a bound nobody reviewed |
+| WARN | `alloy_file` declared but no invariant routes to it |
+
+Not checked, and deliberately: whether the Alloy assertion *means* what the invariant's prose says. That is the same human-reviewed step the Quint mapping has — the readback puts them side by side to make it a diff rather than a hunt. Know where the trust boundary is.
+
+### The instance is not committed
+
+Counterexample instances are written to `specs/<area>/gen/alloy/<command>/` — **gitignored**. Alloy returns one satisfying instance out of many and that choice is not guaranteed stable across solver or tool versions; committing it would churn diffs and imply a canonicity the tool does not provide. The verdict, its scope and its solver are committed instead — enough to re-derive the run. This is the one place the Alloy path deliberately differs from the Quint path, where ITF traces *are* committed because they are load-bearing (witnesses, replay input).
+
+### Known rough edges
+
+The Alloy CLI is younger than the rest of this chain (introduced 6.2.0, January 2025) and lightly exercised. Two consequences the runner already handles, worth knowing about:
+
+- **No timeout flag.** The wall-clock cap is enforced by `spec-record`, exactly as it already is for `quint`.
+- **`-y/--ymmetry` is ignored** and `-d/--depth` silently changes symmetry breaking too (the option reads `depth()` in the 6.2 CLI source). The runner passes neither and takes the defaults, which keeps runs reproducible.
+
+
+---
+
 ## Architecture (Layers 0–6)
 
 Architecture is **separate from behavior**. The spec says what the system does; architecture says how it's realized. Six layers compose by inheritance; each is optional.
@@ -612,6 +729,8 @@ requirement.status:   raw → needs-validation → specified → verified
 requirement.witness.status: not-run → witnessed | no-witness | skipped
 invariant.formal_status: specified | not-run → verified            (bounded ✓ — valid to max_steps only)
                                   → verified-inductive   (proven over ALL reachable states; proof: inductive)
+                                  → verified-in-scope    (Alloy: no counterexample within the declared
+                                                          finite scope; proof: structural — not a proof)
                                   → counterexample-found
                                   → accepted-risk
 area.status:          raw → structured → formalized → in-review → approved
@@ -641,7 +760,7 @@ area.status:          raw → structured → formalized → in-review → approv
 
 `tools/spec-record.py` is the deterministic ledger for both machine-checked phases — **no verification verdict in the area JSON is ever hand-edited**:
 
-- `check <area>` — runs `quint verify` for every invariant, property, and witness probe, parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically — with skip-if-fresh (`model_sha` match + valid trace → probe not re-run) and `--only` runs merging into the prior ledger rather than replacing it.
+- `check <area>` — runs `quint verify` for every invariant, property, and witness probe (and, for invariants marked `proof: "structural"`, `alloy exec` instead — verdict read from the run's `receipt.json`), parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically — with skip-if-fresh (`model_sha` match + valid trace → probe not re-run) and `--only` runs merging into the prior ledger rather than replacing it.
 - `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
 
 The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-verify`.
