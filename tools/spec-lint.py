@@ -98,6 +98,9 @@ def add(findings, severity, category, check, area, description, ref=None):
 sys.path.insert(0, str(Path(__file__).parent))
 try:
     from quint_ir import parse_qnt as _ir_parse_qnt
+    # Shared rejection definition — lint, spec-record and the readback must
+    # not disagree about which requirements owe a refusal artifact.
+    from itf_tools import is_rejection
     from itf_tools import compute_model_sha as _compute_model_sha
     from itf_tools import load_trace as _load_trace
 except ImportError as e:
@@ -150,6 +153,7 @@ def parse_sidecar(path):
         "named":            set(ir["vals"]) | set(ir["temporals"]),
         "actions":          set(ir["actions"]),
         "runs":             set(ir.get("runs") or []),
+        "action_params":    ir.get("action_params") or {},
         "type_variants":    ir.get("type_variants") or {},
         "vars":             set(ir["vars"]),
         "action_mutations": ir["action_mutations"],
@@ -918,6 +922,11 @@ def check_assumptions(area_data, all_areas, area_name, findings):
             if not resolve_ref(target, area_data, all_areas):
                 add(findings, FAIL, "assumptions", "assumption-affects-dangling", area_name,
                     f"{aid}.affects references '{target}', which does not exist.", ref=aid)
+        if asm.get("status") == "accepted-risk" and not asm.get("rationale"):
+            add(findings, FAIL, "assumptions", "accepted-risk-without-rationale", area_name,
+                f"{aid} is 'accepted-risk' but records no rationale. An assumption "
+                f"knowingly carried as risk needs its argument written down, or the next "
+                f"reader cannot tell a considered bet from an oversight.", ref=aid)
         if approved and asm.get("status", "accepted") == "open":
             add(findings, FAIL, "assumptions", "assumption-open-on-approved", area_name,
                 f"{aid} is still 'open' on an approved area \u2014 an undecided assumption is "
@@ -1099,6 +1108,193 @@ def check_examples(area_data, sidecar, all_areas, area_name, findings):
             if not resolve_ref(target, area_data, all_areas):
                 add(findings, FAIL, "examples", "example-ref-dangling", area_name,
                     f"{eid}.refs references '{target}', which does not exist.", ref=eid)
+
+
+def ghost_for(param):
+    """Ghost var name for an action parameter: uid -> _lastUid.
+
+    The convention is fixed rather than configurable precisely so this check
+    can exist: a generated probe module and a hand-written predicate have to
+    agree on the name without consulting each other."""
+    return "_last" + param[:1].upper() + param[1:]
+
+
+def check_witness_binding(area_data, sidecar, area_name, findings):
+    """Rule 1. `_lastAction == login` pins WHICH action ran last, not that
+    this call produced the postcondition.
+
+    A bare existential — `sessions.keys().exists(s => sessions.get(s) == Active)`
+    — is satisfied by a session some unrelated earlier call created. The
+    requirement then goes green while its own action misbehaves, which is the
+    failure the path constraint was supposed to prevent and does not. Binding
+    the predicate to the param ghosts closes it: the postcondition must hold
+    OF THE THING THIS CALL ACTED ON."""
+    if not sidecar or sidecar.get("__no_module__"):
+        return
+    params_by_action = sidecar.get("action_params") or {}
+    review = at_review(area_data)
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") in EARLY_STATUSES or req.get("status") == "deferred":
+            continue
+        if req.get("type") == "non-functional" or is_rejection(req):
+            continue
+        qref = req.get("quint_ref")
+        params = params_by_action.get(qref) or []
+        if not params:
+            continue                      # parameterless action: nothing to bind to
+        witness = req.get("witness") or {}
+        preds = [witness.get("predicate") or ""]
+        preds += [oc.get("predicate") or "" for oc in (witness.get("outcomes") or [])]
+        ghosts = [ghost_for(x) for x in params]
+        for pred in preds:
+            if not pred.strip():
+                continue
+            if not any(re.search(rf"\b{re.escape(g)}\b", pred) for g in ghosts):
+                add(findings, FAIL if review else WARN, "witness", "witness-unbound",
+                    area_name,
+                    f"{rid}.witness.predicate is not bound to the arguments `{qref}` was "
+                    f"called with (expected one of {', '.join(ghosts)}). An unbound "
+                    f"existential is satisfied by state an unrelated call produced, so "
+                    f"the witness can pass while this requirement's own action is wrong.",
+                    ref=rid)
+                break          # one finding per requirement, not per predicate
+
+
+def check_witness_delta(root, area_data, sidecar, area_name, findings):
+    """Rule 2. A postcondition alone proves reachability, not causation.
+
+    The vacuity case the methodology already covers is a guard too STRONG to
+    fire. Its mirror image is a guard that already implies its own
+    postcondition: the action becomes a no-op that can only fire once its
+    result holds, the probe finds a state where the postcondition is true and
+    that action ran, and dead text witnesses green. Requiring a pre-state
+    delta means the trace has to show the state actually moving."""
+    review = at_review(area_data)
+    fm = area_data.get("formal_model") or {}
+    probes_rel = fm.get("probes_file")
+    probes_text = None
+    if probes_rel:
+        probes_path = Path(root) / "specs" / probes_rel
+        if probes_path.exists():
+            try:
+                probes_text = probes_path.read_text(encoding="utf-8")
+            except OSError:
+                probes_text = None
+
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") in EARLY_STATUSES or req.get("status") == "deferred":
+            continue
+        if req.get("type") == "non-functional" or is_rejection(req):
+            continue
+        witness = req.get("witness") or {}
+        if not witness.get("predicate") and not (witness.get("outcomes") or []):
+            continue                      # absence is the vagueness gate's job
+        delta = (witness.get("delta") or {}).get("pre")
+        if not delta:
+            add(findings, FAIL if review else WARN, "witness", "witness-delta-missing",
+                area_name,
+                f"{rid} has no witness.delta.pre. Without a pre-state condition the "
+                f"probe accepts a step that changed nothing \u2014 a guard implying its own "
+                f"postcondition witnesses green over dead text.", ref=rid)
+            continue
+        # A recorded delta that the generated probe dropped is worse than none:
+        # the JSON claims a check the model never performs.
+        if probes_text is not None:
+            probe = "witness_" + rid.replace("-", "_")
+            idx = probes_text.find("val " + probe)
+            if idx != -1:
+                end = probes_text.find("val ", idx + 4)
+                body = probes_text[idx:end if end != -1 else len(probes_text)]
+                # Compare modulo whitespace: the check is about the
+                # conjunct being present, not about how the generator
+                # wrapped it across lines.
+                def squash(t):
+                    return re.sub(r"\s+", " ", t).strip()
+                if squash(delta) not in squash(body):
+                    add(findings, FAIL, "witness", "witness-delta-not-in-probe", area_name,
+                        f"{rid}.witness.delta.pre is recorded but the generated probe "
+                        f"`{probe}` does not contain it \u2014 the JSON claims a check the "
+                        f"model does not make. Regenerate the probes module.", ref=rid)
+
+
+def check_paired_invariants(root, area_data, sidecar, area_name, findings):
+    """Rule 3. Reachability is one-sided.
+
+    A witness shows a threshold CAN fire; nothing shows it cannot fire EARLY.
+    With MAX_FAILED_ATTEMPTS = 5, changing the guard to `>= 1` leaves every
+    invariant holding, the witness still found (in one step, which nothing
+    looks at), and lint clean. Every numeric constant an action reads needs an
+    invariant bounding it from the other side."""
+    if not sidecar or sidecar.get("__no_module__"):
+        return
+    fm = area_data.get("formal_model") or {}
+    qnt_rel = fm.get("quint_file") or f"{area_name}.qnt"
+    qnt_path = Path(root) / "specs" / qnt_rel
+    try:
+        text = qnt_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    inv_ids = {i.get("id") for i in (area_data.get("invariants") or []) if i.get("id")}
+    review = at_review(area_data)
+    for con in area_data.get("constraints", []) or []:
+        name, cid = con.get("name"), con.get("id", "?")
+        if not name or not isinstance(con.get("value"), (int, float)):
+            continue
+        # "Read by the model" = mentioned somewhere other than its own
+        # declaration. Engine-independent: the raw sidecar text is the same
+        # for the compiler IR and the regex fallback.
+        hits = [m for m in re.finditer(rf"\b{re.escape(name)}\b", text)]
+        decl = re.search(rf"^\s*(pure\s+)?(val|const)\s+{re.escape(name)}\b",
+                         text, re.MULTILINE)
+        used = len(hits) > (1 if decl else 0)
+        paired = con.get("paired_invariant")
+        if paired and paired not in inv_ids:
+            add(findings, FAIL, "constraints", "paired-invariant-dangling", area_name,
+                f"{cid}.paired_invariant '{paired}' is not a declared invariant.", ref=cid)
+            continue
+        if used and not paired:
+            add(findings, FAIL if review else WARN, "constraints",
+                "constraint-without-paired-invariant", area_name,
+                f"{cid} ({name}) is read by an action guard but names no "
+                f"paired_invariant. A witness proves the threshold CAN fire; nothing "
+                f"proves it cannot fire early \u2014 loosening the guard to `>= 1` would "
+                f"pass every gate here.", ref=cid)
+
+
+def check_refusal_artifacts(area_data, area_name, findings):
+    """Rule 4. Rejections have no witness, and replay only replays witnesses.
+
+    So the requirement class most likely to be wrong in the implementation had
+    no code-side evidence at all: a login() written without the locked-account
+    check replays every happy-path trace green, passes the tampered
+    self-tests, and /spec-verify reports pass. The refusal artifact is the
+    missing half \u2014 drive the code into the blocking state, attempt the call,
+    assert it is refused AND that nothing observable moved."""
+    review = at_review(area_data)
+    for req in area_data.get("requirements", []) or []:
+        if not is_rejection(req):
+            continue
+        rid = req.get("id", "?")
+        refusal = req.get("refusal") or {}
+        if not refusal.get("artifact"):
+            add(findings, FAIL if review else WARN, "refusal", "refusal-without-artifact",
+                area_name,
+                f"{rid} is a rejection requirement with no refusal.artifact. It has no "
+                f"witness trace by design, and conformance replay only replays witness "
+                f"traces \u2014 so nothing in the chain checks the implementation actually "
+                f"refuses.", ref=rid)
+            continue
+        if not refusal.get("unchanged"):
+            add(findings, WARN, "refusal", "refusal-without-unchanged", area_name,
+                f"{rid}.refusal names no `unchanged` vars. A rejection that throws "
+                f"after incrementing the counter is not a rejection \u2014 list what must "
+                f"be identical after the refused call.", ref=rid)
+        if review and refusal.get("status") == "failing":
+            add(findings, FAIL, "refusal", "refusal-failing", area_name,
+                f"{rid}.refusal.status is 'failing' \u2014 the implementation does not "
+                f"refuse.", ref=rid)
 
 
 def check_cross_refs(area_data, all_areas, area_name, findings):
@@ -1583,6 +1779,10 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_modality(area_data, area_name, findings)
     check_decision_affects(area_data, all_areas, area_name, findings)
     check_examples(area_data, sidecar, all_areas, area_name, findings)
+    check_witness_binding(area_data, sidecar, area_name, findings)
+    check_witness_delta(root, area_data, sidecar, area_name, findings)
+    check_paired_invariants(root, area_data, sidecar, area_name, findings)
+    check_refusal_artifacts(area_data, area_name, findings)
     check_cross_refs(area_data, all_areas, area_name, findings)
     check_contract_spans(area_data, all_areas, area_name, findings)
     check_open_questions(area_data, area_name, findings)

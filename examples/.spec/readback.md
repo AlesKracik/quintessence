@@ -4,7 +4,7 @@
 
 ## ⚠ Needs Your Attention
 
-- **auth** — 7 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Open coverage GAPs … — see [auth](./specs/auth.readback.md)
+- **auth** — 8 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [auth](./specs/auth.readback.md)
 - **auth-ui** — 3 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement — see [auth-ui](./specs/auth-ui.readback.md)
 - **subscription** — 7 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [subscription](./specs/subscription.readback.md)
 
@@ -12,7 +12,7 @@
 
 | Area | Kind | Version | Status | Last verified |
 |---|---|---|---|---|
-| [auth](./specs/auth.readback.md) | area | 0.2.0 | formalized | never |
+| [auth](./specs/auth.readback.md) | area | 0.3.0 | formalized | never |
 | [auth-ui](./specs/auth-ui.readback.md) | area | 0.1.0 | formalized | never |
 | [session-ownership](./specs/session-ownership.readback.md) | contract | 1.0.0 | formalized | never |
 | [subscription](./specs/subscription.readback.md) | area | 0.1.0 | formalized | never |
@@ -26,5 +26,5 @@
 | 1 | [UI-001](./specs/auth-ui.readback.md#ui-001) — While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login. | auth-ui | ⏳ |
 | 2 | [REQ-001](./specs/auth.readback.md#req-001) — When a registered user submits valid credentials, the system shall create an Active session owned by that user. | auth | ⏳ |
 | 3 | [UI-002](./specs/auth-ui.readback.md#ui-002) — While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard. | auth-ui | ⏳ |
-| 4 | [REQ-003](./specs/auth.readback.md#req-003) — While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS. — failure branch: repeated bad credentials lock the account | auth | ◐ |
+| 4 | [REQ-003](./specs/auth.readback.md#req-003) — While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS. — failure branch: repeated bad credentials lock the account | auth | ⏳ |
 | 5 | [UI-003](./specs/auth-ui.readback.md#ui-003) — While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice. — locked-account counterpart of the submit step | auth-ui | ⏳ |

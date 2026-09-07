@@ -144,6 +144,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
     │                                conformance replay, drift; writes all ledgers
     ├── spec-readback.py          ← deterministic readback generator (area/change/project)
     │                                + derived phase grid (`status <slug> --json`)
+    ├── spec-mutate.py             ← mutate the implementation; check the gates turn red
+    ├── spec-separation.py         ← refuse commits that move claims and code together
     ├── spec-diff.py               ← semantic diff between two revisions of the specs
     │                                (behavior / domain / boundary / evidence + obligations)
     ├── spec-matrix.py            ← state×event coverage matrix, and external×outcome
@@ -376,6 +378,10 @@ Each requirement carries a `witness` block:
 | Every witness fresh | `model_sha` stamp matches current model | stale trace — model changed since it was found |
 | Every action fires somewhere | free: witnessed REQs prove their `quint_ref` fires; `spec-lint` flags unreferenced actions (`orphan-action`) | dead action — missing requirement or dead spec text |
 | Every matrix cell triaged | `spec-matrix --strict` | silent state×event gap |
+| Every witness bound to its call | `spec-lint` (param ghosts vs `action_params`) | the postcondition may hold of state another call produced |
+| Every witness carries a delta | `spec-lint` + the probe's third conjunct | the step may have changed nothing |
+| Every numeric bound two-sided | `constraints[].paired_invariant` | the threshold could fire early and nothing would notice |
+| Every rejection has an artifact | `spec-record verify` preflight | replay covers no prohibition |
 
 **Rejection requirements have no witness — by design.** "If the account is Locked, login shall be rejected" produces no state change; reachability probes can't demonstrate a non-event. The rule: encode the rejection as (or pair it with) the **invariant that stays true** (`noSessionWhileLocked`) and set `witness: { "status": "skipped", "justification": "rejection — enforced by INV-002" }`. Don't delete the requirement and don't force a meaningless predicate — the invariant carries the proof, the justification carries the trace back to it.
 
@@ -388,6 +394,60 @@ One trace, three consumers:
 1. **Reachability proof** — the requirement is demonstrably achievable in the model.
 2. **Review artifact** — `/spec-readback` renders it as a Mermaid sequence diagram (via `tools/itf_tools.py mermaid`): stakeholders review a concrete machine-found example per requirement, not a prose paraphrase. Wrong-rule bugs (lockout at attempt 6 instead of 5) are visible at review, before code exists.
 3. **Conformance test input** — see next section.
+
+---
+
+## Witness Soundness: Three Conjuncts, Not One
+
+A witness proves a behavior is reachable. It does not automatically prove *the behavior the requirement describes* — and the gap between those two is where a green chain hides a wrong implementation. Each probe therefore carries three conjuncts, and each closes a distinct way a witness can prove strictly less than it appears to.
+
+### 1. Argument binding — the postcondition must hold of what this call touched
+
+The path constraint (`_lastAction == quint_ref`) pins **which action ran last**. It does not pin that *this call* produced the postcondition. So a bare existential:
+
+```quint
+sessions.keys().exists(s => sessions.get(s) == Active)
+```
+
+is satisfied by a session some unrelated earlier `login` created. The requirement goes green while its own action misbehaves — exactly the failure the path constraint was introduced to prevent, and does not.
+
+Predicates are written over the **param ghosts** instead:
+
+```quint
+statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)
+```
+
+`quint_ir` exposes each action's parameters (`action_params`), so `spec-lint` can check the binding: a predicate for an action with parameters that mentions none of `_last<Param>` is flagged. The ghost naming convention is fixed (`uid` → `_lastUid`) precisely so a generated probe and a hand-written predicate agree without consulting each other.
+
+### 2. Delta — the step must move the state, not find it already moved
+
+A postcondition alone proves reachability, not causation. The methodology already covers a guard too **strong** to fire — that is the vacuity case, and the witness comes back `no-witness`. Its mirror image is a guard that **already implies its own postcondition**: the action becomes a no-op that can only fire once its result holds, the probe finds a state where the postcondition is true and that action ran, and dead text witnesses green.
+
+So a witness declares the pre-state it must start from:
+
+```json
+"delta": { "pre": "not(_prevSessions.keys().contains(_lastSid))" }
+```
+
+The probe module snapshots pre-state into `_prev*` ghosts and conjoins it. `spec-lint` checks two things: that the delta exists, and that the **generated probe actually kept it** — a recorded delta the probe dropped is worse than none, because the JSON then claims a check the model does not make.
+
+### 3. Boundaries — reachability is one-sided
+
+A witness can show a threshold *can* fire. Nothing in it can show the threshold does not fire *early*. With `MAX_FAILED_ATTEMPTS = 5`, loosening the guard to `>= 1` leaves every invariant holding, the witness still found (in one step, which nothing looks at), and lint clean. Nothing in the chain notices.
+
+Every numeric constant an action reads therefore names a paired invariant:
+
+```json
+{ "id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 5, "paired_invariant": "INV-004" }
+```
+
+```quint
+val noEarlyLockout: bool =
+  failedAttempts.keys().forall(uid =>
+    (attemptsOf(uid) < MAX_FAILED_ATTEMPTS) implies not(isLocked(uid)))
+```
+
+One bounds the threshold from above (it fires), the other from below (it does not fire early). Neither alone pins the number.
 
 ---
 
@@ -415,6 +475,38 @@ Config lives in the area JSON:
 The trust chain ends up: human approves EARS fields → mapping to Quint, reviewed via readback → Apalache produces traces (machine) → traces replay against code (machine, self-tested harness). The AI only does the two human-supervised steps; everything load-bearing is checked by a tool.
 
 **Honest residual gaps** — two places remain human-reviewed rather than machine-checked, by construction: (1) whether the Quint action *semantically* matches its EARS fields (the readback shows them side by side to make that review a diff, not a hunt), and (2) whether the adapter's abstraction mapping is faithful (mitigated by the tampered-trace self-test, reviewed as ordinary code). Know where the trust boundary is; don't pretend it isn't there.
+
+---
+
+## Refusal Artifacts: Code-Side Evidence for Prohibitions
+
+A rejection produces no state change, so it correctly has **no witness trace** — and conformance replay only replays witness traces. The consequence is uncomfortable and was true until now: **the requirement class most likely to be wrong in the implementation had zero code-side evidence.**
+
+Concretely: a `login()` written with no locked-account check replays every happy-path trace green, passes every tampered self-test, and `/spec-verify` reports pass. The model-side proof (`INV-002 noSessionWhileLocked`) says the *model* forbids it. Nothing said the code did.
+
+A refusal artifact is the missing half:
+
+```json
+"refusal": {
+  "artifact": "tests/auth/refusal/locked-login.test.ts",
+  "blocking_state": "accountStatus[uid] == Locked",
+  "unchanged": ["sessions", "userActiveSession", "failedAttempts"]
+}
+```
+
+It drives the code into the blocking state, attempts the call, and asserts **both** halves: that it is refused, **and** that no observable var moved. The second half is not decoration — a rejection that throws after incrementing the counter is not a rejection.
+
+**Keyed on a deliberately skipped witness, not on `ears.unwanted`.** Much unwanted-behavior handling *does* change state — a timeout that moves the order to `PENDING` is witnessable and already covered by replay. The distinguishing property of a refusal is that there is nothing to witness. `is_rejection()` lives in `itf_tools.py` so lint, `spec-record` and the readback cannot drift apart about which requirements owe an artifact.
+
+`spec-record verify` refuses to report success while a rejection has no artifact on disk, and marks `refusal.status` from the conformance run. That is **file-granular**: a green suite means the artifact ran green along with everything else. Recorded as such rather than pretending to per-requirement resolution.
+
+### The property-based tier
+
+Apalache returns the *shortest* counterexample, and `stepP` nondets over a handful of users, so replay is a few traces of a few steps — each requirement exercised once, along one path. The adapter `/spec-apply` already generates is one method per action, one getter per var, and a `reset()`: that is exactly a stateful property-based-testing interface. `conformance.pbt_command` runs it (`quint run --mbt`, or fast-check/Hypothesis against the same adapter). It complements replay and never replaces it — replay checks the model's own traces, PBT explores beyond them.
+
+### Where this leaves codegen
+
+`/spec-apply` writes the code that `/spec-verify` then checks against the same model. A faithful translation passes by construction, so the check largely tests the translator. **Conformance strength is inversely proportional to how much of the implementation was generated** — the strongest configuration is brownfield, where the code was written independently and the spec has something to disagree with. This is not a caveat to bury: it decides how much a green `/spec-verify` is worth on any given area.
 
 ---
 
@@ -905,6 +997,36 @@ This is where `decisions[].affects[]` earns its keep. It is the blast radius: wh
 
 ---
 
+## Mutation and Separation: Two Gates on the Gates
+
+### spec-mutate — would any of this notice?
+
+Three questions, and until now only two had an answer:
+
+| Question | Answered by |
+|---|---|
+| Is the model safe? | Apalache invariant checking |
+| Is the model vacuous? | Witness probes |
+| **Would the gates catch a wrong implementation?** | **`tools/spec-mutate.py`** |
+
+A green `/spec-verify` says the implementation passed the checks that exist. It says nothing about whether those checks are *capable of failing*. `spec-mutate` answers that by breaking the implementation on purpose — boundary shifts, comparison and logic inversion, literal bumps, deleted `throw`/`raise` — and checking the area's own gates turn red.
+
+Discipline, because it edits real source: only files named in `traceability[]`, one mutant at a time, always restored (in a `finally`, so Ctrl-C and crashes still put the source back), refuses a dirty working tree so a failed restore shows up as an ordinary diff, and never mutates inside comments or string literals.
+
+**Survivors are the finding. Kills are an upper bound** — a mutant that fails to compile also turns the gate red, and that is not the gate noticing a behavior change.
+
+### spec-separation — claims and code, not both at once
+
+`spec-record` removed hand-written verdicts from the ledger. It did not remove the other direction: **weakening a claim until the existing implementation satisfies it.** Loosening a witness predicate, dropping a conjunct from an invariant, widening a constraint — each is legal, each leaves every gate green, and lint catches only the crudest forms.
+
+The one reliable signal is timing. A commit that moves a claim *and* the code it judges has, in that commit, no independent check left. `tools/spec-separation.py` refuses it, as a pre-commit hook and on any revision or range.
+
+What counts as a claim change is deliberately narrow: parsed **values**, not text. Reformatting, key reordering, and everything the tools write themselves (`check_results`, `verification_log`, witness status/trace/model_sha, `formal_status`, `last_modified`) are not claim changes — otherwise the rule would fire on every `/spec-check` and become something people route around. `QUINT_ALLOW_MIXED_COMMIT=1` exists for genuinely mixed changes; the point is that they are opted into rather than arrived at.
+
+Separating them does not prove either side is right. It makes the adjustment visible as its own reviewable step.
+
+---
+
 ## Git Conventions (Minimal)
 
 The methodology doesn't dictate a branch model. Use whatever your team uses. Suggested conventions only:
@@ -942,6 +1064,7 @@ requirement.status:   raw → needs-validation → specified → verified
 requirement.witness.status: not-run → witnessed | no-witness | skipped
                       (modality "may": witnessed only when EVERY witness.outcomes[] entry is)
 requirement.modality: must (default) | may | forbidden
+requirement.refusal.status: not-run → passing | failing   (code-side evidence for a prohibition)
 invariant.formal_status: specified | not-run → verified            (bounded ✓ — valid to max_steps only)
                                   → verified-inductive   (proven over ALL reachable states; proof: inductive)
                                   → verified-in-scope    (Alloy: no counterexample within the declared
@@ -982,6 +1105,14 @@ area.status:          raw → structured → formalized → in-review → approv
 - `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
 
 The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-verify`.
+
+### spec-mutate
+
+`tools/spec-mutate.py <area>` mutates the traced implementation and checks the area's gates turn red. `--dry-run` lists mutants, `--operators cmp,lit,logic,throw` selects them, `--limit` caps the run, `--command` overrides the gate. Exit 1 when any mutant survives. Survivors are the finding; kills are an upper bound. See "Mutation and Separation".
+
+### spec-separation
+
+`tools/spec-separation.py` refuses a change that moves spec claims and traced implementation together. Runs on the staged set (pre-commit), `--rev` for one commit, `--range A..B` for many. Compares parsed claim VALUES, so bookkeeping and reformats are invisible to it. `QUINT_ALLOW_MIXED_COMMIT=1` opts out.
 
 ### spec-diff
 

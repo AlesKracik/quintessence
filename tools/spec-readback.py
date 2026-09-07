@@ -474,7 +474,7 @@ def render_requirement(root, area, req, constraints, rendered_full):
     modality = req.get("modality", "must")
     if modality == "forbidden":
         enforced = w.get("enforced_by")
-        lines.append("> **Forbidden** — this must never happen, so there is no trace to "
+        lines.append("> **Forbidden** \u2014 this must never happen, so there is no trace to "
                      "find. The proof is the invariant that stays true"
                      + (f": **{enforced}**." if enforced else " (none named yet)."))
         lines.append("")
@@ -502,11 +502,26 @@ def render_requirement(root, area, req, constraints, rendered_full):
                      f"{eo.get('effect')}{idem}")
     if req.get("error_outcomes"):
         lines.append("")
+    refusal = req.get("refusal") or {}
+    if refusal:
+        mark = {"passing": "\u2713", "failing": "\u2717"}.get(refusal.get("status"), "\u23f3")
+        unchanged = ", ".join(f"`{v}`" for v in (refusal.get("unchanged") or []))
+        lines.append(f"> **Refusal check:** {mark} `{refusal.get('artifact', '—')}` "
+                     f"\u2014 drives the code into "
+                     f"{refusal.get('blocking_state') or 'the blocking state'}, attempts "
+                     f"the call, asserts it is refused"
+                     + (f" and that {unchanged} did not move." if unchanged else "."))
+        lines.append("> _Replay cannot cover this: a rejection has no trace to replay._")
+        lines.append("")
     if w.get("status") == "skipped" and w.get("justification"):
         lines.append(f"> **Witness skipped:** {w['justification']}")
         lines.append("")
     elif w.get("trace") and w.get("status") == "witnessed":
         lines.append(f"> **Witness:** {witness_one_liner(root, w['trace'])}")
+        delta = (w.get("delta") or {}).get("pre")
+        if delta:
+            lines.append(f"> **Starting from:** `{delta}` \u2014 the step had to move the "
+                         f"state, not merely find it already there.")
         lines.append("")
     details = []
     qref = req.get("quint_ref")
@@ -638,6 +653,12 @@ def invariants_section(area):
                      "configured step limit only._")
         lines.append("")
     return lines
+
+
+def paired_note(con):
+    """A numeric bound is only two-sided when something checks the other side."""
+    paired = con.get("paired_invariant")
+    return f" Bounded below by **{paired}**." if paired else ""
 
 
 def limits_section(root, area_name, area):
@@ -948,6 +969,10 @@ def dimensions_section(area):
     examples = area.get("examples", []) or []
     props = area.get("properties", []) or []
     unwanted = [r for r in reqs if (r.get("ears") or {}).get("unwanted")]
+    rejections = [r for r in reqs
+                  if r.get("modality") == "forbidden"
+                  or ((r.get("witness") or {}).get("status") == "skipped"
+                      and (r.get("witness") or {}).get("justification"))]
     witnessed = [r for r in reqs
                  if (r.get("witness") or {}).get("status") in ("witnessed", "skipped")]
     closed = [e for e in entities if e.get("closed")]
@@ -1012,6 +1037,14 @@ def dimensions_section(area):
             if assumptions else "none recorded"),
         row("Temporal behavior", bool(props) or None,
             f"{len(props)} liveness propert(ies)" if props else "none declared"),
+        row("Refusal coverage",
+            all((r.get("refusal") or {}).get("status") == "passing" for r in rejections)
+            if rejections else None,
+            f"{sum(1 for r in rejections if (r.get('refusal') or {}).get('artifact'))}"
+            f"/{len(rejections)} rejection(s) with an artifact, "
+            f"{sum(1 for r in rejections if (r.get('refusal') or {}).get('status') == 'passing')}"
+            f" passing"
+            if rejections else "no rejection requirements"),
         row("Examples", bool(examples) or None,
             f"{len(examples)} worked example(s)" if examples else "none written"),
         row("Invariants", (n_inv_ok == len(invs)) if invs else None,

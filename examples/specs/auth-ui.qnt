@@ -6,7 +6,12 @@
 
 module authUi {
 
-  import auth.* from "./auth"
+  // NO wildcard import of the auth module. `import auth.* from "./auth"` pulls
+  // in that module's `init` and `step`, which collide with this module's own —
+  // and nothing here actually references an auth symbol: `authenticated` is
+  // modelled locally as the UI's view of session state. If a UI invariant ever
+  // needs auth's state, import it QUALIFIED (`import auth from "./auth"`) and
+  // write `auth::sessions`, so the two step relations stay distinct.
 
   // -- Screen state machine -----------------------------------------
 

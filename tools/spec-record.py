@@ -60,6 +60,11 @@ the LLM keeps the judgment dimensions: completeness/correctness/coherence
 reads of the code):
   1. Witness preflight via itf_tools.witness_status — refuses conformance
      replay while any obligation is undischarged (stale/missing/not-run).
+     1b. Refusal preflight: every rejection requirement must name a
+     refusal.artifact that exists on disk. A rejection has no witness
+     trace by design and replay only replays traces, so without this
+     the requirement class most likely to be wrong in the code carries
+     no code-side evidence at all.
   2. Runs conformance.command (trace replay incl. the tampered self-test)
      and the area's test_command from the code repo root; records exit
      codes. Counts are facts, not judgments.
@@ -87,7 +92,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from itf_tools import compute_model_sha, load_trace, witness_status, area_json_path  # noqa: E402
+from itf_tools import (compute_model_sha, load_trace, witness_status,  # noqa: E402
+                       area_json_path, is_rejection)
 from quint_ir import parse_qnt  # noqa: E402
 
 
@@ -868,6 +874,27 @@ def cmd_verify(args):
               f"conformance replay refused (run itf_tools status / spec-record check).")
         bad += 1
 
+    # ── 1b. Refusal preflight ────────────────────────────────────────────
+    # A rejection produces no state change, so it has no witness trace, so
+    # replay never touches it. Its evidence is a refusal artifact: drive the
+    # code into the blocking state, attempt the call, assert it is refused AND
+    # that nothing observable moved.
+    rejections = [r for r in (area.get("requirements") or []) if is_rejection(r)]
+    missing_refusals = []
+    for req in rejections:
+        rid = req.get("id", "?")
+        artifact = (req.get("refusal") or {}).get("artifact")
+        if not artifact:
+            missing_refusals.append(f"{rid} (none declared)")
+        elif not (repo_root / artifact).exists():
+            missing_refusals.append(f"{rid} -> {artifact} (file not found)")
+    if missing_refusals:
+        bad += 1
+        notes.append(f"refusal preflight: {len(missing_refusals)} rejection(s) "
+                     f"without a runnable artifact")
+        print(f"PREFLIGHT: {len(missing_refusals)} rejection requirement(s) with no "
+              f"refusal artifact — " + "; ".join(missing_refusals))
+
     # ── 2. Conformance replay ────────────────────────────────────────────
     conf_result = None  # None = not run
     traces_replayed = 0
@@ -890,6 +917,38 @@ def cmd_verify(args):
             bad += 1
             print(f"CONFORMANCE: FAIL (exit {code})\n{tail}")
             notes.append(f"conformance failed (exit {code})")
+
+    # Refusal artifacts are ordinary test files inside the conformance suite,
+    # so their verdict is the suite's verdict. That is FILE-GRANULAR, not
+    # per-requirement: a green suite means the artifact ran green along with
+    # everything else, and a red suite does not say which part failed. Recorded
+    # honestly as such rather than pretending to per-requirement resolution.
+    if conf_result is not None and not missing_refusals:
+        for req in rejections:
+            refusal = req.setdefault("refusal", {})
+            refusal["status"] = "passing" if conf_result else "failing"
+            refusal["checked_at"] = now_iso()
+        if rejections:
+            print(f"REFUSAL: {len(rejections)} artifact(s) marked "
+                  f"{'passing' if conf_result else 'failing'} (from the conformance run)")
+
+    # ── 2b. Property-based tier (optional) ───────────────────────────────
+    # Replay is a handful of traces of a handful of steps: Apalache returns the
+    # SHORTEST counterexample, so each requirement is exercised once, along one
+    # path. The adapter is already a stateful-PBT interface (one method per
+    # action, one getter per var, reset()), so the same wiring explores
+    # thousands of randomized sequences. Complements replay; never replaces it.
+    pbt_command = conformance.get("pbt_command")
+    if pbt_command and not args.skip_conformance:
+        code, tail = run_shell(pbt_command, repo_root, args.timeout or 1800)
+        if code == 0:
+            print("PBT: PASS — randomized sequences found no divergence")
+        else:
+            bad += 1
+            print(f"PBT: FAIL (exit {code})\n{tail}")
+            notes.append(f"property-based tier failed (exit {code})")
+    elif not pbt_command:
+        notes.append("pbt: not configured (conformance.pbt_command)")
 
     # ── 3. Test suite ────────────────────────────────────────────────────
     tests_result = None

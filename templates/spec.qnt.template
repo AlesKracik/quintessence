@@ -75,16 +75,31 @@ module {{MODULE_NAME}} {
   // ----------------------------------------------------------
   // ACTIONS (state transitions)
   // Each action corresponds to one or more REQ-* items.
-  // Guard conditions (require) encode CON-* constraints.
+  // Guards encode CON-* constraints.
+  //
+  // IDIOM: Quint has no `require`. A guard is a BARE BOOLEAN
+  // conjunct inside `all { ... }`. Nor is there a builtin
+  // `getOrElse`: `m.get(k)` is undefined on an absent key, so
+  // guard it with `if (m.keys().contains(k)) m.get(k) else <d>`.
+  // A `{ ... }` body may bind local `val`s and then yield ONE
+  // expression — bare statements in a block are a parse error.
   // ----------------------------------------------------------
 
   // {{ACTION_DEFINITIONS}}
   // Template for each action:
   //
   // /// REQ-NNN: <requirement description>
-  // action {{ACTION_NAME}}({{PARAMS}}) = {
-  //   require({{PRECONDITION}})   // CON-NNN guard
+  // action {{ACTION_NAME}}({{PARAMS}}): bool = all {
+  //   {{PRECONDITION}},          // CON-NNN guard, a plain boolean
+  //   {{STATE_UPDATES}}
+  // }
+  //
+  // With a local binding:
+  //
+  // action {{ACTION_NAME}}({{PARAMS}}): bool = {
+  //   val {{LOCAL}} = <expression>
   //   all {
+  //     {{PRECONDITION}},
   //     {{STATE_UPDATES}}
   //   }
   // }
@@ -107,6 +122,15 @@ module {{MODULE_NAME}} {
 
   // ----------------------------------------------------------
   // SAFETY INVARIANTS (INV-*)
+  //
+  // Every numeric CON-* an action reads needs an invariant
+  // bounding it from the OTHER side (constraints[].paired_invariant).
+  // A witness proves the threshold CAN fire; nothing proves it
+  // cannot fire early, so `>= MAX` loosened to `>= 1` passes every
+  // other gate. The paired invariant is what notices:
+  //   val noEarly{{THING}}: bool =
+  //     counter.keys().forall(k =>
+  //       (counterOf(k) < {{MAX_CONST}}) implies not(triggered(k)))
   // Must hold in every reachable state.
   // Apalache will try to find a state where these are false.
   // ----------------------------------------------------------

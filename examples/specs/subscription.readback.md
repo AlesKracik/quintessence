@@ -282,6 +282,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | External systems | ✓ | 1 declared, 4 outcomes |
 | Assumptions | ✓ | 2 recorded, 0 open |
 | Temporal behavior | — | none declared |
+| Refusal coverage | ! | 0/1 rejection(s) with an artifact, 0 passing |
 | Examples | ✓ | 3 worked example(s) |
 | Invariants | ! | 0/3 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |

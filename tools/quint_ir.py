@@ -23,7 +23,8 @@ Normalized output (same shape from both engines):
     "vals":        ["atMostOneActiveSession", ...],   # top-level val/invariant
     "temporals":   ["eventualLogout", ...],
     "runs":        ["happyPath", ...],
-    "action_mutations": {"login": ["sessions", ...], ...}
+    "action_mutations": {"login": ["sessions", ...], ...},
+    "action_params":    {"login": ["uid", "sid"], ...}
   }
 
 Usage (CLI):
@@ -131,6 +132,35 @@ def _sum_variants(type_node):
     return names
 
 
+def _lambda_params(expr):
+    """Parameter names of an action, from the lambda its definition wraps.
+
+    Needed because a witness predicate has to be BOUND: `_lastAction == login`
+    pins which action ran last, not that this call caused the postcondition.
+    A bare existential is satisfied by a session some unrelated call created,
+    so the requirement goes green while its own action misbehaves. Checking
+    the binding means knowing the parameter names."""
+    if not isinstance(expr, dict):
+        return []
+    if expr.get("kind") != "lambda":
+        # Some IR versions wrap the lambda one level down (e.g. in an opdef
+        # body). Look one level rather than guessing at the whole shape.
+        for key in ("expr", "body"):
+            inner = expr.get(key)
+            if isinstance(inner, dict) and inner.get("kind") == "lambda":
+                expr = inner
+                break
+        else:
+            return []
+    names = []
+    for param in expr.get("params") or []:
+        if isinstance(param, dict) and param.get("name"):
+            names.append(param["name"])
+        elif isinstance(param, str):
+            names.append(param)
+    return names
+
+
 def _norm_name(s):
     """Normalization for stem↔module matching: lowercase, alphanumerics only.
     Makes 'auth.probes' (file stem) match 'auth_probes' (module name) — the
@@ -182,6 +212,7 @@ def _normalize_ir(ir_json, qnt_path):
         "temporals": [],
         "runs": [],
         "action_mutations": {},
+        "action_params": {},
     }
 
     for d in main.get("declarations") or []:
@@ -207,6 +238,7 @@ def _normalize_ir(ir_json, qnt_path):
             if q == "action":
                 out["actions"].append(name)
                 out["action_mutations"][name] = _collect_mutations(d.get("expr"))
+                out["action_params"][name] = _lambda_params(d.get("expr"))
             elif q == "run":
                 out["runs"].append(name)
             elif q == "temporal":
@@ -287,6 +319,27 @@ def _scan_const_values(text):
             out[name] = raw[1:-1]
         else:
             out[name] = int(raw)
+    return out
+
+
+ACTION_SIG_RE = re.compile(
+    r"^[ \t]*action[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(([^)]*)\)",
+    re.MULTILINE)
+
+
+def _scan_action_params(text):
+    """Regex twin of _lambda_params: `action login(uid: UserId, sid: SessionId)`
+    -> {"login": ["uid", "sid"]}. Parameterless actions are simply absent."""
+    out = {}
+    for m in ACTION_SIG_RE.finditer(text):
+        names = []
+        for part in m.group(2).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            names.append(part.split(":")[0].strip())
+        if names:
+            out[m.group(1)] = names
     return out
 
 
@@ -476,6 +529,7 @@ def _parse_via_regex(qnt_path):
         "temporals": TEMPORAL_RE.findall(text),
         "runs": RUN_RE.findall(text),
         "action_mutations": mutations,
+        "action_params": _scan_action_params(text),
     }
 
 

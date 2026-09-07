@@ -141,10 +141,11 @@
         "properties": {
           "id":        { "type": "string", "pattern": "^ASM-\\d{3}$" },
           "statement": { "type": "string", "description": "The assumed fact, stated so it could in principle be falsified. 'PaymentProvider eventually responds', not 'PaymentProvider is reliable'." },
-          "kind":      { "type": "string", "enum": ["environment", "external", "platform", "human", "other"], "default": "environment" },
+          "kind":      { "type": "string", "enum": ["environment", "external", "platform", "human", "unrepresentable", "other"], "default": "environment", "description": "'unrepresentable' is the sharpest case: something the MODEL cannot express and therefore cannot be wrong about \u2014 monotonic clocks, atomic increments, single-writer storage, bounded skew. The model is silent on it by construction, so silence must not be mistaken for coverage." },
           "external":  { "type": "string", "description": "The externals[].name this assumption is about, when it is about one." },
           "affects":   { "type": "array", "items": { "type": "string" }, "description": "IDs whose verification depends on this assumption (INV-NNN, PROP-NNN, REQ-NNN). The single direction of the link — invariants do not list their assumptions, so there is one source of truth. Drives the readback's 'under ASM-NNN' annotation." },
-          "status":    { "type": "string", "enum": ["accepted", "open", "retired"], "default": "accepted" },
+          "status":    { "type": "string", "enum": ["accepted", "accepted-risk", "open", "retired"], "default": "accepted", "description": "'accepted': believed and relied upon. 'accepted-risk': known to be possibly false, shipped anyway \u2014 requires a `rationale` saying who accepted it and why. 'open': undecided, blocks approval. 'retired': no longer relied upon." },
+          "rationale": { "type": "string", "description": "Required for status 'accepted-risk'. An assumption knowingly carried as risk needs its argument recorded, or the next reader cannot tell a considered bet from an oversight." },
           "discharged_by": { "type": "string", "description": "How the assumption is monitored or tested in the real system, if it is (an alert, a contract test). Absent means: believed, not checked." }
         }
       }
@@ -304,8 +305,30 @@
                   }
                 }
               },
+              "delta": {
+                "type": "object",
+                "description": "The PRE-state the witnessing step must start from. A postcondition alone proves reachability, not causation: a guard that already implies its own postcondition makes the action a no-op that only fires once its result already holds, and the probe goes green over dead text. The probe conjoins this over `_prev*` ghosts snapshotted before the step, so the trace must show the state actually MOVING.",
+                "additionalProperties": false,
+                "required": ["pre"],
+                "properties": {
+                  "pre":  { "type": "string", "description": "Quint boolean over the `_prev*` ghost vars, true exactly when the pre-state was one this behavior could still change. For a lockout: `_prevAccountStatus.get(_lastUid) == Unlocked`." },
+                  "note": { "type": "string" }
+                }
+              },
               "checked_at": { "type": "string", "format": "date-time" },
               "model_sha":  { "type": "string", "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one." }
+            }
+          },
+          "refusal": {
+            "type": "object",
+            "description": "Code-side evidence for a REJECTION requirement. Such a requirement produces no state change, so it correctly has no witness trace \u2014 and conformance replay only replays witness traces. Without this block the requirement class most likely to be wrong in the implementation carries zero code-side evidence: a login() written with no locked-account check replays every happy-path trace green, passes the tampered self-tests, and /spec-verify reports pass.",
+            "additionalProperties": false,
+            "properties": {
+              "artifact":  { "type": "string", "description": "Path of the test that drives the code into the blocking state, attempts the call, and asserts BOTH that it is refused AND that no observable var moved." },
+              "blocking_state": { "type": "string", "description": "The state the code must be driven into first, in the model's vocabulary (e.g. 'accountStatus[uid] == Locked')." },
+              "unchanged": { "type": "array", "items": { "type": "string" }, "description": "Observable vars that must be identical after the refused call. This half is what makes it a refusal: a rejection that throws AFTER incrementing the counter is not a rejection." },
+              "status":     { "type": "string", "enum": ["not-run", "passing", "failing"], "default": "not-run" },
+              "checked_at": { "type": "string", "format": "date-time" }
             }
           },
           "quint_ref": { "type": "string", "description": "Name of the Quint action that realizes this requirement." },
@@ -378,6 +401,11 @@
         "properties": {
           "id":          { "type": "string", "pattern": "^CON(-CONTRACT)?-\\d{3}$" },
           "name":        { "type": "string", "description": "Symbolic name used in code, e.g. MAX_FAILED_ATTEMPTS." },
+          "paired_invariant": {
+            "type": "string",
+            "pattern": "^INV(-CONTRACT)?-\\d{3}$",
+            "description": "The invariant bounding this constant from the OTHER side. Reachability is one-sided: a witness can show a threshold CAN fire, never that it cannot fire early. With MAX_FAILED_ATTEMPTS = 5, changing the guard to `>= 1` leaves every invariant holding, the witness still found (in one step), and lint clean \u2014 nothing in the chain notices. The paired invariant is what makes the threshold two-sided, e.g. `failedAttempts.get(u) < MAX_FAILED_ATTEMPTS implies not(isLocked(u))`."
+          },
           "value":       {},
           "unit":        { "type": "string" },
           "description": { "type": "string" }
@@ -615,6 +643,7 @@
         "adapter":    { "type": "string", "description": "Path (relative to code root) of the adapter mapping Quint actions to code API calls and Quint vars to observable code state." },
         "harness":    { "type": "string", "description": "Path (relative to tests root) of the trace-replay harness that loads ITF files and drives the adapter." },
         "command":    { "type": "string", "description": "Shell command that replays all traces, e.g. 'pnpm test conformance'. Run from the code repo root by /spec-verify." },
+        "pbt_command": { "type": "string", "description": "OPTIONAL stateful property-based testing command. Apalache returns the SHORTEST counterexample, so replay is a handful of traces and a handful of steps per area, each requirement exercised once. The adapter already exposes one method per action, one getter per var and a reset() \u2014 which is exactly a stateful-PBT interface, so the same adapter drives thousands of randomized sequences for the price of wiring. Complements replay, never replaces it: replay checks the model's own traces, PBT explores beyond them." },
         "traces_dir": { "type": "string", "description": "Where witness traces live, relative to specs/. Default: '<area>/traces'." }
       }
     },

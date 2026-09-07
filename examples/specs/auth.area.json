@@ -2,7 +2,7 @@
   "$schema": "../../schemas/area.schema.json",
   "kind": "area",
   "area": "auth",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "status": "formalized",
   "last_modified": "2026-05-15T12:00:00Z",
   "purpose": "Authenticate users; manage session lifecycle; lock accounts after repeated failed attempts.",
@@ -79,8 +79,12 @@
         "response": "create an Active session owned by that user"
       },
       "witness": {
-        "predicate": "sessions.keys().exists(sid => sessions.get(sid) == Active)",
-        "status": "not-run"
+        "predicate": "sessions.keys().contains(_lastSid) and statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)",
+        "status": "not-run",
+        "delta": {
+          "pre": "not(_prevSessions.keys().contains(_lastSid))",
+          "note": "The session must not have existed before the call — otherwise 'some Active session exists' is satisfied by one an earlier login created."
+        }
       }
     },
     {
@@ -94,8 +98,12 @@
         "response": "transition that session to LoggedOut"
       },
       "witness": {
-        "predicate": "sessions.keys().exists(sid => sessions.get(sid) == LoggedOut)",
-        "status": "not-run"
+        "predicate": "statusOf(sessions, _lastSid) == LoggedOut",
+        "status": "not-run",
+        "delta": {
+          "pre": "statusOf(_prevSessions, _lastSid) == Active",
+          "note": "Logging out something already logged out proves nothing."
+        }
       }
     },
     {
@@ -110,11 +118,12 @@
         "response": "increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS"
       },
       "witness": {
-        "predicate": "accountStatus.keys().exists(uid => accountStatus.get(uid) == Locked)",
-        "trace": "auth/traces/REQ-003.itf.json",
-        "status": "witnessed",
-        "checked_at": "2026-05-15T12:00:00Z",
-        "model_sha": "a3a842ed9cb7fcb71cd27c237fb14023ca6f0ac6f7af7a29e4acf2cbde26b8c4"
+        "predicate": "accountStatus.keys().contains(_lastUid) and accountStatus.get(_lastUid) == Locked",
+        "status": "not-run",
+        "delta": {
+          "pre": "not(_prevAccountStatus.keys().contains(_lastUid) and _prevAccountStatus.get(_lastUid) == Locked)",
+          "note": "The account must have been unlocked before the failure that locked it — a state where it was already Locked witnesses nothing about the lockout rule."
+        }
       }
     },
     {
@@ -127,9 +136,42 @@
         "response": "transition it to Expired"
       },
       "witness": {
-        "predicate": "sessions.keys().exists(sid => sessions.get(sid) == Expired)",
-        "status": "not-run"
+        "predicate": "statusOf(sessions, _lastSid) == Expired",
+        "status": "not-run",
+        "delta": {
+          "pre": "statusOf(_prevSessions, _lastSid) == Active",
+          "note": "Only an Active session can expire."
+        }
       }
+    },
+    {
+      "id": "REQ-005",
+      "description": "While the account is Locked, if the user submits valid credentials, then the system shall refuse the login.",
+      "status": "specified",
+      "modality": "forbidden",
+      "quint_ref": "login",
+      "ears": {
+        "state": "the Account is Locked",
+        "trigger": "the user submits valid credentials",
+        "unwanted": true,
+        "response": "refuse the login and leave every session and counter untouched"
+      },
+      "witness": {
+        "status": "skipped",
+        "enforced_by": "INV-002",
+        "justification": "A prohibition has no reachable state to witness — there is no step in which 'the login did not happen' becomes visible. INV-002 (noSessionWhileLocked) carries the model-side proof."
+      },
+      "refusal": {
+        "artifact": "tests/auth/refusal/locked-login.test.ts",
+        "blocking_state": "accountStatus[uid] == Locked",
+        "unchanged": [
+          "sessions",
+          "userActiveSession",
+          "failedAttempts"
+        ],
+        "status": "not-run"
+      },
+      "cross_refs": []
     }
   ],
   "invariants": [
@@ -153,6 +195,14 @@
       "quint_name": "noAccessWithInvalidToken",
       "formal_status": "specified",
       "criticality": "high"
+    },
+    {
+      "id": "INV-004",
+      "description": "Below MAX_FAILED_ATTEMPTS, the account stays unlocked.",
+      "quint_name": "noEarlyLockout",
+      "formal_status": "specified",
+      "criticality": "high",
+      "cross_refs": []
     }
   ],
   "constraints": [
@@ -160,7 +210,8 @@
       "id": "CON-001",
       "name": "MAX_FAILED_ATTEMPTS",
       "value": 5,
-      "description": "Failed-login threshold before locking."
+      "description": "Failed-login threshold before locking.",
+      "paired_invariant": "INV-004"
     },
     {
       "id": "CON-002",
@@ -211,6 +262,13 @@
           "actor": "User",
           "quint_action": "logout",
           "guard": "session is currently Active"
+        },
+        {
+          "from": "Active",
+          "to": "LoggedOut",
+          "trigger": "login_failed",
+          "actor": "System",
+          "quint_action": "login_failed"
         }
       ]
     },

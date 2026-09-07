@@ -12,6 +12,9 @@ Covers the deterministic, quint-free logic touched by the robustness pass:
   - closed-world entities checked against the sidecar's variant type
   - modality: a witness per permitted outcome, an invariant per prohibition
   - the semantic diff (spec-diff) and the completeness dimension grid
+  - witness soundness: argument binding, the delta conjunct, paired invariants
+  - refusal artifacts (code-side evidence for prohibitions)
+  - spec-mutate (do the gates fail?) and spec-separation (claims vs code)
 
 The tool files use hyphenated names, so they're loaded by path. None of
 these tests need quint/Apalache/Java — they exercise pure Python only.
@@ -43,6 +46,9 @@ lint = _load("spec_lint", "spec-lint.py")
 matrix = _load("spec_matrix", "spec-matrix.py")
 diff = _load("spec_diff", "spec-diff.py")
 quint_ir = _load("quint_ir_mod", "quint_ir.py")
+itf = _load("itf_tools_mod", "itf_tools.py")
+mutate = _load("spec_mutate", "spec-mutate.py")
+sep = _load("spec_separation", "spec-separation.py")
 
 
 # ── Finding 1: honest bounded/inductive invariant rendering ──────────────────
@@ -1320,3 +1326,466 @@ def test_diff_over_real_git_history(tmp_path):
     assert "widened" in reports["auth"]["domain"][0]["now"]
     rendered = "\n".join(diff.render(reports, True, "HEAD", diff.WORKTREE))
     assert "## What Changed" in rendered and "MAX_FAILED_ATTEMPTS" in rendered
+
+
+# ── Witness soundness 1: argument binding ───────────────────────────────────
+
+_BIND_SIDECAR = {"vars": {"sessions", "accountStatus"},
+                 "actions": {"login", "tick"},
+                 "action_params": {"login": ["uid", "sid"]},
+                 "action_mutations": {"login": ["sessions"]},
+                 "runs": set(), "type_variants": {}}
+
+
+def _bind_codes(reqs, status="formalized", sidecar=_BIND_SIDECAR):
+    findings = []
+    lint.check_witness_binding({"status": status, "requirements": reqs},
+                               sidecar, "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_ghost_name_convention():
+    assert lint.ghost_for("uid") == "_lastUid"
+    assert lint.ghost_for("sid") == "_lastSid"
+    assert lint.ghost_for("c") == "_lastC"
+
+
+def test_unbound_existential_is_flagged():
+    # The exact shape that passes today while proving nothing about this call.
+    codes = _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "login",
+                          "witness": {"predicate":
+                                      "sessions.keys().exists(s => sessions.get(s) == Active)"}}])
+    assert (lint.WARN, "witness-unbound") in codes
+
+
+def test_bound_predicate_passes():
+    assert _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "login",
+                         "witness": {"predicate":
+                                     "statusOf(sessions, _lastSid) == Active"}}]) == []
+
+
+def test_binding_fails_at_review():
+    codes = _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "login",
+                          "witness": {"predicate": "sessions.size() > 0"}}],
+                        status="approved")
+    assert (lint.FAIL, "witness-unbound") in codes
+
+
+def test_parameterless_action_has_nothing_to_bind_to():
+    assert _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "tick",
+                         "witness": {"predicate": "sessions.size() > 0"}}]) == []
+
+
+def test_rejection_is_exempt_from_binding():
+    # A prohibition has no predicate to bind; it carries an enforcing invariant.
+    assert _bind_codes([{"id": "REQ-005", "status": "specified", "quint_ref": "login",
+                         "modality": "forbidden",
+                         "witness": {"status": "skipped", "enforced_by": "INV-002"}}]) == []
+
+
+def test_binding_reports_once_per_requirement():
+    codes = _bind_codes([{"id": "REQ-007", "status": "specified", "quint_ref": "login",
+                          "modality": "may",
+                          "witness": {"outcomes": [{"name": "a", "predicate": "sessions.size() > 0"},
+                                                   {"name": "b", "predicate": "sessions.size() > 1"}]}}])
+    assert codes.count((lint.WARN, "witness-unbound")) == 1
+
+
+def test_quint_ir_exposes_action_parameters(tmp_path):
+    src = tmp_path / "m.qnt"
+    src.write_text("module m {\n"
+                   "  var sessions: int\n"
+                   "  action login(uid: UserId, sid: SessionId): bool = all { true }\n"
+                   "  action tick = all { true }\n}\n", encoding="utf-8")
+    ir = quint_ir.parse_qnt(src, engine="regex")
+    assert ir["action_params"]["login"] == ["uid", "sid"]
+    assert "tick" not in ir["action_params"]      # parameterless: simply absent
+
+
+# ── Witness soundness 2: the delta conjunct ─────────────────────────────────
+
+def _delta_codes(tmp_path, reqs, status="formalized", probes=None):
+    area = {"status": status, "requirements": reqs,
+            "formal_model": {"quint_file": "a.qnt"}}
+    if probes is not None:
+        specs = tmp_path / "specs"
+        specs.mkdir(parents=True, exist_ok=True)
+        (specs / "a.probes.qnt").write_text(probes, encoding="utf-8")
+        area["formal_model"]["probes_file"] = "a.probes.qnt"
+    findings = []
+    lint.check_witness_delta(tmp_path, area, {}, "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_missing_delta_warns_then_fails(tmp_path):
+    req = [{"id": "REQ-001", "status": "specified", "witness": {"predicate": "p"}}]
+    assert (lint.WARN, "witness-delta-missing") in _delta_codes(tmp_path, req)
+    assert (lint.FAIL, "witness-delta-missing") in _delta_codes(tmp_path, req,
+                                                                status="approved")
+
+
+def test_present_delta_passes(tmp_path):
+    req = [{"id": "REQ-001", "status": "specified",
+            "witness": {"predicate": "p", "delta": {"pre": "not(_prevX.contains(k))"}}}]
+    assert _delta_codes(tmp_path, req) == []
+
+
+def test_delta_dropped_by_the_probe_generator_fails(tmp_path):
+    # A recorded delta the probe does not contain is worse than none: the JSON
+    # claims a check the model never performs.
+    probes = 'val witness_REQ_001: bool =\n  not(p and _lastAction == "login")\n'
+    req = [{"id": "REQ-001", "status": "specified",
+            "witness": {"predicate": "p", "delta": {"pre": "not(_prevX.contains(k))"}}}]
+    codes = _delta_codes(tmp_path, req, probes=probes)
+    assert (lint.FAIL, "witness-delta-not-in-probe") in codes
+
+
+def test_delta_in_the_probe_passes_despite_wrapping(tmp_path):
+    # The generator wraps long conjuncts across lines; the check is about the
+    # conjunct being there, not about its formatting.
+    probes = ('val witness_REQ_001: bool =\n'
+              '  not(p and _lastAction == "login"\n'
+              '      and not(_prevX.contains(k)))\n')
+    req = [{"id": "REQ-001", "status": "specified",
+            "witness": {"predicate": "p",
+                        "delta": {"pre": "not(_prevX.contains(k))"}}}]
+    assert _delta_codes(tmp_path, req, probes=probes) == []
+
+
+def test_rejection_owes_no_delta(tmp_path):
+    req = [{"id": "REQ-005", "status": "specified", "modality": "forbidden",
+            "witness": {"status": "skipped", "enforced_by": "INV-002"}}]
+    assert _delta_codes(tmp_path, req) == []
+
+
+# ── Witness soundness 3: paired invariants ──────────────────────────────────
+
+def _paired_codes(tmp_path, constraints, invariants=None, qnt=None, status="formalized"):
+    specs = tmp_path / "specs"
+    specs.mkdir(parents=True, exist_ok=True)
+    (specs / "auth.qnt").write_text(
+        qnt if qnt is not None else
+        "module auth {\n  pure val MAX_FAILED_ATTEMPTS: int = 5\n"
+        "  action f(u: str): bool = all { n < MAX_FAILED_ATTEMPTS }\n}\n",
+        encoding="utf-8")
+    area = {"status": status, "constraints": constraints,
+            "invariants": invariants or [{"id": "INV-004"}],
+            "formal_model": {"quint_file": "auth.qnt"}}
+    findings = []
+    lint.check_paired_invariants(tmp_path, area, {"vars": set()}, "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_read_constant_without_paired_invariant_warns(tmp_path):
+    codes = _paired_codes(tmp_path, [{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS",
+                                      "value": 5}])
+    assert (lint.WARN, "constraint-without-paired-invariant") in codes
+
+
+def test_read_constant_fails_at_review(tmp_path):
+    codes = _paired_codes(tmp_path, [{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS",
+                                      "value": 5}], status="in-review")
+    assert (lint.FAIL, "constraint-without-paired-invariant") in codes
+
+
+def test_paired_constant_is_clean(tmp_path):
+    assert _paired_codes(tmp_path, [{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS",
+                                     "value": 5, "paired_invariant": "INV-004"}]) == []
+
+
+def test_paired_invariant_must_exist(tmp_path):
+    codes = _paired_codes(tmp_path, [{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS",
+                                      "value": 5, "paired_invariant": "INV-999"}])
+    assert (lint.FAIL, "paired-invariant-dangling") in codes
+
+
+def test_declared_but_unused_constant_needs_no_pairing(tmp_path):
+    # Declared and never read by any action: no threshold to get wrong.
+    qnt = "module auth {\n  pure val MAX_SESSION_AGE: int = 24\n}\n"
+    assert _paired_codes(tmp_path, [{"id": "CON-002", "name": "MAX_SESSION_AGE",
+                                     "value": 24}], qnt=qnt) == []
+
+
+def test_non_numeric_constraint_is_exempt(tmp_path):
+    assert _paired_codes(tmp_path, [{"id": "CON-003", "name": "MODE",
+                                     "value": "strict"}]) == []
+
+
+# ── Refusal artifacts ───────────────────────────────────────────────────────
+
+def test_is_rejection_shared_definition():
+    assert itf.is_rejection({"modality": "forbidden"})
+    assert itf.is_rejection({"witness": {"status": "skipped", "justification": "x"}})
+    # unwanted-behavior handling that CHANGES state is witnessable, and replay
+    # already covers it — it is not a refusal.
+    assert not itf.is_rejection({"ears": {"unwanted": True}})
+    assert not itf.is_rejection({"witness": {"status": "skipped"}})
+    assert not itf.is_rejection({})
+    assert not itf.is_rejection(None)
+
+
+def _refusal_codes(reqs, status="formalized"):
+    findings = []
+    lint.check_refusal_artifacts({"status": status, "requirements": reqs},
+                                 "auth", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_rejection_without_artifact_warns_then_fails():
+    req = [{"id": "REQ-005", "modality": "forbidden",
+            "witness": {"status": "skipped", "enforced_by": "INV-002"}}]
+    assert (lint.WARN, "refusal-without-artifact") in _refusal_codes(req)
+    assert (lint.FAIL, "refusal-without-artifact") in _refusal_codes(req, "approved")
+
+
+def test_refusal_without_unchanged_vars_warns():
+    # A rejection that throws after incrementing the counter is not a rejection.
+    req = [{"id": "REQ-005", "modality": "forbidden",
+            "refusal": {"artifact": "t.ts"}}]
+    assert (lint.WARN, "refusal-without-unchanged") in _refusal_codes(req)
+
+
+def test_complete_refusal_is_clean():
+    req = [{"id": "REQ-005", "modality": "forbidden",
+            "refusal": {"artifact": "t.ts", "unchanged": ["sessions"]}}]
+    assert _refusal_codes(req) == []
+
+
+def test_failing_refusal_blocks_review():
+    req = [{"id": "REQ-005", "modality": "forbidden",
+            "refusal": {"artifact": "t.ts", "unchanged": ["sessions"],
+                        "status": "failing"}}]
+    assert (lint.FAIL, "refusal-failing") in _refusal_codes(req, "in-review")
+
+
+def test_ordinary_requirement_owes_no_refusal():
+    assert _refusal_codes([{"id": "REQ-001", "witness": {"predicate": "p"}}]) == []
+
+
+# ── Assumptions amendment ───────────────────────────────────────────────────
+
+def test_accepted_risk_needs_a_rationale():
+    area = {"status": "formalized",
+            "assumptions": [{"id": "ASM-001", "statement": "clock is monotonic",
+                             "status": "accepted-risk"}]}
+    findings = []
+    lint.check_assumptions(area, {}, "auth", findings)
+    codes = [(f.severity, f.check) for f in findings]
+    assert (lint.FAIL, "accepted-risk-without-rationale") in codes
+
+    area["assumptions"][0]["rationale"] = "Accepted by the platform team on 2026-05-01."
+    findings = []
+    lint.check_assumptions(area, {}, "auth", findings)
+    assert findings == []
+
+
+# ── spec-mutate ─────────────────────────────────────────────────────────────
+
+def test_mask_preserves_length_and_blanks_noise():
+    src = ('// limit >= 5 in a comment\n'
+           'const MAX = 5;\n'
+           'if (n >= MAX) { throw new Error("too many >= tries"); }\n')
+    masked = mutate.mask_noise(src)
+    assert len(masked) == len(src)
+    assert "limit" not in masked and "too many" not in masked
+    assert "MAX" in masked and "throw" in masked
+
+
+def test_mask_handles_block_comments_and_escapes():
+    src = 'a /* >= */ b = "he said \\"x >= y\\"";\n'
+    masked = mutate.mask_noise(src)
+    assert len(masked) == len(src)
+    assert masked.count(">=") == 0
+
+
+def test_operators_find_the_shapes_that_matter():
+    masked = mutate.mask_noise('if (n >= 5 && ok) { throw new Error("no"); }')
+    assert any("cmp >= -> >" == label for label, *_ in mutate.OPERATORS["cmp"](masked))
+    assert any("lit 5 -> 6" == label for label, *_ in mutate.OPERATORS["lit"](masked))
+    assert any("&&" in label for label, *_ in mutate.OPERATORS["logic"](masked))
+    assert any("throw" in label for label, *_ in mutate.OPERATORS["throw"](masked))
+
+
+def test_python_raise_is_mutable():
+    masked = mutate.mask_noise("    if locked:\n        raise ValueError('no')\n")
+    assert list(mutate.OPERATORS["throw"](masked))
+
+
+def test_traced_files_only(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "authService.ts").write_text("x", encoding="utf-8")
+    (tmp_path / "src" / "untraced.ts").write_text("x", encoding="utf-8")
+    area = {"traceability": [{"id": "REQ-001", "code": "src/authService.ts:login"},
+                             {"id": "REQ-002", "code": "src/missing.ts:foo"}]}
+    files = mutate.traced_files(area, tmp_path)
+    assert [f.name for f in files] == ["authService.ts"]
+
+
+def test_mutant_application_always_restores(tmp_path):
+    target = tmp_path / "code.js"
+    original = "if (n >= 5) { return 1; }\n"
+    target.write_text(original, encoding="utf-8")
+    masked = mutate.mask_noise(original)
+    label, start, end, repl = next(iter(mutate.OPERATORS["cmp"](masked)))
+    seen = {}
+
+    def fake_run(command, repo_root, timeout):
+        seen["during"] = target.read_text(encoding="utf-8")
+        return 1
+
+    mutate.run_gate = fake_run
+    code = mutate.apply_and_run(
+        {"file": str(target), "start": start, "end": end, "replacement": repl},
+        "gate", tmp_path, 10)
+    assert code == 1
+    assert seen["during"] != original            # the mutant really was applied
+    assert target.read_text(encoding="utf-8") == original   # and always restored
+
+
+# ── spec-separation ─────────────────────────────────────────────────────────
+
+def _spec(**kw):
+    base = {"area": "auth",
+            "requirements": [{"id": "REQ-001", "ears": {"response": "r"},
+                              "status": "specified",
+                              "witness": {"predicate": "p", "status": "not-run"}}],
+            "invariants": [{"id": "INV-001", "description": "d",
+                            "formal_status": "specified"}],
+            "constraints": [{"id": "CON-001", "name": "MAX", "value": 5}],
+            "check_results": {"ran_at": "t"}, "last_modified": "t"}
+    base.update(kw)
+    return json.dumps(base)
+
+
+def test_separation_ignores_mechanical_bookkeeping():
+    before = _spec()
+    after = json.loads(before)
+    after["check_results"] = {"ran_at": "later"}
+    after["last_modified"] = "later"
+    after["requirements"][0]["status"] = "verified"
+    after["requirements"][0]["witness"]["status"] = "witnessed"
+    after["requirements"][0]["witness"]["trace"] = "auth/traces/REQ-001.itf.json"
+    after["invariants"][0]["formal_status"] = "verified"
+    assert sep.claim_diff(sep.claims(before), sep.claims(json.dumps(after))) == []
+
+
+def test_separation_ignores_reformatting():
+    before = _spec()
+    reflowed = json.dumps(json.loads(before), indent=4, sort_keys=True)
+    assert sep.claim_diff(sep.claims(before), sep.claims(reflowed)) == []
+
+
+def test_separation_catches_a_weakened_predicate():
+    before = _spec()
+    after = json.loads(before)
+    after["requirements"][0]["witness"]["predicate"] = "true"
+    assert sep.claim_diff(sep.claims(before), sep.claims(json.dumps(after))) == \
+        ["requirements.REQ-001"]
+
+
+def test_separation_catches_a_widened_constraint():
+    before = _spec()
+    after = json.loads(before)
+    after["constraints"][0]["value"] = 7
+    assert sep.claim_diff(sep.claims(before), sep.claims(json.dumps(after))) == \
+        ["constraints"]
+
+
+def test_separation_catches_a_dropped_invariant_conjunct():
+    before = _spec()
+    after = json.loads(before)
+    after["invariants"][0]["description"] = "weaker"
+    assert sep.claim_diff(sep.claims(before), sep.claims(json.dumps(after))) == \
+        ["invariants.INV-001"]
+
+
+def test_separation_refusal_status_is_a_result_not_a_claim():
+    before = json.loads(_spec())
+    before["requirements"][0]["refusal"] = {"artifact": "t.ts", "unchanged": ["s"],
+                                            "status": "not-run"}
+    after = json.loads(json.dumps(before))
+    after["requirements"][0]["refusal"]["status"] = "passing"
+    assert sep.claim_diff(sep.claims(json.dumps(before)),
+                          sep.claims(json.dumps(after))) == []
+    after["requirements"][0]["refusal"]["unchanged"] = []
+    assert sep.claim_diff(sep.claims(json.dumps(before)),
+                          sep.claims(json.dumps(after))) == ["requirements.REQ-001"]
+
+
+def test_separation_path_matching_is_segment_wise():
+    traced = {"src/auth/authService.ts", "src/billing/"}
+    assert sep.touches_implementation("src/auth/authService.ts", traced)
+    assert sep.touches_implementation("repo/src/auth/authService.ts", traced)
+    assert sep.touches_implementation("src/billing/invoice.ts", traced)
+    assert not sep.touches_implementation("src/authz/authService.ts", traced)
+    assert not sep.touches_implementation("docs/auth.md", traced)
+
+
+def test_separation_end_to_end_over_git(tmp_path):
+    import subprocess
+
+    def run(*args):
+        subprocess.run(args, cwd=tmp_path, check=True, capture_output=True, text=True)
+
+    run("git", "init", "-q")
+    run("git", "config", "user.email", "t@example.com")
+    run("git", "config", "user.name", "t")
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "src").mkdir()
+    spec = tmp_path / "specs" / "auth.area.json"
+    code = tmp_path / "src" / "authService.ts"
+    payload = json.loads(_spec())
+    payload["traceability"] = [{"id": "REQ-001", "code": "src/authService.ts:login"}]
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+    code.write_text("export const login = () => 1;\n", encoding="utf-8")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "v1")
+
+    # Bookkeeping-only spec edit plus a code edit: not a mixed commit.
+    payload["check_results"] = {"ran_at": "later"}
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+    code.write_text("export const login = () => 2;\n", encoding="utf-8")
+    run("git", "add", "-A")
+    files, before, after = sep.changed_files(
+        type("A", (), {"range": None, "rev": None})(), tmp_path)
+    traced = sep.traced_paths(tmp_path, before)
+    impl = [f for f in files if not f.startswith("specs/")
+            and sep.touches_implementation(f, traced)]
+    claim_changed = [f for f in files if f.startswith("specs/")
+                     and sep.claim_diff(sep.claims(sep.blob(before, f, tmp_path)),
+                                        sep.claims(sep.blob(after, f, tmp_path)))]
+    assert impl and not claim_changed
+
+    # Now weaken a claim in the same commit as the code change: mixed.
+    payload["requirements"][0]["witness"]["predicate"] = "true"
+    spec.write_text(json.dumps(payload), encoding="utf-8")
+    run("git", "add", "-A")
+    claim_changed = [f for f in files if f.startswith("specs/")
+                     and sep.claim_diff(sep.claims(sep.blob(before, f, tmp_path)),
+                                        sep.claims(sep.blob(None, f, tmp_path)))]
+    assert claim_changed and impl
+
+
+def test_python_deletion_keeps_the_file_parsable(tmp_path):
+    # A deleted `raise` that leaves an empty suite turns the gate red with an
+    # IndentationError — the mutant then reads as killed while the gate never
+    # exercised the refusal at all. Substituting `pass` is what makes a gate
+    # blind to the refusal path show up as the survivor it is.
+    src = ("def check(n, locked):\n"
+           "    if locked:\n"
+           "        raise ValueError('no')\n"
+           "    return n\n")
+    path = tmp_path / "auth.py"
+    path.write_text(src, encoding="utf-8")
+    label, start, end, repl = next(iter(mutate.OPERATORS["throw"](mutate.mask_noise(src))))
+    fixed = mutate.keep_syntax_valid(path, src, "throw", start, end, repl)
+    mutated = src[:start] + fixed + src[end:]
+    compile(mutated, "auth.py", "exec")          # must still parse
+    assert "raise" not in mutated                # and the refusal must be gone
+
+
+def test_braced_languages_need_no_substitute(tmp_path):
+    src = 'if (locked) { throw new Error("no"); }\n'
+    path = tmp_path / "auth.ts"
+    label, start, end, repl = next(iter(mutate.OPERATORS["throw"](mutate.mask_noise(src))))
+    assert mutate.keep_syntax_valid(path, src, "throw", start, end, repl) == ""

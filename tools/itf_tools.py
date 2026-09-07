@@ -55,6 +55,28 @@ GHOST_PREFIXES = ("_last", "mbt::")
 AREA_SUFFIXES = ("area", "contract")
 
 
+def is_rejection(req):
+    """True when a requirement forbids a behavior rather than requiring one.
+
+    Shared so lint, spec-record and the readback cannot disagree about which
+    requirements owe a refusal artifact. Two forms count:
+
+      - modality "forbidden" (the typed form), or
+      - a deliberately SKIPPED witness carrying a justification (the older
+        prose form, still valid).
+
+    Deliberately NOT keyed on ears.unwanted alone: much unwanted-behavior
+    handling does change state (a timeout that moves the order to PENDING),
+    is witnessable, and is already covered by trace replay. The distinguishing
+    property of a refusal is that there is no state change to witness."""
+    if not isinstance(req, dict):
+        return False
+    if req.get("modality") == "forbidden":
+        return True
+    w = req.get("witness") or {}
+    return w.get("status") == "skipped" and bool(w.get("justification"))
+
+
 def area_json_path(root, name):
     """Resolve specs/<name>.area.json or specs/<name>.contract.json —
     whichever exists. Falls back to the .area.json path (for new files /

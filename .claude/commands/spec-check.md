@@ -52,7 +52,7 @@ Before the runner can do anything:
 
 2. **Generate/refresh the probe module** at `specs/<target>.probes.qnt` (see `templates/probes.qnt.template`). It imports the area module, instruments steps with ghost vars, and declares one negated probe per requirement, named `witness_<REQ_ID with - → _>`:
 
-   - **Ghost vars** — underscore-prefixed so they can never collide with real model vars: `_lastAction` (which action produced the state) plus one param ghost per distinct action parameter (`_lastUid`, `_lastSid`, …). `initP`/`stepP` wrap the area's `init`/`step`, tagging every branch. The replay harness reads call parameters from these ghosts — never infer them from state diffs.
+   - **Ghost vars** — underscore-prefixed so they can never collide with real model vars: `_lastAction` (which action produced the state), one param ghost per distinct action parameter (`_lastUid`, `_lastSid`, …), and one `_prev<Var>` snapshot per state var some `witness.delta` reads. Ghost initial values in `initP` are written explicitly (`_prevSessions' = Map()`), never `= sessions`: before init there is no prior state to read. `initP`/`stepP` wrap the area's `init`/`step`, tagging every branch. The replay harness reads call parameters from these ghosts — never infer them from state diffs.
    - **Path-constrained probes**: the probe negates `predicate AND _lastAction == <quint_ref>` — the trace must reach the postcondition *via the requirement's own action*. A trace that produces the right state through some other mechanism is not a demonstration of this requirement. Drop the `_lastAction` conjunct only when the requirement has no `quint_ref` (rare — e.g. cross-ref requirements).
 
 ```quint

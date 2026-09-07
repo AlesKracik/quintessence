@@ -44,3 +44,6 @@ specs/*/gen/
 # NOT ignored: specs/<area>/traces/ (witness traces are committed — they're
 # verification inputs cross-machine) and specs/*.probes.qnt (CI typechecks them).
 **/specs/*/gen/
+
+# Apalache scratch output (regenerated on every run)
+_apalache-out/

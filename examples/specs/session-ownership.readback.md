@@ -40,6 +40,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | External systems | — | none declared — if the area calls anything, this is a gap |
 | Assumptions | — | none recorded |
 | Temporal behavior | — | none declared |
+| Refusal coverage | — | no rejection requirements |
 | Examples | — | none written |
 | Invariants | ✓ | 2/2 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |

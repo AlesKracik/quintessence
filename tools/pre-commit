@@ -3,7 +3,20 @@
 # Install: bash tools/setup-hooks.sh
 set -euo pipefail
 
-# Only run when spec files are staged.
+# The separation gate looks at every commit, because the thing it checks for
+# is a commit that touches specs AND code. Bailing out on "no specs staged"
+# would make it blind to exactly half its job.
+ROOT_EARLY="$(git rev-parse --show-toplevel)"
+PYTHON_EARLY="$(command -v python3 || command -v python || true)"
+if [ -n "$PYTHON_EARLY" ] && [ -f "$ROOT_EARLY/tools/spec-separation.py" ]; then
+  if ! "$PYTHON_EARLY" "$ROOT_EARLY/tools/spec-separation.py" --root "$ROOT_EARLY"; then
+    echo ""
+    echo "  To skip (not recommended): git commit --no-verify"
+    exit 1
+  fi
+fi
+
+# Everything below only concerns staged spec files.
 git diff --cached --name-only | grep -qE '^(specs|\.spec)/' || exit 0
 
 PYTHON="$(command -v python3 || command -v python || true)"

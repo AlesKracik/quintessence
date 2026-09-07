@@ -56,7 +56,7 @@ graph TB
 
 <details><summary>Quint action `click_sign_in`, witness predicate + trace</summary>
 
-`specs/auth-ui.qnt:L42-L47` · model `3b187046b51a`
+`specs/auth-ui.qnt:L47-L52` · model `24b0c5487088`
 
 ```quint
   action click_sign_in: bool = all {
@@ -79,7 +79,7 @@ graph TB
 
 <details><summary>Quint action `submit_success`, witness predicate + trace</summary>
 
-`specs/auth-ui.qnt:L51-L58` · model `3b187046b51a`
+`specs/auth-ui.qnt:L56-L63` · model `24b0c5487088`
 
 ```quint
   action submit_success: bool = all {
@@ -106,7 +106,7 @@ graph TB
 
 <details><summary>Quint action `submit_locked`, witness predicate + trace</summary>
 
-`specs/auth-ui.qnt:L61-L67` · model `3b187046b51a`
+`specs/auth-ui.qnt:L66-L72` · model `24b0c5487088`
 
 ```quint
   action submit_locked: bool = all {
@@ -141,6 +141,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | External systems | — | none declared — if the area calls anything, this is a gap |
 | Assumptions | — | none recorded |
 | Temporal behavior | — | none declared |
+| Refusal coverage | — | no rejection requirements |
 | Examples | — | none written |
 | Invariants | ! | 0/1 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
