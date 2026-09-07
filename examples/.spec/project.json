@@ -36,6 +36,15 @@
       "code_path": "src/subscription/",
       "tests_path": "tests/subscription/",
       "test_command": "pnpm test subscription"
+    },
+    {
+      "name": "cart",
+      "kind": "area",
+      "description": "Brownfield example: a spec extracted from existing code, with the extraction ledger that accounts for every decision site.",
+      "code_repo": null,
+      "code_path": "code/legacy-cart/",
+      "tests_path": "tests/cart/",
+      "test_command": "node --test tests/cart"
     }
   ],
   "architecture": {

@@ -20,6 +20,7 @@ Subcommands:
                 [--only INV-001,REQ-003] [--no-witness] [--json]
   verify <area> [--root .] [--code-root PATH]
                 [--skip-conformance] [--skip-tests] [--json]
+  equiv  <area> [--root .] [--code-root PATH] [--sequences N] [--json]
 
 What `check` does, in order:
   1. Invariants + properties (quint_name set): `quint verify
@@ -75,6 +76,19 @@ reads of the code):
      requirements[].status -> "verified" and traceability[].verified for
      witnessed REQs ONLY when the replay was green, trims the log to the
      newest 50 entries. No hand-written verdicts anywhere.
+
+What `equiv` does (brownfield only, and only where it is configured):
+  Runs the differential comparator \u2014 the original implementation and the
+  regenerated one, driven through identical sequences, with
+  boundary.observable_state diffed after every step. This is the one
+  question only a brownfield area can ask, because only it has a second
+  implementation to ask. Preflight refuses to report a verdict without a
+  declared observation boundary (nothing to compare), without a parallel
+  path distinct from the original (the oracle must survive the
+  experiment), and without a comparator command. Writes
+  check_results.differential mechanically; the verdict is
+  'equivalent-in-sequences' and always carries the sequence count, because
+  no number of sequences proves equivalence.
 
 Exit codes: 0 = all verified/witnessed/fresh; 1 = any counterexample,
 no-witness, error, timeout, or failed replay/tests; 2 = setup problem
@@ -781,6 +795,106 @@ def cmd_check(args):
     sys.exit(1 if bad else 0)
 
 
+# ── equiv (differential conformance) ─────────────────────────────────────────
+
+DIVERGENCE_RE = re.compile(r"^DIVERGENCES=(\d+)\s*$", re.MULTILINE)
+
+
+def cmd_equiv(args):
+    """Differential conformance: is the regenerated implementation
+    substitutable for the original at the declared boundary?
+
+    Extraction fidelity is otherwise asserted by whoever ran the confirm
+    pass. Brownfield is the one case where it can be MEASURED, because the
+    original answers any question you ask it \u2014 and until now nothing asked."""
+    root = Path(args.root)
+    area_path = area_json_path(root, args.area)
+    area = load_json(area_path)
+    if area is None:
+        fail_setup(f"{area_path} not found.")
+    if area.get("kind") == "contract":
+        fail_setup(f"'{args.area}' is a contract \u2014 it has no implementation to compare.")
+
+    project = load_json(root / ".spec" / "project.json") or {}
+    repo_root, entry = resolve_code_root(root, args.area, project, args.code_root)
+    conformance = area.get("conformance") or {}
+    diff_cfg = conformance.get("differential") or {}
+    boundary = area.get("boundary") or {}
+
+    # Preflight. Each refusal is a thing that would make the verdict a lie.
+    if not boundary.get("observable_state"):
+        fail_setup("boundary.observable_state is not declared \u2014 there is nothing to "
+                   "diff, so 'equivalent' would mean 'equivalent in ways nobody "
+                   "wrote down'.")
+    command = diff_cfg.get("command")
+    if not command:
+        fail_setup("conformance.differential.command is not set. Generate the "
+                   "comparator with /spec-apply --parallel first.")
+    parallel = diff_cfg.get("parallel_path")
+    if not parallel:
+        fail_setup("conformance.differential.parallel_path is not set.")
+    original_path = entry.get("code_path") or ""
+    par_norm = str(parallel).replace(chr(92), "/").strip("/")
+    orig_norm = str(original_path).replace(chr(92), "/").strip("/")
+    if orig_norm and (par_norm == orig_norm or par_norm.startswith(orig_norm + "/")):
+        fail_setup(f"parallel_path '{parallel}' is inside the original's code_path "
+                   f"'{original_path}'. The oracle has to survive the experiment \u2014 "
+                   f"generate beside it, never over it.")
+    if not (repo_root / parallel).exists():
+        fail_setup(f"{repo_root / parallel} does not exist \u2014 run /spec-apply "
+                   f"--parallel to generate the implementation under test.")
+
+    sequences = args.sequences or diff_cfg.get("sequences") or 1000
+    env_note = f"QUINT_DIFF_SEQUENCES={sequences}"
+    os.environ["QUINT_DIFF_SEQUENCES"] = str(sequences)
+    os.environ["QUINT_DIFF_PARALLEL"] = str(parallel)
+
+    print(f"DIFFERENTIAL: {args.area} \u2014 original vs {parallel} ({env_note})")
+    code, tail = run_shell(command, repo_root, args.timeout or 3600)
+
+    # The comparator reports its own count on a final DIVERGENCES=<n> line.
+    # Absent, the count is unknown rather than zero \u2014 an unreported number is
+    # not a good number.
+    m = DIVERGENCE_RE.search(tail or "")
+    divergences = int(m.group(1)) if m else None
+    result = "equivalent-in-sequences" if code == 0 else "diverged"
+    if code != 0 and divergences is None:
+        divergences = None
+    if code not in (0, 1):
+        result = "error"
+
+    entry_out = {
+        "ran_at": now_iso(),
+        "sequences": sequences,
+        "result": result,
+    }
+    if divergences is not None:
+        entry_out["divergences"] = divergences
+    elif result == "equivalent-in-sequences":
+        entry_out["divergences"] = 0
+    if tail and result != "equivalent-in-sequences":
+        entry_out["detail"] = "\n".join(tail.strip().splitlines()[-8:])
+
+    area.setdefault("check_results", {})["differential"] = entry_out
+    save_area(area_path, area)
+
+    if result == "equivalent-in-sequences":
+        print(f"DIFFERENTIAL: no sequence distinguished the two implementations "
+              f"({sequences} sequences). That is not equivalence \u2014 it is the "
+              f"absence of a counterexample at this budget.")
+    elif result == "diverged":
+        n = divergences if divergences is not None else "an unreported number of"
+        print(f"DIFFERENTIAL: {n} divergence(s). Each is either a missing spec "
+              f"element (the extraction gap) or an intentional difference \u2014 record "
+              f"the second as a decision.\n{tail}")
+    else:
+        print(f"DIFFERENTIAL: comparator error (exit {code})\n{tail}")
+
+    if args.emit_json:
+        print(json.dumps({"area": args.area, **entry_out}, indent=2))
+    sys.exit(0 if result == "equivalent-in-sequences" else 1)
+
+
 # ── verify ───────────────────────────────────────────────────────────────────
 
 def git_head(cwd):
@@ -1042,6 +1156,16 @@ def main():
     pc.add_argument("--json", dest="emit_json", action="store_true",
                     help="Also print a JSON summary.")
     pc.set_defaults(func=cmd_check)
+
+    pe = sub.add_parser("equiv", help="Differential conformance vs the original implementation.")
+    pe.add_argument("area")
+    pe.add_argument("--root", default=".")
+    pe.add_argument("--code-root", dest="code_root")
+    pe.add_argument("--sequences", type=int,
+                    help="Override conformance.differential.sequences.")
+    pe.add_argument("--timeout", type=int)
+    pe.add_argument("--json", dest="emit_json", action="store_true")
+    pe.set_defaults(func=cmd_equiv)
 
     pv = sub.add_parser("verify", help="Replay conformance + tests; record verification_log.")
     pv.add_argument("area")

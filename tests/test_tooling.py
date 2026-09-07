@@ -15,6 +15,8 @@ Covers the deterministic, quint-free logic touched by the robustness pass:
   - witness soundness: argument binding, the delta conjunct, paired invariants
   - refusal artifacts (code-side evidence for prohibitions)
   - spec-mutate (do the gates fail?) and spec-separation (claims vs code)
+  - brownfield fidelity: the substitution boundary, extraction site detection
+    and its ledger, provenance, and the differential/extraction dimensions
 
 The tool files use hyphenated names, so they're loaded by path. None of
 these tests need quint/Apalache/Java — they exercise pure Python only.
@@ -49,6 +51,7 @@ quint_ir = _load("quint_ir_mod", "quint_ir.py")
 itf = _load("itf_tools_mod", "itf_tools.py")
 mutate = _load("spec_mutate", "spec-mutate.py")
 sep = _load("spec_separation", "spec-separation.py")
+audit = _load("spec_extract_audit", "spec-extract-audit.py")
 
 
 # ── Finding 1: honest bounded/inductive invariant rendering ──────────────────
@@ -1789,3 +1792,372 @@ def test_braced_languages_need_no_substitute(tmp_path):
     path = tmp_path / "auth.ts"
     label, start, end, repl = next(iter(mutate.OPERATORS["throw"](mutate.mask_noise(src))))
     assert mutate.keep_syntax_valid(path, src, "throw", start, end, repl) == ""
+
+
+# ── Brownfield 1: the substitution boundary ─────────────────────────────────
+
+def _boundary_codes(area):
+    findings = []
+    lint.check_boundary(area, "cart", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_differential_without_boundary_fails():
+    # "Equivalent" would mean "equivalent in ways nobody wrote down".
+    codes = _boundary_codes({"status": "formalized",
+                             "conformance": {"differential": {"command": "x"}}})
+    assert (lint.FAIL, "differential-without-boundary") in codes
+
+
+def test_boundary_that_pins_everything_warns():
+    # A spec with nothing free is a transliteration: it can no longer disagree
+    # with the code, so it inherits its bugs as truth.
+    codes = _boundary_codes({"status": "formalized",
+                             "boundary": {"entry_points": ["f()"],
+                                          "observable_state": ["s"],
+                                          "persistence_contract": "none"}})
+    assert (lint.WARN, "boundary-pins-everything") in codes
+
+
+def test_complete_boundary_is_clean():
+    assert _boundary_codes({"status": "formalized", "boundary": {
+        "entry_points": ["f()"], "observable_state": ["s"],
+        "persistence_contract": "none", "free": ["layout"]}}) == []
+
+
+def test_boundary_silent_on_persistence_warns_at_review():
+    area = {"status": "approved", "boundary": {
+        "entry_points": ["f()"], "observable_state": ["s"], "free": ["layout"]}}
+    assert (lint.WARN, "boundary-silent-on-persistence") in _boundary_codes(area)
+
+
+def test_no_boundary_no_findings():
+    assert _boundary_codes({"status": "formalized"}) == []
+
+
+# ── Brownfield 2: extraction site detection ─────────────────────────────────
+
+_JS = '''const MAX = 20;
+function addItem(cart, sku) {
+  if (cart.status === "closed") {
+    throw new Error("closed");
+  }
+
+  if (cart.items.length >= 5) {
+    return null;
+  }
+  try {
+    save(cart);
+  } catch (err) {
+    return { ok: false };
+  }
+  return cart;
+}
+
+function clear(cart) {
+  return cart;
+}
+'''
+
+
+def _sites(tmp_path, text=_JS, name="cart.js"):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return audit.scan_file(path, tmp_path)
+
+
+def test_branches_do_not_swallow_blank_lines(tmp_path):
+    # `\\s*` after the closing brace eats newlines, and the site then swallows
+    # the blank line plus whatever followed it.
+    sites = _sites(tmp_path)
+    for site in sites:
+        assert "\n\n" not in site["snippet"]
+    branches = [s["snippet"] for s in sites if s["kind"] == "branch"]
+    assert any(s.startswith("if (cart.items.length >= 5)") for s in branches)
+
+
+def test_brace_catch_form_is_found(tmp_path):
+    # `} catch (e) {` is the common shape; missing it would miss every error
+    # handler in a braced language, which is the half specs are thinnest on.
+    kinds = [s["kind"] for s in _sites(tmp_path)]
+    assert "error-handler" in kinds
+
+
+def test_identical_statements_in_different_functions_are_distinct_sites(tmp_path):
+    # Two `return cart;` lines collide on text alone; one ledger row would
+    # silently claim both decisions.
+    returns = [s for s in _sites(tmp_path) if s["snippet"] == "return cart;"]
+    assert len(returns) == 2
+    assert returns[0]["fingerprint"] != returns[1]["fingerprint"]
+    assert {r["owner"] for r in returns} == {"addItem", "clear"}
+
+
+def test_guard_literals_are_their_own_site(tmp_path):
+    # "the branch is specified" and "the number in it is specified" are
+    # different claims.
+    lits = [s for s in _sites(tmp_path) if s["kind"] == "guard-literal"]
+    assert any("5" in s["snippet"] for s in lits)
+    # The constant declaration is not a guard, so MAX = 20 is not a site.
+    assert not any("20" in s["snippet"] for s in lits)
+
+
+def test_comments_and_strings_produce_no_sites(tmp_path):
+    text = 'function f() {\n  // if (x) { throw new Error("no"); }\n  const s = "if (y) return 1;";\n  return s;\n}\n'
+    sites = _sites(tmp_path, text)
+    assert [s["snippet"] for s in sites] == ["return s;"]
+
+
+def test_fingerprint_survives_reindentation(tmp_path):
+    a = _sites(tmp_path, "function f() {\n  if (x > 1) {\n    return 1;\n  }\n}\n")
+    b = _sites(tmp_path, "function f() {\n      if  (x > 1)   {\n        return 1;\n      }\n}\n")
+    assert {s["fingerprint"] for s in a} == {s["fingerprint"] for s in b}
+
+
+def test_fingerprint_changes_when_the_condition_changes(tmp_path):
+    a = _sites(tmp_path, "function f() {\n  if (x > 1) { return 1; }\n}\n")
+    b = _sites(tmp_path, "function f() {\n  if (x > 2) { return 1; }\n}\n")
+    assert {s["fingerprint"] for s in a} != {s["fingerprint"] for s in b}
+
+
+# ── Brownfield 3: the ledger reconciliation ─────────────────────────────────
+
+def _audit(sites, area):
+    return audit.audit(area, sites)
+
+
+def test_unclaimed_sites_are_counted(tmp_path):
+    sites = _sites(tmp_path)
+    report = _audit(sites, {})
+    assert report["unclaimed"] == len(sites)
+    assert report["mapped"] == 0
+
+
+def test_mapped_site_must_name_an_existing_id(tmp_path):
+    sites = _sites(tmp_path)[:1]
+    area = {"requirements": [{"id": "REQ-001"}], "extraction_triage": [
+        {"file": "cart.js", "fingerprint": sites[0]["fingerprint"],
+         "verdict": "MAPPED", "maps_to": ["REQ-404"]}]}
+    assert any("REQ-404" in p for p in _audit(sites, area)["problems"])
+
+
+def test_stale_ledger_entries_are_reported(tmp_path):
+    # The code moved out from under a decision; silently keeping the row would
+    # let the ledger drift into fiction while still looking complete.
+    sites = _sites(tmp_path)[:1]
+    area = {"extraction_triage": [
+        {"file": "cart.js", "fingerprint": sites[0]["fingerprint"],
+         "verdict": "NOT-BEHAVIOR", "reason": "x"},
+        {"file": "cart.js", "fingerprint": "deadbeef",
+         "verdict": "NOT-BEHAVIOR", "reason": "gone"}]}
+    assert _audit(sites, area)["stale"] == ["deadbeef"]
+
+
+def test_out_of_scope_site_must_cite_an_exclusion(tmp_path):
+    sites = _sites(tmp_path)[:1]
+    area = {"scope": {"excluded": [{"item": "pricing", "reason": "billing"}]},
+            "extraction_triage": [
+                {"file": "cart.js", "fingerprint": sites[0]["fingerprint"],
+                 "verdict": "OUT-OF-SCOPE", "reason": "x", "scope_ref": "nope"}]}
+    assert any("scope_ref" in p for p in _audit(sites, area)["problems"])
+
+
+def test_emit_produces_paste_ready_stubs(tmp_path):
+    stubs = audit.emit_stubs(_sites(tmp_path)[:2])
+    assert len(stubs) == 2
+    assert all(s["verdict"] == "GAP" and s["fingerprint"] for s in stubs)
+
+
+# ── Brownfield 4: ledger coherence in lint ──────────────────────────────────
+
+def _ledger_codes(rows, area=None):
+    area = dict(area or {})
+    area["extraction_triage"] = rows
+    findings = []
+    lint.check_extraction_ledger(area, "cart", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_mapped_without_target_fails():
+    assert (lint.FAIL, "mapped-without-target") in _ledger_codes(
+        [{"file": "a.js", "fingerprint": "aaaaaaaa", "verdict": "MAPPED"}])
+
+
+def test_verdict_without_reason_fails():
+    assert (lint.FAIL, "extraction-verdict-without-reason") in _ledger_codes(
+        [{"file": "a.js", "fingerprint": "aaaaaaaa", "verdict": "DEFENSIVE"}])
+
+
+def test_duplicate_site_fails():
+    rows = [{"file": "a.js", "fingerprint": "aaaaaaaa", "verdict": "DEAD", "reason": "x"},
+            {"file": "a.js", "fingerprint": "aaaaaaaa", "verdict": "DEFENSIVE", "reason": "y"}]
+    assert (lint.FAIL, "duplicate-extraction-site") in _ledger_codes(rows)
+
+
+def test_gap_blocks_approval():
+    rows = [{"file": "a.js", "fingerprint": "aaaaaaaa", "verdict": "GAP",
+             "reason": "unspecified", "question": "Q-001"}]
+    assert _ledger_codes(rows, {"status": "formalized"}) == []
+    assert (lint.FAIL, "extraction-gap-on-approved") in _ledger_codes(
+        rows, {"status": "approved"})
+
+
+def test_dead_code_is_a_finding_about_the_code():
+    assert (lint.WARN, "extraction-dead-code") in _ledger_codes(
+        [{"file": "a.js", "fingerprint": "aaaaaaaa", "verdict": "DEAD",
+          "reason": "unreachable"}])
+
+
+# ── Brownfield 5: provenance ────────────────────────────────────────────────
+
+def _prov_codes(tmp_path, items, status="formalized", key="requirements"):
+    findings = []
+    lint.check_extraction_provenance(tmp_path, {"status": status, key: items},
+                                     "cart", findings)
+    return [(f.severity, f.check) for f in findings]
+
+
+def test_extracted_without_evidence_warns_then_fails(tmp_path):
+    item = [{"id": "REQ-001", "source": "extracted"}]
+    assert (lint.WARN, "extracted-without-evidence") in _prov_codes(tmp_path, item)
+    assert (lint.FAIL, "extracted-without-evidence") in _prov_codes(
+        tmp_path, item, status="approved")
+
+
+def test_evidence_satisfies_the_gate(tmp_path):
+    item = [{"id": "REQ-001", "source": "extracted",
+             "extraction": {"evidence": "cart.js:10-20", "confidence": "high"}}]
+    assert _prov_codes(tmp_path, item) == []
+
+
+def test_low_confidence_surfaces_at_review(tmp_path):
+    item = [{"id": "REQ-001", "source": "extracted",
+             "extraction": {"evidence": "cart.js:10", "confidence": "low"}}]
+    assert (lint.WARN, "low-confidence-at-review") in _prov_codes(
+        tmp_path, item, status="in-review")
+
+
+def test_elicited_items_need_no_evidence(tmp_path):
+    assert _prov_codes(tmp_path, [{"id": "REQ-001", "source": "elicited"}]) == []
+
+
+# ── Brownfield 6: harvested example traces ──────────────────────────────────
+
+def test_harvested_trace_must_exist(tmp_path):
+    findings = []
+    lint.check_harvested_examples(
+        tmp_path, {"examples": [{"id": "EX-001", "trace": "cart/traces/EX-001.itf.json"}]},
+        "cart", findings)
+    assert [(f.severity, f.check) for f in findings] == \
+        [(lint.FAIL, "harvested-trace-missing")]
+
+    (tmp_path / "specs" / "cart" / "traces").mkdir(parents=True)
+    (tmp_path / "specs" / "cart" / "traces" / "EX-001.itf.json").write_text("{}", encoding="utf-8")
+    findings = []
+    lint.check_harvested_examples(
+        tmp_path, {"examples": [{"id": "EX-001", "trace": "cart/traces/EX-001.itf.json"}]},
+        "cart", findings)
+    assert findings == []
+
+
+# ── Brownfield 7: the readback surfaces ─────────────────────────────────────
+
+def test_boundary_section_names_what_is_free():
+    lines = readback.boundary_section({"boundary": {
+        "entry_points": ["addItem(c, s, q)"], "observable_state": ["cart.status"],
+        "persistence_contract": "the stored shape is the contract",
+        "free": ["file layout"]}})
+    text = "\n".join(lines)
+    assert "addItem(c, s, q)" in text and "cart.status" in text
+    assert "Deliberately free" in text and "file layout" in text
+
+
+def test_differential_result_is_never_reported_as_equivalence():
+    lines = readback.boundary_section({
+        "boundary": {"observable_state": ["s"]},
+        "check_results": {"differential": {"result": "equivalent-in-sequences",
+                                           "sequences": 2000, "divergences": 0}}})
+    text = "\n".join(lines)
+    assert "2000" in text
+    assert "not equivalence" in text
+
+
+def test_divergence_is_surfaced_in_attention(tmp_path):
+    items = readback.attention_items(tmp_path, "cart", {
+        "check_results": {"differential": {"result": "diverged", "divergences": 3}}})
+    assert any("Not substitutable" in i for i in items)
+
+
+def test_unclaimed_sites_are_surfaced_in_attention(tmp_path):
+    items = readback.attention_items(tmp_path, "cart", {
+        "check_results": {"extraction": {"unclaimed": 4, "sites": 18}}})
+    assert any("Unaccounted code" in i for i in items)
+
+
+def test_extraction_section_groups_by_verdict():
+    lines = readback.extraction_section({
+        "check_results": {"extraction": {"sites": 3, "mapped": 1, "triaged": 2,
+                                         "unclaimed": 0}},
+        "extraction_triage": [
+            {"file": "a.js", "line": 1, "fingerprint": "aaaaaaaa", "verdict": "MAPPED",
+             "maps_to": ["REQ-001"]},
+            {"file": "a.js", "line": 9, "fingerprint": "bbbbbbbb", "verdict": "GAP",
+             "reason": "unspecified rejection", "question": "Q-001"},
+            {"file": "a.js", "line": 12, "fingerprint": "cccccccc", "verdict": "DEAD",
+             "reason": "unreachable"}]})
+    text = "\n".join(lines)
+    assert "**GAP** (1)" in text and "**DEAD** (1)" in text
+    assert "Q-001" in text
+    assert "1 site(s) MAPPED" in text
+
+
+def test_low_confidence_extraction_is_flagged_on_the_requirement(tmp_path):
+    lines = readback.render_requirement(
+        tmp_path,
+        {"area": "cart", "requirements": []},
+        {"id": "REQ-001", "status": "needs-validation",
+         "ears": {"response": "do the thing"},
+         "extraction": {"evidence": "cart.js:31-35", "confidence": "low"}},
+        [], set())
+    text = "\n".join(lines)
+    assert "cart.js:31-35" in text and "low confidence" in text
+
+
+def test_dimensions_report_extraction_and_substitutability():
+    unmeasured = readback.dimensions_section({})
+    joined = "\n".join(unmeasured)
+    assert "| Extraction coverage | — |" in joined
+    assert "| Substitutability | — |" in joined
+
+    measured = readback.dimensions_section({"check_results": {
+        "extraction": {"sites": 18, "mapped": 9, "triaged": 9, "unclaimed": 0},
+        "differential": {"result": "equivalent-in-sequences", "sequences": 2000,
+                         "divergences": 0}}})
+    joined = "\n".join(measured)
+    assert "| Extraction coverage | ✓ |" in joined
+    assert "| Substitutability | ✓ |" in joined
+
+    diverged = readback.dimensions_section({"check_results": {
+        "extraction": {"sites": 18, "mapped": 9, "triaged": 4, "unclaimed": 5},
+        "differential": {"result": "diverged", "sequences": 2000, "divergences": 3}}})
+    joined = "\n".join(diverged)
+    assert "| Extraction coverage | ! |" in joined
+    assert "| Substitutability | ! |" in joined
+
+
+# ── The worked brownfield example stays accounted for ───────────────────────
+
+def test_cart_example_ledger_covers_every_site():
+    """The example is the regression test for the whole loop: if a site is
+    added to cart.js without a verdict, this fails."""
+    repo = Path(__file__).resolve().parent.parent
+    area = json.loads((repo / "examples" / "specs" / "cart.area.json")
+                      .read_text(encoding="utf-8"))
+    examples_root = repo / "examples"
+    sites = []
+    for path in mutate.traced_files(area, examples_root):
+        sites.extend(audit.scan_file(path, examples_root))
+    report = audit.audit(area, sites)
+    assert report["unclaimed"] == 0, report["unclaimed_sites"]
+    assert report["problems"] == []
+    assert report["stale"] == []
+    assert report["mapped"] > 0 and report["triaged"] > 0

@@ -354,6 +354,17 @@ def attention_items(root, area_name, area):
         items.append(f"**Unhandled failure behavior** — {outcomes['uncovered']} declared "
                      f"external outcome(s) have no requirement saying what happens and no "
                      f"triage saying why not. Run `tools/spec-matrix.py <area> --outcomes`.")
+    extraction = (area.get("check_results") or {}).get("extraction") or {}
+    if extraction.get("unclaimed"):
+        items.append(f"**Unaccounted code** \u2014 {extraction['unclaimed']} decision site(s) "
+                     f"in the implementation that no spec element claims and no triage "
+                     f"explains. These are what a regenerated implementation gets wrong.")
+    differential = (area.get("check_results") or {}).get("differential") or {}
+    if differential.get("result") == "diverged":
+        items.append(f"**Not substitutable** \u2014 {differential.get('divergences', 'some')} "
+                     f"divergence(s) between the original and the regenerated "
+                     f"implementation. Either the spec is missing something, or the "
+                     f"difference is intentional and undeclared.")
     for asm in area.get("assumptions", []) or []:
         if asm.get("status", "accepted") == "open":
             items.append(f"**Open assumption** — {asm.get('id')}: {asm.get('statement')} "
@@ -464,6 +475,16 @@ def render_requirement(root, area, req, constraints, rendered_full):
     sentence = resolve_constraints(ears_sentence(req), constraints)
     lines.append(f"{mark}{tag} {sentence}")
     lines.append("")
+    prov = req.get("extraction") or {}
+    if prov.get("evidence"):
+        conf = prov.get("confidence")
+        # A low-confidence extraction is a guess about ambiguous code. Saying so
+        # is the difference between a reviewable draft and a plausible-looking
+        # assertion.
+        flag = " \u26a0 **low confidence** \u2014 the code was ambiguous here" \
+            if conf == "low" else (f" ({conf} confidence)" if conf else "")
+        lines.append(f"> _Extracted from `{prov['evidence']}`{flag}._")
+        lines.append("")
     if req.get("type") == "non-functional":
         fc = req.get("fit_criterion") or {}
         lines.append(f"> **Fit:** {fc.get('metric', '?')} — {fc.get('target', '?')} — "
@@ -870,6 +891,83 @@ def scope_section(area):
     return lines
 
 
+def boundary_section(area):
+    """What a replacement would have to preserve. Printed next to Scope
+    because the two answer different questions people routinely conflate:
+    scope says what this area is responsible for, boundary says what 'the
+    same behavior' means."""
+    b = area.get("boundary") or {}
+    if not b:
+        return []
+    lines = ["## What a Replacement Must Preserve", ""]
+    if b.get("entry_points"):
+        lines += ["**Entry points:** " + ", ".join(f"`{e}`" for e in b["entry_points"]), ""]
+    if b.get("observable_state"):
+        lines += ["**Observable state** (what the differential comparator diffs): "
+                  + ", ".join(f"`{v}`" for v in b["observable_state"]), ""]
+    if b.get("emits"):
+        lines += ["**Emits:** " + ", ".join(b["emits"]), ""]
+    if b.get("persistence_contract"):
+        lines += ["**Persistence:** " + b["persistence_contract"], ""]
+    if b.get("free"):
+        lines += ["**Deliberately free** \u2014 a replacement may do these differently: "
+                  + ", ".join(b["free"]) + ".", ""]
+    diff = (area.get("check_results") or {}).get("differential") or {}
+    if diff:
+        result = diff.get("result")
+        if result == "equivalent-in-sequences":
+            lines += [f"**Differential:** \u2713 no sequence out of "
+                      f"{diff.get('sequences', '?')} distinguished the regenerated "
+                      f"implementation from the original. That is the absence of a "
+                      f"counterexample at this budget, not equivalence.", ""]
+        elif result == "diverged":
+            lines += [f"**Differential:** \u2717 {diff.get('divergences', 'some')} "
+                      f"divergence(s) over {diff.get('sequences', '?')} sequences \u2014 "
+                      f"each is a missing spec element or an undeclared intentional "
+                      f"difference.", ""]
+        else:
+            lines += [f"**Differential:** \u23f3 {result}.", ""]
+    return lines
+
+
+def extraction_section(area):
+    """The code the spec does not describe. Only rendered for an area that has
+    a ledger \u2014 which in practice means one extracted from existing code."""
+    rows = area.get("extraction_triage", []) or []
+    stats = (area.get("check_results") or {}).get("extraction") or {}
+    if not rows and not stats:
+        return []
+    lines = ["## What the Code Does That the Spec Does Not", "",
+             "_The only check here that runs code \u2192 spec. A branch nobody wrote down "
+             "cannot be regenerated, cannot be witnessed, and cannot be missed by any "
+             "spec-shaped check \u2014 because nothing spec-shaped knows it exists._", ""]
+    if stats:
+        lines += [f"**{stats.get('mapped', 0)} mapped · {stats.get('triaged', 0)} triaged "
+                  f"· {stats.get('unclaimed', 0)} unclaimed** of {stats.get('sites', 0)} "
+                  f"decision site(s).", ""]
+    buckets = {}
+    for row in rows:
+        buckets.setdefault(row.get("verdict", "?"), []).append(row)
+    for verdict in ("GAP", "DEAD", "OUT-OF-SCOPE", "DEFENSIVE", "NOT-BEHAVIOR"):
+        hits = buckets.get(verdict) or []
+        if not hits:
+            continue
+        lines.append(f"**{verdict}** ({len(hits)})")
+        lines.append("")
+        for row in hits[:12]:
+            where = f"`{row.get('file')}:{row.get('line', '?')}`"
+            tail = f" \u2014 {row.get('question')}" if row.get("question") else ""
+            lines.append(f"- {where} {row.get('reason', '')}{tail}")
+        if len(hits) > 12:
+            lines.append(f"- _\u2026 and {len(hits) - 12} more_")
+        lines.append("")
+    mapped = buckets.get("MAPPED") or []
+    if mapped:
+        lines += [f"_{len(mapped)} site(s) MAPPED to spec elements \u2014 listed in the "
+                  f"ledger, not repeated here._", ""]
+    return lines
+
+
 def externals_section(area):
     """Gap B + E. One row per outcome the outside world can produce, with what
     this area does about it. The unhappy rows are the point."""
@@ -963,6 +1061,8 @@ def dimensions_section(area):
     invs = area.get("invariants", []) or []
     cr = area.get("check_results") or {}
     matrix, outcomes = cr.get("matrix") or {}, cr.get("outcomes") or {}
+    extraction = cr.get("extraction") or {}
+    differential = cr.get("differential") or {}
     entities = ((area.get("concepts") or {}).get("entities") or [])
     externals = area.get("externals", []) or []
     assumptions = area.get("assumptions", []) or []
@@ -1037,6 +1137,20 @@ def dimensions_section(area):
             if assumptions else "none recorded"),
         row("Temporal behavior", bool(props) or None,
             f"{len(props)} liveness propert(ies)" if props else "none declared"),
+        row("Extraction coverage",
+            (extraction.get("unclaimed") == 0) if extraction else None,
+            f"{extraction.get('mapped', 0)} mapped, {extraction.get('triaged', 0)} "
+            f"triaged, {extraction.get('unclaimed', 0)} unclaimed of "
+            f"{extraction.get('sites', 0)} site(s)"
+            if extraction else "not audited \u2014 `tools/spec-extract-audit.py`"),
+        row("Substitutability",
+            (differential.get("result") == "equivalent-in-sequences")
+            if differential.get("result") in ("equivalent-in-sequences", "diverged")
+            else None,
+            f"{differential.get('divergences', '?')} divergence(s) over "
+            f"{differential.get('sequences', '?')} sequences"
+            if differential.get("result") in ("equivalent-in-sequences", "diverged")
+            else "not measured \u2014 needs a parallel build and `spec-record equiv`"),
         row("Refusal coverage",
             all((r.get("refusal") or {}).get("status") == "passing" for r in rejections)
             if rejections else None,
@@ -1085,6 +1199,7 @@ def emit_area(root, area_name):
     if area.get("purpose"):
         lines += ["## Purpose", "", area["purpose"], ""]
     lines += scope_section(area)
+    lines += boundary_section(area)
     items = attention_items(root, area_name, area)
     lines.append("## ⚠ Needs Your Attention")
     lines.append("")
@@ -1098,6 +1213,7 @@ def emit_area(root, area_name):
     lines += invariants_section(area)
     lines += externals_section(area)
     lines += examples_section(area)
+    lines += extraction_section(area)
     lines += limits_section(root, area_name, area)
     if not area.get("screens"):
         lines += state_machines_section(area)

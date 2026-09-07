@@ -1,0 +1,573 @@
+{
+  "$schema": "../../schemas/area.schema.json",
+  "kind": "area",
+  "area": "cart",
+  "version": "0.1.0",
+  "status": "structured",
+  "last_modified": "2026-05-15T12:00:00Z",
+  "purpose": "BROWNFIELD EXAMPLE. The spec extracted from code/legacy-cart/cart.js — code that already existed, with a threshold nobody documented, a rejection nobody tested, and one line that turned out to be dead. Shows the three things only brownfield can do: declare a substitution boundary, account for every decision site in the implementation, and measure fidelity against the original instead of asserting it.",
+  "scope": {
+    "included": [
+      "adding items to a cart",
+      "checkout",
+      "clearing a cart"
+    ],
+    "excluded": [
+      {
+        "item": "pricing",
+        "reason": "Totals here count quantities; money is the billing area's.",
+        "owner": "billing"
+      },
+      {
+        "item": "inventory-reservation",
+        "reason": "Nothing in this code reserves stock; adding an item does not hold it."
+      }
+    ]
+  },
+  "boundary": {
+    "entry_points": [
+      "addItem(cartId, sku, qty)",
+      "checkout(cartId)",
+      "clear(cartId)"
+    ],
+    "observable_state": [
+      "cart.status",
+      "cart.items (sku → qty)"
+    ],
+    "emits": [],
+    "persistence_contract": "The store's cart shape IS the contract — existing carts must remain readable. A replacement may change how it talks to the store, not what a stored cart looks like.",
+    "free": [
+      "file and class layout",
+      "log wording and level",
+      "how items are looked up (find vs index)",
+      "error class names, as long as the call still throws"
+    ]
+  },
+  "concepts": {
+    "entities": [
+      {
+        "name": "Cart",
+        "id_field": "cartId",
+        "states": [
+          "Open",
+          "CheckedOut"
+        ],
+        "closed": true,
+        "description": "CLOSED, read off the code: `status` is only ever compared to \"checked_out\" and only ever assigned it. Anything else a regenerated implementation invents (Abandoned, Locked) would be new behavior nobody specified."
+      }
+    ],
+    "actors": [
+      "Shopper",
+      "System"
+    ],
+    "verbs": [
+      "add_item",
+      "checkout",
+      "clear"
+    ]
+  },
+  "externals": [
+    {
+      "name": "PaymentGateway",
+      "kind": "service",
+      "description": "Charged at checkout. The code's try/catch says more about it than any document did.",
+      "outcomes": [
+        {
+          "name": "OK",
+          "description": "Charge accepted.",
+          "terminal": true
+        },
+        {
+          "name": "DECLINED",
+          "description": "Explicitly refused; the cart stays open.",
+          "terminal": true
+        },
+        {
+          "name": "UNAVAILABLE",
+          "description": "Threw — timeout or transport. The charge may or may not have landed."
+        }
+      ]
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "ASM-001",
+      "statement": "A charge that throws did not take the money, so retrying is safe.",
+      "kind": "external",
+      "external": "PaymentGateway",
+      "affects": [
+        "REQ-004"
+      ],
+      "status": "accepted-risk",
+      "rationale": "The code retries on UNAVAILABLE with no idempotency key, so a landed-but-unacknowledged charge would double-charge. Carried as risk because it is what the existing system already does — extracting the spec did not create this exposure, it revealed it. Tracked in Q-002.",
+      "discharged_by": "Nothing today. A gateway idempotency key would discharge it."
+    }
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "description": "While the cart is Open, when a shopper adds a SKU already in the cart, the system shall increase that line's quantity.",
+      "status": "needs-validation",
+      "source": "extracted",
+      "extraction": {
+        "evidence": "code/legacy-cart/cart.js:31-35",
+        "confidence": "high",
+        "inferred_by": "agent"
+      },
+      "modality": "must",
+      "quint_ref": "add_item",
+      "ears": {
+        "state": "the Cart is Open",
+        "trigger": "a shopper adds a SKU already present",
+        "response": "increase that line's quantity by the amount added"
+      }
+    },
+    {
+      "id": "REQ-002",
+      "description": "While the cart is Open and holds fewer than MAX_ITEMS lines, when a shopper adds a new SKU, the system shall append a line for it.",
+      "status": "needs-validation",
+      "source": "extracted",
+      "extraction": {
+        "evidence": "code/legacy-cart/cart.js:26-36",
+        "confidence": "high",
+        "inferred_by": "agent"
+      },
+      "modality": "must",
+      "quint_ref": "add_item",
+      "ears": {
+        "state": "the Cart is Open and holds fewer than MAX_ITEMS lines",
+        "trigger": "a shopper adds a new SKU",
+        "response": "append a line for that SKU"
+      }
+    },
+    {
+      "id": "REQ-003",
+      "description": "If a shopper adds an item to a CheckedOut cart, then the system shall refuse the call and change nothing.",
+      "status": "needs-validation",
+      "source": "extracted",
+      "extraction": {
+        "evidence": "code/legacy-cart/cart.js:22-24",
+        "confidence": "high",
+        "inferred_by": "agent"
+      },
+      "modality": "forbidden",
+      "quint_ref": "add_item",
+      "ears": {
+        "state": "the Cart is CheckedOut",
+        "trigger": "a shopper adds an item",
+        "unwanted": true,
+        "response": "refuse the call and leave the cart untouched"
+      },
+      "witness": {
+        "status": "skipped",
+        "enforced_by": "INV-001",
+        "justification": "A refusal has no reachable state to witness. INV-001 carries the model-side proof."
+      },
+      "refusal": {
+        "artifact": "tests/cart/refusal/closed-cart.test.js",
+        "blocking_state": "cart.status == \"checked_out\"",
+        "unchanged": [
+          "cart.items",
+          "cart.status"
+        ],
+        "status": "not-run"
+      }
+    },
+    {
+      "id": "REQ-004",
+      "description": "If the payment gateway is unavailable during checkout, then the system shall leave the cart Open and report that a retry is possible.",
+      "status": "needs-validation",
+      "source": "extracted",
+      "extraction": {
+        "evidence": "code/legacy-cart/cart.js:58-62",
+        "confidence": "medium",
+        "inferred_by": "agent"
+      },
+      "modality": "must",
+      "quint_ref": "checkout_unavailable",
+      "ears": {
+        "state": "the Cart is Open",
+        "trigger": "the payment gateway throws during checkout",
+        "unwanted": true,
+        "response": "leave the Cart Open and return ok:false with reason 'unavailable'"
+      },
+      "error_outcomes": [
+        {
+          "external": "PaymentGateway",
+          "outcome": "OK",
+          "effect": "CheckedOut",
+          "idempotent": false
+        },
+        {
+          "external": "PaymentGateway",
+          "outcome": "DECLINED",
+          "effect": "NO_CHANGE — the cart stays Open; reason 'declined'",
+          "idempotent": true
+        },
+        {
+          "external": "PaymentGateway",
+          "outcome": "UNAVAILABLE",
+          "effect": "NO_CHANGE — the cart stays Open; reason 'unavailable'; caller retries",
+          "idempotent": true,
+          "note": "Retry safety rests on ASM-001, which is carried as a known risk."
+        }
+      ]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "INV-001",
+      "description": "A CheckedOut cart's items never change.",
+      "quint_name": "checkedOutIsFrozen",
+      "formal_status": "specified",
+      "criticality": "critical",
+      "extraction": {
+        "evidence": "code/legacy-cart/cart.js:22-24",
+        "confidence": "high",
+        "inferred_by": "agent"
+      }
+    },
+    {
+      "id": "INV-002",
+      "description": "A cart never holds more than MAX_ITEMS distinct lines.",
+      "quint_name": "underItemCap",
+      "formal_status": "specified",
+      "criticality": "high",
+      "extraction": {
+        "evidence": "code/legacy-cart/cart.js:26-28",
+        "confidence": "high",
+        "inferred_by": "agent"
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "id": "CON-001",
+      "name": "MAX_ITEMS",
+      "value": 20,
+      "description": "Maximum distinct lines in a cart. Read off the code — no document mentioned it.",
+      "paired_invariant": "INV-002",
+      "extraction": {
+        "evidence": "code/legacy-cart/cart.js:10",
+        "confidence": "high",
+        "inferred_by": "agent"
+      }
+    }
+  ],
+  "examples": [
+    {
+      "id": "EX-001",
+      "title": "Adding a SKU twice merges the lines",
+      "given": {
+        "cart.status": "Open",
+        "cart.items": "[{sku: 'a', qty: 1}]"
+      },
+      "when": {
+        "action": "add_item",
+        "args": {
+          "sku": "a",
+          "qty": 2
+        }
+      },
+      "expect": {
+        "cart.items": "[{sku: 'a', qty: 3}]"
+      },
+      "refs": [
+        "REQ-001"
+      ],
+      "source": "extracted-from-production"
+    }
+  ],
+  "extraction_triage": [
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "102f8240",
+      "line": 22,
+      "kind": "branch",
+      "snippet": "if (cart.status === \"checked_out\") {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-003",
+        "INV-001"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "ca6300b4",
+      "line": 23,
+      "kind": "early-exit",
+      "snippet": "throw new Error(\"cart is closed\");",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-003"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "f5742212",
+      "line": 26,
+      "kind": "branch",
+      "snippet": "if (cart.items.length >= MAX_ITEMS) {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-002",
+        "CON-001"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "728444f3",
+      "line": 27,
+      "kind": "early-exit",
+      "snippet": "throw new Error(\"cart is full\");",
+      "verdict": "GAP",
+      "reason": "The cart-full rejection is real behavior with no requirement: REQ-002 says what happens BELOW the limit and nothing says what happens at it. Exactly the kind of branch a regenerated implementation would omit.",
+      "question": "Q-001"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "0ad60ceb",
+      "line": 31,
+      "kind": "branch",
+      "snippet": "if (existing) {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-001",
+        "REQ-002"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "577f2715",
+      "line": 39,
+      "kind": "early-exit",
+      "snippet": "return cart;",
+      "verdict": "NOT-BEHAVIOR",
+      "reason": "Returns the updated cart the caller already holds; the observable change is the stored cart, covered by REQ-001/REQ-002."
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "a2c443fe",
+      "line": 45,
+      "kind": "branch",
+      "snippet": "if (cart.items.length === 0) {",
+      "verdict": "GAP",
+      "reason": "Checkout of an empty cart throws. No requirement mentions it, and the empty-cart case is not in any journey.",
+      "question": "Q-003"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "7d648654",
+      "line": 45,
+      "kind": "guard-literal",
+      "snippet": "0 in if (cart.items.length === 0) {",
+      "verdict": "GAP",
+      "reason": "Same site: the threshold itself is unspecified. Is an empty checkout an error, or a no-op returning ok:true?",
+      "question": "Q-003"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "c7768565",
+      "line": 46,
+      "kind": "early-exit",
+      "snippet": "throw new Error(\"cart is empty\");",
+      "verdict": "GAP",
+      "reason": "The empty-cart rejection, unspecified. Note it THROWS while the other two failure paths RETURN ok:false — an inconsistency the extraction surfaced.",
+      "question": "Q-003"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "d440624f",
+      "line": 51,
+      "kind": "branch",
+      "snippet": "if (result.status === \"declined\") {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "c376fc9f",
+      "line": 52,
+      "kind": "early-exit",
+      "snippet": "return { ok: false, reason: \"declined\" };",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "5521a968",
+      "line": 56,
+      "kind": "early-exit",
+      "snippet": "return { ok: true };",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "f47481e8",
+      "line": 58,
+      "kind": "error-handler",
+      "snippet": "} catch (err) {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "8d577ca8",
+      "line": 61,
+      "kind": "early-exit",
+      "snippet": "return { ok: false, reason: \"unavailable\" };",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "8afb3db2",
+      "line": 67,
+      "kind": "branch",
+      "snippet": "if (!cart) {",
+      "verdict": "DEFENSIVE",
+      "reason": "store.get always returns a cart today; the guard is a belt against a store contract that has never been violated."
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "7ea7055b",
+      "line": 68,
+      "kind": "early-exit",
+      "snippet": "return null;",
+      "verdict": "DEAD",
+      "reason": "Unreachable given the store's current contract. A finding about the CODE: either delete it, or make the store contract explicit enough that the branch is justified."
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "27cef06c",
+      "line": 72,
+      "kind": "early-exit",
+      "snippet": "return cart;",
+      "verdict": "GAP",
+      "reason": "clear() has no requirement at all — the whole operation was extracted as code with no spec behind it.",
+      "question": "Q-004"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "3abecdb3",
+      "line": 77,
+      "kind": "early-exit",
+      "snippet": "return cart.items.reduce((sum, i) => sum + i.qty, 0);",
+      "verdict": "OUT-OF-SCOPE",
+      "scope_ref": "pricing",
+      "reason": "total() sums quantities as a stand-in for an amount; anything money-shaped belongs to billing."
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "Q-001",
+      "question": "What should adding an item to a full cart do — throw as today, or return a result the UI can render? The code throws, which no requirement describes.",
+      "status": "open",
+      "source": "extraction"
+    },
+    {
+      "id": "Q-002",
+      "question": "Retry after a thrown charge assumes the money did not move (ASM-001). Should checkout send an idempotency key before we rely on that?",
+      "status": "open",
+      "source": "extraction"
+    },
+    {
+      "id": "Q-003",
+      "question": "Checkout of an empty cart THROWS while declined and unavailable RETURN ok:false. Is the inconsistency intentional?",
+      "status": "open",
+      "source": "extraction"
+    },
+    {
+      "id": "Q-004",
+      "question": "clear() is implemented and unspecified. Is it product behavior, or a leftover from an admin tool?",
+      "status": "open",
+      "source": "extraction"
+    }
+  ],
+  "traceability": [
+    {
+      "id": "REQ-001",
+      "code": "code/legacy-cart/cart.js:addItem",
+      "tests": [],
+      "verified": false
+    },
+    {
+      "id": "REQ-002",
+      "code": "code/legacy-cart/cart.js:addItem",
+      "tests": [],
+      "verified": false
+    },
+    {
+      "id": "REQ-003",
+      "code": "code/legacy-cart/cart.js:addItem",
+      "tests": [],
+      "verified": false
+    },
+    {
+      "id": "REQ-004",
+      "code": "code/legacy-cart/cart.js:checkout",
+      "tests": [],
+      "verified": false
+    }
+  ],
+  "conformance": {
+    "differential": {
+      "parallel_path": "gen/cart",
+      "command": "node tests/cart/differential/compare.js",
+      "sequences": 2000
+    }
+  },
+  "check_results": {
+    "extraction": {
+      "ran_at": "2026-09-07T18:06:41+00:00",
+      "sites": 18,
+      "mapped": 9,
+      "triaged": 9,
+      "unclaimed": 0,
+      "gaps": [
+        "Q-001",
+        "Q-003",
+        "Q-004"
+      ]
+    }
+  },
+  "state_machines": [
+    {
+      "entity": "Cart",
+      "quint_var": "carts",
+      "quint_type": "CartStatus",
+      "initial_state": "Open",
+      "states": [
+        {
+          "name": "Open",
+          "description": "Accepting items."
+        },
+        {
+          "name": "CheckedOut",
+          "terminal": true,
+          "description": "Frozen; INV-001 keeps its items fixed."
+        }
+      ],
+      "transitions": [
+        {
+          "from": "Open",
+          "to": "CheckedOut",
+          "trigger": "checkout",
+          "actor": "Shopper",
+          "quint_action": "checkout"
+        }
+      ]
+    }
+  ]
+}

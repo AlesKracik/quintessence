@@ -282,6 +282,8 @@ _One number would hide which half is missing. Each row is derived from declared 
 | External systems | ✓ | 1 declared, 4 outcomes |
 | Assumptions | ✓ | 2 recorded, 0 open |
 | Temporal behavior | — | none declared |
+| Extraction coverage | — | not audited — `tools/spec-extract-audit.py` |
+| Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | ! | 0/1 rejection(s) with an artifact, 0 passing |
 | Examples | ✓ | 3 worked example(s) |
 | Invariants | ! | 0/3 holding |

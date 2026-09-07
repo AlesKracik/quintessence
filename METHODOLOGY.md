@@ -58,7 +58,7 @@ cd my-project
 # (creates .spec/project.json, opens the first change, scaffolds the areas)
 ```
 
-For an **existing codebase** (brownfield): the same `/spec auth` recognizes that no `specs/auth.area.json` exists but `src/auth/` has code, and walks extraction. No special command, no separate path.
+For an **existing codebase** (brownfield): the same `/spec auth` recognizes that no `specs/auth.area.json` exists but `src/auth/` has code, and walks extraction. No special command, no separate path — but a longer beat, because the code can answer questions a user cannot, and because fidelity can be measured rather than asserted. See "Brownfield: Specs You Could Rebuild From".
 
 ---
 
@@ -144,6 +144,7 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
     │                                conformance replay, drift; writes all ledgers
     ├── spec-readback.py          ← deterministic readback generator (area/change/project)
     │                                + derived phase grid (`status <slug> --json`)
+    ├── spec-extract-audit.py      ← code→spec coverage: every decision site accounted for
     ├── spec-mutate.py             ← mutate the implementation; check the gates turn red
     ├── spec-separation.py         ← refuse commits that move claims and code together
     ├── spec-diff.py               ← semantic diff between two revisions of the specs
@@ -997,6 +998,105 @@ This is where `decisions[].affects[]` earns its keep. It is the blast radius: wh
 
 ---
 
+## Brownfield: Specs You Could Rebuild From
+
+Greenfield elicitation has only the user's memory to work from. Brownfield has a running implementation that answers any question you ask it — every threshold, every branch, every error path already decided and readable. Extraction should therefore produce a **stronger** spec than elicitation, and the framework should ask more of it, not less.
+
+### The target is substitutability, not identical code
+
+The tempting goal is a spec so complete that regenerating from it reproduces the original line for line. That goal is a trap. A spec that determines the implementation uniquely **is** the implementation in a worse notation: `Traces(Impl) = Traces(Spec)`, refinement collapses to equality, and the spec can no longer disagree with the code — so it inherits every bug as truth. You would have written the program twice and verified nothing.
+
+The achievable and useful target:
+
+> A regenerated implementation is **substitutable** for the original at a declared boundary — indistinguishable through the interfaces anyone depends on, free in everything else.
+
+Which is why `boundary` names what is **free** as well as what is preserved. An area whose boundary pins everything has stopped being a specification.
+
+### 1. Declare the boundary
+
+```json
+"boundary": {
+  "entry_points":     ["addItem(cartId, sku, qty)", "checkout(cartId)"],
+  "observable_state": ["cart.status", "cart.items (sku → qty)"],
+  "persistence_contract": "The store's cart shape IS the contract — existing carts must stay readable.",
+  "free": ["file layout", "log wording", "how items are looked up", "error class names"]
+}
+```
+
+`scope` says what the area is responsible for. `boundary` says what *the same* means. Without it, "the regenerated code matches" has no referent and the differential comparator has nothing to diff. Persistence is the line people forget: behavior can match perfectly while a regenerated schema orphans every existing row.
+
+### 2. Read fields out of the code, not prose
+
+The code already made every decision an elicitation session would have to ask about. Extract **fields**:
+
+| In the code | Becomes |
+|---|---|
+| literal in a guard | `CON-NNN` + `paired_invariant` |
+| branch condition | `ears.state` / `ears.trigger` |
+| `catch` per dependency | `externals[].outcomes[]` + `error_outcomes[]` |
+| enum / status column | entity `states[]` + `closed: true` |
+| early return / throw | `modality: "forbidden"` + `refusal.artifact` |
+| an observable choice already made | `DEC-NNN` with `affects[]` |
+| a genuinely free choice | `modality: "may"`, one outcome per branch |
+
+The four capture-time checks get asked **of the code**: it knows whether the comparison is `>=` or `>`, and `Map<UserId, int>` answers the quantifier question that stalls a greenfield conversation.
+
+Each extracted item records where it came from:
+
+```json
+"extraction": { "evidence": "cart.js:31-35", "confidence": "high", "inferred_by": "agent" }
+```
+
+`confidence: "low"` is the honest label for ambiguous code, and the readback prints it as a warning rather than letting a guess read like a reading.
+
+### 3. Account for the code you did NOT specify
+
+`tools/spec-extract-audit.py` is the only check in the framework that runs **code → spec**. It enumerates decision sites — branches, guard literals, error handlers, early exits — and requires each to be claimed in `extraction_triage[]`:
+
+| Verdict | Means |
+|---|---|
+| `MAPPED` | realizes these spec ids |
+| `NOT-BEHAVIOR` | logging, metrics, tracing |
+| `DEFENSIVE` | unreachable by construction, kept as a belt |
+| `DEAD` | unreachable — a finding about the CODE |
+| `GAP` | real behavior nobody specified. The extraction hole |
+| `OUT-OF-SCOPE` | outside the boundary; cites `scope.excluded` |
+
+This matters more than it sounds. **The reason a regenerated implementation diverges is almost always a branch nobody wrote down** — and no spec-shaped check can look for a branch the spec does not mention. Every other gate in this framework is blind to it by construction.
+
+Sites are keyed by a fingerprint of their normalized text plus their enclosing declaration, never by line number: a ledger keyed on line numbers rots on the first reformat, and a rotted ledger is worse than none because it still looks complete. A ledger entry matching no current site is reported too — the code moved out from under a decision.
+
+### 4. Harvest examples instead of inventing them
+
+Real call sequences — from logs, from existing tests — become `examples[]` with `source: "extracted-from-production"` and a `trace` pointing at the recording. Greenfield examples are guesses about what matters; harvested ones are evidence.
+
+### 5. Then measure, instead of asserting
+
+```
+/spec-apply <area> --parallel     regenerate BESIDE the original
+spec-record equiv <area>          drive BOTH through the same sequences
+```
+
+The comparator instantiates the same conformance adapter twice — over the original and over the regenerated implementation — and diffs `boundary.observable_state` after every step, across witness traces, harvested traces and randomized sequences. Refusals count: an action that throws on one side and returns on the other is a divergence even when the end state matches.
+
+Two rules make the result mean something. The parallel implementation is generated **from the spec alone** — consulting the original turns the experiment into a copy and guarantees a false pass. And `parallel_path` may never fall inside the original's `code_path`, which `spec-record equiv` enforces: the oracle has to survive the experiment.
+
+Every divergence is one of two things: a **missing spec element** (capture it, regenerate) or an **intentional difference** (record a `DEC-NNN` so the next run does not re-litigate it).
+
+The verdict is `equivalent-in-sequences` and always carries the sequence count. No number of sequences proves equivalence, and a verdict that hid the number would claim more than it checked.
+
+### What this replaces
+
+| Question | Before | Now |
+|---|---|---|
+| Does the code do what the spec says? | conformance replay | unchanged |
+| Does the spec describe everything the code does? | nothing | extraction audit |
+| Is the spec enough to rebuild from? | a human's judgement | differential run |
+
+The last row is the one that decides whether a brownfield spec is worth anything, and it was previously unanswerable.
+
+---
+
 ## Mutation and Separation: Two Gates on the Gates
 
 ### spec-mutate — would any of this notice?
@@ -1105,6 +1205,14 @@ area.status:          raw → structured → formalized → in-review → approv
 - `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
 
 The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-verify`.
+
+### spec-extract-audit
+
+`tools/spec-extract-audit.py <area>` enumerates the decision sites in the traced implementation and requires each to be claimed in `extraction_triage[]`. `--emit` prints paste-ready triage stubs, `--record` stamps `check_results.extraction`, `--strict` gates. The only check that runs code → spec. A regex scan under-counts exotic control flow, so a clean run means nothing OBVIOUS is unclaimed — never that the spec is complete.
+
+### spec-record equiv
+
+`tools/spec-record.py equiv <area>` runs the differential comparator: the original implementation and the regenerated one, driven through identical sequences, diffed at `boundary.observable_state`. Preflight refuses a verdict without an observation boundary, without a comparator command, or when `parallel_path` sits inside the original's code path. Writes `check_results.differential` mechanically, always with the sequence count.
 
 ### spec-mutate
 

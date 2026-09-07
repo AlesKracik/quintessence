@@ -41,6 +41,38 @@
       "description": "One paragraph: what this area is responsible for."
     },
 
+    "boundary": {
+      "type": "object",
+      "description": "The SUBSTITUTION boundary: what would have to stay identical for a different implementation of this area to be a drop-in replacement. `scope` says what the area is responsible for; this says what 'the same' means. Without it, 'the regenerated code matches' has no referent \u2014 and the differential runner has nothing to compare. Most valuable on brownfield areas, where an implementation already exists and can serve as the oracle.",
+      "additionalProperties": false,
+      "properties": {
+        "entry_points": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The callable surface clients depend on, with argument shape: 'login(email, password)'. A replacement must accept these."
+        },
+        "observable_state": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "What a client can read back and therefore can notice changing. These are what the differential comparator diffs after each step \u2014 typically the same abstractions the conformance adapter's getters expose."
+        },
+        "persistence_contract": {
+          "type": "string",
+          "description": "Whether the stored representation is part of the contract, and how much of it. The one people forget: behavior can match perfectly while a regenerated schema orphans every existing row. State it explicitly, including 'none \u2014 the store is private and may be replaced'."
+        },
+        "emits": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Outward signals other systems consume \u2014 events, webhooks, audit records. Observable whether or not anyone calls them API."
+        },
+        "free": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Deliberately NOT preserved: file layout, log wording, internal structure, algorithmic approach. Naming these is what keeps the spec a specification rather than a transliteration \u2014 a spec that pins everything can no longer disagree with the code, so it inherits its bugs as truth."
+        }
+      }
+    },
+
     "scope": {
       "type": "object",
       "description": "The declared semantic boundary. Completeness is only meaningful relative to a boundary: without one, 'closed' is an unbounded claim nobody can check, and every OUT-OF-SCOPE triage verdict is an unfalsifiable assertion. Declaring it turns both into checkable statements — the readback's ship verdict reads 'READY relative to this scope', and spec-lint requires an OUT-OF-SCOPE cell to name the exclusion that covers it.",
@@ -151,6 +183,32 @@
       }
     },
 
+    "extraction_triage": {
+      "type": "array",
+      "description": "COMMITTED triage of code sites against the spec \u2014 the only check in the framework that runs code \u2192 spec rather than spec \u2192 code. Every branch, guard literal and error handler in a traced file either maps to a spec element or is explained here. This is where the branches that make a regenerated implementation differ actually live: they are never in the spec, so nothing spec-shaped can look for them.",
+      "items": {
+        "type": "object",
+        "required": ["file", "fingerprint", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "file":        { "type": "string", "description": "Path relative to the code root." },
+          "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{8}$", "description": "Stable hash of the normalized site text, from tools/spec-extract-audit.py. Identity survives the site moving, which a line number does not \u2014 a ledger keyed on line numbers rots on the first reformat." },
+          "line":        { "type": "integer", "minimum": 1, "description": "Advisory only: where the site was last seen." },
+          "kind":        { "type": "string", "enum": ["branch", "guard-literal", "error-handler", "early-exit", "loop", "other"] },
+          "snippet":     { "type": "string", "description": "The site's source text, trimmed. Present so the ledger is reviewable without opening the file." },
+          "verdict": {
+            "type": "string",
+            "enum": ["MAPPED", "NOT-BEHAVIOR", "DEFENSIVE", "DEAD", "GAP", "OUT-OF-SCOPE"],
+            "description": "MAPPED: realizes the spec element in maps_to. NOT-BEHAVIOR: logging, metrics, tracing \u2014 real code, no externally observable behavior. DEFENSIVE: unreachable by construction, kept as a belt. DEAD: unreachable, and that is a finding about the CODE. GAP: real behavior nobody has specified \u2014 the extraction hole, tracked by a question. OUT-OF-SCOPE: outside the declared boundary; cite the exclusion."
+          },
+          "maps_to":   { "type": "array", "items": { "type": "string" }, "description": "Required for MAPPED: the spec ids this site realizes (REQ/INV/CON/...)." },
+          "reason":    { "type": "string", "description": "Required for every verdict except MAPPED." },
+          "scope_ref": { "type": "string", "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item covering it." },
+          "question":  { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For GAP verdicts: the open_questions[] entry tracking it." }
+        }
+      }
+    },
+
     "outcome_triage": {
       "type": "array",
       "description": "COMMITTED triage for external×outcome cells no requirement handles — the failure-behavior twin of matrix_triage. Same verdicts, same durability rationale: the generated view under specs/<area>/gen/ is gitignored scratch, this is the reviewable home.",
@@ -192,7 +250,8 @@
           "expect": { "type": "object", "additionalProperties": true, "description": "Expected resulting state as var → value." },
           "refs":   { "type": "array", "items": { "type": "string" }, "description": "Requirement/invariant IDs this example illustrates." },
           "quint_run": { "type": "string", "description": "Name of the generated `run` in the sidecar, once formalized." },
-          "source": { "type": "string", "description": "elicited | extracted-from-production | regression-for-<ID> | etc." }
+          "source": { "type": "string", "description": "elicited | extracted-from-production | regression-for-<ID> | etc." },
+          "trace":  { "type": "string", "description": "For a HARVESTED example: the ITF trace recorded from the real system, relative to specs/. Greenfield examples are guesses about what matters; harvested ones are evidence, and they replay through the same machinery as a witness trace." }
         }
       }
     },
@@ -265,6 +324,17 @@
             }
           },
           "source":    { "type": "string", "description": "elicited | extracted | reconciled | etc." },
+          "extraction": {
+            "type": "object",
+            "description": "Where this item came from when it was read out of existing code. Makes the confirm pass jump-to-site instead of guess-what-I-meant, and lets the extraction audit tell a specified site from an unexamined one.",
+            "additionalProperties": false,
+            "properties": {
+              "evidence":    { "type": "string", "description": "The code that justifies it: 'authService.ts:78-91'." },
+              "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{8}$", "description": "The extraction_triage[] site this item was read from, when it came from exactly one." },
+              "confidence":  { "type": "string", "enum": ["high", "medium", "low"], "description": "low = the code was ambiguous and a human guessed. Worth revisiting before approval; the readback surfaces it." },
+              "inferred_by": { "type": "string", "description": "'agent' | 'human' | 'agent+confirmed'. A confirmed inference is not the same claim as an unreviewed one." }
+            }
+          },
           "ears": {
             "type": "object",
             "description": "EARS-structured requirement (Easy Approach to Requirements Syntax). The fields ARE the structure — the EARS pattern is derived from which are filled (trigger → 'When …', state → 'While …', both → complex, feature → 'Where …'; none → ubiquitous, which belongs in invariants[] instead). Mapping to Quint: trigger → action, state → require guard, response → effect. spec-lint validates; a requirement without ears past status raw/needs-validation gets a WARN.",
@@ -371,6 +441,17 @@
             "description": "Written mechanically by spec-record. 'verified' = bounded ✓ (≤max_steps). 'verified-inductive' = proven via inductive invariant (unbounded). 'verified-in-scope' = Alloy found no counterexample within the declared finite scope — bounded by structure, not by steps. 'verified-smt' = an SMT solver proved the negation unsatisfiable, valid modulo the encoding. 'not-checkable' = the chosen backend returned no verdict (SMT 'unknown'); an absent answer, never a pass."
           },
           "criticality":   { "type": "string", "enum": ["critical", "high", "medium", "low"], "default": "high" },
+          "extraction": {
+            "type": "object",
+            "description": "Where this item came from when it was read out of existing code. Makes the confirm pass jump-to-site instead of guess-what-I-meant, and lets the extraction audit tell a specified site from an unexamined one.",
+            "additionalProperties": false,
+            "properties": {
+              "evidence":    { "type": "string", "description": "The code that justifies it: 'authService.ts:78-91'." },
+              "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{8}$", "description": "The extraction_triage[] site this item was read from, when it came from exactly one." },
+              "confidence":  { "type": "string", "enum": ["high", "medium", "low"], "description": "low = the code was ambiguous and a human guessed. Worth revisiting before approval; the readback surfaces it." },
+              "inferred_by": { "type": "string", "description": "'agent' | 'human' | 'agent+confirmed'. A confirmed inference is not the same claim as an unreviewed one." }
+            }
+          },
           "cross_refs":    { "type": "array", "items": { "type": "string" } }
         }
       }
@@ -408,7 +489,18 @@
           },
           "value":       {},
           "unit":        { "type": "string" },
-          "description": { "type": "string" }
+          "description": { "type": "string" },
+          "extraction": {
+            "type": "object",
+            "description": "Where this item came from when it was read out of existing code. Makes the confirm pass jump-to-site instead of guess-what-I-meant, and lets the extraction audit tell a specified site from an unexamined one.",
+            "additionalProperties": false,
+            "properties": {
+              "evidence":    { "type": "string", "description": "The code that justifies it: 'authService.ts:78-91'." },
+              "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{8}$", "description": "The extraction_triage[] site this item was read from, when it came from exactly one." },
+              "confidence":  { "type": "string", "enum": ["high", "medium", "low"], "description": "low = the code was ambiguous and a human guessed. Worth revisiting before approval; the readback surfaces it." },
+              "inferred_by": { "type": "string", "description": "'agent' | 'human' | 'agent+confirmed'. A confirmed inference is not the same claim as an unreviewed one." }
+            }
+          }
         }
       }
     },
@@ -644,7 +736,17 @@
         "harness":    { "type": "string", "description": "Path (relative to tests root) of the trace-replay harness that loads ITF files and drives the adapter." },
         "command":    { "type": "string", "description": "Shell command that replays all traces, e.g. 'pnpm test conformance'. Run from the code repo root by /spec-verify." },
         "pbt_command": { "type": "string", "description": "OPTIONAL stateful property-based testing command. Apalache returns the SHORTEST counterexample, so replay is a handful of traces and a handful of steps per area, each requirement exercised once. The adapter already exposes one method per action, one getter per var and a reset() \u2014 which is exactly a stateful-PBT interface, so the same adapter drives thousands of randomized sequences for the price of wiring. Complements replay, never replaces it: replay checks the model's own traces, PBT explores beyond them." },
-        "traces_dir": { "type": "string", "description": "Where witness traces live, relative to specs/. Default: '<area>/traces'." }
+        "traces_dir": { "type": "string", "description": "Where witness traces live, relative to specs/. Default: '<area>/traces'." },
+        "differential": {
+          "type": "object",
+          "description": "DIFFERENTIAL conformance, available only to brownfield: the existing implementation is an oracle that answers any question you ask it, and until you ask, extraction fidelity is asserted by a human rather than measured. The comparator instantiates the SAME adapter twice \u2014 once over the original, once over the regenerated implementation \u2014 drives both through identical sequences, and diffs boundary.observable_state after every step. Each divergence is either a missing spec element (the extraction gap you were hunting) or an intentional difference (record it as a decision).",
+          "additionalProperties": false,
+          "properties": {
+            "parallel_path": { "type": "string", "description": "Where /spec-apply --parallel writes the regenerated implementation. NEVER the original's path: the oracle has to survive the experiment." },
+            "command":       { "type": "string", "description": "Shell command running the comparator. Exit 0 = no sequence distinguished the two." },
+            "sequences":     { "type": "integer", "minimum": 1, "description": "How many randomized sequences the comparator should run. Reported with the verdict, because 'equivalent' means 'no counterexample in N', never 'equivalent'." }
+          }
+        }
       }
     },
 
@@ -785,6 +887,33 @@
       "properties": {
         "ran_at": { "type": "string", "format": "date-time" },
         "max_steps": { "type": "integer", "minimum": 1, "description": "Apalache step bound used for the bounded checks in this run. Drives honest '✓ (≤N steps)' rendering — a bounded ✓ is only valid up to this depth." },
+        "extraction": {
+          "type": "object",
+          "description": "Code\u2192spec coverage stats from the last tools/spec-extract-audit.py run. The third completeness axis, and the only one that measures the specification against the implementation rather than the other way round.",
+          "additionalProperties": false,
+          "properties": {
+            "ran_at":    { "type": "string", "format": "date-time" },
+            "sites":     { "type": "integer", "minimum": 0 },
+            "mapped":    { "type": "integer", "minimum": 0 },
+            "triaged":   { "type": "integer", "minimum": 0 },
+            "unclaimed": { "type": "integer", "minimum": 0 },
+            "gaps":      { "type": "array", "items": { "type": "string" } }
+          }
+        },
+
+        "differential": {
+          "type": "object",
+          "description": "Result of the last differential run: the original implementation and the regenerated one, driven through the same sequences.",
+          "additionalProperties": false,
+          "properties": {
+            "ran_at":      { "type": "string", "format": "date-time" },
+            "sequences":   { "type": "integer", "minimum": 0, "description": "How many were actually run. A verdict without this number claims more than it checked." },
+            "divergences": { "type": "integer", "minimum": 0 },
+            "result":      { "type": "string", "enum": ["equivalent-in-sequences", "diverged", "not-run", "error"] },
+            "detail":      { "type": "string" }
+          }
+        },
+
         "outcomes": {
           "type": "object",
           "description": "External×outcome coverage stats from the last spec-matrix --outcomes run. The failure-behavior twin of `matrix`: same shape, same purpose — make the completeness of the unhappy paths visible in the readback instead of leaving it to memory.",

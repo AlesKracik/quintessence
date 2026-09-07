@@ -1227,6 +1227,16 @@ def check_paired_invariants(root, area_data, sidecar, area_name, findings):
     invariant holding, the witness still found (in one step, which nothing
     looks at), and lint clean. Every numeric constant an action reads needs an
     invariant bounding it from the other side."""
+    inv_ids_early = {i.get("id") for i in (area_data.get("invariants") or []) if i.get("id")}
+    # The dangling-reference half needs no sidecar, so it runs first: an area
+    # with no Quint model yet (a fresh brownfield extraction, for instance)
+    # would otherwise skip the check entirely and keep a broken pointer.
+    for con in area_data.get("constraints", []) or []:
+        paired = con.get("paired_invariant")
+        if paired and paired not in inv_ids_early:
+            add(findings, FAIL, "constraints", "paired-invariant-dangling", area_name,
+                f"{con.get('id', '?')}.paired_invariant '{paired}' is not a declared "
+                f"invariant.", ref=con.get("id"))
     if not sidecar or sidecar.get("__no_module__"):
         return
     fm = area_data.get("formal_model") or {}
@@ -1251,9 +1261,7 @@ def check_paired_invariants(root, area_data, sidecar, area_name, findings):
         used = len(hits) > (1 if decl else 0)
         paired = con.get("paired_invariant")
         if paired and paired not in inv_ids:
-            add(findings, FAIL, "constraints", "paired-invariant-dangling", area_name,
-                f"{cid}.paired_invariant '{paired}' is not a declared invariant.", ref=cid)
-            continue
+            continue          # already reported above, before the sidecar guard
         if used and not paired:
             add(findings, FAIL if review else WARN, "constraints",
                 "constraint-without-paired-invariant", area_name,
@@ -1295,6 +1303,144 @@ def check_refusal_artifacts(area_data, area_name, findings):
             add(findings, FAIL, "refusal", "refusal-failing", area_name,
                 f"{rid}.refusal.status is 'failing' \u2014 the implementation does not "
                 f"refuse.", ref=rid)
+
+
+def check_boundary(area_data, area_name, findings):
+    """Gap: 'the regenerated code matches' has no referent without a declared
+    substitution boundary, and the differential comparator has nothing to diff.
+
+    Also guards the other direction: a boundary that declares nothing FREE is
+    a boundary that pins everything, and a spec that pins everything is a
+    transliteration \u2014 it can no longer disagree with the code, so it inherits
+    its bugs as truth."""
+    boundary = area_data.get("boundary") or {}
+    diff_cfg = ((area_data.get("conformance") or {}).get("differential") or {})
+    review = at_review(area_data)
+
+    if diff_cfg and not boundary.get("observable_state"):
+        add(findings, FAIL, "boundary", "differential-without-boundary", area_name,
+            "conformance.differential is configured but boundary.observable_state is "
+            "empty \u2014 the comparator would report 'equivalent' about nothing in "
+            "particular.")
+    if not boundary:
+        return
+    if not boundary.get("entry_points"):
+        add(findings, WARN, "boundary", "boundary-without-entry-points", area_name,
+            "boundary declares no entry_points \u2014 name the callable surface a "
+            "replacement has to accept.")
+    if boundary.get("persistence_contract") is None and review:
+        add(findings, WARN, "boundary", "boundary-silent-on-persistence", area_name,
+            "boundary says nothing about persistence. Behavior can match perfectly "
+            "while a regenerated schema orphans every existing row \u2014 state it, "
+            "including 'none: the store is private'.")
+    if not boundary.get("free"):
+        add(findings, WARN, "boundary", "boundary-pins-everything", area_name,
+            "boundary names nothing as free. A spec that pins every detail is a "
+            "transliteration of the code and inherits its bugs as truth \u2014 say what "
+            "a replacement may legitimately do differently.")
+
+
+def check_extraction_ledger(area_data, area_name, findings):
+    """The code\u2192spec direction. Full site enumeration needs the source, which
+    is tools/spec-extract-audit.py's job; what lint owns is the ledger's own
+    coherence, which is checkable from the JSON alone."""
+    rows = area_data.get("extraction_triage", []) or []
+    if not rows:
+        return
+    ids = local_ids(area_data)
+    excluded = {e.get("item")
+                for e in ((area_data.get("scope") or {}).get("excluded") or [])}
+    approved = area_data.get("status") == "approved"
+    seen = set()
+
+    for row in rows:
+        fp = row.get("fingerprint", "?")
+        where = f"{row.get('file', '?')}#{fp}"
+        if fp in seen:
+            add(findings, FAIL, "extraction", "duplicate-extraction-site", area_name,
+                f"Site {fp} is triaged twice \u2014 two verdicts for one decision.", ref=fp)
+        seen.add(fp)
+        verdict = row.get("verdict")
+
+        if verdict == "MAPPED":
+            targets = row.get("maps_to") or []
+            if not targets:
+                add(findings, FAIL, "extraction", "mapped-without-target", area_name,
+                    f"{where} is MAPPED but names no spec id.", ref=fp)
+            for target in targets:
+                if "." not in target and target not in ids:
+                    add(findings, FAIL, "extraction", "extraction-maps-to-dangling",
+                        area_name,
+                        f"{where} maps to '{target}', which does not exist.", ref=fp)
+        else:
+            if not row.get("reason"):
+                add(findings, FAIL, "extraction", "extraction-verdict-without-reason",
+                    area_name,
+                    f"{where} is {verdict} with no reason. Every verdict except MAPPED "
+                    f"is a judgement about code the spec does not describe \u2014 record it.",
+                    ref=fp)
+            if verdict == "OUT-OF-SCOPE":
+                ref = row.get("scope_ref")
+                if not ref:
+                    add(findings, FAIL, "extraction", "extraction-out-of-scope-unanchored",
+                        area_name,
+                        f"{where} is OUT-OF-SCOPE but names no scope_ref.", ref=fp)
+                elif ref not in excluded:
+                    add(findings, FAIL, "extraction", "extraction-scope-ref-dangling",
+                        area_name,
+                        f"{where} has scope_ref '{ref}', which is not in "
+                        f"scope.excluded[].", ref=fp)
+            if verdict == "GAP":
+                if not row.get("question"):
+                    add(findings, WARN, "extraction", "extraction-gap-untracked",
+                        area_name,
+                        f"{where} is a GAP with no Q-NNN. An acknowledged hole nobody "
+                        f"is tracking is an unacknowledged hole.", ref=fp)
+                if approved:
+                    add(findings, FAIL, "extraction", "extraction-gap-on-approved",
+                        area_name,
+                        f"{where} is still a GAP on an approved area \u2014 the code does "
+                        f"something the spec does not describe.", ref=fp)
+            if verdict == "DEAD":
+                add(findings, WARN, "extraction", "extraction-dead-code", area_name,
+                    f"{where} is triaged DEAD. That is a finding about the CODE, not "
+                    f"the spec \u2014 delete it or explain why it stays.", ref=fp)
+
+
+def check_extraction_provenance(root, area_data, area_name, findings):
+    """An extracted claim without evidence cannot be reviewed against the thing
+    it was extracted from, which is the only way to tell inference from
+    invention."""
+    review = at_review(area_data)
+    for list_name in ("requirements", "invariants", "constraints"):
+        for item in area_data.get(list_name, []) or []:
+            iid = item.get("id", "?")
+            source = (item.get("source") or "")
+            prov = item.get("extraction") or {}
+            if source.startswith("extracted") and not prov.get("evidence"):
+                add(findings, FAIL if review else WARN, "extraction",
+                    "extracted-without-evidence", area_name,
+                    f"{iid} is marked '{source}' but records no extraction.evidence. "
+                    f"Without the file:line it came from, the confirm pass is guessing.",
+                    ref=iid)
+            if prov.get("confidence") == "low" and review:
+                add(findings, WARN, "extraction", "low-confidence-at-review", area_name,
+                    f"{iid} was extracted with low confidence \u2014 the code was ambiguous "
+                    f"and someone guessed. Confirm it before approval.", ref=iid)
+
+
+def check_harvested_examples(root, area_data, area_name, findings):
+    """A harvested example whose trace is missing is a claim about production
+    with nothing behind it."""
+    for ex in area_data.get("examples", []) or []:
+        trace = ex.get("trace")
+        if not trace:
+            continue
+        if not (Path(root) / "specs" / trace).exists():
+            add(findings, FAIL, "examples", "harvested-trace-missing", area_name,
+                f"{ex.get('id', '?')}.trace '{trace}' does not exist. A harvested "
+                f"example is evidence only while its recording is there.",
+                ref=ex.get("id"))
 
 
 def check_cross_refs(area_data, all_areas, area_name, findings):
@@ -1783,6 +1929,10 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_witness_delta(root, area_data, sidecar, area_name, findings)
     check_paired_invariants(root, area_data, sidecar, area_name, findings)
     check_refusal_artifacts(area_data, area_name, findings)
+    check_boundary(area_data, area_name, findings)
+    check_extraction_ledger(area_data, area_name, findings)
+    check_extraction_provenance(root, area_data, area_name, findings)
+    check_harvested_examples(root, area_data, area_name, findings)
     check_cross_refs(area_data, all_areas, area_name, findings)
     check_contract_spans(area_data, all_areas, area_name, findings)
     check_open_questions(area_data, area_name, findings)

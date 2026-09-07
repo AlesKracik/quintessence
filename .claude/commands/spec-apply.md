@@ -8,6 +8,10 @@ Generate or update implementation code from the area's spec (Quint sidecar + arc
 /spec-apply [target] --force                # generate even if architecture is incomplete
 /spec-apply [target] --tests-only           # regenerate tests, keep code
 /spec-apply [target] --component <name>     # only one component
+/spec-apply [target] --parallel             # brownfield: generate BESIDE the
+                                            #   original into
+                                            #   conformance.differential.parallel_path,
+                                            #   so `spec-record equiv` can diff the two
 ```
 
 ## Instructions
@@ -126,6 +130,10 @@ For each component (or the area if monolithic):
 
 **On existing code:** inspect first. For each file, diff against what would be generated; show the user, ask before overwriting non-trivial existing logic. Preserve hand-edits that don't conflict.
 
+**`--parallel` (brownfield):** generate into `conformance.differential.parallel_path` instead of over the original, and touch nothing at the original's path. The point is to end up with TWO implementations of the same spec \u2014 the one that already existed and the one the spec produces \u2014 so `spec-record equiv` can drive both and diff them. Overwriting the original destroys the oracle, which is the only thing that can answer "is this spec faithful enough to rebuild from?". `spec-record equiv` refuses to run when `parallel_path` falls inside the area's `code_path`, so this is enforced, not merely advised.
+
+Generate the parallel implementation **from the spec alone**. Consulting the original while generating turns the experiment into a copy and guarantees a false pass: the comparator would be diffing the original against a transcription of itself. If the spec is too thin to generate from, that IS the finding \u2014 record the missing decisions rather than filling them in from the code you happen to be looking at.
+
 ### Step 4a — Generate the conformance adapter + replay harness
 
 `/spec-verify` replays the witness traces (ITF files under `specs/<target>/traces/`) through an adapter against the real implementation (rationale: METHODOLOGY.md → "Conformance"). Generate the artifacts in the target stack:
@@ -157,6 +165,30 @@ Write the config into the area JSON:
 Keep the adapter thin — abstraction mapping only, no logic. If an action can't be mapped 1:1 to a code entry point, that's a finding: the architecture hides a spec-level behavior. Surface it instead of faking the mapping.
 
 **Comments:** include a single line per generated function naming the spec ID: `// REQ-001` or `// INV-001 guard`. Don't write paragraph docstrings — the spec IS the documentation.
+
+### Step 4b — Generate the differential comparator (brownfield, `--parallel` only)
+
+Only when `conformance.differential` is configured. The comparator answers the question replay cannot: **is the regenerated implementation substitutable for the original?**
+
+Almost all of it already exists. The conformance adapter is one method per action, one getter per var, and a `reset()` — which is exactly the interface a differential runner needs. Instantiate it **twice**: once over the original implementation, once over the one at `parallel_path`.
+
+1. **Sequence source**, in this order:
+   - every witness trace (they exercise each requirement at least once);
+   - every harvested example with a `trace` (real production sequences);
+   - randomized sequences of legal actions, `QUINT_DIFF_SEQUENCES` of them (default 1000), drawn the same way the PBT tier draws them.
+2. **Per step**: call the same action with the same arguments on both adapters, then compare every entry of `boundary.observable_state`. Compare the *abstracted* values, not internal structures — the boundary says what counts as the same.
+3. **Also compare refusals**: an action that throws on one side and returns on the other is a divergence even when the observable state ends up identical. A rejection is behavior.
+4. **On divergence**: report the sequence, the step index, the action with its arguments, and both observed values — that quadruple is what makes it reproducible.
+5. **Exit 0** when nothing distinguished them; nonzero otherwise. Print a final line `DIVERGENCES=<n>`; `spec-record equiv` reads it, and treats its absence as *unknown* rather than zero — an unreported number is not a good number.
+
+Environment the runner sets: `QUINT_DIFF_SEQUENCES`, `QUINT_DIFF_PARALLEL`.
+
+Two things the comparator must NOT do, because either turns a green run into a lie: share mutable state between the two instances (each gets its own `reset()` and its own store), and skip a sequence whose actions the parallel implementation rejects — that rejection is exactly the divergence being hunted.
+
+Every divergence is one of two things, and the distinction is the user's call, not yours:
+
+- a **missing spec element** — the extraction gap. Capture the requirement, constraint or decision that was never written down, and re-generate.
+- an **intentional difference** — record a `DEC-NNN` with `affects[]` saying which behavior deliberately changed, so the next run does not re-litigate it.
 
 ### Step 5 — Update traceability
 

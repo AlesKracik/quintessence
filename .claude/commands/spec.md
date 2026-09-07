@@ -131,11 +131,89 @@ If the user types `/spec _patterns`, `/spec _protocols`, or `/spec _journeys` (n
 
 (Runs when `specs/<target>.*.json` is missing AND code exists at the area's `code_path`.)
 
-Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-path>`. I'll extract a draft spec." Read source files. For each function/class/handler, infer requirements; mark them `source: "extracted"`, `status: "needs-validation"`. Fill EARS fields where the code makes them clear (a guard clause → `ears.state`; an event handler → `ears.trigger`; error paths → `ears.unwanted: true`); leave `ears` off where the code is ambiguous and ask during the confirm pass. Infer types and state (Quint `type` and `var`). Infer guards as candidate invariants.
+Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-path>`. I'll extract a draft spec."
 
-Write `specs/<target>.*.json` with the extracted sections. Write `specs/<target>.qnt` with the inferred Quint module skeleton (will need refinement). Present each extracted item one at a time for the user to confirm, edit, or discard.
+**Brownfield is the strong case, not the awkward one.** Greenfield elicitation has only the user's memory to work from. Here there is a running implementation that answers any question you ask it — every threshold, every branch, every error path is already decided and readable. Extraction should therefore produce a *stronger* spec than elicitation, not a weaker one. The whole beat is organised around one target:
 
-End with: "Draft spec written. Recommended next: `/spec-check <target>` to verify the Quint compiles, then refine."
+> A regenerated implementation should be **substitutable** for the original at a declared boundary — indistinguishable through the interfaces anyone depends on, free in everything else.
+
+Not identical code. A spec that determines the implementation uniquely IS the implementation in a worse notation: it can no longer disagree with the code, so it inherits every bug as truth. Aim at the boundary, leave the inside free, and *measure* the difference instead of asserting it.
+
+##### 1. Declare the substitution boundary FIRST
+
+Before extracting behavior, ask what "the same" would mean. Fill `boundary`:
+
+- **entry_points** — the callable surface clients depend on, with argument shape.
+- **observable_state** — what a caller can read back, and therefore can notice changing. These become the differential comparator's diff targets and usually mirror the conformance adapter's getters.
+- **emits** — events, webhooks, audit records: observable whether or not anyone calls them API.
+- **persistence_contract** — is the stored representation part of the contract? The one people forget: behavior can match perfectly while a regenerated schema orphans every existing row. Answer even when the answer is "none, the store is private".
+- **free** — what a replacement may legitimately do differently: file layout, log wording, internal structure, algorithm. Naming this is what keeps the spec from becoming a transliteration.
+
+##### 2. Read fields out of the code, not prose
+
+The code already made these decisions. Extract them as **fields**, not as descriptions:
+
+| In the code | Becomes | Why it matters for fidelity |
+|---|---|---|
+| numeric/string literal in a guard | `CON-NNN` + `paired_invariant` | The threshold AND its other side; `>= 5` regenerated as `> 5` is invisible without both |
+| branch condition | `ears.state` / `ears.trigger`, phrased with declared state names | An unspecified branch cannot be regenerated |
+| `catch` / error branch per dependency | `externals[].outcomes[]` + `error_outcomes[]` (with `idempotent`) | Failure behavior is where extracted specs are thinnest |
+| enum / union / status column | entity `states[]` + `closed: true` | Stops regeneration inventing a fourth state |
+| early return / throw guard | `modality: "forbidden"` + `refusal.artifact` | Rejections have no witness; without an artifact nothing checks them |
+| a choice the code makes that clients see (error codes, ordering, ID format) | `DEC-NNN` with `affects[]` | Legitimate latitude the spec should allow, already spent — pin it or regeneration will pick differently |
+| a choice genuinely free | `modality: "may"` + one outcome per branch | Do not let the extracted branch narrow a permission into a rule |
+
+Apply the four capture-time checks **against the code rather than the user** — the answers are all in there:
+
+1. **Witness test.** Can you write a `witness.predicate` bound to the action's parameters? If not, you have not understood the function well enough to specify it.
+2. **Unwanted counterpart.** Every error path in the source is an unwanted-behavior requirement someone already wrote. Read them out.
+3. **Boundary semantics.** The code *knows* whether it is `>=` or `>`. Do not ask; read it, and record it in the response ("locks on the 5th failure").
+4. **Quantifier scope.** The data structure answers it: `Map<UserId, int>` is per-user, a bare `int` is global.
+
+Mark every extracted item `source: "extracted"`, `status: "needs-validation"`, and fill `extraction`:
+
+```json
+"extraction": { "evidence": "authService.ts:78-91", "confidence": "high", "inferred_by": "agent" }
+```
+
+`confidence: "low"` is the honest label when the code was ambiguous and you guessed — the readback surfaces it and lint flags it at review. Guessing silently is what makes an extracted spec untrustworthy.
+
+##### 3. Account for the code you did NOT specify
+
+Run `tools/spec-extract-audit.py <target> --emit`. It enumerates the decision sites — branches, guard literals, error handlers, early exits — and prints triage stubs for every one no spec element claims.
+
+This is the only check in the framework that runs **code → spec**, and it is the one that matters here: the reason a regenerated implementation diverges is almost always a branch nobody wrote down, and nothing spec-shaped can look for a branch the spec does not mention. Give every site a verdict in `extraction_triage[]`:
+
+- `MAPPED` (+ `maps_to`) — realizes these spec ids.
+- `NOT-BEHAVIOR` — logging, metrics, tracing.
+- `DEFENSIVE` — unreachable by construction, kept as a belt.
+- `DEAD` — unreachable. A finding about the code; say so.
+- `GAP` (+ `Q-NNN`) — real behavior nobody specified. The extraction hole.
+- `OUT-OF-SCOPE` (+ `scope_ref`) — outside the declared boundary.
+
+Sites are keyed by fingerprint, not line number, so the ledger survives reformatting. Work through the GAPs with the user; they are the highest-value questions in the whole beat.
+
+##### 4. Harvest examples instead of inventing them
+
+Ask for real call sequences — from logs, from existing tests, from a recording session. Each becomes an `examples[]` entry with `source: "extracted-from-production"` and, where a recording exists, `trace` pointing at the ITF file. Greenfield examples are guesses about what matters; harvested ones are evidence, and they replay through the same machinery as a witness trace.
+
+##### 5. Then formalize, and offer to measure
+
+Write `specs/<target>.*.json` and the Quint sidecar. Present extracted items in batches for confirm/edit/discard — with `extraction.evidence`, the user can jump to the code instead of reconstructing your reasoning.
+
+End with the ladder, and be explicit that the last rung is the one that actually settles fidelity:
+
+```
+Draft spec written from <n> files. <m> sites triaged, <k> GAPs open.
+
+  /spec-check <target>          the model holds and nothing is vacuous
+  /spec-verify <target>         the ORIGINAL code conforms to the spec
+  /spec-apply <target> --parallel   regenerate beside the original
+  spec-record equiv <target>    drive BOTH through the same sequences
+
+The last one is the only one that answers "is this spec faithful enough to
+rebuild from?" — everything above it checks the spec against itself.
+```
 
 #### greenfield elicit
 

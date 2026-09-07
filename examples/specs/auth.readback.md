@@ -254,6 +254,8 @@ _One number would hide which half is missing. Each row is derived from declared 
 | External systems | — | none declared — if the area calls anything, this is a gap |
 | Assumptions | — | none recorded |
 | Temporal behavior | — | none declared |
+| Extraction coverage | — | not audited — `tools/spec-extract-audit.py` |
+| Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | ! | 1/1 rejection(s) with an artifact, 0 passing |
 | Examples | — | none written |
 | Invariants | ! | 0/4 holding |

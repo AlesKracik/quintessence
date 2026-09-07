@@ -16,6 +16,12 @@
 # QUINT_IR_ENGINE=cli pins lint/matrix to the Quint compiler's typed IR —
 # verdicts here never depend on the lossy regex fallback.
 #
+# Deliberately NOT here, because both need the CODE repo checked out, which a
+# spec repo's CI does not have in the multi-repo case:
+#   tools/spec-extract-audit.py  (code -> spec coverage)
+#   spec-record equiv            (differential vs the original implementation)
+# Wire those into the CODE repo's CI instead, where the source actually is.
+#
 # Apalache model checking (/spec-check) and conformance replay (/spec-verify)
 # are heavier and agent-driven; run them locally or scheduled. The optional
 # Alloy backend is agent-driven for the same reason and needs no jar here:
