@@ -94,7 +94,31 @@ def is_rejection(req):
     if req.get("modality") == "forbidden":
         return True
     w = req.get("witness") or {}
-    return w.get("status") == "skipped" and bool(w.get("justification"))
+    return w.get("status") == "skipped" and skip_discharge(w) is not None
+
+
+def skip_discharge(witness):
+    """What a `skipped` witness offers in place of a trace, or None.
+
+    Two forms discharge the obligation, and they are the same claim written
+    at different precisions:
+
+      - `enforced_by`: the enforcing invariant as an ID. The typed form, and
+        the one the schema and spec-lint both steer prohibitions toward,
+        because a dangling ID FAILs where a sentence cannot be checked.
+      - `justification`: the older prose form, still valid.
+
+    Shared so the gate has one definition. It previously read only the prose
+    field in three separate places, which meant spec-record wrote the typed
+    form for every `forbidden` requirement and spec-lint then failed it — the
+    documented flow breaking its own gate on the first run.
+    """
+    if not isinstance(witness, dict):
+        return None
+    enforced = witness.get("enforced_by")
+    if enforced:
+        return f"enforced by {enforced}"
+    return witness.get("justification") or None
 
 
 def area_json_path(root, name):
@@ -371,11 +395,13 @@ def witness_status(root, area_name, area_data):
         if status == "skipped":
             # Justified skip discharges the obligation (rejection requirement —
             # the proof is an invariant). Unjustified skip is a gate failure.
-            if w.get("justification"):
-                status, detail = "skipped", w["justification"]
+            discharge = skip_discharge(w)
+            if discharge:
+                status, detail = "skipped", discharge
                 discharged += 1
             else:
-                status, detail = "SKIPPED-UNJUSTIFIED", "no justification — does not discharge"
+                status, detail = ("SKIPPED-UNJUSTIFIED",
+                                  "no justification or enforced_by — does not discharge")
                 missing += 1
             rows.append((rid, status, trace_rel or "—", detail))
             continue

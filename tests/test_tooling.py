@@ -2776,3 +2776,109 @@ def test_both_engines_agree_on_the_wrapper_model(tmp_path):
     assert regex["source"] == "regex"
     assert regex["action_calls"]["step"] == ["loginStep", "logoutStep"]
     assert regex["action_calls"]["deadA"] == ["deadB"]
+
+
+# ── A prohibition's typed discharge is honoured by every gate ───────────────
+# spec-record writes witness.status "skipped" for every `forbidden`
+# requirement carrying enforced_by, and never writes a justification. Three
+# separate copies of the discharge gate read only `justification`, so the
+# documented flow failed its own gate on the first run: authoring the
+# prohibition FAILed no-witness-predicate, and running the recorder FAILed
+# skipped-no-justification. enforced_by is the form the schema and lint both
+# steer prohibitions toward — a checkable ID beats a sentence.
+
+def _forbidden_area(witness, rid="REQ-002", modality="forbidden"):
+    return {
+        "kind": "area", "area": "auth", "version": "0.1.0", "status": "draft",
+        "invariants": [{"id": "INV-001", "statement": "s", "criticality": "high"}],
+        "requirements": [{"id": rid, "modality": modality, "quint_ref": "login",
+                          "ears": {"trigger": "t", "response": "rejected"},
+                          "witness": witness}],
+    }
+
+
+def _witness_findings(tmp_path, area):
+    findings = []
+    lint.check_witnesses(tmp_path, area, "auth", findings)
+    return {f.check for f in findings if f.ref == area["requirements"][0]["id"]}
+
+
+@pytest.mark.parametrize("witness", [
+    {"enforced_by": "INV-001"},                      # as authored
+    {"status": "skipped", "enforced_by": "INV-001"},  # as spec-record writes it
+])
+def test_typed_prohibition_discharges_the_witness_gate(tmp_path, witness):
+    assert _witness_findings(tmp_path, _forbidden_area(witness)) == set()
+
+
+def test_prose_justification_still_discharges(tmp_path):
+    """The older form stays valid \u2014 this fix widens the gate, never narrows it."""
+    area = _forbidden_area({"status": "skipped",
+                            "justification": "rejection \u2014 enforced by INV-001"},
+                           modality=None)
+    assert "skipped-no-justification" not in _witness_findings(tmp_path, area)
+
+
+def test_skip_with_neither_form_still_fails(tmp_path):
+    area = _forbidden_area({"status": "skipped"}, rid="REQ-003", modality=None)
+    assert "skipped-no-justification" in _witness_findings(tmp_path, area)
+
+
+def test_a_non_forbidden_requirement_still_needs_a_predicate(tmp_path):
+    """The predicate exemption is scoped to prohibitions carrying enforced_by,
+    not handed to anything that omits a predicate."""
+    area = _forbidden_area({}, rid="REQ-004", modality=None)
+    assert "no-witness-predicate" in _witness_findings(tmp_path, area)
+
+
+def test_forbidden_without_enforced_by_is_not_exempt(tmp_path):
+    """modality alone must not buy the exemption \u2014 check_modality FAILs the
+    missing enforced_by, and the predicate gate must not go quiet meanwhile."""
+    assert "no-witness-predicate" in _witness_findings(tmp_path, _forbidden_area({}))
+
+
+@pytest.mark.parametrize("witness,expected", [
+    ({"status": "skipped", "enforced_by": "INV-001"}, "enforced by INV-001"),
+    ({"status": "skipped", "justification": "rejection \u2014 see INV-002"},
+     "rejection \u2014 see INV-002"),
+    ({"status": "skipped"}, None),
+    ({}, None),
+    ("not-a-dict", None),
+])
+def test_skip_discharge_is_the_single_definition(witness, expected):
+    assert itf.skip_discharge(witness) == expected
+
+
+def test_enforced_by_wins_over_prose_when_both_are_present():
+    """The checkable form is the one worth reporting."""
+    assert itf.skip_discharge({"status": "skipped", "enforced_by": "INV-001",
+                               "justification": "prose"}) == "enforced by INV-001"
+
+
+def test_witness_status_counts_a_typed_skip_as_discharged(tmp_path):
+    """The readback's ledger reads the same definition, so a prohibition no
+    longer renders as SKIPPED-UNJUSTIFIED, and it counts as discharged rather
+    than against the gate."""
+    area = {"kind": "area", "area": "auth",
+            "requirements": [{"id": "REQ-002", "modality": "forbidden",
+                              "witness": {"status": "skipped",
+                                          "enforced_by": "INV-001"}}]}
+    rows, missing, discharged = itf.witness_status(tmp_path, "auth", area)
+    assert [r[1] for r in rows] == ["skipped"]
+    assert "INV-001" in rows[0][3]
+    assert (missing, discharged) == (0, 1)
+
+
+def test_witness_status_still_gates_an_undischarged_skip(tmp_path):
+    area = {"kind": "area", "area": "auth",
+            "requirements": [{"id": "REQ-003",
+                              "witness": {"status": "skipped"}}]}
+    rows, missing, discharged = itf.witness_status(tmp_path, "auth", area)
+    assert rows[0][1] == "SKIPPED-UNJUSTIFIED"
+    assert (missing, discharged) == (1, 0)
+
+
+def test_a_typed_skip_is_a_rejection_for_refusal_purposes():
+    assert itf.is_rejection({"witness": {"status": "skipped",
+                                         "enforced_by": "INV-001"}})
+    assert not itf.is_rejection({"witness": {"status": "skipped"}})

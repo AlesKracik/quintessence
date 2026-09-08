@@ -107,7 +107,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (compute_model_sha, load_trace, witness_status,  # noqa: E402
-                       area_json_path, is_rejection)
+                       area_json_path, is_rejection, skip_discharge)
 from quint_ir import parse_qnt  # noqa: E402
 
 
@@ -707,11 +707,11 @@ def cmd_check(args):
                       f"{witness['enforced_by']})")
                 continue
             if witness.get("status") == "skipped":
-                if not witness.get("justification"):
+                if skip_discharge(witness) is None:
                     # Same gate as spec-lint — an unjustified skip must not
                     # let this runner report green.
-                    print(f"{rid:<12} SKIPPED-UNJUST.  (skip without justification "
-                          f"does not discharge — justify or remove)")
+                    print(f"{rid:<12} SKIPPED-UNJUST.  (skip with neither enforced_by "
+                          f"nor justification does not discharge)")
                     bad += 1
                 continue
             if not witness.get("predicate"):

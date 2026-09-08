@@ -100,7 +100,7 @@ try:
     from quint_ir import parse_qnt as _ir_parse_qnt
     # Shared rejection definition — lint, spec-record and the readback must
     # not disagree about which requirements owe a refusal artifact.
-    from itf_tools import is_rejection, witness_entries
+    from itf_tools import is_rejection, witness_entries, skip_discharge
     from itf_tools import compute_model_sha as _compute_model_sha
     from itf_tools import load_trace as _load_trace
 except ImportError as e:
@@ -402,6 +402,14 @@ def check_witnesses(root, area_data, area_name, findings):
             continue
         witness = req.get("witness") or {}
         predicate = witness.get("predicate")
+        if not predicate and req.get("modality") == "forbidden" and witness.get("enforced_by"):
+            # A prohibition has no state change to witness — that is the whole
+            # reason it names an enforcing invariant instead. Demanding a
+            # predicate here failed every correctly-written prohibition before
+            # spec-record had even run (which is what sets status 'skipped').
+            # check_modality separately FAILs a forbidden REQ with no
+            # enforced_by, and a dangling one.
+            continue
         if not predicate and req.get("modality") == "may":
             # A 'may' requirement carries one predicate per permitted outcome
             # instead of a single one; the gate is satisfied when they exist
@@ -421,12 +429,12 @@ def check_witnesses(root, area_data, area_name, findings):
             # Deliberate opt-out — legitimate for rejection requirements
             # (no state change to witness; an invariant carries the proof).
             # Only a JUSTIFIED skip discharges the obligation.
-            if not witness.get("justification"):
+            if skip_discharge(witness) is None:
                 add(findings, FAIL, "witness", "skipped-no-justification", area_name,
-                    f"{rid}.witness is skipped without a justification — an "
-                    f"unjustified skip does not discharge the obligation. "
-                    f"Rejection requirement? Point at the invariant that "
-                    f"enforces it.",
+                    f"{rid}.witness is skipped with neither witness.enforced_by "
+                    f"nor a justification — an undischarged skip proves nothing. "
+                    f"Rejection requirement? Set modality 'forbidden' and "
+                    f"witness.enforced_by to the invariant that enforces it.",
                     ref=rid)
             continue
 
