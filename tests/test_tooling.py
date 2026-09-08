@@ -31,6 +31,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -2957,3 +2958,57 @@ def test_matrix_still_returns_empty_for_an_area_with_no_sidecar(tmp_path):
     formalized yet, and that must not become a hard error."""
     (tmp_path / "specs").mkdir(parents=True)
     assert matrix.discover_qnt_actions(tmp_path, {}, "auth") == []
+
+
+# ── Documented slash commands must exist ────────────────────────────────────
+# The tier table's column was headed "Commands" and listed `/spec`,
+# `/spec-readback`, `spec-lint`, `spec-matrix`, `spec-diff` — the last three
+# are tools/*.py scripts, not commands, and the section two screens below is
+# titled "The Five Commands". A reader types /spec-lint and it does not
+# exist. Docs and .claude/commands/ are the same duplicated-fact problem as
+# the rest, so pin them to each other.
+
+REPO_ROOT = TOOLS.parent
+COMMANDS_DIR = REPO_ROOT / ".claude" / "commands"
+DOC_FILES = ["METHODOLOGY.md", "README.md"]
+SLASH_RE = re.compile(r"`(/spec[a-z-]*)`")
+
+
+def _declared_commands():
+    return {"/" + p.stem for p in COMMANDS_DIR.glob("*.md")}
+
+
+def test_command_files_exist():
+    assert _declared_commands(), "no command files found — retarget this test"
+
+
+@pytest.mark.parametrize("doc", DOC_FILES)
+def test_every_documented_slash_command_is_real(doc):
+    """A `/name` in backticks is a promise the reader can type it."""
+    text = (REPO_ROOT / doc).read_text(encoding="utf-8")
+    declared = _declared_commands()
+    # `/spec <area>` and `/spec-readback --all` carry arguments; the command
+    # is the first token.
+    used = {m.split()[0] for m in SLASH_RE.findall(text)}
+    unknown = sorted(used - declared)
+    assert not unknown, f"{doc} documents commands that do not exist: {unknown}"
+
+
+def test_the_five_commands_section_matches_the_command_files():
+    """METHODOLOGY calls them "The Five Commands" — if a command is added or
+    removed, that heading and this test move together."""
+    declared = _declared_commands()
+    assert len(declared) == 5, sorted(declared)
+    text = (REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8")
+    assert "## The Five Commands" in text
+
+
+def test_scripts_are_not_presented_as_commands_in_the_tier_table():
+    """The regression proper: a bare script name in the tier table's entry
+    points column reads as something you can type."""
+    text = (REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8")
+    row = next(ln for ln in text.splitlines() if ln.startswith("| **1 — Precision core**"))
+    for script in ("spec-lint", "spec-matrix", "spec-diff"):
+        assert f"`{script}`," not in row and not row.endswith(f"`{script}` |"), (
+            f"{script} is listed bare; qualify it as tools/{script}.py")
+        assert f"tools/{script}.py" in row
