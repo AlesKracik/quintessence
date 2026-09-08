@@ -62,6 +62,29 @@ else
   missing+=("apalache")
 fi
 
+# -- jsonschema (spec-lint's schema validation) ------------------------------
+# Not optional in the way Alloy is: without it spec-lint SKIPS schema
+# validation entirely, and several other checks defer malformed-shape
+# detection to it. A project linting without the lib has real holes, and
+# every run carries a WARN saying so — so report it here, where the fix
+# is one line, instead of leaving it to nag on every lint.
+
+py=""
+for cand in python3 python; do
+  if command -v "$cand" >/dev/null 2>&1; then py="$cand"; break; fi
+done
+
+if [ -z "$py" ]; then
+  echo "✗ python     not found  (spec-lint and the rest of tools/ are Python 3)"
+  missing+=("python")
+elif "$py" -c "import jsonschema" >/dev/null 2>&1; then
+  jver="$("$py" -c "import jsonschema; print(jsonschema.__version__)" 2>/dev/null)"
+  echo "✓ jsonschema ${jver:-(version unknown)}"
+else
+  echo "⚠ jsonschema not installed  (spec-lint skips schema validation without it)"
+  warn+=("jsonschema")
+fi
+
 # -- Alloy (OPTIONAL structural backend) ------------------------------------
 # Never counted as missing: the Alloy backend is opt-in per invariant
 # (proof: "structural") and most projects never turn it on. Reported only so
@@ -144,6 +167,13 @@ case " ${warn[*]:-} " in *" alloy-jar-missing "*)
   echo "    https://github.com/AlloyTools/org.alloytools.alloy/releases"
   echo "  Then set ALLOY_JAR=/path/to/org.alloytools.alloy.dist.jar"
   echo "  (or alloy.jar_path in .spec/project.json). Verify: java -jar \"\$ALLOY_JAR\" help"
+  echo
+;; esac
+
+case " ${warn[*]:-} " in *" jsonschema "*)
+  echo "Install jsonschema (spec-lint needs it for schema validation):"
+  echo "  ${py:-python3} -m pip install jsonschema"
+  echo "  (Verify: ${py:-python3} -c 'import jsonschema')"
   echo
 ;; esac
 

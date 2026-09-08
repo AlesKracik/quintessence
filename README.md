@@ -49,7 +49,7 @@ claude
 > /spec
 ```
 
-`tools/check-tooling.sh` is the **fastest way to find out what's missing**. It checks `java -version` (must be 17+ for Apalache), confirms `quint` and `apalache-mc` are on PATH, and prints platform-specific install commands for whatever it doesn't find — `brew install --cask temurin` on macOS, `apt install openjdk-17-jdk` on Ubuntu, the full GitHub-release recipe for Apalache, etc. Run it before `/spec-check` if you're not sure your machine is ready.
+`tools/check-tooling.sh` is the **fastest way to find out what's missing**. It checks `java -version` (must be 17+ for Apalache), confirms `quint` and `apalache-mc` are on PATH, reports whether Python's `jsonschema` is installed (without it `spec-lint` silently skips schema validation), and prints platform-specific install commands for whatever it doesn't find — `brew install --cask temurin` on macOS, `apt install openjdk-17-jdk` on Ubuntu, the full GitHub-release recipe for Apalache, etc. Run it before `/spec-check` if you're not sure your machine is ready.
 
 `/spec` detects there's no `.spec/project.json` yet and walks the project bootstrap (areas, repos) and opens the first **change** — the unit of work every spec edit lands in. Then `/spec <area>` walks each area conversationally — eliciting requirements, identifying entities, formalizing Quint, all in one chat — with the edits tracked in that change.
 
