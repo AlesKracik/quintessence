@@ -3003,12 +3003,30 @@ def test_the_five_commands_section_matches_the_command_files():
     assert "## The Five Commands" in text
 
 
-def test_scripts_are_not_presented_as_commands_in_the_tier_table():
-    """The regression proper: a bare script name in the tier table's entry
-    points column reads as something you can type."""
+def _tier_rows():
     text = (REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8")
-    row = next(ln for ln in text.splitlines() if ln.startswith("| **1 — Precision core**"))
-    for script in ("spec-lint", "spec-matrix", "spec-diff"):
-        assert f"`{script}`," not in row and not row.endswith(f"`{script}` |"), (
-            f"{script} is listed bare; qualify it as tools/{script}.py")
-        assert f"tools/{script}.py" in row
+    return [ln for ln in text.splitlines()
+            if ln.startswith("| **1 — Precision core**")
+            or ln.startswith("| **2 — Formal proof**")]
+
+
+def test_the_tier_table_commands_column_holds_only_commands():
+    """The regression proper: the column is headed Commands, so every entry in
+    it must be one. Scripts belong in the prose that describes them, where the
+    document already spells them tools/<name>.py."""
+    rows = _tier_rows()
+    assert len(rows) == 2, rows
+    declared = _declared_commands()
+    for row in rows:
+        column = row.rstrip().rstrip("|").rsplit("|", 1)[-1]
+        entries = [e.strip().strip("`") for e in column.split(",") if e.strip()]
+        assert entries, row
+        assert all(e in declared for e in entries), entries
+
+
+def test_no_script_names_leak_into_the_tier_commands_column():
+    for row in _tier_rows():
+        column = row.rstrip().rstrip("|").rsplit("|", 1)[-1]
+        for script in ("spec-lint", "spec-matrix", "spec-diff", "spec-record",
+                       "spec-mutate", "spec-separation", "spec-extract-audit"):
+            assert script not in column, f"{script} listed under Commands"

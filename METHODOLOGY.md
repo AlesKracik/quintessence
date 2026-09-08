@@ -23,10 +23,10 @@ flowchart LR
 
 Most of the value in "vague → bulletproof" lands **before** the model checker. The framework is layered so you can stop at the first tier:
 
-| Tier | What it gives | Tools needed | Entry points |
+| Tier | What it gives | Tools needed | Commands |
 |---|---|---|---|
-| **1 — Precision core** | EARS-structured requirements (the 4 capture-time checks kill vagueness), a declared **scope** to be complete relative to, state×event **and** external×outcome completeness, closed-world entities, modality (must/may/forbidden), first-class assumptions, the deterministic human-review **readback**, the semantic **diff**, and `spec-lint` gating it all. | Python 3 only — **no Java/Apalache/Quint** | commands `/spec`, `/spec-readback`; scripts `tools/spec-lint.py`, `tools/spec-matrix.py`, `tools/spec-diff.py` |
-| **2 — Formal proof** | Quint model, Apalache invariants (bounded or inductive), machine-found witness traces, and conformance replay against code. Optional extra backends for other question classes: Alloy for structure, z3 for arithmetic. | + Java 17, Quint, Apalache (+ Alloy / z3 if used) | commands `/spec-check`, `/spec-apply`, `/spec-verify` |
+| **1 — Precision core** | EARS-structured requirements (the 4 capture-time checks kill vagueness), a declared **scope** to be complete relative to, state×event **and** external×outcome completeness, closed-world entities, modality (must/may/forbidden), first-class assumptions, the deterministic human-review **readback**, the semantic **diff**, and `spec-lint` gating it all. | Python 3 only — **no Java/Apalache/Quint** | `/spec`, `/spec-readback` |
+| **2 — Formal proof** | Quint model, Apalache invariants (bounded or inductive), machine-found witness traces, and conformance replay against code. Optional extra backends for other question classes: Alloy for structure, z3 for arithmetic. | + Java 17, Quint, Apalache (+ Alloy / z3 if used) | `/spec-check`, `/spec-apply`, `/spec-verify` |
 
 Tier 1 is a complete, useful workflow on its own: a team can distill requirements and ship the readback for review in minutes, with zero JVM on-ramp. Tier 2 is opt-in depth for the areas that earn it — the formal machinery proves *internal consistency, reachability, and code-conformance*, but it does **not** invent or correct intent. **The trust boundary is at elicitation** (NL → EARS fields): that step is human + AI judgment, backstopped mechanically by `spec-lint` (a functional requirement with no writable witness predicate FAILs past draft — see "EARS"), the matrix completeness gate, and the optional red-team. Everything downstream of a captured EARS field is mechanized; nothing upstream of it is. Know which tier a claim comes from.
 
