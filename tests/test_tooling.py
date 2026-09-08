@@ -2349,3 +2349,41 @@ def test_diff_still_defaults_modality_to_must():
         {"id": "R", "ears": {"response": "r"}, "modality": "may"}]}
     entries = diff.diff_area(old, new)["behavior"]
     assert entries[0]["was"] == "modality=must"
+
+
+# ── Executable bit on shipped scripts ───────────────────────────────────────
+# The docs invoke the tools directly (`./tools/bootstrap.sh`,
+# `tools/spec-record.py check <area>`), so a script committed 100644 is a
+# "permission denied" on every fresh POSIX clone. Windows checkouts have
+# core.filemode=false and cannot see the loss, so the index is the only
+# reliable place to assert it.
+
+def _git_index_modes():
+    import subprocess
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run(["git", "ls-files", "-s", "--", "tools"],
+                         cwd=root, capture_output=True, text=True)
+    if out.returncode != 0:
+        pytest.skip("not a git checkout")
+    modes = {}
+    for line in out.stdout.splitlines():
+        meta, _, path = line.partition("\t")
+        modes[path] = meta.split()[0]
+    return root, modes
+
+
+def test_shipped_scripts_are_executable_in_the_index():
+    root, modes = _git_index_modes()
+    not_exec = []
+    for path, mode in sorted(modes.items()):
+        f = root / path
+        if not f.is_file():
+            continue
+        with open(f, "rb") as fh:
+            if fh.read(2) != b"#!":
+                continue
+        if mode != "100755":
+            not_exec.append(f"{path} is {mode}, want 100755")
+    assert not not_exec, "\n".join(not_exec)
+
+
