@@ -3030,3 +3030,59 @@ def test_no_script_names_leak_into_the_tier_commands_column():
         for script in ("spec-lint", "spec-matrix", "spec-diff", "spec-record",
                        "spec-mutate", "spec-separation", "spec-extract-audit"):
             assert script not in column, f"{script} listed under Commands"
+
+
+# ── Brownfield extraction is ongoing, not one-time ──────────────────────────
+# The chapter and the /spec beat were organised around substitutability: the
+# boundary was step 1, and the closing table said the differential run "is
+# the one that decides whether a brownfield spec is worth anything". That is
+# a fidelity measurement for a rewrite, not the reason to extract. The reason
+# is a spec that is true of the code and stays true — which needs a route
+# back into extraction after the code moves, and there was none: extract
+# fired only when the spec was MISSING, and the only other way in was drift
+# codify, gated behind /spec-verify.
+
+SPEC_COMMAND = COMMANDS_DIR / "spec.md"
+
+
+def test_reextract_is_reachable_from_the_routing_table():
+    text = SPEC_COMMAND.read_text(encoding="utf-8")
+    routing = text.split("### Step 2")[0]
+    assert "re-extract" in routing, "no routing entry for re-extraction"
+    row = next(ln for ln in routing.splitlines() if "re-extract" in ln)
+    assert "exists" in row, "re-extract must trigger on an area that HAS a spec"
+
+
+def test_reextract_beat_exists_and_does_not_require_the_verify_chain():
+    """Requiring traceability, an adapter or a test command before you can
+    reconcile a spec with its code is what would stop anyone doing it."""
+    text = SPEC_COMMAND.read_text(encoding="utf-8")
+    assert "#### re-extract" in text
+    beat = text.split("#### re-extract")[1].split("#### drift codify")[0]
+    assert "without" in beat and "/spec-verify" in beat
+
+
+def test_the_boundary_is_no_longer_the_first_extraction_step():
+    text = SPEC_COMMAND.read_text(encoding="utf-8")
+    beat = text.split("#### brownfield extract")[1].split("#### re-extract")[0]
+    first_step = next(ln for ln in beat.splitlines() if ln.startswith("##### 1."))
+    assert "boundary" not in first_step.lower(), first_step
+    assert "Optional" in beat, "the boundary step must survive, marked optional"
+    assert "boundary" in beat, "the boundary content must not be deleted"
+
+
+def test_methodology_brownfield_chapter_leads_with_keeping_the_spec_true():
+    text = (REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8")
+    heading = next(ln for ln in text.splitlines() if ln.startswith("## Brownfield"))
+    assert "Rebuild From" not in heading, heading
+    chapter = text.split("## Brownfield")[1].split("## Mutation and Separation")[0]
+    # the fidelity machinery is kept, but demoted
+    assert "Optional: measuring extraction fidelity" in chapter
+    assert "spec-record equiv" in chapter, "differential machinery must not be deleted"
+    assert "substitutab" in chapter, "the substitutability argument must not be deleted"
+
+
+def test_no_stale_cross_reference_to_the_old_chapter_title():
+    for doc in DOC_FILES:
+        text = (REPO_ROOT / doc).read_text(encoding="utf-8")
+        assert "Specs You Could Rebuild From" not in text, doc

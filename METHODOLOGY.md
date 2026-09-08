@@ -58,7 +58,7 @@ cd my-project
 # (creates .spec/project.json, opens the first change, scaffolds the areas)
 ```
 
-For an **existing codebase** (brownfield): the same `/spec auth` recognizes that no `specs/auth.area.json` exists but `src/auth/` has code, and walks extraction. No special command, no separate path — but a longer beat, because the code can answer questions a user cannot, and because fidelity can be measured rather than asserted. See "Brownfield: Specs You Could Rebuild From".
+For an **existing codebase** (brownfield): the same `/spec auth` recognizes that no `specs/auth.area.json` exists but `src/auth/` has code, and walks extraction. No special command, no separate path — but a longer beat, because the code can answer questions a user cannot, and because fidelity can be measured rather than asserted. See "Brownfield: Keeping the Spec True to the Code".
 
 ---
 
@@ -998,34 +998,18 @@ This is where `decisions[].affects[]` earns its keep. It is the blast radius: wh
 
 ---
 
-## Brownfield: Specs You Could Rebuild From
+## Brownfield: Keeping the Spec True to the Code
 
 Greenfield elicitation has only the user's memory to work from. Brownfield has a running implementation that answers any question you ask it — every threshold, every branch, every error path already decided and readable. Extraction should therefore produce a **stronger** spec than elicitation, and the framework should ask more of it, not less.
 
-### The target is substitutability, not identical code
+**The point of extracting a spec from code is to have a spec that is true of the code — and stays true.** Not to prepare a rewrite. An accurate spec is what lets a team review behavior they never wrote down, reason about a change before making it, and see in a readback what the system actually does today. That value is immediate and it is the whole return; nothing has to be regenerated for it to be real.
 
-The tempting goal is a spec so complete that regenerating from it reproduces the original line for line. That goal is a trap. A spec that determines the implementation uniquely **is** the implementation in a worse notation: `Traces(Impl) = Traces(Spec)`, refinement collapses to equality, and the spec can no longer disagree with the code — so it inherits every bug as truth. You would have written the program twice and verified nothing.
+Which means extraction is not a one-time onboarding event. Code moves. A spec extracted last quarter and never revisited is a document about a system that no longer exists, and it is worse than no spec, because it still reads as authoritative. Re-extraction is a routine you run whenever the code has moved on — see "5. Keep it true as the code moves" below.
 
-The achievable and useful target:
+Measuring how completely the extraction captured the code *is* possible here, and it is worth doing when you are actually rewriting the thing. That machinery is real and it is kept — in "Optional: measuring extraction fidelity" at the end of this chapter. It is a confidence measurement for a specific job, not the reason to extract.
 
-> A regenerated implementation is **substitutable** for the original at a declared boundary — indistinguishable through the interfaces anyone depends on, free in everything else.
+### 1. Read fields out of the code, not prose
 
-Which is why `boundary` names what is **free** as well as what is preserved. An area whose boundary pins everything has stopped being a specification.
-
-### 1. Declare the boundary
-
-```json
-"boundary": {
-  "entry_points":     ["addItem(cartId, sku, qty)", "checkout(cartId)"],
-  "observable_state": ["cart.status", "cart.items (sku → qty)"],
-  "persistence_contract": "The store's cart shape IS the contract — existing carts must stay readable.",
-  "free": ["file layout", "log wording", "how items are looked up", "error class names"]
-}
-```
-
-`scope` says what the area is responsible for. `boundary` says what *the same* means. Without it, "the regenerated code matches" has no referent and the differential comparator has nothing to diff. Persistence is the line people forget: behavior can match perfectly while a regenerated schema orphans every existing row.
-
-### 2. Read fields out of the code, not prose
 
 The code already made every decision an elicitation session would have to ask about. Extract **fields**:
 
@@ -1049,7 +1033,8 @@ Each extracted item records where it came from:
 
 `confidence: "low"` is the honest label for ambiguous code, and the readback prints it as a warning rather than letting a guess read like a reading.
 
-### 3. Account for the code you did NOT specify
+### 2. Account for the code you did NOT specify
+
 
 `tools/spec-extract-audit.py` is the only check in the framework that runs **code → spec**. It enumerates decision sites — branches, guard literals, error handlers, early exits — and requires each to be claimed in `extraction_triage[]`:
 
@@ -1066,11 +1051,56 @@ This matters more than it sounds. **The reason a regenerated implementation dive
 
 Sites are keyed by a fingerprint of their normalized text plus their enclosing declaration, never by line number: a ledger keyed on line numbers rots on the first reformat, and a rotted ledger is worse than none because it still looks complete. A ledger entry matching no current site is reported too — the code moved out from under a decision.
 
-### 4. Harvest examples instead of inventing them
+### 3. Harvest examples instead of inventing them
+
 
 Real call sequences — from logs, from existing tests — become `examples[]` with `source: "extracted-from-production"` and a `trace` pointing at the recording. Greenfield examples are guesses about what matters; harvested ones are evidence.
 
-### 5. Then measure, instead of asserting
+### 4. Keep it true as the code moves
+
+An extracted spec starts accurate and decays from there. `/spec <area>` on an area that already has a spec whose `code_path` has changed since the last extraction routes to **re-extract**: it re-reads the code, diffs what it finds against the current spec, and walks you through the differences — new decision sites the audit ledger has never seen, guard literals that moved away from their `CON-NNN`, branches that disappeared, error paths that appeared.
+
+Each difference resolves the same three ways, and which one it is matters:
+
+| The code changed and the spec did not | Resolve as |
+|---|---|
+| deliberate behavior change nobody wrote down | update the spec, record a `DEC-NNN` if a decision moved with it |
+| the spec was always wrong about this | correct the spec; the extraction was incomplete, not the code |
+| the code is wrong | leave the spec, file the finding against the code |
+
+This is deliberately reachable without `/spec-verify`, `traceability[]`, a conformance adapter or a test command. Those are how you check code against a spec; this is how you keep the spec describing the code, and needing the full verification chain first is exactly what would stop anyone from doing it. Drift codification is the same reconciliation arriving from the other direction — when `/spec-verify` has already run and found the mismatch for you.
+
+### Optional: measuring extraction fidelity
+
+Everything above produces a spec that describes the code. A separate question is whether it describes the code *completely enough to rebuild from* — and there is a way to measure that rather than assert it. Do this when a rewrite, a re-platform or a language port is the actual plan. It is expensive, it needs a boundary declared, and skipping it costs you nothing if you are not rebuilding.
+
+#### The target is substitutability, not identical code
+
+
+The tempting goal is a spec so complete that regenerating from it reproduces the original line for line. That goal is a trap. A spec that determines the implementation uniquely **is** the implementation in a worse notation: `Traces(Impl) = Traces(Spec)`, refinement collapses to equality, and the spec can no longer disagree with the code — so it inherits every bug as truth. You would have written the program twice and verified nothing.
+
+The achievable and useful target:
+
+> A regenerated implementation is **substitutable** for the original at a declared boundary — indistinguishable through the interfaces anyone depends on, free in everything else.
+
+Which is why `boundary` names what is **free** as well as what is preserved. An area whose boundary pins everything has stopped being a specification.
+
+#### Declare the boundary
+
+
+```json
+"boundary": {
+  "entry_points":     ["addItem(cartId, sku, qty)", "checkout(cartId)"],
+  "observable_state": ["cart.status", "cart.items (sku → qty)"],
+  "persistence_contract": "The store's cart shape IS the contract — existing carts must stay readable.",
+  "free": ["file layout", "log wording", "how items are looked up", "error class names"]
+}
+```
+
+`scope` says what the area is responsible for. `boundary` says what *the same* means. Without it, "the regenerated code matches" has no referent and the differential comparator has nothing to diff. Persistence is the line people forget: behavior can match perfectly while a regenerated schema orphans every existing row.
+
+#### Then measure, instead of asserting
+
 
 ```
 /spec-apply <area> --parallel     regenerate BESIDE the original
@@ -1091,11 +1121,10 @@ The verdict is `equivalent-in-sequences` and always carries the sequence count. 
 |---|---|---|
 | Does the code do what the spec says? | conformance replay | unchanged |
 | Does the spec describe everything the code does? | nothing | extraction audit |
-| Is the spec enough to rebuild from? | a human's judgement | differential run |
+| Does the spec still describe the code it was extracted from? | nothing | re-extract |
+| Is the spec enough to rebuild from? | a human's judgement | differential run (when you are rebuilding) |
 
-The last row is the one that decides whether a brownfield spec is worth anything, and it was previously unanswerable.
-
----
+The middle two rows are what make a brownfield spec worth keeping: one says the extraction was complete, the other says it stayed complete. The last row answers a different question, and only some projects are asking it.
 
 ## Mutation and Separation: Two Gates on the Gates
 

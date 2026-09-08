@@ -52,6 +52,7 @@ This determines the entry beat:
 | `<target>` is `_patterns/<name>`, `_protocols/<name>`, or `_journeys/<name>` | **catalog edit**: add/edit a catalog file |
 | `specs/<target>.*.json` missing, code exists at the area's `code_path` | **brownfield extract** |
 | `specs/<target>.*.json` missing, no code | **greenfield elicit** |
+| `specs/<target>.*.json` exists, code at `code_path` changed since the last extraction | **re-extract**: reconcile the spec against the code as it is now |
 | `specs/<target>.*.json` exists, sections incomplete | **resume**: pick up the next phase |
 | `specs/<target>.*.json` exists, `verification_log` shows drift | **drift codify**: walk the drift items |
 | `specs/<target>.*.json` exists, all phases complete | **review/idle**: present the readback, offer next action |
@@ -133,23 +134,13 @@ If the user types `/spec _patterns`, `/spec _protocols`, or `/spec _journeys` (n
 
 Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-path>`. I'll extract a draft spec."
 
-**Brownfield is the strong case, not the awkward one.** Greenfield elicitation has only the user's memory to work from. Here there is a running implementation that answers any question you ask it — every threshold, every branch, every error path is already decided and readable. Extraction should therefore produce a *stronger* spec than elicitation, not a weaker one. The whole beat is organised around one target:
+**Brownfield is the strong case, not the awkward one.** Greenfield elicitation has only the user's memory to work from. Here there is a running implementation that answers any question you ask it — every threshold, every branch, every error path is already decided and readable. Extraction should therefore produce a *stronger* spec than elicitation, not a weaker one.
 
-> A regenerated implementation should be **substitutable** for the original at a declared boundary — indistinguishable through the interfaces anyone depends on, free in everything else.
+**What you are producing is a spec that is true of this code.** That is the deliverable and its whole value: the team can review behavior nobody wrote down, reason about a change before making it, and read in the readback what the system does today. Nothing has to be regenerated for that to pay off, so do not steer the user toward a rewrite they did not ask for, and do not open the beat by asking them to design a substitution boundary. If they *are* rewriting, there is machinery to measure how completely the spec captured the code — offer it at the end, as step 5.
 
-Not identical code. A spec that determines the implementation uniquely IS the implementation in a worse notation: it can no longer disagree with the code, so it inherits every bug as truth. Aim at the boundary, leave the inside free, and *measure* the difference instead of asserting it.
+Extraction is also not a one-time event. Say so when you finish: the spec is true of the code as of today, and `/spec <target>` re-extracts when the code moves on.
 
-##### 1. Declare the substitution boundary FIRST
-
-Before extracting behavior, ask what "the same" would mean. Fill `boundary`:
-
-- **entry_points** — the callable surface clients depend on, with argument shape.
-- **observable_state** — what a caller can read back, and therefore can notice changing. These become the differential comparator's diff targets and usually mirror the conformance adapter's getters.
-- **emits** — events, webhooks, audit records: observable whether or not anyone calls them API.
-- **persistence_contract** — is the stored representation part of the contract? The one people forget: behavior can match perfectly while a regenerated schema orphans every existing row. Answer even when the answer is "none, the store is private".
-- **free** — what a replacement may legitimately do differently: file layout, log wording, internal structure, algorithm. Naming this is what keeps the spec from becoming a transliteration.
-
-##### 2. Read fields out of the code, not prose
+##### 1. Read fields out of the code, not prose
 
 The code already made these decisions. Extract them as **fields**, not as descriptions:
 
@@ -178,7 +169,7 @@ Mark every extracted item `source: "extracted"`, `status: "needs-validation"`, a
 
 `confidence: "low"` is the honest label when the code was ambiguous and you guessed — the readback surfaces it and lint flags it at review. Guessing silently is what makes an extracted spec untrustworthy.
 
-##### 3. Account for the code you did NOT specify
+##### 2. Account for the code you did NOT specify
 
 Run `tools/spec-extract-audit.py <target> --emit`. It enumerates the decision sites — branches, guard literals, error handlers, early exits — and prints triage stubs for every one no spec element claims.
 
@@ -193,27 +184,53 @@ This is the only check in the framework that runs **code → spec**, and it is t
 
 Sites are keyed by fingerprint, not line number, so the ledger survives reformatting. Work through the GAPs with the user; they are the highest-value questions in the whole beat.
 
-##### 4. Harvest examples instead of inventing them
+##### 3. Harvest examples instead of inventing them
 
 Ask for real call sequences — from logs, from existing tests, from a recording session. Each becomes an `examples[]` entry with `source: "extracted-from-production"` and, where a recording exists, `trace` pointing at the ITF file. Greenfield examples are guesses about what matters; harvested ones are evidence, and they replay through the same machinery as a witness trace.
 
-##### 5. Then formalize, and offer to measure
+##### 4. Keep it true as the code moves
+
+Tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-verify`, adapter or test command needed first.
+
+##### 5. Then formalize — and offer fidelity measurement only if it fits
 
 Write `specs/<target>.*.json` and the Quint sidecar. Present extracted items in batches for confirm/edit/discard — with `extraction.evidence`, the user can jump to the code instead of reconstructing your reasoning.
 
-End with the ladder, and be explicit that the last rung is the one that actually settles fidelity:
+End with the ladder:
 
 ```
 Draft spec written from <n> files. <m> sites triaged, <k> GAPs open.
 
-  /spec-check <target>          the model holds and nothing is vacuous
-  /spec-verify <target>         the ORIGINAL code conforms to the spec
-  /spec-apply <target> --parallel   regenerate beside the original
-  spec-record equiv <target>    drive BOTH through the same sequences
+  /spec-check <target>     the model holds and nothing is vacuous
+  /spec-verify <target>    the code conforms to the spec
+  /spec <target>           re-extract when the code moves on
 
-The last one is the only one that answers "is this spec faithful enough to
-rebuild from?" — everything above it checks the spec against itself.
+The spec now describes this code. Keep it that way and it stays worth reading.
 ```
+
+Then, and only if the user has said they are rewriting, re-platforming or porting this area, offer the fidelity measurement as a separate thing:
+
+```
+Planning to rebuild this area? Fidelity can be measured rather than assumed:
+declare a `boundary`, then
+
+  /spec-apply <target> --parallel   regenerate beside the original
+  spec-record equiv <target>        drive BOTH through the same sequences
+
+That answers "is this spec complete enough to rebuild from?" — a different
+question from the ones above, and only worth the cost if you are rebuilding.
+```
+
+##### Optional: declare a substitution boundary
+
+Only for an area being rebuilt — skip it otherwise. `boundary` is what makes "the same" mean something, and the differential comparator has nothing to diff without it:
+Before extracting behavior, ask what "the same" would mean. Fill `boundary`:
+
+- **entry_points** — the callable surface clients depend on, with argument shape.
+- **observable_state** — what a caller can read back, and therefore can notice changing. These become the differential comparator's diff targets and usually mirror the conformance adapter's getters.
+- **emits** — events, webhooks, audit records: observable whether or not anyone calls them API.
+- **persistence_contract** — is the stored representation part of the contract? The one people forget: behavior can match perfectly while a regenerated schema orphans every existing row. Answer even when the answer is "none, the store is private".
+- **free** — what a replacement may legitimately do differently: file layout, log wording, internal structure, algorithm. Naming this is what keeps the spec from becoming a transliteration.
 
 #### greenfield elicit
 
@@ -294,6 +311,34 @@ Writing state_machines[<Entity>] in specs/<target>.*.json.
 After writing, suggest running `spec-lint` (or `/spec-check`) — the state-machine lints fire immediately if the declared structure conflicts with the Quint sidecar.
 
 Tell the user what you noticed and what you propose to work on next; let them confirm or redirect.
+
+#### re-extract
+
+(Runs when `specs/<target>.*.json` exists, the area has a `code_path`, and the code there has changed since the spec was extracted or last reconciled — compare `extraction_triage[]` fingerprints and `extraction.evidence` against the current sources. Offer it, do not force it: say what looks stale and ask.)
+
+An extracted spec is true of the code on the day it is written and decays from there. This beat exists so keeping it true is a routine, not a project. It is deliberately reachable **without** `/spec-verify`, `traceability[]`, a conformance adapter or a test command — those check code against a spec, which is a different job, and requiring them first is what would stop anyone from doing this at all.
+
+Tell the user: "`<target>`'s spec was extracted against code that has changed. I'll re-read `<resolved-code-path>` and show you what no longer matches."
+
+1. **Re-run the audit.** `tools/spec-extract-audit.py <target> --emit`. Fingerprints are stable across reformatting, so what surfaces is real movement: decision sites the ledger has never seen, and ledger entries matching no current site — the code moved out from under a triaged decision.
+
+2. **Re-read the fields that carry literals.** Every `CON-NNN` whose value came from a guard, every `closed: true` state set, every `externals[].outcomes[]` read out of a `catch`. These drift silently: a threshold changes in code and the spec keeps asserting the old number, which is worse than saying nothing because `spec-check` will happily prove things about it.
+
+3. **Walk each difference with the user.** Three resolutions, and naming which one it is matters more than the edit:
+
+   | The code and the spec disagree because | Resolve as |
+   |---|---|
+   | behavior deliberately changed and nobody updated the spec | update the spec; if a decision moved with it, record or amend the `DEC-NNN` |
+   | the spec was always wrong here | correct it — the original extraction was incomplete, not the code |
+   | the code is wrong | leave the spec alone and file the finding against the code |
+
+   The third is why this is worth doing at all: reconciling against an accurate spec is how an extracted spec starts finding bugs instead of just recording them.
+
+4. **Re-stamp what you touched.** Updated items get fresh `extraction.evidence` and honest `confidence`; anything whose behavior changed goes back to `status: "needs-validation"`. Editing a requirement invalidates its witness freshness automatically (the model sha moves), so `/spec-check` is the natural next step — say so.
+
+5. **Land it in the change.** Re-extraction is a spec edit like any other: register the target in the active change's `targets[]` and add every touched ID to `ids[]`.
+
+Finish with what moved, not just a count: "3 requirements updated, 1 new GAP (Q-004), 1 constraint whose code value changed — CON-002 said 5, the guard says 3."
 
 #### drift codify
 
