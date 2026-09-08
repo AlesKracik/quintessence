@@ -52,9 +52,6 @@ on:
       - "tests/**"
       - ".github/workflows/**"
 
-env:
-  QUINT_IR_ENGINE: cli
-
 jobs:
   # The tooling's own unit + regression suite. Deliberately NOT gated on
   # .spec/project.json the way spec-gates below is: these test tools/, not a
@@ -82,6 +79,13 @@ jobs:
 
   spec-gates:
     runs-on: ubuntu-latest
+    # Scoped to this job, not the workflow: it pins lint/matrix to the Quint
+    # compiler's typed IR, and only this job installs the Quint CLI. Set
+    # workflow-wide it also reached tool-tests, where the CLI is absent, so
+    # every sidecar silently parsed as "no module" and the checks that read
+    # one quietly passed on nothing.
+    env:
+      QUINT_IR_ENGINE: cli
     steps:
       - uses: actions/checkout@v4
 

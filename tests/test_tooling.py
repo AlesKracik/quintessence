@@ -27,6 +27,7 @@ these tests need quint/Apalache/Java — they exercise pure Python only.
 Run:  python -m pytest tests/ -q     (from the repo root)
 """
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -2615,6 +2616,24 @@ WRAPPER_MODEL = """module auth {
 """
 
 
+@contextlib.contextmanager
+def _forced_regex_engine():
+    """Pin the parse to the regex fallback for the duration.
+
+    lint captures quint_ir.DEFAULT_ENGINE from the environment at import, so
+    an ambient QUINT_IR_ENGINE=cli on a machine without the Quint CLI makes
+    every sidecar parse as "no module" — which reads as "no orphans" rather
+    than as a failure. These tests are about the reachability rule, not about
+    engine selection, so they state the engine instead of inheriting it.
+    """
+    original = lint._ir_parse_qnt
+    lint._ir_parse_qnt = lambda path: quint_ir.parse_qnt(path, engine="regex")
+    try:
+        yield
+    finally:
+        lint._ir_parse_qnt = original
+
+
 def _orphans(tmp_path, model=WRAPPER_MODEL, refs=("login", "logout")):
     (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
     qnt = tmp_path / "specs" / "auth.qnt"
@@ -2624,7 +2643,10 @@ def _orphans(tmp_path, model=WRAPPER_MODEL, refs=("login", "logout")):
             "requirements": [{"id": f"REQ-{i:03d}", "quint_ref": r}
                              for i, r in enumerate(refs, 1)]}
     findings = []
-    lint.check_orphan_actions(area, lint.parse_sidecar(qnt), "auth", findings)
+    with _forced_regex_engine():
+        sidecar = lint.parse_sidecar(qnt)
+    assert "__no_module__" not in sidecar, "sidecar failed to parse"
+    lint.check_orphan_actions(area, sidecar, "auth", findings)
     return sorted(f.ref for f in findings if f.check == "orphan-action")
 
 
@@ -2655,7 +2677,9 @@ def test_the_shipped_example_has_no_orphans(tmp_path):
     templates show — and must stay clean under the new rule."""
     root = TOOLS.parent / "examples"
     area = json.loads((root / "specs" / "auth.area.json").read_text(encoding="utf-8"))
-    sidecar = lint.parse_sidecar(root / "specs" / "auth.qnt")
+    with _forced_regex_engine():
+        sidecar = lint.parse_sidecar(root / "specs" / "auth.qnt")
+    assert "__no_module__" not in sidecar, "sidecar failed to parse"
     findings = []
     lint.check_orphan_actions(area, sidecar, "auth", findings)
     assert [f.ref for f in findings] == []
@@ -2667,7 +2691,8 @@ def test_absent_call_graph_falls_back_to_direct_references(tmp_path):
     (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
     qnt = tmp_path / "specs" / "auth.qnt"
     qnt.write_text(WRAPPER_MODEL, encoding="utf-8")
-    sidecar = lint.parse_sidecar(qnt)
+    with _forced_regex_engine():
+        sidecar = lint.parse_sidecar(qnt)
     sidecar["action_calls"] = None
     area = {"kind": "area", "area": "auth", "status": "draft",
             "requirements": [{"id": "REQ-001", "quint_ref": "login"}]}
@@ -2681,7 +2706,7 @@ def test_call_graph_is_narrowed_to_declared_actions(tmp_path):
     agree; only declared actions survive, and never self-reference."""
     qnt = tmp_path / "auth.qnt"
     qnt.write_text(WRAPPER_MODEL, encoding="utf-8")
-    calls = quint_ir.parse_qnt(qnt)["action_calls"]
+    calls = quint_ir.parse_qnt(qnt, engine="regex")["action_calls"]
     assert calls["step"] == ["loginStep", "logoutStep"]
     assert calls["loginStep"] == ["login"]
     assert calls["login"] == []
