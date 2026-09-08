@@ -17,6 +17,16 @@ flowchart LR
 - **Witness traces** prove every claimed behavior is actually reachable in the model — a verified-but-vacuous spec (invariants trivially true over an empty state space) cannot slip through.
 - **Conformance replay** runs the model's own traces against the real code through a thin adapter — a requirement is *verified* only when its witness trace replays green.
 
+### The arrows are dependencies, not a schedule
+
+Read the diagram as *what rests on what*, never as an order you march through. The phases — **elicit → vocab → structure → formalize → check → generate → verify** — are **sections of one JSON file**, not stages of a process. A section exists or it doesn't; nothing is "in" a phase, so there is no phase to be blocked in.
+
+**Do any part, in any order, at any time.** Formalize one requirement while nine others are still a sentence someone dictated. Run `/spec-check` on a model that covers a third of the area. Extract from code first and elicit afterwards. Jump back and sharpen a requirement you already verified — that just un-derives its witness, which the next check re-proves. `/spec` reads the state of the area and picks up wherever you actually are, which is why it is one adaptive command instead of seven phase commands.
+
+Nothing gates entry to the next step, because there is no next step — only work that has enough inputs to be worth doing yet. The chain in the diagram tells you what those inputs are: you cannot witness a behavior before there is a model to find the trace in. That is a fact about the work, not a ceremony imposed on it.
+
+And there is no workflow machinery on top: no propose, approve, or sync commands, no state field advanced by hand. **Git tracks the change, PR review is the approval, `/spec-code-verify` is the continuous gate.** An area is as good as what it currently proves — readable at any moment in the readback, whatever fraction is done.
+
 > This document is part of a **template repository**. Projects are created by cloning the template, running `tools/bootstrap.sh` (strips template-only files), then running `/spec` to set up the project. Once bootstrapped, this `METHODOLOGY.md` lives at the root of your project as the canonical reference.
 
 ### Two tiers — the precision core stands alone
@@ -40,8 +50,6 @@ A **spec area** is a JSON file at `specs/<name>.area.json` (or `specs/<name>.con
 - `kind: "contract"` — cross-area invariant carrier (no code; `spans: ["auth", "billing"]`); the sidecar imports the spanned areas' Quint modules and asserts joint invariants.
 
 A **project** is `.spec/project.json` (areas index, code repo paths, architecture defaults, topology) plus per-area JSON files. Per-developer code-repo paths go in `.spec/local.json` (gitignored).
-
-The pipeline runs: **elicit → vocab → structure → formalize → check → verify → apply**, but it's not a ceremony — each phase is a section of the area JSON that grows conversationally via `/spec`. There are no propose/approve/sync commands; git tracks change, PR review is approval, `/spec-code-verify` is the continuous gate.
 
 ---
 

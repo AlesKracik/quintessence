@@ -3154,3 +3154,37 @@ def test_readme_defers_the_detail_to_the_methodology():
     opening = readme.split("## Quick Start")[0]
     assert "[METHODOLOGY.md](METHODOLOGY.md)" in opening
     assert "What you get:" not in opening, "the inlined methodology summary is back"
+
+
+# ── The iterative claim sits where it is read ───────────────────────────────
+# "It's not a ceremony — do any part at any time" was the last line of Core
+# Concepts, below the repo layout, after a left-to-right flowchart that reads
+# as a pipeline you march through. A reader forms the wrong model of the
+# workflow well before reaching the sentence that corrects it.
+
+def test_the_iterative_claim_is_in_the_opening():
+    text = (REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8")
+    opening = text.split("## Core Concepts")[0]
+    assert "### The arrows are dependencies, not a schedule" in opening
+    assert "in any order, at any time" in opening
+    # it must land after the diagram it reinterprets, not before
+    assert opening.index("```mermaid") < opening.index("### The arrows are dependencies")
+
+
+def test_the_workflow_machinery_denial_survived_the_move():
+    """The load-bearing half: no propose/approve/sync, git is the tracker,
+    PR review is the approval, /spec-code-verify is the gate."""
+    opening = (REPO_ROOT / "METHODOLOGY.md").read_text(
+        encoding="utf-8").split("## Core Concepts")[0]
+    for claim in ("propose", "PR review is the approval", "/spec-code-verify"):
+        assert claim in opening, claim
+
+
+def test_the_phase_list_matches_the_renamed_commands():
+    """The list said "check -> verify -> apply", which put verifying code
+    before generating it and used the old command's name."""
+    opening = (REPO_ROOT / "METHODOLOGY.md").read_text(
+        encoding="utf-8").split("## Core Concepts")[0]
+    line = next(ln for ln in opening.splitlines() if "elicit" in ln and "formalize" in ln)
+    assert "generate \u2192 verify" in line, line
+    assert "apply" not in line, line
