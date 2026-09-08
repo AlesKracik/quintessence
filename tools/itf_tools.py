@@ -121,6 +121,81 @@ def skip_discharge(witness):
     return witness.get("justification") or None
 
 
+def compute_spec_sha(area_data):
+    """Canonical sha256 over the SEMANTIC content a prose brief describes.
+
+    The brief is the one long-form thing an agent writes into the readback,
+    and prose cannot be checked the way a witness can — so it gets the same
+    treatment a witness trace gets: a freshness pin. Written against this sha,
+    compared against it later; a mismatch means the spec moved and the brief
+    is describing something that is no longer there.
+
+    Deliberately covers only what a brief could be WRONG about: the EARS
+    fields, modality and status of each requirement, invariant and property
+    statements, constraint values, entity states, scope, and the declared
+    externals. Bookkeeping the brief never claims anything about — witness
+    traces, check results, verification logs, extraction evidence — is
+    excluded, so re-running the checker does not invalidate prose it cannot
+    have affected.
+    """
+    if not isinstance(area_data, dict):
+        return None
+
+    def reqs():
+        for r in area_data.get("requirements", []) or []:
+            if not isinstance(r, dict):
+                continue
+            yield {
+                "id": r.get("id"),
+                "ears": r.get("ears"),
+                "modality": r.get("modality"),
+                "determinism": r.get("determinism"),
+                "type": r.get("type"),
+                "status": r.get("status"),
+            }
+
+    def named(key, *fields):
+        out = []
+        for item in area_data.get(key, []) or []:
+            if isinstance(item, dict):
+                out.append({f: item.get(f) for f in fields})
+        return out
+
+    payload = {
+        "purpose": area_data.get("purpose"),
+        "scope": area_data.get("scope"),
+        "requirements": list(reqs()),
+        "invariants": named("invariants", "id", "statement", "criticality"),
+        "properties": named("properties", "id", "statement"),
+        "constraints": named("constraints", "id", "name", "value"),
+        "assumptions": named("assumptions", "id", "statement"),
+        "decisions": named("decisions", "id", "decision"),
+        "externals": named("externals", "name", "outcomes"),
+        "entities": [
+            {"name": e.get("name"), "states": e.get("states"), "closed": e.get("closed")}
+            for e in ((area_data.get("concepts") or {}).get("entities") or [])
+            if isinstance(e, dict)
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def brief_status(area_data):
+    """(state, detail) for a prose brief: "absent", "stale" or "current"."""
+    brief = (area_data or {}).get("brief") or {}
+    if not brief.get("text"):
+        return "absent", None
+    pinned = brief.get("written_against")
+    current = compute_spec_sha(area_data)
+    if not pinned:
+        return "stale", "no written_against pin — freshness unverifiable"
+    if current and pinned != current:
+        return "stale", f"spec has changed since the brief was written ({pinned[:12]})"
+    return "current", (current or "")[:12]
+
+
 def area_json_path(root, name):
     """Resolve specs/<name>.area.json or specs/<name>.contract.json —
     whichever exists. Falls back to the .area.json path (for new files /
@@ -341,6 +416,28 @@ def cmd_mermaid(args):
         action_var=args.action_var, show_init=args.show_init)))
 
 
+def cmd_spec_sha(args):
+    """The pin a prose brief is written against. Prints the sha, and says
+    whether the current brief still matches it."""
+    root = Path(args.root)
+    area_path = area_json_path(root, args.area)
+    if not area_path.exists():
+        print(f"ERROR: {area_path} not found", file=sys.stderr)
+        sys.exit(2)
+    area = json.loads(area_path.read_text(encoding="utf-8"))
+    sha = compute_spec_sha(area)
+    print(sha)
+    state, detail = brief_status(area)
+    if state == "absent":
+        print("no brief recorded — paste this into brief.written_against when "
+              "you write one", file=sys.stderr)
+    elif state == "stale":
+        print(f"brief is STALE: {detail}", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print("brief is current", file=sys.stderr)
+
+
 def cmd_sha(args):
     root = Path(args.root)
     area_path = area_json_path(root, args.area)
@@ -520,6 +617,12 @@ def main():
     ph.add_argument("area")
     ph.add_argument("--root", default=".")
     ph.set_defaults(func=cmd_sha)
+
+    ps = sub.add_parser("spec-sha",
+                        help="Semantic spec sha — the pin a prose brief is written against.")
+    ps.add_argument("area")
+    ps.add_argument("--root", default=".")
+    ps.set_defaults(func=cmd_spec_sha)
 
     args = p.parse_args()
     args.func(args)

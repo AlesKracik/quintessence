@@ -40,6 +40,20 @@
       "type": "string",
       "description": "One paragraph: what this area is responsible for."
     },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Authored prose that orients a human before the machine-checked detail. The ONE long-form thing an agent writes into the readback — everything else there is derived from fields. Prose cannot be checked the way a witness can, so it carries a freshness pin instead: `written_against` records the spec sha it was written for, and spec-lint flags it once the spec moves. Rendered verbatim and marked as narrative rather than verified fact, so the readback stays byte-identical for identical input.",
+      "required": ["text"],
+      "properties": {
+        "text":       { "type": "string", "minLength": 1, "description": "Lead paragraph(s), Markdown. If it needs its own headings it is competing with the generated sections instead of introducing them." },
+        "how_it_fits":    { "type": "string", "description": "Optional facet: the area's shape — main entities, how they relate, the flow through them. The orientation a new reviewer lacks." },
+        "why_this_way":   { "type": "string", "description": "Optional facet: the reasoning behind the shape. Complements decisions[], which record what was decided but not the narrative joining them." },
+        "watch_out_for":  { "type": "string", "description": "Optional facet: the sharp edges — what is easy to get wrong, which requirements interact, where the open questions bite." },
+        "written_against": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 from `tools/itf_tools.py spec-sha <area>` — the semantic spec content this brief was written for. Mismatch means the spec moved and the brief may describe something no longer there." },
+        "author":     { "type": "string", "enum": ["agent", "human"], "description": "Who wrote it. A human-written brief is not re-authored by the agent without asking." }
+      }
+    },
 
     "boundary": {
       "type": "object",

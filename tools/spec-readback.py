@@ -41,6 +41,7 @@ from itf_tools import (  # noqa: E402
     load_trace, mermaid_lines, render_value, state_vars,
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
+    skip_discharge, brief_status,
 )
 from quint_ir import _strip_noise  # noqa: E402
 
@@ -73,7 +74,7 @@ def status_mark(req):
     w = req.get("witness") or {}
     if req.get("status") == "verified":
         return "✓"
-    if w.get("status") == "skipped" and w.get("justification"):
+    if w.get("status") == "skipped" and skip_discharge(w):
         return "⊘"
     if w.get("status") == "no-witness":
         return "✗"
@@ -872,6 +873,118 @@ def reference_section(root, area, project):
     return lines
 
 
+BRIEF_FACETS = [
+    ("how_it_fits", "How it fits together"),
+    ("why_this_way", "Why it is this way"),
+    ("watch_out_for", "What to watch out for"),
+]
+
+
+def brief_section(area):
+    """The one authored section in a generated document.
+
+    Rendered verbatim from `brief` in the area JSON — never composed here —
+    so identical input still yields byte-identical output. Marked as prose so
+    a reader never mistakes it for something the checker established, and
+    marked STALE the moment its pin no longer matches the spec: an
+    orientation written for a previous version of the area is worse than none,
+    because it reads with the same authority as the derived sections below it.
+    """
+    brief = area.get("brief") or {}
+    text = (brief.get("text") or "").strip()
+    if not text:
+        return []
+    state, detail = brief_status(area)
+    lines = ["## In Brief", ""]
+    if state == "stale":
+        lines += [
+            f"> **⚠ This brief may be out of date** — {detail}. Everything below "
+            f"it is regenerated from the spec and is current; this section is not.",
+            "",
+        ]
+    lines += [text, ""]
+    for key, heading in BRIEF_FACETS:
+        value = (brief.get(key) or "").strip()
+        if value:
+            lines += [f"**{heading}.** {value}", ""]
+    who = brief.get("author")
+    pin = "unpinned" if state == "stale" and not brief.get("written_against") else detail
+    lines += [
+        f"*Written by {who or 'unknown'}; prose, not machine-checked. "
+        f"Spec pin: `{pin}`. Every section below is derived from the spec itself.*",
+        "",
+    ]
+    return lines
+
+
+def at_a_glance(area):
+    """A one-screen index of the requirements before the per-REQ detail.
+
+    The detail sections are complete but flat: a reviewer meets Quint
+    excerpts and witness predicates before knowing how many requirements
+    there are or which ones are in trouble. This is the layer between.
+    """
+    reqs = [r for r in area.get("requirements", []) or []
+            if isinstance(r, dict) and r.get("status") != "deferred"]
+    if len(reqs) < 2:
+        return []
+    lines = ["## At a Glance", "",
+             "| | ID | Behavior | Modality |", "|---|---|---|---|"]
+    for r in reqs:
+        rid = r.get("id", "?")
+        response = ((r.get("ears") or {}).get("response") or "").strip()
+        if len(response) > 88:
+            response = response[:87].rstrip() + "…"
+        modality = r.get("modality") or "must"
+        anchor = rid.lower()
+        lines.append(f"| {status_mark(r)} | [{rid}](#{anchor}) | {response or '—'} | {modality} |")
+    lines.append("")
+    return lines
+
+
+def shape_diagram(area):
+    """The area's shape in one picture: entities with their state counts, the
+    externals it depends on, and the areas it spans. Derived entirely from
+    declared fields — no layout choices that could vary between runs."""
+    entities = [e for e in ((area.get("concepts") or {}).get("entities") or [])
+                if isinstance(e, dict) and e.get("name")]
+    externals = [x for x in (area.get("externals") or [])
+                 if isinstance(x, dict) and x.get("name")]
+    spans = [x for x in (area.get("spans") or []) if x]
+    if not entities and not externals:
+        return []
+    name = area.get("area", "area")
+    lines = ["## Shape", "", "```mermaid", "flowchart LR"]
+    lines.append(f'    subgraph AREA["{name}"]')
+    if entities:
+        for e in entities:
+            states = e.get("states") or []
+            label = e["name"] if not states else f"{e['name']}<br/>{len(states)} states"
+            closed = " ▪ closed" if e.get("closed") else ""
+            lines.append(f'        E_{_slug(e["name"])}["{label}{closed}"]')
+    else:
+        lines.append(f'        E_none["(no entities declared)"]')
+    lines.append("    end")
+    for x in externals:
+        outcomes = x.get("outcomes") or []
+        suffix = f"<br/>{len(outcomes)} outcomes" if outcomes else ""
+        lines.append(f'    X_{_slug(x["name"])}(["{x["name"]}{suffix}"])')
+        lines.append(f'    AREA --> X_{_slug(x["name"])}')
+    for sp in spans:
+        lines.append(f'    S_{_slug(sp)}[["{sp}"]]')
+        lines.append(f'    S_{_slug(sp)} --> AREA')
+    lines += ["```", ""]
+    if externals:
+        lines += ["*Rounded nodes are outside systems this area depends on; "
+                  "each declared outcome is a cell the coverage matrix requires "
+                  "an answer for.*", ""]
+    return lines
+
+
+def _slug(name):
+    return re.sub(r"[^A-Za-z0-9_]", "_", str(name))
+
+
 def scope_section(area):
     """Gap A. Printed before anything claims completeness, because every such
     claim below is relative to this boundary."""
@@ -1198,6 +1311,11 @@ def emit_area(root, area_name):
     lines.append("")
     if area.get("purpose"):
         lines += ["## Purpose", "", area["purpose"], ""]
+    # Authored orientation first, then the picture, then the index, then the
+    # machine detail: a reader descends to the depth they need instead of
+    # meeting Quint excerpts on the way in.
+    lines += brief_section(area)
+    lines += shape_diagram(area)
     lines += scope_section(area)
     lines += boundary_section(area)
     items = attention_items(root, area_name, area)
@@ -1209,6 +1327,7 @@ def emit_area(root, area_name):
         lines.append("**Nothing needs attention.**")
     lines.append("")
     lines += ui_sections(area)
+    lines += at_a_glance(area)
     lines += what_the_system_does(root, area_name, area, journeys)
     lines += invariants_section(area)
     lines += externals_section(area)

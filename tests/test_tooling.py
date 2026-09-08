@@ -3224,3 +3224,146 @@ def test_core_concepts_keeps_what_only_it_says():
     for needle in ("specs/<name>.area.json", "suffix encodes the `kind`",
                    ".spec/project.json", ".spec/local.json"):
         assert needle in core, needle
+
+
+# ── The one authored section, pinned like a witness ─────────────────────────
+# The readback is deterministic by construction, which is what makes its git
+# diff the review — but it went from a one-line purpose straight into Quint
+# excerpts, with no altitude in between. A prose brief supplies that, as an
+# INPUT rendered verbatim rather than composed at render time, so
+# determinism survives. Prose cannot be checked the way a witness can, so it
+# carries the same freshness pin a witness trace does.
+
+def _area_with_brief(**brief):
+    area = {"kind": "area", "area": "auth", "version": "0.1.0", "status": "formalized",
+            "purpose": "p",
+            "requirements": [{"id": "REQ-001", "ears": {"response": "a session exists"}}]}
+    area["brief"] = brief
+    return area
+
+
+def test_spec_sha_ignores_bookkeeping_churn():
+    """Re-running the checker must not invalidate prose it cannot affect."""
+    area = _area_with_brief(text="x")
+    before = itf.compute_spec_sha(area)
+    area["check_results"] = {"ran_at": "2026-01-01", "checks": [{"id": "INV-001"}]}
+    area["requirements"][0]["witness"] = {"status": "witnessed", "trace": "t.json"}
+    area["verification_log"] = [{"at": "now"}]
+    assert itf.compute_spec_sha(area) == before
+
+
+def test_spec_sha_moves_when_a_claim_moves():
+    area = _area_with_brief(text="x")
+    before = itf.compute_spec_sha(area)
+    area["requirements"][0]["ears"]["response"] = "something else entirely"
+    assert itf.compute_spec_sha(area) != before
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda a: a["requirements"].append({"id": "REQ-002", "ears": {"response": "r"}}),
+    lambda a: a.update(purpose="a different purpose"),
+    lambda a: a.update(scope={"included": ["x"]}),
+    lambda a: a.update(constraints=[{"id": "CON-001", "name": "MAX", "value": 5}]),
+])
+def test_spec_sha_covers_what_a_brief_could_be_wrong_about(mutate):
+    area = _area_with_brief(text="x")
+    before = itf.compute_spec_sha(area)
+    mutate(area)
+    assert itf.compute_spec_sha(area) != before
+
+
+def test_brief_status_reports_absent_current_and_stale():
+    area = _area_with_brief(text="")
+    assert itf.brief_status(area)[0] == "absent"
+    area = _area_with_brief(text="a real brief")
+    assert itf.brief_status(area)[0] == "stale", "unpinned prose is not trustworthy"
+    area["brief"]["written_against"] = itf.compute_spec_sha(area)
+    assert itf.brief_status(area)[0] == "current"
+    area["requirements"][0]["ears"]["response"] = "moved"
+    assert itf.brief_status(area)[0] == "stale"
+
+
+@pytest.mark.parametrize("status,severity", [
+    ("raw", "warn"), ("formalized", "warn"),
+    ("in-review", "fail"), ("approved", "fail"),
+])
+def test_a_stale_brief_warns_while_authoring_and_fails_at_review(status, severity):
+    area = _area_with_brief(text="a real brief", written_against="0" * 64)
+    area["status"] = status
+    findings = []
+    lint.check_brief(area, "auth", findings)
+    hits = [f for f in findings if f.check == "brief-stale"]
+    assert len(hits) == 1 and hits[0].severity == severity
+
+
+def test_no_brief_means_no_findings():
+    findings = []
+    lint.check_brief({"kind": "area", "area": "auth"}, "auth", findings)
+    assert findings == []
+
+
+def test_the_brief_is_rendered_verbatim_not_composed():
+    """Determinism depends on this: the generator copies the text through."""
+    area = _area_with_brief(text="EXACT PROSE HERE", how_it_fits="FACET TEXT")
+    area["brief"]["written_against"] = itf.compute_spec_sha(area)
+    out = "\n".join(readback.brief_section(area))
+    assert "EXACT PROSE HERE" in out and "FACET TEXT" in out
+    assert "How it fits together" in out
+    assert "prose, not machine-checked" in out
+
+
+def test_a_stale_brief_is_marked_in_the_readback():
+    area = _area_with_brief(text="prose", written_against="0" * 64)
+    out = "\n".join(readback.brief_section(area))
+    assert "may be out of date" in out
+
+
+def test_brief_section_is_empty_without_a_brief():
+    assert readback.brief_section({"kind": "area", "area": "auth"}) == []
+
+
+def test_at_a_glance_indexes_the_requirements():
+    area = {"requirements": [
+        {"id": "REQ-001", "ears": {"response": "first thing"}},
+        {"id": "REQ-002", "ears": {"response": "second thing"}, "modality": "may"},
+        {"id": "REQ-003", "ears": {"response": "gone"}, "status": "deferred"},
+    ]}
+    out = "\n".join(readback.at_a_glance(area))
+    assert "REQ-001" in out and "REQ-002" in out
+    assert "REQ-003" not in out, "deferred requirements are not part of the picture"
+    assert "may" in out
+
+
+def test_at_a_glance_skips_itself_when_there_is_nothing_to_index():
+    assert readback.at_a_glance({"requirements": [{"id": "REQ-001"}]}) == []
+
+
+def test_shape_diagram_is_derived_and_deterministic():
+    area = {"area": "auth", "concepts": {"entities": [
+                {"name": "Session", "states": ["Active", "Expired"], "closed": True}]},
+            "externals": [{"name": "BillingProvider", "outcomes": ["OK", "TIMEOUT"]}]}
+    once = readback.shape_diagram(area)
+    assert once == readback.shape_diagram(area), "same input, same output"
+    out = "\n".join(once)
+    assert "```mermaid" in out and "2 states" in out and "closed" in out
+    assert "BillingProvider" in out and "2 outcomes" in out
+
+
+def test_shape_diagram_absent_when_there_is_nothing_to_draw():
+    assert readback.shape_diagram({"area": "auth"}) == []
+
+
+def test_a_typed_prohibition_renders_as_discharged_not_pending():
+    """status_mark read only `justification`, so a forbidden requirement
+    discharged by enforced_by showed as not-yet-checked."""
+    assert readback.status_mark(
+        {"witness": {"status": "skipped", "enforced_by": "INV-001"}}) == "\u2298"
+    assert readback.status_mark(
+        {"witness": {"status": "skipped", "justification": "prose"}}) == "\u2298"
+    assert readback.status_mark({"witness": {"status": "skipped"}}) == "\u23f3"
+
+
+def test_the_shipped_example_carries_a_current_brief():
+    area = json.loads((TOOLS.parent / "examples" / "specs" / "auth.area.json")
+                      .read_text(encoding="utf-8"))
+    assert itf.brief_status(area)[0] == "current", "example brief pin is stale"

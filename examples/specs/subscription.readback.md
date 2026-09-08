@@ -12,6 +12,19 @@
 
 Subscription cancellation: stop future billing, preserve access to the end of the paid period, survive a flaky billing provider. This is the methodology's acceptance case — five sentences of prose turned into the decisions the prose leaves open.
 
+## Shape
+
+```mermaid
+flowchart LR
+    subgraph AREA["subscription"]
+        E_Subscription["Subscription<br/>3 states ▪ closed"]
+    end
+    X_BillingProvider(["BillingProvider<br/>4 outcomes"])
+    AREA --> X_BillingProvider
+```
+
+*Rounded nodes are outside systems this area depends on; each declared outcome is a cell the coverage matrix requires an answer for.*
+
 ## Scope
 
 **In scope:** cancellation, billing suppression, access until period end
@@ -32,6 +45,18 @@ Subscription cancellation: stop future billing, preserve access to the end of th
 - **Unchecked requirement** — REQ-005: While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired.
 - **Unchecked requirement** — REQ-007: When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice. _(REQ-007/email)_
 - **Open question** — Q-001: After MAX_CANCEL_RETRIES exhausted TIMEOUTs, does the subscription stay Active forever, or does an operator get paged? ASM-001 assumes the provider answers eventually; nothing here says what happens if it does not. _(source: elicitation)_
+
+## At a Glance
+
+| | ID | Behavior | Modality |
+|---|---|---|---|
+| ⏳ | [REQ-001](#req-001) | stop future billing and mark the Subscription Cancelled | must |
+| ⏳ | [REQ-002](#req-002) | keep access available | must |
+| ⏳ | [REQ-003](#req-003) | make no further change and report success | must |
+| ⏳ | [REQ-004](#req-004) | leave the Subscription Active and billing enabled | must |
+| ⏳ | [REQ-005](#req-005) | withdraw access and mark the Subscription Expired | must |
+| ⊘ | [REQ-006](#req-006) | issue no refund | forbidden |
+| ⏳ | [REQ-007](#req-007) | confirm to the customer by email or in-app notice | may |
 
 ## What the System Does
 

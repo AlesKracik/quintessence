@@ -12,6 +12,19 @@
 
 BROWNFIELD EXAMPLE. The spec extracted from code/legacy-cart/cart.js — code that already existed, with a threshold nobody documented, a rejection nobody tested, and one line that turned out to be dead. Shows the three things only brownfield can do: declare a substitution boundary, account for every decision site in the implementation, and measure fidelity against the original instead of asserting it.
 
+## Shape
+
+```mermaid
+flowchart LR
+    subgraph AREA["cart"]
+        E_Cart["Cart<br/>2 states ▪ closed"]
+    end
+    X_PaymentGateway(["PaymentGateway<br/>3 outcomes"])
+    AREA --> X_PaymentGateway
+```
+
+*Rounded nodes are outside systems this area depends on; each declared outcome is a cell the coverage matrix requires an answer for.*
+
 ## Scope
 
 **In scope:** adding items to a cart, checkout, clearing a cart
@@ -41,6 +54,15 @@ BROWNFIELD EXAMPLE. The spec extracted from code/legacy-cart/cart.js — code th
 - **Open question** — Q-002: Retry after a thrown charge assumes the money did not move (ASM-001). Should checkout send an idempotency key before we rely on that? _(source: extraction)_
 - **Open question** — Q-003: Checkout of an empty cart THROWS while declined and unavailable RETURN ok:false. Is the inconsistency intentional? _(source: extraction)_
 - **Open question** — Q-004: clear() is implemented and unspecified. Is it product behavior, or a leftover from an admin tool? _(source: extraction)_
+
+## At a Glance
+
+| | ID | Behavior | Modality |
+|---|---|---|---|
+| ⏳ | [REQ-001](#req-001) | increase that line's quantity by the amount added | must |
+| ⏳ | [REQ-002](#req-002) | append a line for that SKU | must |
+| ⊘ | [REQ-003](#req-003) | refuse the call and leave the cart untouched | forbidden |
+| ⏳ | [REQ-004](#req-004) | leave the Cart Open and return ok:false with reason 'unavailable' | must |
 
 ## What the System Does
 

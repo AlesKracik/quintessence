@@ -46,6 +46,14 @@ graph TB
 - **LoginForm** — fields: email, password; states: idle, submitting, error
 - **Header** — visible when: always
 
+## At a Glance
+
+| | ID | Behavior | Modality |
+|---|---|---|---|
+| ⏳ | [UI-001](#ui-001) | navigate to Login | must |
+| ⏳ | [UI-002](#ui-002) | navigate to Dashboard | must |
+| ⏳ | [UI-003](#ui-003) | navigate to LockedNotice | must |
+
 ## What the System Does
 
 ### Sign in — *User — User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.*

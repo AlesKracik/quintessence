@@ -12,6 +12,29 @@
 
 Authenticate users; manage session lifecycle; lock accounts after repeated failed attempts.
 
+## In Brief
+
+Auth owns exactly three things: who is signed in, for how long, and when to stop letting someone try. Everything here is a consequence of one of those, and anything that is not one of them (passwords resets, machine identities, a second factor) is deliberately somewhere else — see Scope.
+
+**How it fits together.** A **Session** is the unit of "signed in", and an **Account** is the unit of "allowed to try". They move independently: a session expires on its own clock (REQ-004), while an account locks on a counter that only failed logins touch (REQ-003). The pair meets in one place — a locked account may hold no active session — which is INV-002, and it is the invariant most of the other rules exist to keep true.
+
+**Why it is this way.** Lockout counts attempts rather than rate-limiting time because the threshold has to be reviewable as a number (CON-001 = 5) rather than argued about as a policy. One active session per user (INV-001) is a deliberate narrowing: multi-device was cheaper to add later than to remove once anything depended on it.
+
+**What to watch out for.** The counter and the lock are two facts, not one, and REQ-003 is the only thing that keeps them consistent — read it before changing either. Q-003 is open on what a failed login against an already-locked account should do, so the Locked row of the matrix is a triaged gap rather than a settled answer.
+
+*Written by human; prose, not machine-checked. Spec pin: `0eafe45ee4a6`. Every section below is derived from the spec itself.*
+
+## Shape
+
+```mermaid
+flowchart LR
+    subgraph AREA["auth"]
+        E_User["User"]
+        E_Session["Session<br/>3 states"]
+        E_Account["Account<br/>2 states"]
+    end
+```
+
 ## Scope
 
 **In scope:** password login, session lifecycle, account lockout
@@ -32,6 +55,16 @@ Authenticate users; manage session lifecycle; lock accounts after repeated faile
 - **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
 - **Open question** — Q-003: State×event gap: when Account=Locked and login_failed fires, the spec is silent (REQ-003 covers Unlocked only). Should attempts against a locked account be counted toward anything, ignored, or raise an alert? _(source: matrix)_
+
+## At a Glance
+
+| | ID | Behavior | Modality |
+|---|---|---|---|
+| ⏳ | [REQ-001](#req-001) | create an Active session owned by that user | must |
+| ⏳ | [REQ-002](#req-002) | transition that session to LoggedOut | must |
+| ⏳ | [REQ-003](#req-003) | increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS | must |
+| ⏳ | [REQ-004](#req-004) | transition it to Expired | must |
+| ⊘ | [REQ-005](#req-005) | refuse the login and leave every session and counter untouched | forbidden |
 
 ## What the System Does
 

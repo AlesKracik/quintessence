@@ -103,6 +103,7 @@ try:
     # Shared rejection definition — lint, spec-record and the readback must
     # not disagree about which requirements owe a refusal artifact.
     from itf_tools import is_rejection, witness_entries, skip_discharge
+    from itf_tools import brief_status as _brief_status
     from itf_tools import compute_model_sha as _compute_model_sha
     from itf_tools import load_trace as _load_trace
 except ImportError as e:
@@ -1370,6 +1371,39 @@ def check_refusal_artifacts(area_data, area_name, findings):
                 f"refuse.", ref=rid)
 
 
+def check_brief(area_data, area_name, findings):
+    """A prose brief is the one unverifiable thing in the readback, so it is
+    pinned like a witness rather than trusted like a README.
+
+    Graded the way every other precision lint is: WARN while the area is
+    being authored (the brief legitimately lags a spec still moving under
+    it), FAIL from in-review on, where a reviewer reads the brief first and
+    has no way to tell it is describing a previous version of the area.
+    """
+    brief = area_data.get("brief") or {}
+    if not brief:
+        return
+    state, detail = _brief_status(area_data)
+    if state == "stale":
+        gating = at_review(area_data)
+        add(findings, FAIL if gating else WARN, "brief", "brief-stale", area_name,
+            f"The prose brief is stale — {detail}. It is the first thing a "
+            f"reviewer reads and nothing else in the readback can contradict it. "
+            f"Re-read it, then re-pin with `tools/itf_tools.py spec-sha "
+            f"{area_name}`.")
+    text = (brief.get("text") or "").strip()
+    if text and len(text) < 40:
+        add(findings, WARN, "brief", "brief-too-thin", area_name,
+            "The brief is a sentence. `purpose` already carries the one-liner — "
+            "a brief that adds no orientation is a section a reader learns to skip.")
+    for facet in ("how_it_fits", "why_this_way", "watch_out_for"):
+        value = brief.get(facet)
+        if value is not None and not str(value).strip():
+            add(findings, WARN, "brief", "brief-empty-facet", area_name,
+                f"brief.{facet} is present but empty — drop the key rather than "
+                f"rendering an empty heading.", ref=facet)
+
+
 def check_boundary(area_data, area_name, findings):
     """Gap: 'the regenerated code matches' has no referent without a declared
     substitution boundary, and the differential comparator has nothing to diff.
@@ -1982,6 +2016,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_quint_refs(area_data, sidecar, area_name, findings)
     check_orphan_actions(area_data, sidecar, area_name, findings)
     check_constraint_values(area_data, sidecar, area_name, findings)
+    check_brief(area_data, area_name, findings)
     check_formal_model_consistency(area_data, sidecar, area_name, findings)
     check_alloy_backend(root, area_data, area_name, findings)
     check_scope(area_data, area_name, findings)

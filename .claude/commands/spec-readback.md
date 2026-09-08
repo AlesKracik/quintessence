@@ -42,6 +42,8 @@ git commit -m "spec(<target>): readback — <summary>"
 
 ## What `/spec-readback` does NOT do
 
+- **The `brief` is the one exception, and it is not an exception to determinism.** You may write `brief` in the *area JSON* — lead paragraphs plus optional `how_it_fits`, `why_this_way`, `watch_out_for`. The generator renders it verbatim; you never type prose into the `.md`. After writing or revising it, re-pin: `tools/itf_tools.py spec-sha <area>` → `brief.written_against`. Leaving it unpinned or stale is a lint finding, and FAILs once the area is `in-review`.
+- **Don't rewrite a `brief` whose `author` is `human`** without asking — offer an edit instead.
 - **Never writes readback content yourself** — not a sentence, not a table row. If something is missing from the output, the fix is in the source JSON (or in `tools/spec-readback.py`), never prose patched into the generated file.
 - **Does not modify area JSONs or sidecars** — generator and command are read-only over them.
 - **Does not render images** — Mermaid is text; viewers render it.
