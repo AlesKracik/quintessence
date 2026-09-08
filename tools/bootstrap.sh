@@ -87,10 +87,15 @@ if [ "$IN_PLACE" -eq 1 ]; then
   # Optional tooling check (soft — never blocks).
   echo
   echo "Checking for Quint and Apalache..."
-  if [ -x "$ROOT/tools/check-tooling.sh" ]; then
-    "$ROOT/tools/check-tooling.sh" || true
+  # Guard on presence, and supply the interpreter — never on the exec bit.
+  # A clone is exactly where that bit goes missing (Windows checkouts run
+  # core.filemode=false, so a script committed 100644 arrives unrunnable),
+  # and an `-x` guard turns that into a silent skip of the one check whose
+  # whole job is telling you what your machine is missing.
+  if [ -f "$ROOT/tools/check-tooling.sh" ]; then
+    bash "$ROOT/tools/check-tooling.sh" || true
   else
-    echo "  (tools/check-tooling.sh missing or not executable — skipping)"
+    echo "  (tools/check-tooling.sh not found — skipping)"
   fi
 
   rm -f "$0"
@@ -195,10 +200,11 @@ fi
 
 echo
 echo "Checking for Quint and Apalache..."
-if [ -x "$ROOT/tools/check-tooling.sh" ]; then
-  "$ROOT/tools/check-tooling.sh" || true   # warn-only: never block bootstrap
+# Presence, not the exec bit — see the note at the fresh-mode call above.
+if [ -f "$ROOT/tools/check-tooling.sh" ]; then
+  bash "$ROOT/tools/check-tooling.sh" || true   # warn-only: never block bootstrap
 else
-  echo "  (tools/check-tooling.sh missing or not executable — skipping)"
+  echo "  (tools/check-tooling.sh not found — skipping)"
 fi
 
 # -- Self-remove ------------------------------------------------------------

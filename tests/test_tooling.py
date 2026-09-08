@@ -2494,3 +2494,30 @@ def test_report_renders_on_a_cp1252_console(monkeypatch, capsys):
     assert lint.ASCII_ICONS[lint.WARN] in out
 
 
+# ── Bootstrap must not gate its own tooling check on the exec bit ───────────
+# `[ -x tools/check-tooling.sh ]` conflates "absent" with "present but not
+# marked executable". The second is not a reason to skip: bootstrap invokes
+# the script as a child and can supply the interpreter itself. Gating on it
+# silently skipped the one check whose job is reporting what's missing, and
+# `-x` is exactly the attribute a clone loses.
+
+BOOTSTRAP = TOOLS / "bootstrap.sh"
+
+
+def test_bootstrap_guards_check_tooling_on_presence_not_exec_bit():
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "check-tooling.sh" in text, "guard moved — retarget this test"
+    offenders = [ln.strip() for ln in text.splitlines()
+                 if "-x " in ln and "check-tooling.sh" in ln]
+    assert not offenders, "exec-bit guard is back: " + "; ".join(offenders)
+    assert text.count('if [ -f "$ROOT/tools/check-tooling.sh" ]; then') == 2
+
+
+def test_bootstrap_invokes_check_tooling_through_bash():
+    """Supplying the interpreter is what makes the presence guard sufficient."""
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    calls = [ln.strip() for ln in text.splitlines()
+             if "check-tooling.sh" in ln and "$ROOT" in ln and "[ -f" not in ln]
+    assert len(calls) == 2, calls
+    for call in calls:
+        assert call.startswith('bash "$ROOT/tools/check-tooling.sh"'), call
