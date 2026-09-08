@@ -2504,8 +2504,17 @@ def test_report_renders_on_a_cp1252_console(monkeypatch, capsys):
 BOOTSTRAP = TOOLS / "bootstrap.sh"
 
 
+def _bootstrap_text():
+    # bootstrap.sh deletes itself as its last act, so it is absent in every
+    # project created FROM the template — where these two tests have nothing
+    # left to assert. Skip there; the guard matters in the template repo.
+    if not BOOTSTRAP.exists():
+        pytest.skip("bootstrap.sh already removed (bootstrapped project)")
+    return BOOTSTRAP.read_text(encoding="utf-8")
+
+
 def test_bootstrap_guards_check_tooling_on_presence_not_exec_bit():
-    text = BOOTSTRAP.read_text(encoding="utf-8")
+    text = _bootstrap_text()
     assert "check-tooling.sh" in text, "guard moved — retarget this test"
     offenders = [ln.strip() for ln in text.splitlines()
                  if "-x " in ln and "check-tooling.sh" in ln]
@@ -2515,7 +2524,7 @@ def test_bootstrap_guards_check_tooling_on_presence_not_exec_bit():
 
 def test_bootstrap_invokes_check_tooling_through_bash():
     """Supplying the interpreter is what makes the presence guard sufficient."""
-    text = BOOTSTRAP.read_text(encoding="utf-8")
+    text = _bootstrap_text()
     calls = [ln.strip() for ln in text.splitlines()
              if "check-tooling.sh" in ln and "$ROOT" in ln and "[ -f" not in ln]
     assert len(calls) == 2, calls

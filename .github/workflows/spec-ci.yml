@@ -40,16 +40,46 @@ on:
       - ".spec/**"
       - "schemas/**"
       - "tools/**"
+      - "tests/**"
+      - ".github/workflows/**"
   push:
     branches: [main]
     paths:
       - "specs/**"
       - ".spec/**"
+      - "schemas/**"
+      - "tools/**"
+      - "tests/**"
+      - ".github/workflows/**"
 
 env:
   QUINT_IR_ENGINE: cli
 
 jobs:
+  # The tooling's own unit + regression suite. Deliberately NOT gated on
+  # .spec/project.json the way spec-gates below is: these test tools/, not a
+  # project's specs, so this is the one job that must run in the template repo
+  # itself — which is exactly where tools/ gets edited. Pure Python, no
+  # quint/Apalache/Java, so it costs a checkout and a pip install.
+  #
+  # tests/ survives bootstrap on purpose: a project created from the template
+  # ships these tools and keeps their tests. The few template-only assertions
+  # skip themselves once the files they inspect are gone.
+  tool-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest jsonschema
+
+      - name: pytest (tools/ unit + regression suite)
+        run: python -m pytest tests/ -q
+
   spec-gates:
     runs-on: ubuntu-latest
     steps:
