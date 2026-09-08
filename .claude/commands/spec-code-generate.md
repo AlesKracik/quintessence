@@ -1,14 +1,14 @@
-# /spec-apply — Generate Code From Spec
+# /spec-code-generate — Generate Code From Spec
 
 Generate or update implementation code from the area's spec (Quint sidecar + architecture). Per-component when components are declared. Writes `traceability[]` back into the area JSON. Refuses on contract targets.
 
 ## Usage
 ```
-/spec-apply [target]
-/spec-apply [target] --force                # generate even if architecture is incomplete
-/spec-apply [target] --tests-only           # regenerate tests, keep code
-/spec-apply [target] --component <name>     # only one component
-/spec-apply [target] --parallel             # brownfield: generate BESIDE the
+/spec-code-generate [target]
+/spec-code-generate [target] --force                # generate even if architecture is incomplete
+/spec-code-generate [target] --tests-only           # regenerate tests, keep code
+/spec-code-generate [target] --component <name>     # only one component
+/spec-code-generate [target] --parallel             # brownfield: generate BESIDE the
                                             #   original into
                                             #   conformance.differential.parallel_path,
                                             #   so `spec-record equiv` can diff the two
@@ -39,9 +39,9 @@ Read:
 
 Refuse if `kind == "contract"`:
 ```
-/spec-apply does not apply to contract targets. Contracts are spec-only; their verification
+/spec-code-generate does not apply to contract targets. Contracts are spec-only; their verification
 is /spec-check. To regenerate code for an area that participates in a contract, run
-/spec-apply on the area itself.
+/spec-code-generate on the area itself.
 ```
 
 ### Step 2 — Resolve architecture (don't re-ask)
@@ -136,7 +136,7 @@ Generate the parallel implementation **from the spec alone**. Consulting the ori
 
 ### Step 4a — Generate the conformance adapter + replay harness
 
-`/spec-verify` replays the witness traces (ITF files under `specs/<target>/traces/`) through an adapter against the real implementation (rationale: METHODOLOGY.md → "Conformance"). Generate the artifacts in the target stack:
+`/spec-code-verify` replays the witness traces (ITF files under `specs/<target>/traces/`) through an adapter against the real implementation (rationale: METHODOLOGY.md → "Conformance"). Generate the artifacts in the target stack:
 
 1. **Adapter** — maps the formal model to the implementation:
    - one method per Quint action (`login(uid, sid)` → call the real `authService.login(...)`, catching domain errors so guard-rejections are observable);
@@ -201,7 +201,7 @@ Write `traceability[]` in `specs/<target>.*.json`:
 ]
 ```
 
-`verified: false` until `/spec-verify` confirms. Code/test paths are relative to the resolved code root (so the trace stays stable when the repo is mounted at different paths on different machines).
+`verified: false` until `/spec-code-verify` confirms. Code/test paths are relative to the resolved code root (so the trace stays stable when the repo is mounted at different paths on different machines).
 
 Bump area `version` (minor for added components or new mappings, patch for code regen with no spec change).
 
@@ -233,7 +233,7 @@ Coverage:
 
 specs/auth.area.json — traceability[] + conformance updated
 
-Next: /spec-verify auth — confirm it all matches.
+Next: /spec-code-verify auth — confirm it all matches.
 ```
 
 ### Step 7 — Commit

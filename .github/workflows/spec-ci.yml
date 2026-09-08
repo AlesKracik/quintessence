@@ -26,7 +26,7 @@
 #   spec-record equiv            (differential vs the original implementation)
 # Wire those into the CODE repo's CI instead, where the source actually is.
 #
-# Apalache model checking (/spec-check) and conformance replay (/spec-verify)
+# Apalache model checking (/spec-check) and conformance replay (/spec-code-verify)
 # are heavier and agent-driven; run them locally or scheduled. The optional
 # Alloy backend is agent-driven for the same reason and needs no jar here:
 # spec-lint's gate on proof: "structural" invariants is regex-only Python. ALSO wire each

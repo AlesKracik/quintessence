@@ -375,7 +375,7 @@ def attention_items(root, area_name, area):
             items.append(f"**Open question** — {q.get('id')}: {q.get('question')}{src}")
     log = area.get("verification_log") or []
     if log and log[-1].get("drift_detected"):
-        items.append("**Drift** — spec-traced code changed outside /spec-apply and "
+        items.append("**Drift** — spec-traced code changed outside /spec-code-generate and "
                      "verification fails. Revert the code or codify via /spec.")
     return items
 
@@ -853,7 +853,7 @@ def reference_section(root, area, project):
                          f"{'✓' if t.get('verified') else '✗'} |")
         lines.append("")
     else:
-        lines.append("_No code generated yet. Run /spec-apply._")
+        lines.append("_No code generated yet. Run /spec-code-generate._")
         lines.append("")
     log = area.get("verification_log") or []
     if log:

@@ -160,7 +160,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 
 - **DEC-001** (accepted, 2026-05-15) — Model the navigation as a Quint state machine. Encode screens as a variant type, navigation as Quint actions, auth gating as invariants checked by Apalache. Rationale: Lets us prove 'Dashboard unreachable without auth' rather than relying on convention. Visual design stays in the design tooling — not formalized.
 
-_No code generated yet. Run /spec-apply._
+_No code generated yet. Run /spec-code-generate._
 
 _Approval lives in PR history — audit trail: `git log --follow specs/auth-ui.area.json`_
 

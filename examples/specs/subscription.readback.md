@@ -303,7 +303,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 
 - **DEC-001** (accepted, 2026-05-15) — No refunds on cancellation. Cancellation stops future billing and preserves access to the end of the paid period. No money is returned. Rationale: Product policy; the paid period has already been delivered as access. Alternatives: Prorated refund of the unused days (rejected: Support and accounting cost outweighs the churn benefit at this price point.).
 
-_No code generated yet. Run /spec-apply._
+_No code generated yet. Run /spec-code-generate._
 
 _Approval lives in PR history — audit trail: `git log --follow specs/subscription.area.json`_
 

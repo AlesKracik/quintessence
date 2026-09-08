@@ -124,7 +124,7 @@ def claims(spec_text):
             invs[inv["id"]] = {k: v for k, v in inv.items() if k not in MECHANICAL_INV}
     out["invariants"] = invs
 
-    out.pop("traceability", None)      # a map to code, written by /spec-apply
+    out.pop("traceability", None)      # a map to code, written by /spec-code-generate
     return out
 
 

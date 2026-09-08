@@ -1342,7 +1342,7 @@ def check_refusal_artifacts(area_data, area_name, findings):
     So the requirement class most likely to be wrong in the implementation had
     no code-side evidence at all: a login() written without the locked-account
     check replays every happy-path trace green, passes the tampered
-    self-tests, and /spec-verify reports pass. The refusal artifact is the
+    self-tests, and /spec-code-verify reports pass. The refusal artifact is the
     missing half \u2014 drive the code into the blocking state, attempt the call,
     assert it is refused AND that nothing observable moved."""
     review = at_review(area_data)
@@ -1610,7 +1610,7 @@ def check_components_implementation(area_data, area_name, findings):
     if orphan:
         add(findings, WARN, "architecture", "component-no-traceability", area_name,
             f"Components declared but with no traceability entries: {sorted(orphan)}. "
-            f"Either remove from architecture.components or run /spec-apply to generate code.")
+            f"Either remove from architecture.components or run /spec-code-generate to generate code.")
 
     # Actions claimed by multiple components.
     owners = defaultdict(list)

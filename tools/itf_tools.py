@@ -63,7 +63,7 @@ def witness_entries(req):
     nothing on the witness itself \u2014 so a consumer that reads only
     witness.trace sees a fully discharged permission as a missing trace. That
     was a spurious FAIL in lint and, worse, a permanent refusal in the
-    /spec-verify preflight.
+    /spec-code-verify preflight.
 
     Shared here for the same reason is_rejection() is: the gate, the ledger
     and the readback must agree on what "witnessed" means."""

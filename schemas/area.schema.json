@@ -391,7 +391,7 @@
           },
           "refusal": {
             "type": "object",
-            "description": "Code-side evidence for a REJECTION requirement. Such a requirement produces no state change, so it correctly has no witness trace \u2014 and conformance replay only replays witness traces. Without this block the requirement class most likely to be wrong in the implementation carries zero code-side evidence: a login() written with no locked-account check replays every happy-path trace green, passes the tampered self-tests, and /spec-verify reports pass.",
+            "description": "Code-side evidence for a REJECTION requirement. Such a requirement produces no state change, so it correctly has no witness trace \u2014 and conformance replay only replays witness traces. Without this block the requirement class most likely to be wrong in the implementation carries zero code-side evidence: a login() written with no locked-account check replays every happy-path trace green, passes the tampered self-tests, and /spec-code-verify reports pass.",
             "additionalProperties": false,
             "properties": {
               "artifact":  { "type": "string", "description": "Path of the test that drives the code into the blocking state, attempts the call, and asserts BOTH that it is refused AND that no observable var moved." },
@@ -729,12 +729,12 @@
 
     "conformance": {
       "type": "object",
-      "description": "Model-based conformance testing config: how witness traces are replayed against real code. /spec-apply generates the adapter and harness; /spec-verify runs the command and treats a requirement as verified only when its witness trace replays green.",
+      "description": "Model-based conformance testing config: how witness traces are replayed against real code. /spec-code-generate generates the adapter and harness; /spec-code-verify runs the command and treats a requirement as verified only when its witness trace replays green.",
       "additionalProperties": false,
       "properties": {
         "adapter":    { "type": "string", "description": "Path (relative to code root) of the adapter mapping Quint actions to code API calls and Quint vars to observable code state." },
         "harness":    { "type": "string", "description": "Path (relative to tests root) of the trace-replay harness that loads ITF files and drives the adapter." },
-        "command":    { "type": "string", "description": "Shell command that replays all traces, e.g. 'pnpm test conformance'. Run from the code repo root by /spec-verify." },
+        "command":    { "type": "string", "description": "Shell command that replays all traces, e.g. 'pnpm test conformance'. Run from the code repo root by /spec-code-verify." },
         "pbt_command": { "type": "string", "description": "OPTIONAL stateful property-based testing command. Apalache returns the SHORTEST counterexample, so replay is a handful of traces and a handful of steps per area, each requirement exercised once. The adapter already exposes one method per action, one getter per var and a reset() \u2014 which is exactly a stateful-PBT interface, so the same adapter drives thousands of randomized sequences for the price of wiring. Complements replay, never replaces it: replay checks the model's own traces, PBT explores beyond them." },
         "traces_dir": { "type": "string", "description": "Where witness traces live, relative to specs/. Default: '<area>/traces'." },
         "differential": {
@@ -742,7 +742,7 @@
           "description": "DIFFERENTIAL conformance, available only to brownfield: the existing implementation is an oracle that answers any question you ask it, and until you ask, extraction fidelity is asserted by a human rather than measured. The comparator instantiates the SAME adapter twice \u2014 once over the original, once over the regenerated implementation \u2014 drives both through identical sequences, and diffs boundary.observable_state after every step. Each divergence is either a missing spec element (the extraction gap you were hunting) or an intentional difference (record it as a decision).",
           "additionalProperties": false,
           "properties": {
-            "parallel_path": { "type": "string", "description": "Where /spec-apply --parallel writes the regenerated implementation. NEVER the original's path: the oracle has to survive the experiment." },
+            "parallel_path": { "type": "string", "description": "Where /spec-code-generate --parallel writes the regenerated implementation. NEVER the original's path: the oracle has to survive the experiment." },
             "command":       { "type": "string", "description": "Shell command running the comparator. Exit 0 = no sequence distinguished the two." },
             "sequences":     { "type": "integer", "minimum": 1, "description": "How many randomized sequences the comparator should run. Reported with the verdict, because 'equivalent' means 'no counterexample in N', never 'equivalent'." }
           }
@@ -752,7 +752,7 @@
 
     "traceability": {
       "type": "array",
-      "description": "Maps each requirement/invariant to its Quint construct, the component implementing it, and the code/test locations. Filled in by /spec-apply.",
+      "description": "Maps each requirement/invariant to its Quint construct, the component implementing it, and the code/test locations. Filled in by /spec-code-generate.",
       "items": {
         "type": "object",
         "required": ["id"],
@@ -852,7 +852,7 @@
 
     "verification_log": {
       "type": "array",
-      "description": "Appended by /spec-verify each run.",
+      "description": "Appended by /spec-code-verify each run.",
       "items": {
         "type": "object",
         "required": ["date", "status"],

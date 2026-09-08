@@ -337,7 +337,7 @@ def main():
     files = traced_files(area, repo_root)
     source = "traceability[]"
     if not files:
-        # traceability[] is written by /spec-apply, which has not run during a
+        # traceability[] is written by /spec-code-generate, which has not run during a
         # brownfield EXTRACTION \u2014 exactly when this audit is most useful. Fall
         # back to the area's declared code_path so the documented workflow is
         # actually executable.
@@ -350,7 +350,7 @@ def main():
     if not files:
         print(f"ERROR: no source files found under {repo_root}. Set the area's "
               f"code_path in .spec/project.json, pass --code-path, or run "
-              f"/spec-apply so traceability[] exists.", file=sys.stderr)
+              f"/spec-code-generate so traceability[] exists.", file=sys.stderr)
         sys.exit(2)
 
     sites = []

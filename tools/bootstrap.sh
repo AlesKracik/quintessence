@@ -164,8 +164,8 @@ sequence to memorize.
 
 - \`/spec [target]\` — adaptive spec authoring (elicit, vocab, structure, formalize, brownfield extract, drift codify, project edit)
 - \`/spec-check [target]\` — run Apalache on the area's Quint sidecar; cascade to involving contracts
-- \`/spec-verify [target]\` — run the area's test command; validate traceability; detect drift; append to verification_log
-- \`/spec-apply [target]\` — generate code from the spec + architecture; per-component when declared
+- \`/spec-code-verify [target]\` — run the area's test command; validate traceability; detect drift; append to verification_log
+- \`/spec-code-generate [target]\` — generate code from the spec + architecture; per-component when declared
 - \`/spec-readback [target]\` — generate a human-readable Markdown review document with embedded Mermaid diagrams
 
 See [METHODOLOGY.md](METHODOLOGY.md) for the complete reference.

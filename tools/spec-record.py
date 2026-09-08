@@ -56,7 +56,7 @@ What `check` does, in order:
      nl_explanation for counterexamples whose result didn't change),
      formal_status per invariant/property, and each witness block.
 
-What `verify` does, in order (the deterministic half of /spec-verify —
+What `verify` does, in order (the deterministic half of /spec-code-verify —
 the LLM keeps the judgment dimensions: completeness/correctness/coherence
 reads of the code):
   1. Witness preflight via itf_tools.witness_status — refuses conformance
@@ -830,7 +830,7 @@ def cmd_equiv(args):
     command = diff_cfg.get("command")
     if not command:
         fail_setup("conformance.differential.command is not set. Generate the "
-                   "comparator with /spec-apply --parallel first.")
+                   "comparator with /spec-code-generate --parallel first.")
     parallel = diff_cfg.get("parallel_path")
     if not parallel:
         fail_setup("conformance.differential.parallel_path is not set.")
@@ -842,7 +842,7 @@ def cmd_equiv(args):
                    f"'{original_path}'. The oracle has to survive the experiment \u2014 "
                    f"generate beside it, never over it.")
     if not (repo_root / parallel).exists():
-        fail_setup(f"{repo_root / parallel} does not exist \u2014 run /spec-apply "
+        fail_setup(f"{repo_root / parallel} does not exist \u2014 run /spec-code-generate "
                    f"--parallel to generate the implementation under test.")
 
     sequences = args.sequences or diff_cfg.get("sequences") or 1000
@@ -1016,7 +1016,7 @@ def cmd_verify(args):
     if args.skip_conformance:
         notes.append("conformance: skipped (--skip-conformance)")
     elif not conformance.get("command"):
-        notes.append("conformance: not set up (run /spec-apply)")
+        notes.append("conformance: not set up (run /spec-code-generate)")
     elif preflight_ok:
         traces_dir = root / "specs" / (conformance.get("traces_dir") or f"{args.area}/traces")
         traces_replayed = len([

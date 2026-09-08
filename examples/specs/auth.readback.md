@@ -277,7 +277,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 
 - **DEC-001** (accepted, 2026-04-12) — JWT (RS256) over session cookies. Use JWT signed with RS256 for session tokens. Rationale: Asymmetric signing lets the edge verify with the public key; private key stays in the auth service. Alternatives: Cookie-based sessions (rejected: Edge can't validate without a network hop.); Opaque tokens with introspection (rejected: Extra request per call adds latency and ops cost.).
 
-_No code generated yet. Run /spec-apply._
+_No code generated yet. Run /spec-code-generate._
 
 _Approval lives in PR history — audit trail: `git log --follow specs/auth.area.json`_
 

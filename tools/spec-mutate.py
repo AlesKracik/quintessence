@@ -8,7 +8,7 @@ Three questions, and until now only two were answered:
   witnesses     "is the model vacuous?"         — reachability probes
   (nothing)     "would the gates catch a bug?"  — this tool
 
-A green /spec-verify says the implementation passed the checks that exist. It
+A green /spec-code-verify says the implementation passed the checks that exist. It
 says nothing about whether those checks are capable of failing. This tool
 answers that directly: break the implementation on purpose, run the area's own
 gates, and see whether they turn red. A mutant that SURVIVES is a finding — a
@@ -361,7 +361,7 @@ def main():
     files = traced_files(area, repo_root)
     if not files:
         fail_setup(f"no traceability[] code files found under {repo_root}. "
-                   f"Run /spec-apply, or check .spec/local.json paths.")
+                   f"Run /spec-code-generate, or check .spec/local.json paths.")
 
     dirty = git_dirty(repo_root)
     if dirty and not args.dry_run:

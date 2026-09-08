@@ -28,7 +28,7 @@
           "code_repo":   { "type": ["string", "null"], "description": "Key from repos[]. null = spec-only." },
           "code_path":   { "type": "string", "description": "Inside the code repo, e.g. 'src/auth/'." },
           "tests_path":  { "type": "string", "description": "Inside the code repo, e.g. 'tests/auth/'." },
-          "test_command":{ "type": "string", "description": "What /spec-verify runs." }
+          "test_command":{ "type": "string", "description": "What /spec-code-verify runs." }
         }
       }
     },

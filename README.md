@@ -9,9 +9,9 @@ You don't "use" this repo directly — you **clone it**, **bootstrap it**, and t
 What you get:
 
 - A methodology for moving rough requirements → **EARS-structured requirements** → formal Quint specification → Apalache-verified invariants **+ machine-found witness traces per requirement** → generated code **+ conformance replay** (the model's own traces re-run against the implementation) → drift-detection over time, with every requirement traceable to code and tests.
-- **Five Claude Code commands**: `/spec`, `/spec-check`, `/spec-verify`, `/spec-apply`, `/spec-readback`. The first is an adaptive entry point that walks all spec-authoring phases conversationally; the others run Apalache + witness probes, replay traces and run tests, generate code + the conformance adapter, and produce a human-readable Markdown review document with embedded Mermaid diagrams (including witness traces rendered as sequence diagrams).
+- **Five Claude Code commands**: `/spec`, `/spec-check`, `/spec-code-verify`, `/spec-code-generate`, `/spec-readback`. The first is an adaptive entry point that walks all spec-authoring phases conversationally; the others run Apalache + witness probes, replay traces and run tests, generate code + the conformance adapter, and produce a human-readable Markdown review document with embedded Mermaid diagrams (including witness traces rendered as sequence diagrams).
 - **One JSON file per area** at `specs/<name>.area.json` (or `specs/<name>.contract.json` — the suffix encodes the kind), with a Quint sidecar `specs/<name>.qnt`. Two kinds: `area` (functional; declare `screens[]` + `navigation[]` to model an interactive surface formally) and `contract` (cross-area invariants). Requirements group into **journeys** (`specs/journeys/<slug>.journey.json` — use cases with steps in temporal order, single- or cross-area) — readbacks render flows as a human walks them, not ID-sorted lists.
-- **Changes as the unit of work**: a manifest per change at `specs/changes/<slug>.change.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-apply`, `/spec-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
+- **Changes as the unit of work**: a manifest per change at `specs/changes/<slug>.change.json` records which areas/contracts a piece of work touches (membership + IDs only — check/apply/verify status is derived from the area JSONs, so it can't go stale). Bare commands operate on the whole change — `/spec auth` once, then `/spec-check`, `/spec-code-generate`, `/spec-code-verify`, `/spec-readback` need no target. Areas stay the logical boundary; the manifest holds only references.
 - **Completeness relative to a declared boundary**: `scope.included[]/excluded[]` makes "complete" mean something checkable, and an `OUT-OF-SCOPE` triage verdict must cite the exclusion covering it. Triage has four verdicts — GAP, IMPOSSIBLE, **NO-OP** (it happens and deliberately changes nothing), OUT-OF-SCOPE.
 - **Failure behavior as a second completeness axis**: declare an `externals[]` dependency with the outcomes it can really produce (DECLINED, TIMEOUT, NETWORK_ERROR) and every one becomes a matrix cell that a requirement must handle or triage must explain. `assumptions[]` are first-class, and every ✓ that rests on one renders `· under ASM-001` rather than unconditionally.
 - **Modality**: `must` needs one witness, `may` needs **one per permitted outcome** (so latitude survives verification instead of narrowing to whichever branch got proven first), `forbidden` names the invariant that carries the proof. `closed: true` on an entity holds the model to exactly the declared states — the marker that stops an LLM inventing `Paused`.
@@ -19,7 +19,7 @@ What you get:
 - **Anti-vacuity guarantees**: a requirement counts as demonstrated only when the checker produces a witness trace for it; a spec whose invariants pass over an unreachable state space is caught, not celebrated.
 - **Witness soundness — three conjuncts, not one**: the predicate is **bound** to the arguments its own action was called with (an unbound existential is satisfied by state an unrelated call produced), **path-constrained** to that action, and carries a **delta** over pre-state ghosts so the step has to move the state rather than find it already moved. Every numeric bound names a `paired_invariant`, because a witness proves a threshold can fire and never that it cannot fire early.
 - **Refusal artifacts**: a rejection has no witness by design, and replay only replays witnesses — so the requirement class most likely to be wrong in the code had no code-side evidence at all. A refusal artifact drives the code into the blocking state, attempts the call, and asserts it is refused **and** that nothing observable moved.
-- **Brownfield is the strong case**: an existing implementation is an oracle. The goal is a spec that is true of the code you have — and stays true: read requirements, constraints and states out of the source, then account for every decision site with `spec-extract-audit` (the one check that runs *code → spec*, because the branch nobody wrote down is the one no spec-shaped gate can look for). `/spec <area>` re-extracts when the code moves on, so the spec tracks the system instead of describing the version it was born against. If you *are* rewriting, fidelity can be measured rather than judged: declare a `boundary`, then `/spec-apply --parallel` + `spec-record equiv` drive the original and the regenerated implementation through the same sequences and diff them — optional, and only worth its cost when a rebuild is the actual plan.
+- **Brownfield is the strong case**: an existing implementation is an oracle. The goal is a spec that is true of the code you have — and stays true: read requirements, constraints and states out of the source, then account for every decision site with `spec-extract-audit` (the one check that runs *code → spec*, because the branch nobody wrote down is the one no spec-shaped gate can look for). `/spec <area>` re-extracts when the code moves on, so the spec tracks the system instead of describing the version it was born against. If you *are* rewriting, fidelity can be measured rather than judged: declare a `boundary`, then `/spec-code-generate --parallel` + `spec-record equiv` drive the original and the regenerated implementation through the same sequences and diff them — optional, and only worth its cost when a rebuild is the actual plan.
 - **Gates on the gates**: `spec-mutate` breaks the implementation on purpose and checks the gates turn red (survivors are findings; kills are an upper bound). `spec-separation` refuses a commit that moves spec claims and traced code together, because a claim adjusted with the implementation in view has no independent check left.
 - **One backend per question class.** Apalache checks behavior over traces; the optional Alloy backend checks structure over a finite scope. An invariant marked `proof: "structural"` routes to Alloy and renders as `✓ (scope: 4 Session, 4 Account)` — a third kind of ✓, never collapsed into the bounded `✓ (≤N steps)` or the inductive `✓ proven`. Witnesses and conformance replay stay Quint's: a snapshot cannot drive code step by step.
 - Seven optional architecture layers (0–6: stack, components, patterns, ADRs, topology, protocols, readbacks) and a multi-repo story via config-driven paths (no submodules).
@@ -116,29 +116,29 @@ Witness obligations:
      via its own action — so action coverage comes for free)
 
 > /spec-readback orders   # generates the Markdown review doc
-> /spec-apply orders      # generates types, store, service, tests
-> /spec-verify orders     # 12 tests pass; spec ↔ code linked
+> /spec-code-generate orders      # generates types, store, service, tests
+> /spec-code-verify orders     # 12 tests pass; spec ↔ code linked
 ```
 
 End-state for one area: `specs/orders.area.json` + `specs/orders.qnt` + `specs/orders.readback.md` + actual code in `src/orders/` and `tests/orders/`. PR carries all of it together.
 
 ### 2. Brownfield — adding spec to existing code
 
-`./tools/bootstrap.sh --in-place`, then `/spec billing` sees code at `src/billing/` with no spec and extracts a draft: inferred actions, entities with states, guards as candidate invariants — each presented for accept/edit/reject (`status: needs-validation`). `/spec-check` then typically finds a missing precondition in the inferred model; `/spec-verify` flags code behavior the spec doesn't mention yet. Iterate until clean. Later, when `src/billing/` has moved on, `/spec billing` re-extracts and walks you through what no longer matches. **Net effect**: existing code gains a formal model + machine-checked invariants that keep describing it, no rewrite.
+`./tools/bootstrap.sh --in-place`, then `/spec billing` sees code at `src/billing/` with no spec and extracts a draft: inferred actions, entities with states, guards as candidate invariants — each presented for accept/edit/reject (`status: needs-validation`). `/spec-check` then typically finds a missing precondition in the inferred model; `/spec-code-verify` flags code behavior the spec doesn't mention yet. Iterate until clean. Later, when `src/billing/` has moved on, `/spec billing` re-extracts and walks you through what no longer matches. **Net effect**: existing code gains a formal model + machine-checked invariants that keep describing it, no rewrite.
 
 ### 3. Adding a feature to an existing area
 
-`/spec orders` on an approved area asks "what's the change?", captures the new REQ/CON/INV items conversationally, updates the Quint, and the usual loop reruns: `/spec-check` → `/spec-apply` (diffs + new tests) → `/spec-verify` → `/spec-readback`. One PR carries spec diff + Quint diff + readback diff + code diff. No ceremony.
+`/spec orders` on an approved area asks "what's the change?", captures the new REQ/CON/INV items conversationally, updates the Quint, and the usual loop reruns: `/spec-check` → `/spec-code-generate` (diffs + new tests) → `/spec-code-verify` → `/spec-readback`. One PR carries spec diff + Quint diff + readback diff + code diff. No ceremony.
 
 ### 4. Drift detected, then codified
 
-A teammate ships a hotfix at 2am loosening lockout from 5 to 7 attempts. CI runs `/spec-verify auth`:
+A teammate ships a hotfix at 2am loosening lockout from 5 to 7 attempts. CI runs `/spec-code-verify auth`:
 
 ```
-> /spec-verify auth
+> /spec-code-verify auth
 ✗ INV-002 noLockoutWithFewerThanMax  FAIL
   Code at authService.ts:78 uses >= 7; spec CON-001 says 5.
-⚠ Drift detected: spec-traced code modified outside /spec-apply.
+⚠ Drift detected: spec-traced code modified outside /spec-code-generate.
 
 Two paths:
   1. Code is wrong — revert.
@@ -168,7 +168,7 @@ Rationale? (becomes a DEC ADR)
 > /spec-check auth   # the new spec still needs Apalache
   ✓ All VERIFIED
 
-> /spec-verify auth
+> /spec-code-verify auth
   ✓ PASS. No drift.
 ```
 
@@ -226,8 +226,8 @@ This invariant is marked `proof: inductive` in the area JSON, so `spec-check` ru
 
 ```
 > /spec-readback auth-ui   # writes specs/auth-ui.readback.md with navigation diagram inline
-> /spec-apply auth-ui      # generates React components with router guards
-> /spec-verify auth-ui     # all UI navigation tests pass
+> /spec-code-generate auth-ui      # generates React components with router guards
+> /spec-code-verify auth-ui     # all UI navigation tests pass
 ```
 
 PR reviewers see the navigation graph render in GitHub and the auth-guard invariant flagged `✓ proven` (inductive — valid across all reachable states, not just to a step bound).

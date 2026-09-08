@@ -26,7 +26,7 @@ Most of the value in "vague → bulletproof" lands **before** the model checker.
 | Tier | What it gives | Tools needed | Commands |
 |---|---|---|---|
 | **1 — Precision core** | EARS-structured requirements (the 4 capture-time checks kill vagueness), a declared **scope** to be complete relative to, state×event **and** external×outcome completeness, closed-world entities, modality (must/may/forbidden), first-class assumptions, the deterministic human-review **readback**, the semantic **diff**, and `spec-lint` gating it all. | Python 3 only — **no Java/Apalache/Quint** | `/spec`, `/spec-readback` |
-| **2 — Formal proof** | Quint model, Apalache invariants (bounded or inductive), machine-found witness traces, and conformance replay against code. Optional extra backends for other question classes: Alloy for structure, z3 for arithmetic. | + Java 17, Quint, Apalache (+ Alloy / z3 if used) | `/spec-check`, `/spec-apply`, `/spec-verify` |
+| **2 — Formal proof** | Quint model, Apalache invariants (bounded or inductive), machine-found witness traces, and conformance replay against code. Optional extra backends for other question classes: Alloy for structure, z3 for arithmetic. | + Java 17, Quint, Apalache (+ Alloy / z3 if used) | `/spec-check`, `/spec-code-generate`, `/spec-code-verify` |
 
 Tier 1 is a complete, useful workflow on its own: a team can distill requirements and ship the readback for review in minutes, with zero JVM on-ramp. Tier 2 is opt-in depth for the areas that earn it — the formal machinery proves *internal consistency, reachability, and code-conformance*, but it does **not** invent or correct intent. **The trust boundary is at elicitation** (NL → EARS fields): that step is human + AI judgment, backstopped mechanically by `spec-lint` (a functional requirement with no writable witness predicate FAILs past draft — see "EARS"), the matrix completeness gate, and the optional red-team. Everything downstream of a captured EARS field is mechanized; nothing upstream of it is. Know which tier a claim comes from.
 
@@ -41,7 +41,7 @@ A **spec area** is a JSON file at `specs/<name>.area.json` (or `specs/<name>.con
 
 A **project** is `.spec/project.json` (areas index, code repo paths, architecture defaults, topology) plus per-area JSON files. Per-developer code-repo paths go in `.spec/local.json` (gitignored).
 
-The pipeline runs: **elicit → vocab → structure → formalize → check → verify → apply**, but it's not a ceremony — each phase is a section of the area JSON that grows conversationally via `/spec`. There are no propose/approve/sync commands; git tracks change, PR review is approval, `/spec-verify` is the continuous gate.
+The pipeline runs: **elicit → vocab → structure → formalize → check → verify → apply**, but it's not a ceremony — each phase is a section of the area JSON that grows conversationally via `/spec`. There are no propose/approve/sync commands; git tracks change, PR review is approval, `/spec-code-verify` is the continuous gate.
 
 ---
 
@@ -68,8 +68,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 |---|---|
 | `/spec [target]` | Adaptive entry point. Detects state (greenfield, brownfield, existing, drift) and walks the relevant phase conversationally: EARS elicitation, vocabulary, structure, formalize (incl. witness predicates), extract (brownfield), reconcile (drift), edit catalogs, manage project config. Writes `specs/<target>.*.json` and its sidecar `.qnt`. |
 | `/spec-check [target]` | Runs Apalache on the area's sidecar `.qnt` (invariants), discharges witness obligations (per-REQ path-constrained witness traces via a generated `*.probes.qnt` module), then the state×event and external×outcome matrix passes (red-team only with `--reality`). Writes `check_results` and `witness` blocks back into the area JSON; saves ITF traces under `specs/<area>/traces/`. Cascades: on an area target, also checks every contract whose `spans` includes it. |
-| `/spec-verify [target]` | Replays the witness traces against real code through the conformance adapter (a REQ is *verified* only when its trace replays green), runs the area's `test_command`, validates the `traceability[]` table maps to real code/test locations, detects drift (spec-traced files changed outside `/spec-apply`). Appends to `verification_log[]`. |
-| `/spec-apply [target]` | Generates code from the architecture + formal model into the configured paths, plus the conformance adapter and trace-replay harness. Per-component when Layer 1 is declared. Writes `traceability[]` and `conformance`. Refuses on contract targets. |
+| `/spec-code-verify [target]` | Replays the witness traces against real code through the conformance adapter (a REQ is *verified* only when its trace replays green), runs the area's `test_command`, validates the `traceability[]` table maps to real code/test locations, detects drift (spec-traced files changed outside `/spec-code-generate`). Appends to `verification_log[]`. |
+| `/spec-code-generate [target]` | Generates code from the architecture + formal model into the configured paths, plus the conformance adapter and trace-replay harness. Per-component when Layer 1 is declared. Writes `traceability[]` and `conformance`. Refuses on contract targets. |
 | `/spec-readback [target]` | Runs `tools/spec-readback.py` — the readback is **generated by a tool, not authored by the agent**, so it cannot diverge from what the checker verified and identical input yields byte-identical output (`git diff` of the readback IS the review). Requirements render as journey slices (`specs/journeys/` — flows in temporal order) with EARS sentences (constraint values resolved inline), witness one-liners, and collapsed verbatim Quint + predicate + trace diagram with `file:line` and model-sha pins. Writes `specs/<target>.readback.md` per area, `specs/changes/<slug>.readback.md` per change, `.spec/readback.md` for the project. |
 
 `[target]` is the area name (`auth`, `billing`, `auth-ui`, `user-permission`). Optional on every command — defaults to whatever's inferable from context or asks the user. There is no branch convention; use git however your team uses git.
@@ -263,7 +263,7 @@ module auth {
 
 ### `kind: "area"` — functional area
 
-Has code; the standard shape above. `architecture`, `traceability`, `verification_log` are all meaningful. `/spec-apply` generates code; `/spec-verify` runs tests. (Quint `run` scenarios live in the sidecar only — `quint_ir` discovers them; `traceability[]` maps them to tests.)
+Has code; the standard shape above. `architecture`, `traceability`, `verification_log` are all meaningful. `/spec-code-generate` generates code; `/spec-code-verify` runs tests. (Quint `run` scenarios live in the sidecar only — `quint_ir` discovers them; `traceability[]` maps them to tests.)
 
 ### `kind: "contract"` — cross-area agreement
 
@@ -281,7 +281,7 @@ module userPermissionContract {
 
 `/spec-check` cascades automatically — running it on `auth` also checks every contract whose `spans` includes `auth`. A contract failure means an area change broke a joint invariant; either fix the area or evolve the contract (it's another spec change).
 
-`/spec-apply` and `/spec-verify` refuse on contract targets (no code).
+`/spec-code-generate` and `/spec-code-verify` refuse on contract targets (no code).
 
 A contract whose obligations are **relational rather than temporal** ("every Account has an owner", "no two Sessions share an Account") pays a state-space product in Apalache for a fact that has nothing to do with time. Such invariants can opt into the structural backend instead — see "The Structural Backend: Alloy (Optional)". Off by default; most projects never need it.
 
@@ -291,7 +291,7 @@ An interactive surface is an ordinary `kind: "area"` that declares `screens[]`, 
 
 - `spec-lint`: navigation endpoints reference declared screens, isolated screens flagged, screens without navigation FAIL;
 - `/spec-readback`: Navigation graph + Screens table replace the State Machines section;
-- `/spec-apply`: generates UI components (the `module_layout` is configured for component files).
+- `/spec-code-generate`: generates UI components (the `module_layout` is configured for component files).
 
 Such areas typically have `spans: ["auth"]` when they depend on another area's state (e.g., authentication status); requirement IDs may use `UI-NNN`.
 
@@ -456,8 +456,8 @@ One bounds the threshold from above (it fires), the other from below (it does no
 
 `/spec-check` proves the *model*; nothing about hand-written tests proves the *code matches the model* — an LLM writing both the spec and the tests that "verify" it is circular. The conformance step closes the loop with the model's own traces:
 
-1. `/spec-apply` generates a **conformance adapter** (one method per Quint action calling the real API; one getter per Quint var returning the abstracted observable code state; a `reset()`) and a **replay harness**. It also generates **tampered self-test traces — one per observable Quint var** (`_selftest.tampered.<var>.itf.json`), each a copy of a witness trace with that var's final value deliberately corrupted; the harness must FAIL on every one. One tamper would only prove the harness catches divergence on the single var it flipped — a getter echoing expectations on a *different* var would slip through. A harness that passes any tampered trace has a broken adapter (getters echoing expectations, `reset()` not resetting) and all its green results are void.
-2. `/spec-verify` replays every witness trace (refusing stale ones): drive the code step-by-step with the trace's actions and ghost-recorded parameters, after each step assert the code state equals the trace's model state under the adapter mapping.
+1. `/spec-code-generate` generates a **conformance adapter** (one method per Quint action calling the real API; one getter per Quint var returning the abstracted observable code state; a `reset()`) and a **replay harness**. It also generates **tampered self-test traces — one per observable Quint var** (`_selftest.tampered.<var>.itf.json`), each a copy of a witness trace with that var's final value deliberately corrupted; the harness must FAIL on every one. One tamper would only prove the harness catches divergence on the single var it flipped — a getter echoing expectations on a *different* var would slip through. A harness that passes any tampered trace has a broken adapter (getters echoing expectations, `reset()` not resetting) and all its green results are void.
+2. `/spec-code-verify` replays every witness trace (refusing stale ones): drive the code step-by-step with the trace's actions and ghost-recorded parameters, after each step assert the code state equals the trace's model state under the adapter mapping.
 3. **A requirement is `verified` if and only if its witness trace replays green against the implementation.**
 
 Wire `conformance.command` into the **code repo's own CI** as well — the harness is an ordinary test file, so code changes that break model conformance fail on the code PR with no spec tooling installed.
@@ -483,7 +483,7 @@ The trust chain ends up: human approves EARS fields → mapping to Quint, review
 
 A rejection produces no state change, so it correctly has **no witness trace** — and conformance replay only replays witness traces. The consequence is uncomfortable and was true until now: **the requirement class most likely to be wrong in the implementation had zero code-side evidence.**
 
-Concretely: a `login()` written with no locked-account check replays every happy-path trace green, passes every tampered self-test, and `/spec-verify` reports pass. The model-side proof (`INV-002 noSessionWhileLocked`) says the *model* forbids it. Nothing said the code did.
+Concretely: a `login()` written with no locked-account check replays every happy-path trace green, passes every tampered self-test, and `/spec-code-verify` reports pass. The model-side proof (`INV-002 noSessionWhileLocked`) says the *model* forbids it. Nothing said the code did.
 
 A refusal artifact is the missing half:
 
@@ -503,11 +503,11 @@ It drives the code into the blocking state, attempts the call, and asserts **bot
 
 ### The property-based tier
 
-Apalache returns the *shortest* counterexample, and `stepP` nondets over a handful of users, so replay is a few traces of a few steps — each requirement exercised once, along one path. The adapter `/spec-apply` already generates is one method per action, one getter per var, and a `reset()`: that is exactly a stateful property-based-testing interface. `conformance.pbt_command` runs it (`quint run --mbt`, or fast-check/Hypothesis against the same adapter). It complements replay and never replaces it — replay checks the model's own traces, PBT explores beyond them.
+Apalache returns the *shortest* counterexample, and `stepP` nondets over a handful of users, so replay is a few traces of a few steps — each requirement exercised once, along one path. The adapter `/spec-code-generate` already generates is one method per action, one getter per var, and a `reset()`: that is exactly a stateful property-based-testing interface. `conformance.pbt_command` runs it (`quint run --mbt`, or fast-check/Hypothesis against the same adapter). It complements replay and never replaces it — replay checks the model's own traces, PBT explores beyond them.
 
 ### Where this leaves codegen
 
-`/spec-apply` writes the code that `/spec-verify` then checks against the same model. A faithful translation passes by construction, so the check largely tests the translator. **Conformance strength is inversely proportional to how much of the implementation was generated** — the strongest configuration is brownfield, where the code was written independently and the spec has something to disagree with. This is not a caveat to bury: it decides how much a green `/spec-verify` is worth on any given area.
+`/spec-code-generate` writes the code that `/spec-code-verify` then checks against the same model. A faithful translation passes by construction, so the check largely tests the translator. **Conformance strength is inversely proportional to how much of the implementation was generated** — the strongest configuration is brownfield, where the code was written independently and the spec has something to disagree with. This is not a caveat to bury: it decides how much a green `/spec-code-verify` is worth on any given area.
 
 ---
 
@@ -879,11 +879,11 @@ Spec and code can live in the same repo (single-repo) or in separate repos (mult
 
 `last_change` is the **active change** — see "Unit of Work: Changes" below. Per-developer state, which is why it lives in the gitignored `local.json` rather than `project.json`.
 
-When `/spec-apply auth` runs, it resolves `repo_paths.service-api + areas[auth].code_path` → `/Users/alice/work/service-api/src/auth/` and generates code there. `/spec-verify auth` `cd`s into the repo and runs `test_command`.
+When `/spec-code-generate auth` runs, it resolves `repo_paths.service-api + areas[auth].code_path` → `/Users/alice/work/service-api/src/auth/` and generates code there. `/spec-code-verify auth` `cd`s into the repo and runs `test_command`.
 
 Audit trail (which code SHA was verified against which spec): recorded in `verification_log[]` of the area JSON, not in git plumbing. Reproducible enough for most teams; teams that need git-level SHA pinning can opt into submodules separately, but they're not built into the methodology.
 
-A **spec-only** project has no `repos` block. `/spec-apply` and `/spec-verify` aren't used; the spec is the deliverable (useful for protocols, formal-methods exercises, cross-team contracts).
+A **spec-only** project has no `repos` block. `/spec-code-generate` and `/spec-code-verify` aren't used; the spec is the deliverable (useful for protocols, formal-methods exercises, cross-team contracts).
 
 ---
 
@@ -912,7 +912,7 @@ How it drives the commands:
 - The **active change** is per-dev sticky state (`last_change` in `.spec/local.json`). `/spec change <slug>` opens or switches; every spec edit happens inside a change — project bootstrap ends by opening the first change (default `initial-spec`, targets = the declared areas), and starting an area edit with no active change auto-opens one (one prompt, Enter accepts the default name). A single-area tweak is just the degenerate case: a change with one target.
 - Bare `/spec` shows the **change dashboard**: per-target phase grid (spec / checked / applied / verified, all computed) plus the suggested next step.
 - Bare `/spec-check` checks **all** targets of the change, with the contract cascade deduplicated across the set — each contract runs once even when several of its spanned areas moved. Contracts spanning a touched area join `targets[]` automatically (`auto: true`).
-- Bare `/spec-apply` / `/spec-verify` run every code-bearing target; contracts are skipped (spec-only).
+- Bare `/spec-code-generate` / `/spec-code-verify` run every code-bearing target; contracts are skipped (spec-only).
 - Bare `/spec-readback` regenerates the touched targets' readbacks plus a **change readback** (`specs/changes/<slug>.readback.md`) — intent, target table, the change's IDs rendered as EARS sentences. That one document is the PR review surface for a spanning change.
 - Explicit targets always work as a one-off escape hatch and never alter the active change.
 
@@ -944,9 +944,9 @@ formalize    — design the Quint module, write the sidecar, draft witness predi
 readback     — review document derived from the JSON + witness traces, presented for human review
 check        — /spec-check runs Apalache + witness probes; counterexamples and no-witness
                results become Q-NNN open questions; traces saved to specs/<area>/traces/
-verify       — /spec-verify replays witness traces against code (conformance) + runs tests,
+verify       — /spec-code-verify replays witness traces against code (conformance) + runs tests,
                records to verification_log
-apply        — /spec-apply generates/updates code + the conformance adapter/harness
+apply        — /spec-code-generate generates/updates code + the conformance adapter/harness
 ```
 
 Brownfield, drift codification, and contract authoring are not separate flows — `/spec` recognizes the state of `specs/<target>.*.json` (or its absence) and routes to the right beat.
@@ -1068,7 +1068,7 @@ Each difference resolves the same three ways, and which one it is matters:
 | the spec was always wrong about this | correct the spec; the extraction was incomplete, not the code |
 | the code is wrong | leave the spec, file the finding against the code |
 
-This is deliberately reachable without `/spec-verify`, `traceability[]`, a conformance adapter or a test command. Those are how you check code against a spec; this is how you keep the spec describing the code, and needing the full verification chain first is exactly what would stop anyone from doing it. Drift codification is the same reconciliation arriving from the other direction — when `/spec-verify` has already run and found the mismatch for you.
+This is deliberately reachable without `/spec-code-verify`, `traceability[]`, a conformance adapter or a test command. Those are how you check code against a spec; this is how you keep the spec describing the code, and needing the full verification chain first is exactly what would stop anyone from doing it. Drift codification is the same reconciliation arriving from the other direction — when `/spec-code-verify` has already run and found the mismatch for you.
 
 ### Optional: measuring extraction fidelity
 
@@ -1103,7 +1103,7 @@ Which is why `boundary` names what is **free** as well as what is preserved. An 
 
 
 ```
-/spec-apply <area> --parallel     regenerate BESIDE the original
+/spec-code-generate <area> --parallel     regenerate BESIDE the original
 spec-record equiv <area>          drive BOTH through the same sequences
 ```
 
@@ -1138,7 +1138,7 @@ Three questions, and until now only two had an answer:
 | Is the model vacuous? | Witness probes |
 | **Would the gates catch a wrong implementation?** | **`tools/spec-mutate.py`** |
 
-A green `/spec-verify` says the implementation passed the checks that exist. It says nothing about whether those checks are *capable of failing*. `spec-mutate` answers that by breaking the implementation on purpose — boundary shifts, comparison and logic inversion, literal bumps, deleted `throw`/`raise` — and checking the area's own gates turn red.
+A green `/spec-code-verify` says the implementation passed the checks that exist. It says nothing about whether those checks are *capable of failing*. `spec-mutate` answers that by breaking the implementation on purpose — boundary shifts, comparison and logic inversion, literal bumps, deleted `throw`/`raise` — and checking the area's own gates turn red.
 
 Discipline, because it edits real source: only files named in `traceability[]`, one mutant at a time, always restored (in a `finally`, so Ctrl-C and crashes still put the source back), refuses a dirty working tree so a failed restore shows up as an ordinary diff, and never mutates inside comments or string literals.
 
@@ -1162,7 +1162,7 @@ The methodology doesn't dictate a branch model. Use whatever your team uses. Sug
 
 - **Spec changes live in PRs** alongside code changes — reviewers see both diffs together.
 - **Tag spec versions if you want auditability**: `git tag specs/auth/v1.0.0` whenever you bump `area.version` for an important milestone. Optional; nothing requires it.
-- **Wire `conformance.command` into the code repo's own CI** — the replay harness is an ordinary test file, so model-conformance breakage fails code PRs with no spec tooling installed. Full `/spec-verify` runs (traceability, drift, log) are agent-driven: run before merge or on a schedule; spec-ci.yml deliberately carries only the cheap deterministic gates (lint, matrix, typecheck, quint test).
+- **Wire `conformance.command` into the code repo's own CI** — the replay harness is an ordinary test file, so model-conformance breakage fails code PRs with no spec tooling installed. Full `/spec-code-verify` runs (traceability, drift, log) are agent-driven: run before merge or on a schedule; spec-ci.yml deliberately carries only the cheap deterministic gates (lint, matrix, typecheck, quint test).
 - **Branches are optional.** Work on main if your team works on main; work on branches if your team branches. The methodology doesn't care.
 
 ---
@@ -1220,7 +1220,7 @@ area.status:          raw → structured → formalized → in-review → approv
 | Unreachable declared states | No (vacuously satisfied; caught by `spec-lint` structurally) |
 | Actor-permission completeness | No (caught by `spec-lint`) |
 | Numeric threshold correctness | Yes (as guards in actions) |
-| Code matches the model | No — that's `/spec-verify` conformance replay |
+| Code matches the model | No — that's `/spec-code-verify` conformance replay |
 
 ### spec-lint
 
@@ -1233,7 +1233,7 @@ area.status:          raw → structured → formalized → in-review → approv
 - `check <area>` — runs `quint verify` for every invariant, property, and witness probe (and, for invariants marked `proof: "structural"`, `alloy exec` instead — verdict read from the run's `receipt.json`), parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically — with skip-if-fresh (`model_sha` match + valid trace → probe not re-run) and `--only` runs merging into the prior ledger rather than replacing it.
 - `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
 
-The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-verify`.
+The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-code-verify`.
 
 ### spec-extract-audit
 

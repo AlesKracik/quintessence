@@ -2,7 +2,7 @@
 
 The single entry point for spec work. Detects the current state of the project and the named target, then walks the relevant conversational beat: project setup, area elicitation, vocabulary, structuring, formalization, brownfield extraction, drift codification, catalog editing. Writes `specs/<target>.*.json` and its `.qnt` sidecar.
 
-There are no other authoring subcommands — this command subsumes every authoring phase (init, elicit, structure, formalize, reconcile, approve, …); don't invent `/spec-<phase>` names. The only other commands are the four action commands: `/spec-check`, `/spec-verify`, `/spec-apply`, `/spec-readback`.
+There are no other authoring subcommands — this command subsumes every authoring phase (init, elicit, structure, formalize, reconcile, approve, …); don't invent `/spec-<phase>` names. The only other commands are the four action commands: `/spec-check`, `/spec-code-verify`, `/spec-code-generate`, `/spec-readback`.
 
 ## Usage
 ```
@@ -102,7 +102,7 @@ Ask only what's needed to start eliciting:
 3. Repo layout: single-repo (code lives here), multi-repo (code in separate repos), or spec-only. If multi-repo: for each code repo, logical name + URL + default branch → `.spec/project.json` `repos`; prompt user to add per-dev paths to `.spec/local.json` (or do it for them).
 4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area that declares `screens[]` + `navigation[]`), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
 
-**Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-apply` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units; Apalache settings only when a check times out. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
+**Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-code-generate` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units; Apalache settings only when a check times out. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
 Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.<kind>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and `formal_model: {"quint_file": "<name>.qnt"}` — the pointer names where `/spec-check` will write the sidecar, so it is aimed before the file exists. Lint WARNs about the missing sidecar while the area is `raw`/`draft` and only FAILs from `in-review` on, so a freshly bootstrapped project lints clean.
 
@@ -190,7 +190,7 @@ Ask for real call sequences — from logs, from existing tests, from a recording
 
 ##### 4. Keep it true as the code moves
 
-Tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-verify`, adapter or test command needed first.
+Tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-code-verify`, adapter or test command needed first.
 
 ##### 5. Then formalize — and offer fidelity measurement only if it fits
 
@@ -202,7 +202,7 @@ End with the ladder:
 Draft spec written from <n> files. <m> sites triaged, <k> GAPs open.
 
   /spec-check <target>     the model holds and nothing is vacuous
-  /spec-verify <target>    the code conforms to the spec
+  /spec-code-verify <target>    the code conforms to the spec
   /spec <target>           re-extract when the code moves on
 
 The spec now describes this code. Keep it that way and it stays worth reading.
@@ -214,7 +214,7 @@ Then, and only if the user has said they are rewriting, re-platforming or portin
 Planning to rebuild this area? Fidelity can be measured rather than assumed:
 declare a `boundary`, then
 
-  /spec-apply <target> --parallel   regenerate beside the original
+  /spec-code-generate <target> --parallel   regenerate beside the original
   spec-record equiv <target>        drive BOTH through the same sequences
 
 That answers "is this spec complete enough to rebuild from?" — a different
@@ -287,7 +287,7 @@ Inspect the JSON for gaps:
 | Requirements without `witness.predicate` (and sidecar exists) | witness pass: draft predicates, confirm, then suggest `/spec-check` |
 | `formal_model.quint_file` set but file missing | formalize: write the sidecar |
 | `formal_model.quint_file` exists but `check_results` shows failures | check: re-run, address counterexamples |
-| `traceability[]` empty but code exists | suggest `/spec-apply` |
+| `traceability[]` empty but code exists | suggest `/spec-code-generate` |
 | Recent `verification_log` shows `drift_detected: true` | drift codify (see below) |
 | `open_questions[]` has `status: open` entries | **question triage**: walk each open Q (newest first — matrix/red-team output lands here). Each answer becomes a spec edit: a new/changed REQ, INV, or CON — or an explicit `deferred` with the reason in `resolution`. This is how the completeness machinery's findings flow back into requirements; don't let the queue rot. |
 | All sections look complete | review beat (below) |
@@ -316,7 +316,7 @@ Tell the user what you noticed and what you propose to work on next; let them co
 
 (Runs when `specs/<target>.*.json` exists, the area has a `code_path`, and the code there has changed since the spec was extracted or last reconciled — compare `extraction_triage[]` fingerprints and `extraction.evidence` against the current sources. Offer it, do not force it: say what looks stale and ask.)
 
-An extracted spec is true of the code on the day it is written and decays from there. This beat exists so keeping it true is a routine, not a project. It is deliberately reachable **without** `/spec-verify`, `traceability[]`, a conformance adapter or a test command — those check code against a spec, which is a different job, and requiring them first is what would stop anyone from doing this at all.
+An extracted spec is true of the code on the day it is written and decays from there. This beat exists so keeping it true is a routine, not a project. It is deliberately reachable **without** `/spec-code-verify`, `traceability[]`, a conformance adapter or a test command — those check code against a spec, which is a different job, and requiring them first is what would stop anyone from doing this at all.
 
 Tell the user: "`<target>`'s spec was extracted against code that has changed. I'll re-read `<resolved-code-path>` and show you what no longer matches."
 
@@ -359,7 +359,7 @@ Your call?
 
 For "code is right", update the relevant section of the area JSON (modify invariant, change a constraint, add new requirement). Update the corresponding Quint construct in the sidecar. Add a `DEC-NNN` ADR with `kind: "architecture"` explaining the codification rationale. Update `version` and `last_modified`.
 
-After walking all drift items, suggest: `/spec-check <target>` (the new spec still needs Apalache), then `/spec-verify <target>` (should pass now).
+After walking all drift items, suggest: `/spec-check <target>` (the new spec still needs Apalache), then `/spec-code-verify <target>` (should pass now).
 
 #### review / idle
 
@@ -372,7 +372,7 @@ Print a digest:
 - Open questions still open
 - Architecture summary (resolved with project defaults)
 - Last verification result
-- Suggested next action (`/spec-verify` if it's been a while; `/spec-check` if Quint was edited; nothing if all green)
+- Suggested next action (`/spec-code-verify` if it's been a while; `/spec-check` if Quint was edited; nothing if all green)
 
 ### Step 3 — Always write incrementally
 
@@ -390,14 +390,14 @@ End every turn with a concrete suggested next command or beat. Examples:
 
 - "I've drafted the formal model. Next: `/spec-check auth`."
 - "Three items still need invariants. Want to keep going, or check Apalache on what we have?"
-- "Looks complete. Next: `/spec-verify auth` to make sure code matches."
+- "Looks complete. Next: `/spec-code-verify auth` to make sure code matches."
 
 Never just stop — always offer the next move.
 
 ### What `/spec` doesn't do
 
 - **Doesn't run Apalache.** That's `/spec-check`.
-- **Doesn't run tests.** That's `/spec-verify`.
-- **Doesn't generate code.** That's `/spec-apply`.
+- **Doesn't run tests.** That's `/spec-code-verify`.
+- **Doesn't generate code.** That's `/spec-code-generate`.
 - **Doesn't generate the human-readable review document.** That's `/spec-readback`.
 - **Doesn't enforce a workflow.** No propose/approve/sync gates. Git + PRs are your workflow.

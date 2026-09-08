@@ -53,7 +53,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 
 **Architecture (resolved project ⊕ area):** TypeScript 5.4 Node.js 20 Express Vitest pnpm · persistence: sql postgres Prisma
 
-_No code generated yet. Run /spec-apply._
+_No code generated yet. Run /spec-code-generate._
 
 _Approval lives in PR history — audit trail: `git log --follow specs/session-ownership.contract.json`_
 

@@ -88,7 +88,7 @@ Interpret its output:
 - **Properties (PROP-NNN) honesty rule:** Apalache's temporal checking is bounded. Report a PROP result as `verified` ONLY with the bound stated (`verified up to N steps`). On `timeout`, suggest demoting the PROP to a witness-traced scenario (a `run` demonstrating the eventuality once) plus a fairness note — don't leave the user believing unbounded liveness was proven.
 - **Invariants (INV-NNN) honesty rule:** by default `quint verify` checks invariants by **bounded** model checking to `max_steps`. `formal_status: "verified"` therefore means *no counterexample within N steps* — NOT a proof, and the readback renders it `✓ (≤N steps)`. When the user wants an unbounded proof for a load-bearing invariant (e.g. an auth guard), set `proof: "inductive"` on it in the area JSON; `spec-record` runs `quint verify --inductive-invariant=<quint_name>` and a pass becomes `verified-inductive` (`✓ proven`). If quint reports the invariant isn't constrained enough ("x is used before it is assigned"), that's an honest non-proof — help the user strengthen the predicate, don't fall back to bounded and call it proven. Suggest upgrading any `critical` invariant the reviewer would read as "always true" to inductive.
 
-Witness traces are inputs to `/spec-verify`'s conformance replay and to `/spec-readback`'s sequence diagrams — they are committed artifacts, not temp files.
+Witness traces are inputs to `/spec-code-verify`'s conformance replay and to `/spec-readback`'s sequence diagrams — they are committed artifacts, not temp files.
 
 Cascade economy: cascade only to contracts whose `spans` include areas actually changed (git diff against the last check), not every contract in the project.
 

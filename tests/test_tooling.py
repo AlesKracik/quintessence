@@ -2273,7 +2273,7 @@ def test_witness_entries_handles_both_shapes():
 
 def test_extract_audit_runs_before_traceability_exists(tmp_path):
     """The brownfield beat says to run the audit DURING extraction, but
-    traceability[] is written by /spec-apply, which has not run yet. Hard-
+    traceability[] is written by /spec-code-generate, which has not run yet. Hard-
     requiring it made the documented workflow unexecutable."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "a.js").write_text(
@@ -3040,7 +3040,7 @@ def test_no_script_names_leak_into_the_tier_commands_column():
 # is a spec that is true of the code and stays true — which needs a route
 # back into extraction after the code moves, and there was none: extract
 # fired only when the spec was MISSING, and the only other way in was drift
-# codify, gated behind /spec-verify.
+# codify, gated behind /spec-code-verify.
 
 SPEC_COMMAND = COMMANDS_DIR / "spec.md"
 
@@ -3059,7 +3059,7 @@ def test_reextract_beat_exists_and_does_not_require_the_verify_chain():
     text = SPEC_COMMAND.read_text(encoding="utf-8")
     assert "#### re-extract" in text
     beat = text.split("#### re-extract")[1].split("#### drift codify")[0]
-    assert "without" in beat and "/spec-verify" in beat
+    assert "without" in beat and "/spec-code-verify" in beat
 
 
 def test_the_boundary_is_no_longer_the_first_extraction_step():
@@ -3086,3 +3086,51 @@ def test_no_stale_cross_reference_to_the_old_chapter_title():
     for doc in DOC_FILES:
         text = (REPO_ROOT / doc).read_text(encoding="utf-8")
         assert "Specs You Could Rebuild From" not in text, doc
+
+
+# ── The code-facing commands say so in their names ──────────────────────────
+# /spec-check and /spec-verify did not distinguish what each acts on: one
+# checks the spec against itself (Apalache, witness reachability, coverage —
+# no code involved), the other checks CODE against the spec (trace replay
+# through a real adapter, the test suite, drift). Renamed to /spec-code-verify
+# and /spec-code-generate so the code-facing pair is obvious at a glance.
+
+RENAMED_AWAY = ("/spec-verify", "/spec-apply")
+
+
+@pytest.mark.parametrize("old", RENAMED_AWAY)
+def test_the_old_command_names_are_gone(old):
+    """Clean rename, no aliases — a stale name in the docs would send the
+    reader to a command that does not exist."""
+    for doc in DOC_FILES:
+        text = (REPO_ROOT / doc).read_text(encoding="utf-8")
+        assert old not in text, f"{doc} still references {old}"
+    for cmd in COMMANDS_DIR.glob("*.md"):
+        assert old not in cmd.read_text(encoding="utf-8"), f"{cmd.name} still references {old}"
+
+
+def test_the_code_facing_commands_exist_and_are_named_for_code():
+    declared = _declared_commands()
+    assert {"/spec-code-verify", "/spec-code-generate"} <= declared, sorted(declared)
+    assert "/spec-check" in declared, "the spec-side command keeps its name"
+
+
+def test_spec_check_stays_spec_side_only():
+    """The distinction the rename encodes: /spec-check never runs code. If it
+    grows a step that does, the names stop being honest."""
+    text = (COMMANDS_DIR / "spec-check.md").read_text(encoding="utf-8")
+    assert "conformance replay" not in text.split("## Instructions")[1].split("### Step 2")[0]
+
+
+@pytest.mark.parametrize("name", ["spec-code-verify", "spec-code-generate"])
+def test_renamed_command_files_carry_matching_titles(name):
+    text = (COMMANDS_DIR / f"{name}.md").read_text(encoding="utf-8")
+    assert text.startswith(f"# /{name} "), text.splitlines()[0]
+
+
+def test_spec_record_subcommands_were_not_renamed():
+    """spec-record's own `check`/`verify` subcommands are separated by a
+    space, not a hyphen — the rename must not have reached them."""
+    text = (COMMANDS_DIR / "spec-code-verify.md").read_text(encoding="utf-8")
+    assert "spec-record.py verify" in text
+    assert "spec-record.py spec-code-verify" not in text

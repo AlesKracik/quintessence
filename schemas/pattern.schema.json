@@ -29,7 +29,7 @@
     },
     "generates": {
       "type": "array",
-      "description": "File templates emitted by /spec-apply when this pattern is active. Variables: {area}, {component}, {ext}.",
+      "description": "File templates emitted by /spec-code-generate when this pattern is active. Variables: {area}, {component}, {ext}.",
       "items": {
         "type": "object",
         "required": ["path"],
