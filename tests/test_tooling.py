@@ -3188,3 +3188,39 @@ def test_the_phase_list_matches_the_renamed_commands():
     line = next(ln for ln in opening.splitlines() if "elicit" in ln and "formalize" in ln)
     assert "generate \u2192 verify" in line, line
     assert "apply" not in line, line
+
+
+# ── Core Concepts defines, The Two Kinds explains ───────────────────────────
+# Core Concepts carried per-kind bullets that restated "The Two Kinds of
+# Area" — including the UI-blocks summary — so the same facts sat in two
+# places with nothing keeping them in step. Core Concepts now names the two
+# kinds and points; the detail has one home.
+
+def _section(text, heading, next_heading):
+    return text.split(heading)[1].split(next_heading)[0]
+
+
+def test_core_concepts_does_not_restate_the_two_kinds():
+    text = (REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8")
+    core = _section(text, "## Core Concepts", "## Quick Start")
+    assert "The Two Kinds of Area" in core, "it must point at the detail"
+    # the giveaway of the old duplication: per-kind bullet lines
+    assert '- `kind: "area"`' not in core
+    assert '- `kind: "contract"`' not in core
+    assert "ui_components" not in core, "UI blocks are explained in The Two Kinds"
+
+
+def test_the_two_kinds_still_carries_the_detail():
+    text = (REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8")
+    kinds = _section(text, "## The Two Kinds of Area", "## EARS")
+    for needle in ("spans", "ui_components", "navigation", "login, billing, search"):
+        assert needle in kinds, needle
+
+
+def test_core_concepts_keeps_what_only_it_says():
+    """Dedup must not drop the definitions that live nowhere else."""
+    core = _section((REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8"),
+                    "## Core Concepts", "## Quick Start")
+    for needle in ("specs/<name>.area.json", "suffix encodes the `kind`",
+                   ".spec/project.json", ".spec/local.json"):
+        assert needle in core, needle

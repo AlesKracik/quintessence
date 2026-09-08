@@ -44,10 +44,7 @@ Tier 1 is a complete, useful workflow on its own: a team can distill requirement
 
 ## Core Concepts
 
-A **spec area** is a JSON file at `specs/<name>.area.json` (or `specs/<name>.contract.json`) plus an optional sidecar `specs/<name>.qnt` holding the Quint formal model. The filename suffix encodes the `kind` and must match it (`spec-lint` enforces this). Two kinds of area, one schema:
-
-- `kind: "area"` — functional area with code (login, billing, search). May declare **UI blocks** (`screens[]`, `ui_components[]`, `navigation[]`) to model an interactive surface — the sidecar then models navigation as a Quint state machine, and UI-specific lint, readback, and codegen activate on block presence.
-- `kind: "contract"` — cross-area invariant carrier (no code; `spans: ["auth", "billing"]`); the sidecar imports the spanned areas' Quint modules and asserts joint invariants.
+A **spec area** is a JSON file at `specs/<name>.area.json` (or `specs/<name>.contract.json`) plus an optional sidecar `specs/<name>.qnt` holding the Quint formal model. The filename suffix encodes the `kind` and must match it (`spec-lint` enforces this). Two kinds share the one schema — `area` (functional, has code) and `contract` (a cross-area agreement, spec-only) — and an interactive surface is an ordinary `area`, not a third kind. What each carries, and what the tooling does differently for them, is in "The Two Kinds of Area".
 
 A **project** is `.spec/project.json` (areas index, code repo paths, architecture defaults, topology) plus per-area JSON files. Per-developer code-repo paths go in `.spec/local.json` (gitignored).
 
@@ -271,7 +268,7 @@ module auth {
 
 ### `kind: "area"` — functional area
 
-Has code; the standard shape above. `architecture`, `traceability`, `verification_log` are all meaningful. `/spec-code-generate` generates code; `/spec-code-verify` runs tests. (Quint `run` scenarios live in the sidecar only — `quint_ir` discovers them; `traceability[]` maps them to tests.)
+A unit of behavior with code behind it — login, billing, search. Has the standard shape above. `architecture`, `traceability`, `verification_log` are all meaningful. `/spec-code-generate` generates code; `/spec-code-verify` runs tests. (Quint `run` scenarios live in the sidecar only — `quint_ir` discovers them; `traceability[]` maps them to tests.)
 
 ### `kind: "contract"` — cross-area agreement
 
