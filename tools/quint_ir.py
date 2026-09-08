@@ -24,7 +24,9 @@ Normalized output (same shape from both engines):
     "temporals":   ["eventualLogout", ...],
     "runs":        ["happyPath", ...],
     "action_mutations": {"login": ["sessions", ...], ...},
-    "action_params":    {"login": ["uid", "sid"], ...}
+    "action_params":    {"login": ["uid", "sid"], ...},
+    "action_calls":     {"step": ["login", "logout"], ...}  # action -> actions
+                                                            # it calls
   }
 
 Usage (CLI):
@@ -102,6 +104,41 @@ def _collect_mutations(expr):
 
     _walk_expr(expr, visit)
     return mutated
+
+
+def _collect_calls(expr):
+    """Every name an expression mentions — an application's callee opcode and
+    every bare name reference. Deliberately over-collects: vars, vals and
+    operators land here too, and the caller narrows to declared actions. That
+    narrowing is what makes the two engines agree, since the regex fallback
+    cannot tell a callee from any other identifier."""
+    names = []
+
+    def visit(node):
+        op = node.get("opcode")
+        if op:
+            names.append(op)
+        if node.get("kind") == "name" and node.get("name"):
+            names.append(node["name"])
+
+    _walk_expr(expr, visit)
+    return names
+
+
+def _narrow_to_actions(raw_calls, actions):
+    """Keep only references to declared actions, drop self-reference, preserve
+    first-seen order. Applied after the whole module is read, so an action may
+    call one declared further down the file."""
+    known = set(actions)
+    out = {}
+    for name, raw in raw_calls.items():
+        seen, kept = set(), []
+        for n in raw:
+            if n in known and n != name and n not in seen:
+                seen.add(n)
+                kept.append(n)
+        out[name] = kept
+    return out
 
 
 def _sum_variants(type_node):
@@ -213,7 +250,9 @@ def _normalize_ir(ir_json, qnt_path):
         "runs": [],
         "action_mutations": {},
         "action_params": {},
+        "action_calls": {},
     }
+    raw_calls = {}
 
     for d in main.get("declarations") or []:
         kind = d.get("kind")
@@ -239,6 +278,7 @@ def _normalize_ir(ir_json, qnt_path):
                 out["actions"].append(name)
                 out["action_mutations"][name] = _collect_mutations(d.get("expr"))
                 out["action_params"][name] = _lambda_params(d.get("expr"))
+                raw_calls[name] = _collect_calls(d.get("expr"))
             elif q == "run":
                 out["runs"].append(name)
             elif q == "temporal":
@@ -246,6 +286,7 @@ def _normalize_ir(ir_json, qnt_path):
             elif q in ("val", "pureval"):
                 out["vals"].append(name)
             # def/puredef/nondet: helpers, not surfaced
+    out["action_calls"] = _narrow_to_actions(raw_calls, out["actions"])
     return out
 
 
@@ -299,6 +340,7 @@ TEMPORAL_RE = re.compile(r"^\s*temporal\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", re.M
 RUN_RE      = re.compile(r"^\s*run\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", re.MULTILINE)
 MUTATION_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)'\s*=")
 LOCAL_VAL_RE = re.compile(r"^\s*val\s+([A-Za-z_][A-Za-z0-9_]*)\s*=")
+IDENT_RE    = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
 # Named literal constants: `pure val N: int = 5` / `const N: int = 5`.
 # Used by spec-lint to cross-check constraints[].value against the model.
 CONST_VALUE_RE = re.compile(
@@ -448,9 +490,16 @@ def _module_spans(clean_text):
 
 def _parse_action_bodies(text):
     """Brace-depth-tracked single pass over ALREADY-STRIPPED text.
-    Returns (mutations, locals)."""
+    Returns (mutations, locals, raw_calls).
+
+    raw_calls is every identifier appearing in each action's body — the
+    fallback cannot distinguish a callee from a var, a type or an operator,
+    so it over-collects exactly like the IR collector does and lets
+    _narrow_to_actions() decide. Same input, same narrowed answer, whichever
+    engine ran."""
     mutations = {}
     locals_ = set()
+    raw_calls = {}
     current = None
     action_depth = 0
     depth = 0
@@ -461,6 +510,7 @@ def _parse_action_bodies(text):
         if action_match:
             current = action_match.group(1)
             mutations.setdefault(current, [])
+            raw_calls.setdefault(current, [])
             action_depth = depth_before
 
         if current is not None and (depth_before > action_depth or action_match):
@@ -476,12 +526,13 @@ def _parse_action_bodies(text):
             lv = LOCAL_VAL_RE.match(line)
             if lv:
                 locals_.add(lv.group(1))
+            raw_calls[current].extend(IDENT_RE.findall(line))
 
         depth += line.count("{") - line.count("}")
         if current is not None and depth <= action_depth:
             current = None
             action_depth = 0
-    return mutations, locals_
+    return mutations, locals_, raw_calls
 
 
 def _parse_via_regex(qnt_path):
@@ -499,7 +550,7 @@ def _parse_via_regex(qnt_path):
     mod_name, start, end = _pick_main(named, Path(qnt_path))
     text = clean[start:end]  # scope EVERY scan to the selected module
 
-    mutations, action_locals = _parse_action_bodies(text)
+    mutations, action_locals, raw_calls = _parse_action_bodies(text)
     actions = []
     for line in text.splitlines():
         am = ACTION_RE.match(line)
@@ -530,6 +581,7 @@ def _parse_via_regex(qnt_path):
         "runs": RUN_RE.findall(text),
         "action_mutations": mutations,
         "action_params": _scan_action_params(text),
+        "action_calls": _narrow_to_actions(raw_calls, actions),
     }
 
 

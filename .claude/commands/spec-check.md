@@ -4,7 +4,7 @@ Run Apalache on area's Quint sidecar, discharge witness obligations (every requi
 
 Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 1. **Invariants hold** — Apalache finds no counterexample.
-2. **Behaviors are reachable** — every REQ gets a machine-found, path-constrained *witness trace*. Action coverage falls out: a witnessed REQ proves its `quint_ref` fires; actions referenced by no requirement are spec-lint's `orphan-action` warning, not a checker run.
+2. **Behaviors are reachable** — every REQ gets a machine-found, path-constrained *witness trace*. Action coverage falls out: a witnessed REQ proves its `quint_ref` fires; actions the model cannot reach — from `init`/`step` or from anything the area JSON names — are spec-lint's `orphan-action` warning, not a checker run.
 3. **Coverage is total** — state×event matrix has no untriaged cells; red-team gaps surfaced.
 
 ## Usage
@@ -92,7 +92,7 @@ Witness traces are inputs to `/spec-verify`'s conformance replay and to `/spec-r
 
 Cascade economy: cascade only to contracts whose `spans` include areas actually changed (git diff against the last check), not every contract in the project.
 
-(No separate action-coverage pass: witnessed REQs prove their actions fire; `spec-lint` flags unreferenced actions as `orphan-action` statically.)
+(No separate action-coverage pass: witnessed REQs prove their actions fire; `spec-lint` flags unreachable actions as `orphan-action` statically — reachability, so a `step` wrapper is live without a requirement of its own.)
 
 ### Step 3 — Cascade to contracts (areas only)
 

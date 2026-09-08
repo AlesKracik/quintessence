@@ -2589,3 +2589,165 @@ def test_manifest_id_check_tracks_local_ids(tmp_path):
             "examples": [{"id": "EX-001", "title": "t"}]}
     assert lint.local_ids(area) == {"ASM-001", "EX-001"}
     assert _change_project(tmp_path, sorted(lint.local_ids(area))) == []
+
+
+# ── orphan-action asks reachability, not direct mention ─────────────────────
+# The check credited only area-JSON references (quint_ref, quint_action,
+# lifecycle_actions), so `step` dispatching to a per-branch wrapper — the
+# ordinary shape once actions take differing parameters, since the hoisted
+# nondet in the templates only works when branches share a parameter set —
+# flagged every wrapper as dead spec text. An action the model actually runs
+# is not dead, whatever the JSON says. Roots are the model's entry points
+# plus everything the JSON names; anything reachable from a root is live.
+
+WRAPPER_MODEL = """module auth {
+  var sessions: int
+  action init = all { sessions' = 0 }
+  action login(uid: str): bool = all { sessions' = sessions + 1 }
+  action logout(sid: str): bool = all { sessions' = sessions - 1 }
+  action loginStep  = { nondet u = oneOf(Set("a")) login(u) }
+  action logoutStep = { nondet s = oneOf(Set("s1")) logout(s) }
+  action purgeAll = all { sessions' = 0 }
+  action deadB = all { sessions' = 1 }
+  action deadA = deadB
+  action step = any { loginStep, logoutStep }
+}
+"""
+
+
+def _orphans(tmp_path, model=WRAPPER_MODEL, refs=("login", "logout")):
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    qnt = tmp_path / "specs" / "auth.qnt"
+    qnt.write_text(model, encoding="utf-8")
+    area = {"kind": "area", "area": "auth", "status": "draft",
+            "formal_model": {"quint_file": "auth.qnt"},
+            "requirements": [{"id": f"REQ-{i:03d}", "quint_ref": r}
+                             for i, r in enumerate(refs, 1)]}
+    findings = []
+    lint.check_orphan_actions(area, lint.parse_sidecar(qnt), "auth", findings)
+    return sorted(f.ref for f in findings if f.check == "orphan-action")
+
+
+def test_step_wrappers_are_not_orphans(tmp_path):
+    assert "loginStep" not in _orphans(tmp_path)
+    assert "logoutStep" not in _orphans(tmp_path)
+
+
+def test_actions_reached_only_through_a_wrapper_are_not_orphans(tmp_path):
+    """login is referenced by a REQ; logout's wrapper is the only path to it
+    from step. Neither the wrapper nor its callee may be flagged."""
+    assert _orphans(tmp_path, refs=("login",)) == ["deadA", "deadB", "purgeAll"]
+
+
+def test_a_genuinely_unreferenced_action_still_warns(tmp_path):
+    assert "purgeAll" in _orphans(tmp_path)
+
+
+def test_a_dead_cluster_is_reported_whole(tmp_path):
+    """deadA calls deadB and nothing runs deadA. Crediting "called by some
+    action" would clear deadB; reachability from roots reports both."""
+    found = _orphans(tmp_path)
+    assert "deadA" in found and "deadB" in found
+
+
+def test_the_shipped_example_has_no_orphans(tmp_path):
+    """examples/specs/auth.qnt uses the hoisted-nondet shape — the idiom the
+    templates show — and must stay clean under the new rule."""
+    root = TOOLS.parent / "examples"
+    area = json.loads((root / "specs" / "auth.area.json").read_text(encoding="utf-8"))
+    sidecar = lint.parse_sidecar(root / "specs" / "auth.qnt")
+    findings = []
+    lint.check_orphan_actions(area, sidecar, "auth", findings)
+    assert [f.ref for f in findings] == []
+
+
+def test_absent_call_graph_falls_back_to_direct_references(tmp_path):
+    """A parser that reports no call graph must not make every action look
+    reachable. None means "unknown", which is not the same as an empty graph."""
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    qnt = tmp_path / "specs" / "auth.qnt"
+    qnt.write_text(WRAPPER_MODEL, encoding="utf-8")
+    sidecar = lint.parse_sidecar(qnt)
+    sidecar["action_calls"] = None
+    area = {"kind": "area", "area": "auth", "status": "draft",
+            "requirements": [{"id": "REQ-001", "quint_ref": "login"}]}
+    findings = []
+    lint.check_orphan_actions(area, sidecar, "auth", findings)
+    assert "loginStep" in [f.ref for f in findings]
+
+
+def test_call_graph_is_narrowed_to_declared_actions(tmp_path):
+    """quint_ir over-collects identifiers on purpose so the two engines can
+    agree; only declared actions survive, and never self-reference."""
+    qnt = tmp_path / "auth.qnt"
+    qnt.write_text(WRAPPER_MODEL, encoding="utf-8")
+    calls = quint_ir.parse_qnt(qnt)["action_calls"]
+    assert calls["step"] == ["loginStep", "logoutStep"]
+    assert calls["loginStep"] == ["login"]
+    assert calls["login"] == []
+    assert all(name not in targets for name, targets in calls.items())
+
+
+# ── Both engines must report the same call graph ────────────────────────────
+# CI pins QUINT_IR_ENGINE=cli so verdicts never rest on the regex fallback,
+# which means the IR-side collector is the one that actually gates in CI and
+# the one a machine without the Quint CLI never exercises. Drive it directly
+# from a hand-built IR so it is covered either way.
+
+def _ir_module(decls):
+    return {"modules": [{"name": "auth", "declarations": decls}]}
+
+
+def _ir_action(name, expr):
+    return {"kind": "def", "qualifier": "action", "name": name, "expr": expr}
+
+
+def _ir_app(opcode, args):
+    return {"kind": "app", "opcode": opcode, "args": args}
+
+
+def _ir_name(name):
+    return {"kind": "name", "name": name}
+
+
+def test_ir_engine_collects_callees_from_applications_and_names():
+    ir = _ir_module([
+        _ir_action("login", _ir_app("assign", [_ir_name("sessions"),
+                                               _ir_name("sessions")])),
+        _ir_action("loginStep", _ir_app("login", [_ir_name("u")])),
+        _ir_action("step", _ir_app("any", [_ir_name("loginStep")])),
+    ])
+    calls = quint_ir._normalize_ir(ir, "auth.qnt")["action_calls"]
+    assert calls["step"] == ["loginStep"]        # bare name reference
+    assert calls["loginStep"] == ["login"]       # application opcode
+    assert calls["login"] == []                  # vars are not actions
+
+
+def test_ir_engine_narrows_and_drops_self_reference():
+    ir = _ir_module([
+        _ir_action("tick", _ir_app("ite", [_ir_name("tick"),
+                                           _ir_name("someVal"),
+                                           _ir_app("oneOf", [])])),
+    ])
+    assert quint_ir._normalize_ir(ir, "auth.qnt")["action_calls"] == {"tick": []}
+
+
+def test_ir_engine_credits_an_action_declared_later_in_the_file():
+    """Narrowing runs after the whole module is read, so forward references
+    resolve — otherwise `step` at the top would credit nothing."""
+    ir = _ir_module([
+        _ir_action("step", _ir_app("any", [_ir_name("login")])),
+        _ir_action("login", _ir_app("assign", [_ir_name("s"), _ir_name("s")])),
+    ])
+    assert quint_ir._normalize_ir(ir, "auth.qnt")["action_calls"]["step"] == ["login"]
+
+
+def test_both_engines_agree_on_the_wrapper_model(tmp_path):
+    """The regex fallback's answer for the model in WRAPPER_MODEL, stated
+    explicitly: if the two engines ever diverge, one of these two tests moves."""
+    qnt = tmp_path / "auth.qnt"
+    qnt.write_text(WRAPPER_MODEL, encoding="utf-8")
+    regex = quint_ir.parse_qnt(qnt, engine="regex")
+    assert regex["source"] == "regex"
+    assert regex["action_calls"]["step"] == ["loginStep", "logoutStep"]
+    assert regex["action_calls"]["deadA"] == ["deadB"]

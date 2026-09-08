@@ -115,7 +115,9 @@ module {{MODULE_NAME}}_probes {
   // Action coverage falls out of the witness probes (each is
   // path-constrained on _lastAction == quint_ref, so a witnessed
   // REQ proves its action fires). Unreferenced actions are
-  // flagged statically by spec-lint (orphan-action) — no extra
+  // flagged statically by spec-lint (orphan-action), which asks
+  // whether the model can REACH an action, so per-branch step
+  // wrappers count as live — no extra
   // probes needed.
 
   // ----------------------------------------------------------

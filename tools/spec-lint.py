@@ -157,6 +157,10 @@ def parse_sidecar(path):
         "type_variants":    ir.get("type_variants") or {},
         "vars":             set(ir["vars"]),
         "action_mutations": ir["action_mutations"],
+        # Left as None, not {}, when the parser did not report one: the
+        # orphan-action reachability walk treats absent differently from
+        # empty, and an empty graph would call every action unreachable.
+        "action_calls":     ir.get("action_calls"),
         "const_values":     ir.get("const_values") or {},
     }
 
@@ -621,10 +625,32 @@ def check_orphan_actions(area_data, sidecar, area_name, findings):
             if t.get("quint_action"):
                 referenced.add(t["quint_action"])
         referenced.update(sm.get("lifecycle_actions") or [])
-    for action in sorted(set(sidecar["actions"]) - referenced - PLUMBING_ACTIONS):
+    # Reachability, not direct mention. An action the model actually calls is
+    # not dead text, whatever the JSON says about it: `step` dispatching to a
+    # per-branch wrapper is the ordinary shape once actions take differing
+    # parameters, and crediting only JSON references flagged every one of
+    # those wrappers. Roots are the model's own entry points plus everything
+    # the JSON names; anything reachable from a root is live.
+    calls = sidecar.get("action_calls")
+    declared = set(sidecar["actions"])
+    if calls is None:
+        # Parser too old to report a call graph — fall back to the direct
+        # check rather than silently calling every action reachable.
+        reachable = set(referenced)
+    else:
+        reachable, stack = set(), list((referenced | PLUMBING_ACTIONS) & declared)
+        stack += [a for a in referenced if a not in declared]
+        while stack:
+            action = stack.pop()
+            if action in reachable:
+                continue
+            reachable.add(action)
+            stack.extend(calls.get(action, []))
+    for action in sorted(declared - reachable - PLUMBING_ACTIONS):
         add(findings, WARN, "quint", "orphan-action", area_name,
-            f"Action '{action}' is not referenced by any requirement, transition, "
-            f"or lifecycle_actions — missing requirement or dead spec text.",
+            f"Action '{action}' is unreachable — no requirement, transition or "
+            f"lifecycle_action names it, and no action the model runs calls it. "
+            f"Missing requirement or dead spec text.",
             ref=action)
 
 
