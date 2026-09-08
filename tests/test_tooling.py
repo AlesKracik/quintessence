@@ -3134,3 +3134,23 @@ def test_spec_record_subcommands_were_not_renamed():
     text = (COMMANDS_DIR / "spec-code-verify.md").read_text(encoding="utf-8")
     assert "spec-record.py verify" in text
     assert "spec-record.py spec-code-verify" not in text
+
+
+# ── The README lists the commands, the methodology explains everything ──────
+# The opening carried a 17-bullet "What you get" that restated the whole
+# methodology inline — a second copy of a document that ships beside it, free
+# to drift. The README keeps the command surface; METHODOLOGY.md keeps the
+# reasoning.
+
+def test_readme_commands_table_covers_every_command():
+    """If a command is added or renamed, the README table moves with it."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    for cmd in sorted(_declared_commands()):
+        assert f"`{cmd} " in readme or f"`{cmd}`" in readme, f"{cmd} missing from README"
+
+
+def test_readme_defers_the_detail_to_the_methodology():
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    opening = readme.split("## Quick Start")[0]
+    assert "[METHODOLOGY.md](METHODOLOGY.md)" in opening
+    assert "What you get:" not in opening, "the inlined methodology summary is back"
