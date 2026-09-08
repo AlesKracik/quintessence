@@ -44,7 +44,7 @@
           "ids": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "REQ/INV/PROP/CON/DEC/Q IDs added or modified in this target by this change. References only — content lives in the area JSON."
+            "description": "IDs added or modified in this target by this change — any ID the area declares (REQ/UI, INV, PROP, CON, DEC, Q, ASM, EX). References only — content lives in the area JSON."
           }
         }
       }

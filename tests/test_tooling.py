@@ -2521,3 +2521,62 @@ def test_bootstrap_invokes_check_tooling_through_bash():
     assert len(calls) == 2, calls
     for call in calls:
         assert call.startswith('bash "$ROOT/tools/check-tooling.sh"'), call
+
+
+# ── Assumptions belong in a change manifest ─────────────────────────────────
+# check_changes re-enumerated the area's ID lists inline and the copy drifted:
+# it omitted assumptions[] and examples[], so a change that touched ASM-001 or
+# EX-001 could not record it — /spec says "any ID added or modified" goes in
+# targets[].ids, and the gate called those two dangling. local_ids() is the
+# single definition of what an area declares; the manifest check now uses it.
+
+def _change_project(tmp_path, ids):
+    (tmp_path / "specs" / "changes").mkdir(parents=True)
+    area = {
+        "kind": "area", "area": "auth", "version": "0.1.0", "status": "raw",
+        "requirements": [{"id": "REQ-001", "ears": {"response": "r"}}],
+        "invariants": [{"id": "INV-001", "statement": "s"}],
+        "properties": [{"id": "PROP-001", "statement": "s"}],
+        "constraints": [{"id": "CON-001", "statement": "s"}],
+        "decisions": [{"id": "DEC-001", "decision": "d"}],
+        "open_questions": [{"id": "Q-001", "question": "q"}],
+        "assumptions": [{"id": "ASM-001", "statement": "clock is monotonic"}],
+        "examples": [{"id": "EX-001", "title": "happy path"}],
+    }
+    manifest = {"change": "initial", "intent": "i", "status": "in-progress",
+                "targets": [{"name": "auth", "kind": "area", "ids": ids}]}
+    (tmp_path / "specs" / "changes" / "initial.change.json").write_text(
+        json.dumps(manifest), encoding="utf-8")
+    findings = []
+    lint.check_changes(tmp_path, {"auth": area}, findings)
+    return [f for f in findings if f.check == "dangling-id"]
+
+
+@pytest.mark.parametrize("iid", ["REQ-001", "INV-001", "PROP-001", "CON-001",
+                                 "DEC-001", "Q-001", "ASM-001", "EX-001"])
+def test_every_declared_id_may_appear_in_a_manifest(tmp_path, iid):
+    assert _change_project(tmp_path, [iid]) == []
+
+
+def test_all_declared_ids_together(tmp_path):
+    every = ["REQ-001", "INV-001", "PROP-001", "CON-001",
+             "DEC-001", "Q-001", "ASM-001", "EX-001"]
+    assert _change_project(tmp_path, every) == []
+
+
+@pytest.mark.parametrize("iid", ["ASM-999", "EX-042", "REQ-404"])
+def test_an_id_the_area_does_not_declare_still_gates(tmp_path, iid):
+    hits = _change_project(tmp_path, [iid])
+    assert len(hits) == 1
+    assert hits[0].severity == lint.FAIL
+    assert hits[0].ref == iid
+
+
+def test_manifest_id_check_tracks_local_ids(tmp_path):
+    """The regression guard proper: the manifest gate and local_ids() must not
+    diverge again, whichever list a future area block adds."""
+    area = {"kind": "area", "area": "auth",
+            "assumptions": [{"id": "ASM-001", "statement": "s"}],
+            "examples": [{"id": "EX-001", "title": "t"}]}
+    assert lint.local_ids(area) == {"ASM-001", "EX-001"}
+    assert _change_project(tmp_path, sorted(lint.local_ids(area))) == []

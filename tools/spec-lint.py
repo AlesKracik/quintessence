@@ -1845,12 +1845,13 @@ def check_changes(root, all_areas, findings, validator=None):
                     f"freshness, check_results, traceability, verification_log), "
                     f"never stored. Remove them; the manifest holds membership only.",
                     ref=tname)
-            area_ids = set()
-            for src in ("requirements", "invariants", "properties",
-                        "constraints", "decisions", "open_questions"):
-                for o in area_data.get(src, []) or []:
-                    if o.get("id"):
-                        area_ids.add(o["id"])
+            # local_ids() is the single definition of "every ID this area
+            # declares". Enumerating the lists again here is how ASM-* and
+            # EX-* fell out of it: assumptions are first-class and /spec puts
+            # "any ID added or modified" in the manifest, so a change that
+            # touched an assumption could not be recorded without failing the
+            # dangling-id gate. One source of truth, so it cannot drift again.
+            area_ids = local_ids(area_data)
             for iid in t.get("ids", []) or []:
                 if iid not in area_ids:
                     add(findings, FAIL, "changes", "dangling-id", name,
