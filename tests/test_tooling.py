@@ -2430,3 +2430,67 @@ def test_sidecar_without_module_declaration_still_gates(tmp_path):
     assert [f.severity for f in findings] == [lint.FAIL]
 
 
+# ── The report never crashes on a legacy console ────────────────────────────
+# cp1252 cannot encode the status marks or the em dashes in finding text, and
+# print() raises UnicodeEncodeError rather than degrading — so a Windows
+# console turned every WARN into a traceback.
+
+class _Stream(io.StringIO):
+    def __init__(self, encoding):
+        super().__init__()
+        self._encoding = encoding
+
+    @property
+    def encoding(self):
+        return self._encoding
+
+
+def test_icons_stay_unicode_when_the_stream_can_encode_them():
+    assert lint.pick_icons(_Stream("utf-8")) is lint.UNICODE_ICONS
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "ascii", "latin-1"])
+def test_icons_fall_back_to_ascii_on_a_narrow_stream(encoding):
+    assert lint.pick_icons(_Stream(encoding)) is lint.ASCII_ICONS
+
+
+def test_icons_fall_back_when_the_stream_reports_no_encoding():
+    assert lint.pick_icons(io.StringIO()) is lint.ASCII_ICONS
+
+
+def test_icons_fall_back_on_an_unknown_encoding():
+    assert lint.pick_icons(_Stream("not-a-real-codec")) is lint.ASCII_ICONS
+
+
+def test_report_renders_on_a_cp1252_console(monkeypatch, capsys):
+    """The end-to-end regression: a WARN whose description carries an em dash,
+    printed to a stream that cannot encode either it or the icon."""
+    import sys as _sys
+
+    class _Narrow(io.TextIOBase):
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.text = []
+            self.softened = False
+
+        def write(self, s):
+            if not self.softened:
+                s.encode("cp1252")   # raises exactly as the real console did
+            self.text.append(s)
+            return len(s)
+
+        def reconfigure(self, **kw):
+            if kw.get("errors") == "replace":
+                self.softened = True
+
+    narrow = _Narrow()
+    monkeypatch.setattr(_sys, "stdout", narrow)
+    findings = [lint.Finding(lint.WARN, "schema", "jsonschema-unavailable",
+                             "_project", "not installed \u2014 validation SKIPPED", None)]
+    lint.print_report(findings, ["_project"], use_color=False)
+    out = "".join(narrow.text)
+    assert "jsonschema-unavailable" in out
+    assert lint.ASCII_ICONS[lint.WARN] in out
+
+

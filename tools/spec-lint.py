@@ -1980,7 +1980,46 @@ def load_catalog(root, kind):
 
 # ── Reporting ─────────────────────────────────────────────────────────────────
 
-ICONS = {PASS: "✓", WARN: "⚠", FAIL: "✗"}
+# The report is the one thing every user sees, so it must never be the thing
+# that crashes. A legacy Windows console reports cp1252, which cannot encode
+# the status marks below — nor the em dashes running through most finding
+# descriptions — and print() raises UnicodeEncodeError rather than degrading.
+# Pick an icon set the stream can actually carry, and set errors="replace" as
+# the backstop for description text whose characters we do not control.
+UNICODE_ICONS = {PASS: "✓", WARN: "⚠", FAIL: "✗"}
+ASCII_ICONS = {PASS: "OK", WARN: "!", FAIL: "X"}
+ICONS = UNICODE_ICONS
+
+
+def _stream_encodes(stream, probe):
+    enc = getattr(stream, "encoding", None)
+    if not enc:
+        return False
+    try:
+        probe.encode(enc)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+def pick_icons(stream=None):
+    """Unicode marks when the stream can encode them, ASCII marks otherwise."""
+    stream = sys.stdout if stream is None else stream
+    return UNICODE_ICONS if _stream_encodes(stream, "✓⚠✗") else ASCII_ICONS
+
+
+def soften_stdout(stream=None):
+    """Last-resort guard: never let an unencodable character abort the report.
+    Only touches error handling, never the encoding — re-encoding a cp1252
+    console as UTF-8 would trade the crash for mojibake."""
+    stream = sys.stdout if stream is None else stream
+    if _stream_encodes(stream, "—"):
+        return
+    try:
+        stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
 COLORS = {PASS: "\033[32m", WARN: "\033[33m", FAIL: "\033[31m"}
 RESET = "\033[0m"
 
@@ -1992,6 +2031,8 @@ def colorize(text, severity, use_color):
 
 
 def print_report(findings, areas, use_color=True):
+    soften_stdout()
+    icons = pick_icons()
     by_area = defaultdict(list)
     for f in findings:
         by_area[f.area].append(f)
@@ -1999,15 +2040,15 @@ def print_report(findings, areas, use_color=True):
     for area in sorted(set(areas) | set(by_area.keys())):
         items = by_area.get(area, [])
         if not items:
-            print(colorize(f"{ICONS[PASS]} {area}: clean", PASS, use_color))
+            print(colorize(f"{icons[PASS]} {area}: clean", PASS, use_color))
             continue
         fail = sum(1 for f in items if f.severity == FAIL)
         warn = sum(1 for f in items if f.severity == WARN)
         sev = FAIL if fail else WARN
-        print(colorize(f"{ICONS[sev]} {area}: {fail} fail, {warn} warn", sev, use_color))
+        print(colorize(f"{icons[sev]} {area}: {fail} fail, {warn} warn", sev, use_color))
         for f in items:
             ref = f" [{f.ref}]" if f.ref else ""
-            print(f"    {ICONS[f.severity]} {f.category}/{f.check}{ref}: {f.description}")
+            print(f"    {icons[f.severity]} {f.category}/{f.check}{ref}: {f.description}")
 
     total_fail = sum(1 for f in findings if f.severity == FAIL)
     total_warn = sum(1 for f in findings if f.severity == WARN)
