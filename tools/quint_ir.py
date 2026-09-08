@@ -290,6 +290,19 @@ def _normalize_ir(ir_json, qnt_path):
     return out
 
 
+def cli_available():
+    """True when the quint CLI can actually be located.
+
+    Exposed because "the CLI is missing" and "this file does not parse" are
+    different facts that _parse_via_cli() flattens into the same None. Under
+    engine='cli' the first one silently turns every sidecar into "no module",
+    and every check that reads a sidecar then passes on nothing — a whole
+    class of verdicts reported clean without being computed. Callers that
+    demand the authoritative engine ask this first and say so out loud.
+    """
+    return _quint_bin() is not None
+
+
 def _parse_via_cli(qnt_path):
     quint = _quint_bin()
     if not quint:

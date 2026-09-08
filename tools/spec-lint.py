@@ -98,6 +98,8 @@ def add(findings, severity, category, check, area, description, ref=None):
 sys.path.insert(0, str(Path(__file__).parent))
 try:
     from quint_ir import parse_qnt as _ir_parse_qnt
+    from quint_ir import cli_available as _quint_cli_available
+    from quint_ir import DEFAULT_ENGINE as _quint_engine
     # Shared rejection definition — lint, spec-record and the readback must
     # not disagree about which requirements owe a refusal artifact.
     from itf_tools import is_rejection, witness_entries, skip_discharge
@@ -676,12 +678,21 @@ def check_formal_model_consistency(area_data, sidecar, area_name, findings):
     claiming a formal model it does not have.
     """
     fm = area_data.get("formal_model") or {}
-    if (not sidecar or "__no_module__" in sidecar) and fm.get("quint_file"):
+    if sidecar and "__no_module__" in sidecar:
+        # The file is THERE and the parser got nothing out of it. That is a
+        # broken model at any authoring stage, never a not-yet-written one,
+        # and it silences every check that reads a sidecar — so it is always
+        # a FAIL, and it is never graded by status.
+        add(findings, FAIL, "quint", "sidecar-unparseable", area_name,
+            "The sidecar exists but yielded no module. Either the Quint is "
+            "malformed, or the configured parser is unavailable — check for a "
+            "quint/engine-unavailable finding before editing the model. Every "
+            "check that reads the sidecar is skipped meanwhile.")
+    elif not sidecar and fm.get("quint_file"):
         gating = at_review(area_data)
         add(findings, FAIL if gating else WARN, "quint",
             "sidecar-missing-or-empty", area_name,
-            "formal_model.quint_file is set but the sidecar is missing or has "
-            "no module declaration."
+            "formal_model.quint_file is set but the sidecar file does not exist."
             + ("" if gating else " Write it with /spec-check."))
 
 
@@ -2153,6 +2164,16 @@ def main():
     }
 
     schema_validator = build_schema_validator(root)
+
+    if _quint_engine == "cli" and not _quint_cli_available():
+        add(findings, FAIL, "quint", "engine-unavailable", "_project",
+            "QUINT_IR_ENGINE=cli demands the Quint compiler's typed IR, but the "
+            "quint CLI is not on PATH. Every sidecar parses as 'no module', so "
+            "every check that reads one — quint_ref resolution, action "
+            "reachability, action mutations, constraint values — passes without "
+            "being computed. These results are NOT authoritative. Install quint "
+            "(tools/check-tooling.sh prints how) or unset QUINT_IR_ENGINE to "
+            "allow the regex fallback.")
 
     if _jsonschema is None:
         add(findings, WARN, "schema", "jsonschema-unavailable", "_project",

@@ -57,6 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from quint_ir import parse_qnt  # noqa: E402
+from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 from itf_tools import area_json_path  # noqa: E402
 
 # Triage values an LLM (or human) writes into the covered_by column during
@@ -72,10 +73,29 @@ def load_area(root: Path, area: str) -> dict:
 
 
 def discover_qnt_actions(root: Path, area_data: dict, area: str) -> list:
+    """Actions from the sidecar — the event axis of the coverage matrix.
+
+    A failed parse must never come back as "no actions". The event axis would
+    empty, every cell would vanish, and `--strict` would exit 0 over a matrix
+    with nothing in it: the completeness gate reporting complete because it
+    found nothing to be complete about. An absent sidecar is different — the
+    area simply is not formalized yet — and still yields [].
+    """
     quint_file = (area_data.get("formal_model") or {}).get("quint_file") or f"{area}.qnt"
     qnt_path = root / "specs" / quint_file
+    if not qnt_path.exists():
+        return []
+    if DEFAULT_ENGINE == "cli" and not cli_available():
+        sys.exit(f"ERROR: QUINT_IR_ENGINE=cli but the quint CLI is not on PATH. "
+                 f"The event axis would be empty and --strict would pass over an "
+                 f"empty matrix. Install quint (tools/check-tooling.sh) or unset "
+                 f"QUINT_IR_ENGINE.")
     ir = parse_qnt(qnt_path)
-    return ir["actions"] if ir else []
+    if ir is None:
+        sys.exit(f"ERROR: {qnt_path} exists but did not parse "
+                 f"(engine={DEFAULT_ENGINE}). Refusing to report coverage against "
+                 f"an empty event axis.")
+    return ir["actions"]
 
 
 def collect_rows(area_data: dict) -> list:

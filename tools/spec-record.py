@@ -109,6 +109,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (compute_model_sha, load_trace, witness_status,  # noqa: E402
                        area_json_path, is_rejection, skip_discharge)
 from quint_ir import parse_qnt  # noqa: E402
+from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 
 
 def now_iso():
@@ -1179,6 +1180,18 @@ def main():
     pv.set_defaults(func=cmd_verify)
 
     args = p.parse_args()
+
+    # This tool WRITES verdicts. Running it with the authoritative engine
+    # demanded but absent would record check_results and witness blocks
+    # derived from sidecars that all parsed as "no module" — a ledger of
+    # results nothing actually computed, and the ledger is the thing the
+    # whole method asks people to trust.
+    if DEFAULT_ENGINE == "cli" and not cli_available():
+        sys.exit("ERROR: QUINT_IR_ENGINE=cli but the quint CLI is not on PATH. "
+                 "Refusing to record verdicts from an unparsed model. Install "
+                 "quint (tools/check-tooling.sh prints how) or unset "
+                 "QUINT_IR_ENGINE.")
+
     args.func(args)
 
 

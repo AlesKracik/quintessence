@@ -14,7 +14,11 @@
 #   4. quint test           — the model's `run` scenarios still pass
 #
 # QUINT_IR_ENGINE=cli pins lint/matrix to the Quint compiler's typed IR —
-# verdicts here never depend on the lossy regex fallback.
+# verdicts here never depend on the lossy regex fallback. It is set on the
+# spec-gates job only, since that is the job that installs the CLI: with the
+# var set and the CLI absent, spec-lint FAILs quint/engine-unavailable and
+# spec-matrix/spec-record refuse to run, rather than reporting clean over
+# sidecars that all parsed as "no module".
 #
 # Deliberately NOT here, because both need the CODE repo checked out, which a
 # spec repo's CI does not have in the multi-repo case:

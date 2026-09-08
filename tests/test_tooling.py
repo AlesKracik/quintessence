@@ -2882,3 +2882,78 @@ def test_a_typed_skip_is_a_rejection_for_refusal_purposes():
     assert itf.is_rejection({"witness": {"status": "skipped",
                                          "enforced_by": "INV-001"}})
     assert not itf.is_rejection({"witness": {"status": "skipped"}})
+
+
+# ── A missing parser must not report clean ──────────────────────────────────
+# QUINT_IR_ENGINE=cli demands the compiler's typed IR. With the CLI absent,
+# _parse_via_cli returned None, parse_sidecar turned that into
+# {"__no_module__": True}, and every check reading a sidecar returned early.
+# Verdicts were reported without being computed: quint_ref resolution went
+# quiet, and spec-matrix --strict — a CI gate — exited 0 over an empty event
+# axis, reporting complete because it found nothing to be complete about.
+
+def test_cli_available_reports_whether_the_binary_resolves(monkeypatch):
+    monkeypatch.setattr(quint_ir, "_quint_bin", lambda: None)
+    assert quint_ir.cli_available() is False
+    monkeypatch.setattr(quint_ir, "_quint_bin", lambda: "/usr/bin/quint")
+    assert quint_ir.cli_available() is True
+
+
+def test_an_unparseable_sidecar_always_fails_regardless_of_status():
+    """Distinct from a sidecar that has not been written yet, which stays
+    graded by status. A file that is THERE and yields nothing is broken at
+    every authoring stage, and it silences every check that reads it."""
+    for status in ("raw", "draft", "in-review", "approved"):
+        area = {"kind": "area", "area": "auth", "status": status,
+                "formal_model": {"quint_file": "auth.qnt"}}
+        findings = []
+        lint.check_formal_model_consistency(area, {"__no_module__": True},
+                                            "auth", findings)
+        assert [(f.check, f.severity) for f in findings] == [
+            ("sidecar-unparseable", lint.FAIL)], status
+
+
+@pytest.mark.parametrize("status,severity", [
+    ("raw", "warn"), ("draft", "warn"),
+    ("in-review", "fail"), ("approved", "fail"),
+])
+def test_a_missing_sidecar_is_still_graded_by_status(status, severity):
+    """The earlier fix must survive: not-yet-written is not the same defect."""
+    area = {"kind": "area", "area": "auth", "status": status,
+            "formal_model": {"quint_file": "auth.qnt"}}
+    findings = []
+    lint.check_formal_model_consistency(area, None, "auth", findings)
+    assert [(f.check, f.severity) for f in findings] == [
+        ("sidecar-missing-or-empty", severity)]
+
+
+def test_matrix_refuses_an_empty_event_axis_when_the_parse_fails(tmp_path,
+                                                                 monkeypatch):
+    """The gate must refuse rather than pass over nothing."""
+    (tmp_path / "specs").mkdir(parents=True)
+    qnt = tmp_path / "specs" / "auth.qnt"
+    qnt.write_text("module auth {\n  action step = all { true }\n}\n",
+                   encoding="utf-8")
+    monkeypatch.setattr(matrix, "parse_qnt", lambda *a, **k: None)
+    with pytest.raises(SystemExit) as excinfo:
+        matrix.discover_qnt_actions(tmp_path, {}, "auth")
+    assert "did not parse" in str(excinfo.value)
+
+
+def test_matrix_refuses_when_the_demanded_engine_is_absent(tmp_path,
+                                                           monkeypatch):
+    (tmp_path / "specs").mkdir(parents=True)
+    (tmp_path / "specs" / "auth.qnt").write_text("module auth { }\n",
+                                                 encoding="utf-8")
+    monkeypatch.setattr(matrix, "DEFAULT_ENGINE", "cli")
+    monkeypatch.setattr(matrix, "cli_available", lambda: False)
+    with pytest.raises(SystemExit) as excinfo:
+        matrix.discover_qnt_actions(tmp_path, {}, "auth")
+    assert "not on PATH" in str(excinfo.value)
+
+
+def test_matrix_still_returns_empty_for_an_area_with_no_sidecar(tmp_path):
+    """An absent sidecar is a stage, not a failure — the area is not
+    formalized yet, and that must not become a hard error."""
+    (tmp_path / "specs").mkdir(parents=True)
+    assert matrix.discover_qnt_actions(tmp_path, {}, "auth") == []
