@@ -103,7 +103,7 @@ Ask only what's needed to start eliciting:
 
 **Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-apply` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units; Apalache settings only when a check times out. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
-Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.<kind>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and an empty `formal_model.quint_file` pointer.
+Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.<kind>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and `formal_model: {"quint_file": "<name>.qnt"}` — the pointer names where `/spec-check` will write the sidecar, so it is aimed before the file exists. Lint WARNs about the missing sidecar while the area is `raw`/`draft` and only FAILs from `in-review` on, so a freshly bootstrapped project lints clean.
 
 5. **Open the first change** — the change is the unit of work, so bootstrap ends inside one, not before one. Ask: `Name the first change? [initial-spec]` (Enter = default; intent defaults to "Initial specification of <area list>"). Create `specs/changes/<slug>.change.json` per `schemas/change.schema.json` with every declared area as a target (`status: "open"`, empty `ids[]`), write `last_change` to `.spec/local.json`, and suggest branch `change/<slug>`.
 

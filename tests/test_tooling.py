@@ -2387,3 +2387,46 @@ def test_shipped_scripts_are_executable_in_the_index():
     assert not not_exec, "\n".join(not_exec)
 
 
+# ── Fresh projects must lint green ──────────────────────────────────────────
+# /spec bootstrap scaffolds `formal_model.quint_file` pointing at the sidecar
+# /spec-check will later write, so pointer-set-file-absent is the normal
+# opening state of every project — and the /spec triage table already
+# prescribes "formalize: write the sidecar" for it. Graded like the other
+# precision lints: WARN while authoring, FAIL once the area is up for review.
+
+def _sidecar_findings(status, fm=None):
+    area = {"kind": "area", "area": "auth", "version": "0.1.0", "status": status,
+            "formal_model": {"quint_file": "auth.qnt"} if fm is None else fm}
+    findings = []
+    lint.check_formal_model_consistency(area, None, "auth", findings)
+    return [f for f in findings if f.check == "sidecar-missing-or-empty"]
+
+
+@pytest.mark.parametrize("status", ["raw", "draft", "specified", "formalized"])
+def test_aimed_pointer_without_sidecar_only_warns_while_authoring(status):
+    hits = _sidecar_findings(status)
+    assert len(hits) == 1
+    assert hits[0].severity == lint.WARN
+    assert "/spec-check" in hits[0].description
+
+
+@pytest.mark.parametrize("status", ["in-review", "approved"])
+def test_aimed_pointer_without_sidecar_fails_at_review(status):
+    hits = _sidecar_findings(status)
+    assert len(hits) == 1
+    assert hits[0].severity == lint.FAIL
+
+
+@pytest.mark.parametrize("fm", [{}, {"quint_file": ""}])
+def test_unaimed_pointer_is_silent(fm):
+    assert _sidecar_findings("in-review", fm) == []
+
+
+def test_sidecar_without_module_declaration_still_gates(tmp_path):
+    area = {"kind": "area", "area": "auth", "status": "approved",
+            "formal_model": {"quint_file": "auth.qnt"}}
+    findings = []
+    lint.check_formal_model_consistency(area, {"__no_module__": True}, "auth", findings)
+    assert [f.severity for f in findings] == [lint.FAIL]
+
+

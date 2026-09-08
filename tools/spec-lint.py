@@ -631,11 +631,24 @@ def check_orphan_actions(area_data, sidecar, area_name, findings):
 def check_formal_model_consistency(area_data, sidecar, area_name, findings):
     """formal_model.quint_file must point at a parseable module. (Module name
     and imports are read from the sidecar via quint_ir — never mirrored in
-    the JSON, so there's nothing else to reconcile.)"""
+    the JSON, so there's nothing else to reconcile.)
+
+    Graded by status like the other precision lints: while an area is being
+    authored the pointer legitimately runs ahead of the sidecar — /spec
+    scaffolds the pointer at bootstrap, /spec-check writes the file — so this
+    WARNs and reads as "formalize next", which is exactly the next action the
+    /spec triage table already prescribes for it. It FAILs from in-review on,
+    where an aimed pointer with no module means the area is up for review
+    claiming a formal model it does not have.
+    """
     fm = area_data.get("formal_model") or {}
     if (not sidecar or "__no_module__" in sidecar) and fm.get("quint_file"):
-        add(findings, FAIL, "quint", "sidecar-missing-or-empty", area_name,
-            "formal_model.quint_file is set but the sidecar is missing or has no module declaration.")
+        gating = at_review(area_data)
+        add(findings, FAIL if gating else WARN, "quint",
+            "sidecar-missing-or-empty", area_name,
+            "formal_model.quint_file is set but the sidecar is missing or has "
+            "no module declaration."
+            + ("" if gating else " Write it with /spec-check."))
 
 
 ALS_COMMAND_RE = re.compile(
