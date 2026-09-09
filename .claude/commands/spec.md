@@ -122,7 +122,7 @@ Show current project config; ask which section to edit. Sections: repos, areas i
 
 (Runs on `/spec _patterns/<name>`, `/spec _protocols/<name>`, or `/spec _journeys/<name>`.)
 
-For journeys (`schemas/journey.schema.json`, files at `specs/journeys/<name>.journey.json`): a journey is THE use-case mechanism — a named user-visible flow, steps as qualified `<area>.<ID>` refs in temporal order; most live inside one area, some cross boundaries, same shape either way. Usually journeys are born during elicitation (one story = one journey); this beat is for stitching or editing them directly. Creating one: ask for the actor and the story end to end, then map each step to an existing REQ (offer candidates from the areas' requirements); a step with no matching REQ is a gap — capture it in the owning area first (`/spec <area>`), then finish the journey.
+For journeys (`schemas/journey.schema.json`, files at `specs/journeys/<name>.journey.json`): a journey is THE use-case mechanism — a named user-visible flow, steps as qualified `<area>.<ID>` refs in temporal order; most live inside one area, some cross boundaries, same shape either way. Journeys are born where the flow is: in elicitation, one story told is one journey; in brownfield, one reachable entry point is one journey, deduced from the call graph and updated on re-extraction. This beat is for stitching or editing them directly. Creating one: ask for the actor and the story end to end, then map each step to an existing REQ (offer candidates from the areas' requirements); a step with no matching REQ is a gap — capture it in the owning area first (`/spec <area>`), then finish the journey.
 
 If the file doesn't exist: walk creation per `schemas/pattern.schema.json` or `schemas/protocol.schema.json`. If it exists: show contents, ask which fields to update. Write back. Don't modify any area JSON references (the user opts those in separately).
 
@@ -136,7 +136,7 @@ Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-p
 
 **Brownfield is the strong case, not the awkward one.** Greenfield elicitation has only the user's memory to work from. Here there is a running implementation that answers any question you ask it — every threshold, every branch, every error path is already decided and readable. Extraction should therefore produce a *stronger* spec than elicitation, not a weaker one.
 
-**What you are producing is a spec that is true of this code.** That is the deliverable and its whole value: the team can review behavior nobody wrote down, reason about a change before making it, and read in the readback what the system does today. Nothing has to be regenerated for that to pay off, so do not steer the user toward a rewrite they did not ask for, and do not open the beat by asking them to design a substitution boundary. If they *are* rewriting, there is machinery to measure how completely the spec captured the code — offer it at the end, as step 5.
+**What you are producing is a spec that is true of this code.** That is the deliverable and its whole value: the team can review behavior nobody wrote down, reason about a change before making it, and read in the readback what the system does today. Nothing has to be regenerated for that to pay off, so do not steer the user toward a rewrite they did not ask for, and do not open the beat by asking them to design a substitution boundary. If they *are* rewriting, there is machinery to measure how completely the spec captured the code — offer it at the end, as step 6.
 
 Extraction is also not a one-time event. Say so when you finish: the spec is true of the code as of today, and `/spec <target>` re-extracts when the code moves on.
 
@@ -184,15 +184,25 @@ This is the only check in the framework that runs **code → spec**, and it is t
 
 Sites are keyed by fingerprint, not line number, so the ledger survives reformatting. Work through the GAPs with the user; they are the highest-value questions in the whole beat.
 
-##### 3. Harvest examples instead of inventing them
+##### 3. Deduce the journeys from the code
+
+The flows are in the code too, and reading them there is cheaper than asking someone to recall them. In greenfield a journey is born at capture time — one story told is one journey file, because the story already arrives with a name and an order. Here the order is in the call graph: every entry point a user or client can reach (route handler, CLI command, public method, queue consumer, scheduled job) starts one flow, and what it calls, in the order it calls it, is that flow.
+
+Write one `specs/journeys/<slug>.journey.json` per entry point worth naming. Name it for what the actor is doing, not for the handler (`sign-in`, not `postAuthLogin`), and append the requirements extracted in step 1 to `steps[]` as qualified `<area>.<ID>` refs in call order — each happy-path step followed by the error branches that step can take, which are already requirements (the unwanted counterparts read out of the error paths). A call into another area stays one journey; a step whose REQ does not exist yet is the same signal it is in elicitation — a gap, captured in its owning area before the journey lints clean.
+
+The journey carries no confidence field of its own: it is references only, and every step it points at already carries its `extraction.confidence`. What it does need is honesty about order — where the sequence is dynamic (dispatch table, event bus, retry loop), say so in the step `note` instead of inventing one.
+
+Re-extraction **updates** journeys, it does not duplicate them: match the existing file by name, re-derive `steps[]` from the current call order, and report added, removed and reordered steps along with the rest of the extraction diff. A journey whose entry point no longer exists is a finding — surface it, do not silently delete it.
+
+##### 4. Harvest examples instead of inventing them
 
 Ask for real call sequences — from logs, from existing tests, from a recording session. Each becomes an `examples[]` entry with `source: "extracted-from-production"` and, where a recording exists, `trace` pointing at the ITF file. Greenfield examples are guesses about what matters; harvested ones are evidence, and they replay through the same machinery as a witness trace.
 
-##### 4. Keep it true as the code moves
+##### 5. Keep it true as the code moves
 
 Tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-code-verify`, adapter or test command needed first.
 
-##### 5. Then formalize — and offer fidelity measurement only if it fits
+##### 6. Then formalize — and offer fidelity measurement only if it fits
 
 Write `specs/<target>.*.json` and the Quint sidecar. Present extracted items in batches for confirm/edit/discard — with `extraction.evidence`, the user can jump to the code instead of reconstructing your reasoning.
 
@@ -200,6 +210,7 @@ End with the ladder:
 
 ```
 Draft spec written from <n> files. <m> sites triaged, <k> GAPs open.
+<j> journeys deduced from the entry points.
 
   /spec-check <target>     the model holds and nothing is vacuous
   /spec-code-verify <target>    the code conforms to the spec
@@ -282,7 +293,7 @@ Inspect the JSON for gaps:
 | Entities with `states[]` but no matching `state_machines[]` entry | state-machine beat (see below) |
 | `requirements[]` has items without IDs (raw strings) | structure pass |
 | `requirements[]` items have `status: "raw"` | elicit refinement per item |
-| Functional REQs not referenced by any journey step (`specs/journeys/*.journey.json`) | **journey pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `specs/journeys/<slug>.journey.json`. Brownfield extracts land here — group extracted REQs into flows during the confirm pass. |
+| Functional REQs not referenced by any journey step (`specs/journeys/*.journey.json`) | **journey pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `specs/journeys/<slug>.journey.json`. Brownfield journeys are deduced from the call graph during extraction, so what lands here is the leftovers — requirements no entry point walked through. |
 | Requirements past raw status without `ears` structure | EARS pass: walk each one, fill trigger/state/response (+unwanted) |
 | Requirements without `witness.predicate` (and sidecar exists) | witness pass: draft predicates, confirm, then suggest `/spec-check` |
 | `formal_model.quint_file` set but file missing | formalize: write the sidecar |
