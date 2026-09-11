@@ -41,11 +41,10 @@ from itf_tools import (  # noqa: E402
     load_trace, mermaid_lines, render_value, state_vars,
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
-    skip_discharge, brief_status,
+    skip_discharge, brief_status, action_params, GHOST_PARAM_RE,
 )
 from quint_ir import _strip_noise  # noqa: E402
 
-GHOST_PARAM_RE = re.compile(r"^_last(?!Action$)")
 MAX_DIAGRAM_STEPS = 12
 
 LEGEND = ("*Legend: ✓ verified — witness trace replayed green against real code · "
@@ -98,6 +97,18 @@ def check_scopes(area):
     for c in ((area.get("check_results") or {}).get("checks") or []):
         if c.get("backend") == "alloy" and c.get("id") and c.get("scope"):
             out[c["id"]] = c["scope"]
+    return out
+
+
+def check_backends(area):
+    """ID -> which validator actually produced the last result for it. A
+    liveness ✓ from TLC and a liveness ✓ from Apalache are bounded by
+    different things — a finite state space vs a step depth — so the mark
+    cannot be rendered without knowing which one ran."""
+    out = {}
+    for c in ((area.get("check_results") or {}).get("checks") or []):
+        if c.get("id") and c.get("backend"):
+            out[c["id"]] = c["backend"]
     return out
 
 
@@ -201,11 +212,11 @@ def witness_one_liner(root, trace_rel):
     labels = []
     for s in states[1:]:
         action = render_value(s.get(action_var)).strip('"') if action_var else "step"
-        params = []
-        for g in ghosts:
-            val = render_value(s.get(g)).strip('"')
-            if val and val not in params:
-                params.append(val)
+        # Ghost vars OR quint's own mbt::nondetPicks record, depending on
+        # which tool produced the trace — itf_tools.action_params knows both,
+        # so an --mbt trace renders 'login(bob, s1)' like a probe trace does
+        # instead of losing its arguments to a name this loop doesn't know.
+        params = action_params(s, ghosts)
         labels.append(f"{action}({', '.join(params)})" if params else action)
     compressed = []
     for lbl in labels:
@@ -663,16 +674,35 @@ def invariants_section(area):
     lines.append("")
     props = area.get("properties", []) or []
     if props:
+        backends = check_backends(area)
         lines.append("## What Must Eventually Happen")
         lines.append("")
         for p in sorted(props, key=lambda i: i.get("id", "")):
             st = p.get("formal_status", "specified")
-            mark = "✓ (bounded)" if st == "verified" else ("✗" if st == "counterexample-found" else "⏳")
+            # A liveness ✓ is only readable next to the checker that produced
+            # it: TLC enumerates the model's whole finite state space (no step
+            # bound), Apalache checks temporal properties up to max_steps and
+            # only partially. Rendering both as a bare "✓ (bounded)" would
+            # understate one and overstate the other.
+            if st == "verified":
+                mark = "✓ (TLC)" if backends.get(p.get("id")) == "tlc" else "✓ (bounded)"
+            elif st == "counterexample-found":
+                mark = "✗"
+            else:
+                mark = "⏳"
             lines.append(f"- **{p.get('id')}** (`{p.get('quint_name', '—')}`) — "
                          f"{p.get('description', '')} {mark}")
         lines.append("")
-        lines.append("_Liveness results are bounded — Apalache proves them up to the "
-                     "configured step limit only._")
+        if any(backends.get(p.get("id")) == "tlc" for p in props):
+            lines.append("_Liveness legend: ✓ (TLC) — explicit-state check over this "
+                         "model's whole finite state space: no step bound, but no larger "
+                         "instance than the model declares either, and TLC writes no "
+                         "counterexample trace, so a ✗ here has no diagram to show. "
+                         "✓ (bounded) — checked by Apalache up to the configured step "
+                         "limit only._")
+        else:
+            lines.append("_Liveness results are bounded — Apalache proves them up to the "
+                         "configured step limit only._")
         lines.append("")
     return lines
 

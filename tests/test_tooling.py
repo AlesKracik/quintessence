@@ -649,6 +649,11 @@ class _Args:
         self.steps = self.timeout = self.only = None
         self.no_witness = True
         self.emit_json = False
+        # Simulator pre-gate: off by default here so a test that doesn't
+        # opt in never reaches a quint binary these tests don't have.
+        self.no_simulate = True
+        self.only_simulate = False
+        self.samples = self.seed = None
 
 
 def _structural_project(tmp_path, invariants, solution=None):
@@ -3367,3 +3372,270 @@ def test_the_shipped_example_carries_a_current_brief():
     area = json.loads((TOOLS.parent / "examples" / "specs" / "auth.area.json")
                       .read_text(encoding="utf-8"))
     assert itf.brief_status(area)[0] == "current", "example brief pin is stale"
+
+
+# ── The quint surface beyond `verify --invariant` ───────────────────────────
+# Six accelerations/corrections landed at once, and five of them are
+# optimisations of an existing path. The property that matters across all of
+# them: none may turn a verdict green that the old path called red, and none
+# may write a verdict at all from the simulator. These tests pin that.
+
+
+class _FakeProc:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _capture_cmds(monkeypatch, module, outcomes):
+    """Record every argv `module` shells out, answering each with the next
+    entry of `outcomes` (a _FakeProc, or a callable taking the cmd)."""
+    seen = []
+    queue = list(outcomes)
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        nxt = queue.pop(0) if queue else _FakeProc()
+        return nxt(cmd) if callable(nxt) else nxt
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    return seen
+
+
+def test_a_property_is_checked_as_temporal_not_as_an_invariant(monkeypatch, tmp_path):
+    """The bug this fixes: properties[] are liveness formulas, and they were
+    passed to --invariant like state predicates. A temporal formula is not a
+    state predicate, so that was wrong regardless of the outcome."""
+    seen = _capture_cmds(monkeypatch, record, [_FakeProc(0)])
+    result, _, _ = record.run_verify(
+        "quint", tmp_path / "a.qnt", "eventualLogout", 10, 60, temporal=True)
+    assert result == "verified"
+    cmd = seen[0]
+    assert "--temporal=eventualLogout" in cmd
+    assert not any(c.startswith("--invariant") for c in cmd)
+    # TLC by default: Apalache's temporal support is only partial.
+    assert "--backend=tlc" in cmd
+    # ...and --max-steps / --out-itf are Apalache-only flags.
+    assert not any(c.startswith("--max-steps") for c in cmd)
+    assert not any(c.startswith("--out-itf") for c in cmd)
+
+
+def test_a_temporal_violation_is_read_from_quints_own_marker(monkeypatch, tmp_path):
+    """TLC writes no ITF, so the usual 'did the trace file appear' test cannot
+    decide. The marker decides instead — and its ABSENCE must report error,
+    never a guessed verdict."""
+    _capture_cmds(monkeypatch, record,
+                  [_FakeProc(1, stdout="[violation] Found an issue")])
+    assert record.run_verify("quint", tmp_path / "a.qnt", "p", 10, 60,
+                             temporal=True)[0] == "counterexample"
+
+    _capture_cmds(monkeypatch, record,
+                  [_FakeProc(1, stderr="error: could not resolve name p")])
+    assert record.run_verify("quint", tmp_path / "a.qnt", "p", 10, 60,
+                             temporal=True)[0] == "error"
+
+
+def test_batched_verify_uses_repeated_flags_and_reports_only_the_batch(
+        monkeypatch, tmp_path):
+    """One space-separated list would let the array-typed flag swallow the
+    positional input file, so each name gets its own --invariants."""
+    seen = _capture_cmds(monkeypatch, record, [_FakeProc(0)])
+    result, _, _ = record.run_verify_batch(
+        "quint", tmp_path / "a.qnt", ["invA", "invB"], 10, 60)
+    assert result == "verified"
+    assert seen[0].count("--invariants=invA") == 1
+    assert seen[0].count("--invariants=invB") == 1
+
+    _capture_cmds(monkeypatch, record, [_FakeProc(1, stdout="[violation]")])
+    # 'not-verified' is deliberately not a per-name verdict: it means only
+    # "re-run these one at a time", which is where attribution and traces
+    # come from.
+    assert record.run_verify_batch(
+        "quint", tmp_path / "a.qnt", ["invA"], 10, 60)[0] == "not-verified"
+
+
+def test_the_simulator_reports_witness_counts_and_never_a_verdict(
+        monkeypatch, tmp_path):
+    out = ("Witnesses: witness_REQ_001 was witnessed in 7094 trace(s) out of "
+           "10000 explored (70.94%)\n"
+           "Witnesses: witness_REQ_002 was witnessed in 0 trace(s) out of "
+           "10000 explored (0.00%)\n"
+           "[ok] No violation found (599ms).")
+    _capture_cmds(monkeypatch, record, [_FakeProc(0, stdout=out)])
+    result, _, _, counts = record.run_simulate(
+        "quint", tmp_path / "a.qnt", [], 10000, 20, 60,
+        witnesses=["witness_REQ_001", "witness_REQ_002"])
+    # "ok", not "verified". The word choice is the point: the simulator
+    # explored, it did not prove.
+    assert result == "ok"
+    assert counts["witness_REQ_001"] == (7094, 10000)
+    assert counts["witness_REQ_002"] == (0, 10000)
+
+
+def test_quint_supports_degrades_instead_of_failing(monkeypatch):
+    """An older quint must run exactly the command line it ran before, not
+    die on a flag it has never heard of."""
+    record._QUINT_CAPS.clear()
+    _capture_cmds(monkeypatch, record,
+                  [_FakeProc(0, stdout="Options:\n  --max-samples\n")])
+    assert record.quint_supports("quint", "run", "--backend") is False
+    # Probed once, then cached: one --help per flag, not one per area.
+    _capture_cmds(monkeypatch, record, [])
+    assert record.quint_supports("quint", "run", "--backend") is False
+    record._QUINT_CAPS.clear()
+
+
+def _quint_project(tmp_path, area="auth", invariants=(), properties=(),
+                   project=None):
+    (tmp_path / ".spec").mkdir(exist_ok=True)
+    (tmp_path / ".spec" / "project.json").write_text(
+        json.dumps(project or {"project": "p"}), encoding="utf-8")
+    specs = tmp_path / "specs"
+    specs.mkdir(exist_ok=True)
+    (specs / (area + ".qnt")).write_text("module auth {\n}\n", encoding="utf-8")
+    area_path = specs / (area + ".area.json")
+    area_path.write_text(json.dumps({
+        "area": area, "version": "1.0.0", "status": "formalized",
+        "invariants": list(invariants), "properties": list(properties),
+        "formal_model": {"quint_file": area + ".qnt"},
+    }), encoding="utf-8")
+    return area_path
+
+
+def test_a_clean_batch_records_the_same_verdicts_for_one_apalache_start(
+        tmp_path, monkeypatch):
+    area_path = _quint_project(tmp_path, invariants=[
+        {"id": "INV-001", "description": "a", "quint_name": "invA"},
+        {"id": "INV-002", "description": "b", "quint_name": "invB"},
+    ])
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify_batch",
+                        lambda *a, **k: ("verified", "", 1.5))
+    monkeypatch.setattr(record, "run_verify",
+                        lambda *a, **k: pytest.fail("per-id run after a clean batch"))
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "auth"))
+    assert exc.value.code == 0
+    written = json.loads(area_path.read_text(encoding="utf-8"))
+    assert [i["formal_status"] for i in written["invariants"]] == ["verified", "verified"]
+    # Recorded as batched: a batched check and a per-id one should not read alike.
+    assert all(c["batched"] for c in written["check_results"]["checks"])
+
+
+def test_a_dirty_batch_falls_back_to_exactly_the_old_per_id_path(
+        tmp_path, monkeypatch):
+    """The safety property of the whole optimisation: a batch that is not
+    clean must change nothing — same verdicts, same traces, same exit code."""
+    area_path = _quint_project(tmp_path, invariants=[
+        {"id": "INV-001", "description": "a", "quint_name": "invA"},
+        {"id": "INV-002", "description": "b", "quint_name": "invB"},
+    ])
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify_batch",
+                        lambda *a, **k: ("not-verified", "[violation]", 1.0))
+    calls = []
+
+    def per_id(quint, qnt, name, *a, **k):
+        calls.append(name)
+        return ("counterexample", "", 0.2) if name == "invB" else ("verified", "", 0.1)
+
+    monkeypatch.setattr(record, "run_verify", per_id)
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "auth"))
+    assert exc.value.code == 1
+    assert calls == ["invA", "invB"]
+    written = json.loads(area_path.read_text(encoding="utf-8"))
+    assert [i["formal_status"] for i in written["invariants"]] == [
+        "verified", "counterexample-found"]
+    assert not any(c.get("batched") for c in written["check_results"]["checks"])
+
+
+def test_only_simulate_writes_no_verdict_and_does_not_stamp_ran_at(
+        tmp_path, monkeypatch):
+    """check_results.ran_at is what every phase-flag consumer reads as 'this
+    area was checked'. A run that verified nothing must not set it."""
+    area_path = _quint_project(tmp_path, invariants=[
+        {"id": "INV-001", "description": "a", "quint_name": "invA"},
+    ])
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_simulate",
+                        lambda *a, **k: ("violation", "[violation] found", 0.6, {}))
+    monkeypatch.setattr(
+        record, "run_verify",
+        lambda *a, **k: pytest.fail("model checker ran under --only-simulate"))
+    args = _Args(tmp_path, "auth")
+    args.no_simulate, args.only_simulate = False, True
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    assert exc.value.code == 0
+    written = json.loads(area_path.read_text(encoding="utf-8"))
+    cr = written["check_results"]
+    assert cr["simulation"]["invariants"]["result"] == "violation"
+    assert "ran_at" not in cr, "an advisory run must not mark the area checked"
+    assert "checks" not in cr
+    # And above all: a simulator violation writes no formal_status.
+    assert "formal_status" not in written["invariants"][0]
+
+
+def test_action_params_reads_quints_nondet_record_and_the_ghost_vars():
+    """Two conventions, one fact. --mbt traces carry one option-wrapped
+    record; probe-module traces carry one var per parameter."""
+    mbt_state = {"mbt::actionTaken": "login",
+                 "mbt::nondetPicks": {"uid": {"tag": "Some", "value": "bob"},
+                                      "sid": {"tag": "Some", "value": "s1"},
+                                      "amount": {"tag": "None", "value": {}}}}
+    assert itf.action_params(mbt_state) == ["bob", "s1"]
+
+    ghost_state = {"_lastAction": "login", "_lastUid": "bob", "_lastSid": "s1"}
+    assert itf.action_params(ghost_state) == ["bob", "s1"]
+    # _lastAction is the label, never a parameter.
+    assert "login" not in itf.action_params(ghost_state)
+
+
+def test_a_liveness_check_is_rendered_with_the_checker_that_produced_it():
+    """A check from TLC is bounded by the model's finite state space; one from
+    Apalache is bounded by a step depth. One mark cannot honestly mean both."""
+    area = {"area": "auth",
+            "properties": [{"id": "PROP-001", "description": "Sessions end.",
+                            "quint_name": "eventualLogout",
+                            "formal_status": "verified"}],
+            "invariants": [{"id": "INV-001", "description": "x",
+                            "quint_name": "inv", "formal_status": "verified"}],
+            "check_results": {"checks": [
+                {"id": "PROP-001", "kind": "property", "backend": "tlc",
+                 "result": "verified"}]}}
+    out = "\n".join(readback.invariants_section(area))
+    assert "✓ (TLC)" in out
+    assert "explicit-state" in out and "no step bound" in out
+
+    area["check_results"]["checks"][0]["backend"] = "apalache"
+    out = "\n".join(readback.invariants_section(area))
+    assert "✓ (bounded)" in out and "✓ (TLC)" not in out
+
+
+def test_a_temporal_counterexample_records_no_trace_it_does_not_have(
+        tmp_path, monkeypatch):
+    """TLC writes no ITF. A `trace` field pointing at a file that was never
+    written is exactly what the witness gate FAILs on elsewhere — so the
+    absence has to be recorded as an absence, with a note saying why."""
+    area_path = _quint_project(tmp_path, properties=[
+        {"id": "PROP-001", "description": "Sessions end.",
+         "quint_name": "eventualLogout"},
+    ])
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(
+        record, "run_verify",
+        lambda *a, **k: ("counterexample", "no trace: --out-itf is "
+                         "Apalache-only, this ran on tlc", 3.0))
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "auth"))
+    assert exc.value.code == 1
+    written = json.loads(area_path.read_text(encoding="utf-8"))
+    assert written["properties"][0]["formal_status"] == "counterexample-found"
+    entry = written["check_results"]["checks"][0]
+    assert entry["backend"] == "tlc"
+    assert "trace" not in entry
+    assert "Apalache-only" in entry["note"]

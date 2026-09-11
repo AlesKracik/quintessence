@@ -18,15 +18,38 @@ counterexample.nl_explanation), and triaging matrix gaps.
 Subcommands:
   check  <area> [--root .] [--steps N] [--timeout S]
                 [--only INV-001,REQ-003] [--no-witness] [--json]
+                [--no-simulate] [--only-simulate] [--samples N] [--seed S]
   verify <area> [--root .] [--code-root PATH]
                 [--skip-conformance] [--skip-tests] [--json]
   equiv  <area> [--root .] [--code-root PATH] [--sequences N] [--json]
 
 What `check` does, in order:
+  0. Simulator pre-gate (unless --no-simulate): `quint run` over the area's
+     bounded invariants and, with --witnesses, over the witness probes.
+     ADVISORY ONLY — the simulator's "[ok] No violation found" means "not in
+     the executions I explored", never "verified", so this step writes
+     check_results.simulation and NEVER a formal_status. What it buys is the
+     workflow quint's own docs recommend: seconds of randomized exploration
+     ahead of minutes of Apalache, so a shallow bug lands at the TOP of the
+     run, and a witness that no random trace ever reaches is flagged before
+     the model checker is asked to find it. --only-simulate stops after this
+     step (and then writes nothing but the simulation block — bumping
+     check_results.ran_at would make the area read as "checked").
   1. Invariants + properties (quint_name set): `quint verify
      --invariant=<name>` each; counterexample traces saved to
      specs/<area>/traces/<ID>.cex.itf.json. Stale .cex files of
      now-verified checks are removed.
+     1-fast. Bounded invariants are first tried in ONE batched run
+     (`quint verify --invariants=a --invariants=b ...`). Each `quint verify`
+     pays JVM start + Apalache compile, so the green path — the common one
+     in CI — collapses from N of those to one. A batch that is not green
+     falls straight through to the per-ID loop below, which reports and
+     traces exactly what it always did.
+     1t. PROPERTIES ARE TEMPORAL, not state predicates: they run as
+     `quint verify --temporal=<name> --backend=tlc`. Apalache's temporal
+     support is partial (quint's docs: temporal properties can only be
+     checked with --backend=tlc); TLC is explicit-state, so --max-steps and
+     --out-itf do not apply and a temporal violation yields no ITF trace.
      1a. OPT-IN SMT backend: an invariant marked `proof: "smt"` is
      discharged by running z3 over its smt_file, which asserts the
      NEGATION of the invariant. unsat = no violating assignment
@@ -332,8 +355,41 @@ def find_quint():
     return exe
 
 
+# quint's own violation marker. Used ONLY where no ITF file can settle the
+# question (TLC writes none): the file test stays the primary signal because
+# it cannot be confused by an error message that happens to contain a word.
+VIOLATION_MARKER = "[violation]"
+OK_MARKER = "[ok]"
+
+# "Witnesses: someName was witnessed in 7094 trace(s) out of 10000 explored"
+WITNESS_RE = re.compile(
+    r"(\S+) was witnessed in (\d+) trace\(s\) out of (\d+) explored")
+
+_QUINT_CAPS = {}
+
+
+def quint_supports(quint, subcommand, flag, timeout=60):
+    """True when `quint <subcommand> --help` advertises `flag`.
+
+    The flags this runner wants landed in different quint releases
+    (--backend on run/test, --invariants on verify). A missing flag must
+    degrade to the older command line, never fail the run: probing --help
+    once per (subcommand, flag) is cheaper than an exception per area and
+    keeps an older quint working exactly as it worked before."""
+    key = (subcommand, flag)
+    if key not in _QUINT_CAPS:
+        try:
+            proc = subprocess.run([quint, subcommand, "--help"],
+                                  capture_output=True, text=True, timeout=timeout)
+            _QUINT_CAPS[key] = flag in ((proc.stdout or "") + (proc.stderr or ""))
+        except (OSError, subprocess.SubprocessError):
+            _QUINT_CAPS[key] = False
+    return _QUINT_CAPS[key]
+
+
 def run_verify(quint, qnt_file, invariant, max_steps, timeout,
-               init=None, step=None, out_itf=None, inductive=False):
+               init=None, step=None, out_itf=None, inductive=False,
+               temporal=False, backend=None):
     """Run one `quint verify`. Returns (result, detail, duration_s) where
     result ∈ verified | counterexample | timeout | error.
     'counterexample' means a violation was found — for witness probes that
@@ -347,25 +403,41 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
     invariant that isn't constrained enough yields a quint error ('x is used
     before it is assigned') — reported as 'error', not a false proof.
 
+    temporal=True checks `invariant` as a TEMPORAL property — `--temporal=`,
+    not `--invariant=`. A liveness formula is not a state predicate, and
+    Apalache's temporal support is partial (quint's docs: temporal properties
+    can only be checked with --backend=tlc), so this path defaults to TLC.
+    TLC is explicit-state: --max-steps and --out-itf are Apalache-only flags
+    and are omitted, so a temporal violation produces NO ITF trace.
+
     Violation detection: the presence of the freshly-written --out-itf file
     — NOT output-text grepping (any error message containing the word
     'counterexample' would misclassify). The stale file is deleted before
-    the run so its existence afterwards is unambiguous."""
+    the run so its existence afterwards is unambiguous. Where no ITF can be
+    written at all (TLC), quint's own `[violation]` marker is the fallback,
+    and its ABSENCE reports 'error' rather than guessing a verdict."""
     out_path = Path(out_itf) if out_itf else None
     if out_path and out_path.exists():
         out_path.unlink()
-    if inductive:
+    backend = backend or ("tlc" if temporal else None)
+    # --max-steps, --out-itf and --random-transitions are Apalache-only.
+    itf_capable = (backend or "apalache") == "apalache"
+    if temporal:
+        cmd = [quint, "verify", f"--temporal={invariant}"]
+    elif inductive:
         # quint orchestrates base + one-step preservation internally.
         cmd = [quint, "verify", f"--inductive-invariant={invariant}",
                "--max-steps=1"]
     else:
         cmd = [quint, "verify", f"--invariant={invariant}",
                f"--max-steps={max_steps}"]
+    if backend:
+        cmd.append(f"--backend={backend}")
     if init:
         cmd.append(f"--init={init}")
     if step:
         cmd.append(f"--step={step}")
-    if out_itf:
+    if out_itf and itf_capable:
         cmd.append(f"--out-itf={out_itf}")
     cmd.append(str(qnt_file))
     started = datetime.now(timezone.utc)
@@ -380,10 +452,99 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
         return "verified", "", duration
     if out_path and out_path.exists():
         return "counterexample", "", duration
-    # Non-zero without a violation trace: compile/CLI error.
     out = (proc.stdout or "") + (proc.stderr or "")
+    if not itf_capable and VIOLATION_MARKER in out:
+        return ("counterexample",
+                f"no trace: --out-itf is Apalache-only, this ran on {backend}",
+                duration)
+    # Non-zero without a violation trace: compile/CLI error.
     tail = "\n".join(out.strip().splitlines()[-5:])
     return "error", tail, duration
+
+
+def run_verify_batch(quint, qnt_file, names, max_steps, timeout):
+    """Check every name in `names` in ONE `quint verify`. Returns
+    (result, detail, duration_s) for the BATCH — result ∈
+    verified | not-verified | timeout | error — never a per-name verdict.
+
+    Why batch: each `quint verify` pays JVM start plus an Apalache compile of
+    the whole module. On the green path (the common one in CI) N invariants
+    pay that N times. One batched run collapses it to once.
+
+    Why the caller still owns the red path: a batch says *something* failed,
+    and the ledger needs per-ID attribution AND a per-ID counterexample
+    trace. So 'not-verified' means only "re-run these individually" — the
+    existing per-ID loop then reports exactly what it always reported. This
+    function can therefore never turn a red result green or mis-attribute
+    one; the worst it can do is spend one extra Apalache run.
+
+    Repeated `--invariants=<name>` rather than one space-separated list: the
+    flag is typed as an array, and a bare list would swallow the positional
+    input file as another element."""
+    cmd = ([quint, "verify"]
+           + [f"--invariants={n}" for n in names]
+           + [f"--max-steps={max_steps}", str(qnt_file)])
+    started = datetime.now(timezone.utc)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"batch timed out after {timeout}s", timeout
+    duration = (datetime.now(timezone.utc) - started).total_seconds()
+    if proc.returncode == 0:
+        return "verified", "", duration
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    tail = "\n".join(out.splitlines()[-5:])
+    return "not-verified", tail, duration
+
+
+def run_simulate(quint, qnt_file, invariants, max_samples, max_steps, timeout,
+                 seed=None, backend=None, init=None, step=None, witnesses=None):
+    """Run the SIMULATOR (`quint run`) over `invariants` (and, when given,
+    report on `witnesses`). Returns (result, detail, duration_s, counts)
+    with result ∈ ok | violation | timeout | error | not-run and counts a
+    {witness_name: (hit_traces, explored_traces)} dict.
+
+    ADVISORY, by construction. `[ok] No violation found` from the simulator
+    means "not in the executions I explored" — it is not a verification
+    verdict, and nothing downstream of this function writes formal_status.
+    What it buys is the workflow quint's own docs recommend: seconds of
+    randomized exploration before minutes of model checking, so a shallow
+    bug is reported at the top of a run rather than after it.
+
+    `--witnesses` reports, per name, in how many of the explored traces the
+    predicate held. A witness at 0/N is a strong hint that the behavior is
+    unreachable — the vacuity red flag, found cheap. It is only a hint: the
+    simulator is incomplete, so the model checker still runs."""
+    cmd = [quint, "run", f"--max-samples={max_samples}",
+           f"--max-steps={max_steps}"]
+    for name in invariants or []:
+        cmd.append(f"--invariants={name}")
+    for name in witnesses or []:
+        cmd.append(f"--witnesses={name}")
+    if backend:
+        cmd.append(f"--backend={backend}")
+    if seed:
+        cmd.append(f"--seed={seed}")
+    if init:
+        cmd.append(f"--init={init}")
+    if step:
+        cmd.append(f"--step={step}")
+    cmd.append(str(qnt_file))
+    started = datetime.now(timezone.utc)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "timeout", f"timed out after {timeout}s", timeout, {}
+    duration = (datetime.now(timezone.utc) - started).total_seconds()
+    out = (proc.stdout or "") + (proc.stderr or "")
+    counts = {m.group(1): (int(m.group(2)), int(m.group(3)))
+              for m in WITNESS_RE.finditer(out)}
+    tail = "\n".join(out.strip().splitlines()[-5:])
+    if proc.returncode == 0:
+        return "ok", "", duration, counts
+    if VIOLATION_MARKER in out:
+        return "violation", tail, duration, counts
+    return "error", tail, duration, counts
 
 
 def run_structural_check(item, iid, als_rel, als_file, root, area_name,
@@ -564,6 +725,19 @@ def cmd_check(args):
     alloy_solver = alloy_cfg.get("solver", "sat4j")
     alloy_timeout = args.timeout or alloy_cfg.get("timeout_seconds", 300)
 
+    # `quint` block: the simulator pre-gate and the batched verify. Every
+    # value has a working default, and every one of them can be turned off,
+    # because both features are accelerations of an existing path — never a
+    # new source of verdicts.
+    quint_cfg = project.get("quint") or {}
+    eval_backend = quint_cfg.get("eval_backend", "rust")
+    sim_samples = args.samples or quint_cfg.get("max_samples", 10000)
+    sim_steps = quint_cfg.get("max_steps", max_steps)
+    sim_seed = args.seed or quint_cfg.get("seed")
+    sim_timeout = quint_cfg.get("simulate_timeout_seconds", 120)
+    batch_enabled = quint_cfg.get("batch_invariants", True)
+    temporal_backend = quint_cfg.get("temporal_backend", "tlc")
+
     only = None
     if args.only:
         only = {t.strip() for t in args.only.split(",") if t.strip()}
@@ -605,7 +779,111 @@ def cmd_check(args):
     checks = []
     bad = 0
 
+    # Probe module IR, parsed once. Hoisted above the simulator gate because
+    # both the witness pre-screen (step 0) and the probe loop (step 2) name
+    # the same `witness_<ID>` vals; parse_qnt is pure, so reading it earlier
+    # changes nothing about step 2.
+    probes_rel = fm.get("probes_file")
+    probes_file = root / "specs" / probes_rel if probes_rel else None
+    probes_ir = parse_qnt(probes_file) if probes_file and probes_file.exists() else None
+    probe_vals = set(probes_ir["vals"]) if probes_ir else set()
+
+    def selected(item):
+        return not only or item.get("id") in only
+
+    # ── 0. Simulator pre-gate (advisory — never a verdict) ───────────────
+    simulation = None
+    if not args.no_simulate and qnt_file.exists():
+        sim_invs = [i["quint_name"] for i in (area.get("invariants") or [])
+                    if i.get("quint_name") and selected(i)
+                    and i.get("proof") not in ("structural", "smt")]
+        sim_probes = [probe_name(r["id"]) for r in (area.get("requirements") or [])
+                      if r.get("id") and selected(r)
+                      and probe_name(r["id"]) in probe_vals]
+        if sim_invs or sim_probes:
+            quint = need_quint()
+            backend = eval_backend if quint_supports(quint, "run", "--backend") else None
+            simulation = {"ran_at": now_iso(), "max_samples": sim_samples,
+                          "max_steps": sim_steps}
+            if backend:
+                simulation["backend"] = backend
+            if sim_seed:
+                simulation["seed"] = str(sim_seed)
+            if sim_invs:
+                res, detail, dur, _ = run_simulate(
+                    quint, qnt_file, sim_invs, sim_samples, sim_steps,
+                    sim_timeout, seed=sim_seed, backend=backend)
+                simulation["invariants"] = {"result": res, "checked": len(sim_invs)}
+                if detail:
+                    simulation["invariants"]["detail"] = detail
+                # A simulator violation is real (it found an execution), so it
+                # is worth shouting about — but the ledger entry still comes
+                # from the model checker below, which also produces the trace.
+                mark = {"ok": "no violation in explored runs",
+                        "violation": "VIOLATION FOUND — Apalache below will trace it",
+                        }.get(res, res)
+                print(f"{'simulate':<12} {mark:<26} ({dur:.1f}s, "
+                      f"{len(sim_invs)} invariant(s), {sim_samples} samples)")
+            if sim_probes and quint_supports(quint, "run", "--witnesses"):
+                _, _, dur, counts = run_simulate(
+                    quint, probes_file, [], sim_samples, sim_steps, sim_timeout,
+                    seed=sim_seed, backend=backend, init="initP", step="stepP",
+                    witnesses=sim_probes)
+                if counts:
+                    rows = []
+                    for name in sim_probes:
+                        hits, explored = counts.get(name, (None, None))
+                        if hits is None:
+                            continue
+                        rows.append({"probe": name, "traces": hits,
+                                     "explored": explored})
+                        if hits == 0:
+                            print(f"{'simulate':<12} {'0 traces':<26} {name} — "
+                                  f"unreachable in {explored} random runs "
+                                  f"(vacuity red flag; Apalache still decides)")
+                    if rows:
+                        simulation["witnesses"] = rows
+                    print(f"{'simulate':<12} {'witness pre-screen':<26} ({dur:.1f}s, "
+                          f"{len(rows)} probe(s) reported)")
+
+    if args.only_simulate:
+        # Write ONLY the simulation block. Touching check_results.ran_at here
+        # would make the area read as "checked" to every phase-flag consumer
+        # on the strength of a run that verified nothing.
+        cr = area.setdefault("check_results", {})
+        if simulation is None:
+            print("nothing to simulate (no Quint invariants or probes selected)")
+        else:
+            cr["simulation"] = simulation
+            save_area(area_path, area)
+            print(f"\nrecorded check_results.simulation in {area_path} "
+                  f"(no verdicts written — simulation is advisory)")
+        sys.exit(0)
+
     # ── 1. Invariants + properties ───────────────────────────────────────
+    # Fast green path: try every bounded Apalache invariant in one batched
+    # run first. If it comes back clean, the per-ID loop below skips the
+    # model checker for those ids and records them verified with the batch's
+    # own duration. If it doesn't, batch_clean stays empty and every id takes
+    # exactly the path it took before this optimisation existed.
+    batch_clean, batch_duration = set(), 0.0
+    if batch_enabled and qnt_file.exists():
+        batchable = [(i["id"], i["quint_name"]) for i in (area.get("invariants") or [])
+                     if i.get("id") and i.get("quint_name") and selected(i)
+                     and i.get("proof") not in ("structural", "smt", "inductive")]
+        if len(batchable) >= 2:
+            quint = need_quint()
+            if quint_supports(quint, "verify", "--invariants"):
+                res, detail, batch_duration = run_verify_batch(
+                    quint, qnt_file, [q for _, q in batchable], max_steps, timeout)
+                if res == "verified":
+                    batch_clean = {iid for iid, _ in batchable}
+                    print(f"{'batch':<12} {'verified':<26} ({batch_duration:.1f}s, "
+                          f"{len(batch_clean)} invariants in one run)")
+                else:
+                    print(f"{'batch':<12} {res + ' — per-id below':<26} "
+                          f"({batch_duration:.1f}s)")
+
     for list_name, kind in (("invariants", "invariant"), ("properties", "property")):
         for item in area.get(list_name, []) or []:
             iid, qname = item.get("id"), item.get("quint_name")
@@ -638,23 +916,44 @@ def cmd_check(args):
                 checks.append(entry)
                 continue
             # Inductive proof is opt-in per invariant (proof: "inductive").
-            # Default and properties stay bounded — behavior unchanged.
+            # Default invariants stay bounded — behavior unchanged.
             inductive = (kind == "invariant" and item.get("proof") == "inductive")
+            # A property is a LIVENESS formula, so it is checked with
+            # --temporal on a backend that supports temporal operators, not
+            # with --invariant. There is no step bound and no ITF trace on
+            # that path; see run_verify.
+            temporal = (kind == "property")
             cex_rel = f"{args.area}/traces/{iid}.cex.itf.json"
             cex_path = root / "specs" / cex_rel
-            result, detail, duration = run_verify(
-                need_quint(), qnt_file, qname, max_steps, timeout, out_itf=cex_path,
-                inductive=inductive,
-            )
+            if iid in batch_clean:
+                # Already checked, clean, in the batched run above. Same
+                # verdict, same bound, one Apalache start instead of N.
+                result, detail, duration = "verified", "", batch_duration
+            else:
+                result, detail, duration = run_verify(
+                    need_quint(), qnt_file, qname, max_steps, timeout,
+                    out_itf=cex_path, inductive=inductive, temporal=temporal,
+                    backend=temporal_backend if temporal else None,
+                )
             entry = {
                 "id": iid, "kind": kind, "quint_name": qname,
                 "result": result, "duration_s": round(duration, 1),
             }
             if inductive:
                 entry["proof"] = "inductive"
+            if temporal:
+                entry["backend"] = temporal_backend
+            elif iid in batch_clean:
+                entry["batched"] = True
             if result == "counterexample":
                 bad += 1
-                entry["trace"] = cex_rel
+                if detail:
+                    entry["note"] = detail
+                # Recorded only when a trace was actually written: TLC emits
+                # none, and a `trace` pointing at a file that isn't there is
+                # the kind of ledger entry the witness gate already FAILs on.
+                if cex_path.exists():
+                    entry["trace"] = cex_rel
                 prior = prior_checks.get(iid) or {}
                 if (prior.get("result") == "counterexample"
                         and isinstance(prior.get("counterexample"), dict)):
@@ -669,18 +968,20 @@ def cmd_check(args):
                 entry["error"] = detail
                 # timeout/error: keep the prior formal_status untouched.
             checks.append(entry)
-            label = result + (" (inductive)" if inductive and result == "verified" else "")
-            print(f"{iid:<12} {label:<26} ({duration:.1f}s)"
+            suffix = ""
+            if result == "verified":
+                if inductive:
+                    suffix = " (inductive)"
+                elif temporal:
+                    suffix = f" ({temporal_backend})"
+                elif iid in batch_clean:
+                    suffix = " (batched)"
+            print(f"{iid:<12} {result + suffix:<26} ({duration:.1f}s)"
                   + (f"  {detail}" if detail and result == "error" else ""))
 
     # ── 2. Witness probes ────────────────────────────────────────────────
     current_sha = compute_model_sha(root, args.area, area)
     if not args.no_witness:
-        probes_rel = fm.get("probes_file")
-        probes_file = root / "specs" / probes_rel if probes_rel else None
-        probes_ir = parse_qnt(probes_file) if probes_file and probes_file.exists() else None
-        probe_vals = set(probes_ir["vals"]) if probes_ir else set()
-
         for req in area.get("requirements", []) or []:
             rid = req.get("id")
             if not rid:
@@ -785,6 +1086,8 @@ def cmd_check(args):
         merged.append(new_by_id.pop(pid) if pid in new_by_id else prior)
     merged.extend(new_by_id[cid] for cid in [c["id"] for c in checks] if cid in new_by_id)
     cr["checks"] = merged  # matrix block (spec-matrix --record) is preserved
+    if simulation is not None:
+        cr["simulation"] = simulation  # advisory; carries no formal_status
     cr["ran_at"] = now_iso()
     cr["max_steps"] = max_steps  # the bound a bounded ✓ is honest to (readback)
     save_area(area_path, area)
@@ -1063,7 +1366,17 @@ def cmd_verify(args):
             print(f"PBT: FAIL (exit {code})\n{tail}")
             notes.append(f"property-based tier failed (exit {code})")
     elif not pbt_command:
-        notes.append("pbt: not configured (conformance.pbt_command)")
+        # Naming the command that would work is the difference between a note
+        # someone acts on and one they scroll past. `quint run --mbt` writes
+        # out<N>.itf.json traces carrying mbt::actionTaken and
+        # mbt::nondetPicks — the same action-plus-arguments the probe module's
+        # ghosts carry, which is why the adapter replay already generates can
+        # consume them unchanged.
+        notes.append("pbt: not configured (conformance.pbt_command). The adapter "
+                     "is already a stateful-PBT interface; the zero-new-code "
+                     "option is `quint run --mbt --n-traces=1000 "
+                     "--out-itf=<dir>/out.itf.json <area>.qnt` replayed through "
+                     "it, or fast-check/Hypothesis against the same adapter.")
 
     # ── 3. Test suite ────────────────────────────────────────────────────
     tests_result = None
@@ -1154,6 +1467,15 @@ def main():
     pc.add_argument("--timeout", type=int, help="Override apalache.timeout_seconds.")
     pc.add_argument("--only", help="Comma-separated IDs (INV/PROP/REQ) to run.")
     pc.add_argument("--no-witness", action="store_true", help="Skip witness probes.")
+    pc.add_argument("--no-simulate", action="store_true",
+                    help="Skip the advisory `quint run` pre-gate.")
+    pc.add_argument("--only-simulate", action="store_true",
+                    help="Run the simulator pre-gate and stop. Records "
+                         "check_results.simulation only — no verdicts, and "
+                         "check_results.ran_at is left alone.")
+    pc.add_argument("--samples", type=int,
+                    help="Override quint.max_samples for the simulator.")
+    pc.add_argument("--seed", help="Simulator seed, for a reproducible pre-gate.")
     pc.add_argument("--json", dest="emit_json", action="store_true",
                     help="Also print a JSON summary.")
     pc.set_defaults(func=cmd_check)

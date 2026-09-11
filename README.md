@@ -254,7 +254,7 @@ spec-template/
 ├── schemas/                   ← 6 JSON schemas (area, change, journey, project, pattern, protocol)
 ├── templates/                 ← spec.qnt.template, probes.qnt.template, contract.als.template
 ├── .github/workflows/         ← spec-ci.yml (lint → matrix → typecheck → quint test; skips pre-bootstrap)
-├── tools/                     ← spec-lint, spec-record, spec-readback, spec-matrix, quint_ir, itf_tools, bootstrap.sh (self-removes)
+├── tools/                     ← spec-lint, spec-record, spec-readback, spec-matrix, quint_ir, itf_tools, migrate-quint-config, bootstrap.sh (self-removes)
 └── examples/                  ← sample auth area + auth-ui area (stripped by bootstrap)
 ```
 

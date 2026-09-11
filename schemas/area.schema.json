@@ -749,7 +749,7 @@
         "adapter":    { "type": "string", "description": "Path (relative to code root) of the adapter mapping Quint actions to code API calls and Quint vars to observable code state." },
         "harness":    { "type": "string", "description": "Path (relative to tests root) of the trace-replay harness that loads ITF files and drives the adapter." },
         "command":    { "type": "string", "description": "Shell command that replays all traces, e.g. 'pnpm test conformance'. Run from the code repo root by /spec-code-verify." },
-        "pbt_command": { "type": "string", "description": "OPTIONAL stateful property-based testing command. Apalache returns the SHORTEST counterexample, so replay is a handful of traces and a handful of steps per area, each requirement exercised once. The adapter already exposes one method per action, one getter per var and a reset() \u2014 which is exactly a stateful-PBT interface, so the same adapter drives thousands of randomized sequences for the price of wiring. Complements replay, never replaces it: replay checks the model's own traces, PBT explores beyond them." },
+        "pbt_command": { "type": "string", "description": "OPTIONAL stateful property-based testing command. Apalache returns the SHORTEST counterexample, so replay is a handful of traces and a handful of steps per area, each requirement exercised once. The adapter already exposes one method per action, one getter per var and a reset() \u2014 which is exactly a stateful-PBT interface, so the same adapter drives thousands of randomized sequences for the price of wiring. Complements replay, never replaces it: replay checks the model's own traces, PBT explores beyond them. The zero-new-code option is quint's own simulator: `quint run --mbt --n-traces=1000 --out-itf=traces/pbt/out.itf.json <area>.qnt` writes out<N>.itf.json traces carrying mbt::actionTaken and mbt::nondetPicks — the same action-plus-arguments the probe module's _last* ghosts carry, so the existing adapter consumes them unchanged (itf_tools.action_params reads both conventions)." },
         "traces_dir": { "type": "string", "description": "Where witness traces live, relative to specs/. Default: '<area>/traces'." },
         "differential": {
           "type": "object",
@@ -915,6 +915,42 @@
           }
         },
 
+        "simulation": {
+          "type": "object",
+          "description": "Result of the last ADVISORY simulator pre-gate (`quint run`, spec-record check step 0). Deliberately kept apart from `checks`: the simulator's '[ok] No violation found' means 'not in the executions I explored', which is not a verdict, so nothing here ever becomes a formal_status and the readback must never render it as a ✓. What it is for: a shallow bug reported in seconds instead of after the model-checking run, and a witness the random search never reaches flagged before Apalache is asked to find it.",
+          "additionalProperties": false,
+          "properties": {
+            "ran_at":      { "type": "string", "format": "date-time" },
+            "backend":     { "type": "string", "enum": ["rust", "typescript"], "description": "Evaluator used. Absent when the installed quint predates `quint run --backend` and its own default was used." },
+            "max_samples": { "type": "integer", "minimum": 1, "description": "Executions explored. The denominator every count below is honest against." },
+            "max_steps":   { "type": "integer", "minimum": 1 },
+            "seed":        { "type": "string", "description": "Present only when the run was seeded. Without it the exploration differs run to run, which is the point on a pre-gate but means a finding here is not reproducible by re-running." },
+            "invariants": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "result":  { "type": "string", "enum": ["ok", "violation", "timeout", "error", "not-run"], "description": "'ok' is NOT 'verified' — it is 'no violation in max_samples random executions'. Only `checks` carries verdicts." },
+                "checked": { "type": "integer", "minimum": 0 },
+                "detail":  { "type": "string" }
+              }
+            },
+            "witnesses": {
+              "type": "array",
+              "description": "Per-probe result of `quint run --witnesses`: in how many explored traces the witness predicate held. 0 of N is the vacuity red flag found cheap — a strong hint the behavior is unreachable, and only a hint, because the simulator is incomplete and the model checker still decides.",
+              "items": {
+                "type": "object",
+                "required": ["probe"],
+                "additionalProperties": false,
+                "properties": {
+                  "probe":    { "type": "string", "description": "Probe val name, e.g. 'witness_REQ_003'." },
+                  "traces":   { "type": "integer", "minimum": 0 },
+                  "explored": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+
         "differential": {
           "type": "object",
           "description": "Result of the last differential run: the original implementation and the regenerated one, driven through the same sequences.",
@@ -967,13 +1003,15 @@
               "kind":            { "type": "string", "enum": ["invariant", "property"], "default": "invariant" },
               "quint_name":      { "type": "string" },
               "proof":           { "type": "string", "enum": ["bounded", "inductive", "structural", "smt"], "default": "bounded", "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps; 'structural' results come from the Alloy backend and are valid only within this entry's `scope`." },
-              "backend":         { "type": "string", "enum": ["apalache", "alloy", "z3"], "default": "apalache", "description": "Which validator produced this result. 'alloy' entries are scope-bounded, not step-bounded — their honesty suffix comes from `scope`, not check_results.max_steps." },
+              "backend":         { "type": "string", "enum": ["apalache", "tlc", "alloy", "z3"], "default": "apalache", "description": "Which validator produced this result. 'alloy' entries are scope-bounded, not step-bounded — their honesty suffix comes from `scope`, not check_results.max_steps. 'tlc' entries come from the temporal path (properties[], `quint verify --temporal`): explicit-state, so they are bounded by the model's own finite state space rather than by check_results.max_steps, and they carry no `trace` because --out-itf is Apalache-only." },
               "alloy_command":   { "type": "string", "description": "For backend 'alloy': the .als check command that was run." },
               "scope":           { "type": "string", "description": "For backend 'alloy': the finite scope the verdict is valid within, echoed from the run's receipt.json (e.g. '3 Account, 3 User'). A ✓ outside this scope was never checked." },
               "solver":          { "type": "string", "description": "For backend 'alloy': the SAT solver id used (pinned via .spec/project.json alloy.solver). Recorded because a scope-bounded ✓ is only reproducible against a named solver." },
               "instance":        { "type": "string", "description": "For backend 'alloy': repo-relative path of the counterexample instance XML. Written under specs/<area>/gen/ — GITIGNORED and regenerable, because Alloy picks one instance out of many and its choice is not stable across solver/tool versions. The verdict is committed; the instance is not." },
               "result":          { "type": "string", "enum": ["verified", "counterexample", "timeout", "error", "not-checkable", "not-run"] },
               "duration_s":      { "type": "number" },
+              "batched":         { "type": "boolean", "description": "This verdict came from the batched `quint verify --invariants` run that checked every bounded invariant at once. Same check, same bound, one Apalache start for all of them — recorded because a batched ✓ and a per-id ✓ should not be indistinguishable when reading a ledger back." },
+              "note":            { "type": "string", "description": "Mechanical note about HOW the result was obtained, never about what it means. Written for results whose usual evidence is absent by construction — e.g. a temporal counterexample found by TLC, which produces no ITF trace." },
               "trace":           { "type": "string", "description": "Counterexample ITF path relative to specs/, if any." },
               "counterexample":  { "type": "object", "additionalProperties": true, "description": "NL explanation of the counterexample (nl_explanation). The raw trace lives in the file at `trace`, not inline." }
             }

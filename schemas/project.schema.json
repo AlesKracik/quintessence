@@ -145,6 +145,20 @@
         "max_steps":       { "type": "integer", "minimum": 1, "default": 10 }
       }
     },
+    "quint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OPTIONAL. Tunes the two quint accelerations spec-record runs around the Apalache path — the advisory `quint run` pre-gate and the batched `quint verify --invariants` green path — plus the backend properties[] are checked on. Every field has a working default; the block absent means defaults. Nothing here can produce a verification verdict.",
+      "properties": {
+        "eval_backend":      { "type": "string", "enum": ["rust", "typescript"], "default": "rust", "description": "Evaluator for `quint run` / `quint test`. Rust is the fast one. spec-record probes `quint run --help` first, so an older quint without --backend runs its own default rather than failing on an unknown flag." },
+        "max_samples":       { "type": "integer", "minimum": 1, "default": 10000, "description": "How many randomized executions the pre-gate explores. Also the denominator of the witness pre-screen's 'N of M traces'." },
+        "max_steps":         { "type": "integer", "minimum": 1, "description": "Step bound for the simulator. Defaults to apalache.max_steps, so the pre-gate explores the depth the model checker will." },
+        "seed":              { "type": "string", "description": "Fixes the simulator's random choices. Set it when a pre-gate finding has to be reproducible; leave it out for fresh exploration every run." },
+        "simulate_timeout_seconds": { "type": "integer", "minimum": 1, "default": 120, "description": "Wall-clock cap on the pre-gate. Short on purpose — its whole value is being cheap relative to the model checker." },
+        "batch_invariants":  { "type": "boolean", "default": true, "description": "Try every bounded invariant in one `quint verify --invariants` run before falling back to one run per id. A clean batch records the same verdicts for one Apalache start instead of N; a batch that is not clean changes nothing, because every id then takes the per-id path and gets its own trace." },
+        "temporal_backend":  { "type": "string", "enum": ["tlc", "apalache"], "default": "tlc", "description": "Backend for properties[] (liveness), which run as `quint verify --temporal=<name>`. TLC by default because Apalache's temporal support is partial. TLC is explicit-state: no --max-steps bound and no ITF trace, so a temporal counterexample is recorded without one." }
+      }
+    },
     "z3": {
       "type": "object",
       "additionalProperties": false,

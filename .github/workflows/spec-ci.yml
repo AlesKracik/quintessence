@@ -11,7 +11,10 @@
 #                             declared failure mode of every dependency is
 #                             handled by a requirement or triaged
 #   3. quint typecheck      — sidecars and probe modules still compile
-#   4. quint test           — the model's `run` scenarios still pass
+#   4. quint test           — the model's `run` scenarios still pass, on the
+#                             Rust evaluator (QUINT_EVAL_BACKEND to override;
+#                             probed, so an older quint without --backend
+#                             still runs the gate)
 #
 # QUINT_IR_ENGINE=cli pins lint/matrix to the Quint compiler's typed IR —
 # verdicts here never depend on the lossy regex fallback. It is set on the
@@ -157,8 +160,17 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
+          # The Rust evaluator is the fast one, but --backend landed after
+          # the flag-less releases. Probe --help rather than pinning a
+          # version: an older quint then runs exactly the command it ran
+          # before, instead of failing the gate on an unknown flag.
+          backend=""
+          if quint test --help 2>&1 | grep -q -- "--backend"; then
+            backend="--backend=${QUINT_EVAL_BACKEND:-rust}"
+            echo "── evaluator: ${QUINT_EVAL_BACKEND:-rust}"
+          fi
           for f in specs/*.qnt; do
             case "$f" in *.probes.qnt) continue;; esac
             echo "── test: $f"
-            quint test "$f" || exit 1
+            quint test $backend "$f" || exit 1
           done

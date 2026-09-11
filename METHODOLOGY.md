@@ -141,12 +141,16 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   ├── probes.qnt.template       ← ghost instrumentation + witness probes
 │   └── contract.als.template     ← OPTIONAL Alloy structural sidecar
 ├── .github/workflows/
-│   └── spec-ci.yml               ← lint → matrix --strict → quint typecheck → quint test
+│   └── spec-ci.yml               ← lint → matrix --strict → quint typecheck → quint test (rust)
 │                                    (Apalache + conformance replay are agent-driven, not CI)
 └── tools/
     ├── spec-lint.py              ← consistency checker (incl. EARS + witness obligations)
-    ├── spec-record.py            ← deterministic check+verify runner: quint verify, probes,
-    │                                conformance replay, drift; writes all ledgers
+    ├── spec-record.py            ← deterministic check+verify runner: quint run pre-gate,
+    │                                quint verify (batched, then per-id), --temporal for
+    │                                liveness, probes, conformance replay, drift; writes
+    │                                all ledgers
+    ├── migrate-quint-config.py   ← one-shot: seeds .spec/project.json's `quint` block and
+    │                                flags property verdicts predating the --temporal fix
     ├── spec-readback.py          ← deterministic readback generator (area/change/project)
     │                                + derived phase grid (`status <slug> --json`)
     ├── spec-extract-audit.py      ← code→spec coverage: every decision site accounted for
@@ -508,7 +512,13 @@ It drives the code into the blocking state, attempts the call, and asserts **bot
 
 ### The property-based tier
 
-Apalache returns the *shortest* counterexample, and `stepP` nondets over a handful of users, so replay is a few traces of a few steps — each requirement exercised once, along one path. The adapter `/spec-code-generate` already generates is one method per action, one getter per var, and a `reset()`: that is exactly a stateful property-based-testing interface. `conformance.pbt_command` runs it (`quint run --mbt`, or fast-check/Hypothesis against the same adapter). It complements replay and never replaces it — replay checks the model's own traces, PBT explores beyond them.
+Apalache returns the *shortest* counterexample, and `stepP` nondets over a handful of users, so replay is a few traces of a few steps — each requirement exercised once, along one path. The adapter `/spec-code-generate` already generates is one method per action, one getter per var, and a `reset()`: that is exactly a stateful property-based-testing interface. `conformance.pbt_command` runs it. The zero-new-code option is quint's own simulator:
+
+```
+quint run --mbt --n-traces=1000 --out-itf=traces/pbt/out.itf.json specs/<area>.qnt
+```
+
+`--mbt` adds two fields to every state — `mbt::actionTaken` (which action produced it) and `mbt::nondetPicks` (what each nondet choice was bound to). That is the same action-plus-arguments the probe module's `_last*` ghosts carry, which is why the existing adapter consumes these traces unchanged: `itf_tools.action_params()` reads both conventions, so a witness one-liner renders `login(bob, s1)` whichever tool produced the trace. (`--mbt` is a **simulator** flag. Apalache has no equivalent, which is exactly why the probe module instruments the model with ghosts — the two mechanisms are complements, not duplicates.) fast-check/Hypothesis against the same adapter is the other option. Either way it complements replay and never replaces it — replay checks the model's own traces, PBT explores beyond them.
 
 ### Where this leaves codegen
 
@@ -1220,7 +1230,7 @@ area.status:          raw → structured → formalized → in-review → approv
 |---|---|
 | Safety invariant violations | **Bounded by default** (no counterexample to `max_steps`, rendered `✓ (≤N steps)`); **proven** only for invariants marked `proof: inductive` (rendered `✓ proven`). A bounded ✓ is not a proof — a violation at depth N+1 still ships green. Upgrade load-bearing invariants to inductive. |
 | Behavior reachability (witnesses) | Yes (negated-predicate probes; counterexample = witness trace) |
-| Liveness (eventually X) | **Bounded only.** Temporal checking frequently times out on real models; a PROP result is honest only with its bound stated. Prefer demoting liveness to a witnessed scenario (`run` demonstrating the eventuality once) plus a fairness note. |
+| Liveness (eventually X) | **Not by Apalache.** A `properties[]` entry is a temporal formula, so it runs as `quint verify --temporal=<quint_name>` — and quint checks temporal properties on **TLC** (`--backend=tlc`, the default for this path in `quint.temporal_backend`); Apalache's temporal support is partial. TLC enumerates explicitly: a pass is exhaustive over the model's own finite state space, with no step bound, but also no instance larger than the model declares, and TLC writes no ITF, so a liveness `✗` arrives without a trace to diagram. Rendered `✓ (TLC)`, distinct from a bounded `✓`. State explosion is the failure mode — when it bites, demoting to a witnessed scenario (`run` demonstrating the eventuality once) plus a fairness note is still the honest fallback. |
 | Action vacuity (dead actions) | Free: path-constrained witnesses prove referenced actions fire; `spec-lint` flags unreferenced ones statically |
 | Unreachable declared states | No (vacuously satisfied; caught by `spec-lint` structurally) |
 | Actor-permission completeness | No (caught by `spec-lint`) |
@@ -1236,6 +1246,9 @@ area.status:          raw → structured → formalized → in-review → approv
 `tools/spec-record.py` is the deterministic ledger for both machine-checked phases — **no verification verdict in the area JSON is ever hand-edited**:
 
 - `check <area>` — runs `quint verify` for every invariant, property, and witness probe (and, for invariants marked `proof: "structural"`, `alloy exec` instead — verdict read from the run's `receipt.json`), parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically — with skip-if-fresh (`model_sha` match + valid trace → probe not re-run) and `--only` runs merging into the prior ledger rather than replacing it.
+  - **Before** the model checker, an advisory **simulator pre-gate**: `quint run` over the same invariants, and `--witnesses` over the probes. Seconds, not minutes — quint's own recommended workflow is simulate first, model-check the survivors. It writes `check_results.simulation` and **never** a `formal_status`: `[ok] No violation found` means "not in the executions I explored", which is not a verdict. Its two payoffs are a shallow bug reported at the top of a run instead of after it, and a witness that 0 of 10 000 random traces reach — the vacuity red flag, found cheap. `--only-simulate` runs just this (and deliberately leaves `check_results.ran_at` alone, so an advisory run cannot make an area read as checked); `--no-simulate` skips it.
+  - Bounded invariants are tried **batched first** (`quint verify --invariants=a --invariants=b …`): each `quint verify` pays a JVM start and an Apalache compile, so the green path collapses from N of those to one. A batch that is not clean falls through to the per-id loop, which produces exactly the verdicts and traces it always did — the optimisation can cost one extra run, never change an outcome. Off with `quint.batch_invariants: false`.
+  - Flags that arrived in later quint releases (`run --backend`, `run --witnesses`, `verify --invariants`) are **probed** via `--help` before use, so an older quint runs the command line it always ran instead of failing on an unknown flag.
 - `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
 
 The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-code-verify`.

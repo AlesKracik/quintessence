@@ -145,7 +145,7 @@ Generate the parallel implementation **from the spec alone**. Consulting the ori
 
 2. **Replay harness** — a test file that, for each `*.itf.json` in the traces dir:
    - parses the ITF states (ints arrive as `{"#bigint": "n"}`, maps as `{"#map": [[k,v],...]}`, variants as `{tag, value}` — mirror `tools/itf_tools.py render_value` semantics);
-   - reads the action per step from the `_lastAction` ghost var and its parameters from the param ghosts (`_lastUid`, `_lastSid`, … — written by the probe module's instrumented step; for `quint run --mbt` traces use `mbt::actionTaken`/`mbt::nondetPicks`). Never infer call parameters from state diffs;
+   - reads the action per step from the `_lastAction` ghost var and its parameters from the param ghosts (`_lastUid`, `_lastSid`, … — written by the probe module's instrumented step). **Handle both conventions**: a trace from `quint run --mbt` carries `mbt::actionTaken` plus one option-wrapped record, `mbt::nondetPicks` (`Some(v)` = the value picked, `None` = that choice didn't apply this step), instead of one ghost var per parameter. `itf_tools.action_params()` is the reference implementation of "read either" — mirror its order (picks first, ghosts second) so a probe module simulated with `--mbt` reports quint's own record rather than the hand-written mirror of it. This matters because the PBT tier (`conformance.pbt_command`) feeds this same harness `--mbt` traces. Never infer call parameters from state diffs;
    - calls the adapter method for each step, then asserts every Quint var getter equals the trace's state under the abstraction (ghost vars are bookkeeping — excluded from the comparison);
    - reports the first diverging step with expected/observed values.
 

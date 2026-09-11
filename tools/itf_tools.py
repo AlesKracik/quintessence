@@ -38,6 +38,7 @@ output.
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -47,6 +48,10 @@ MAX_NOTE_LEN = 60
 # prefix is the convention precisely so model vars ("lastLoginTime") are
 # never silently dropped from summaries/diagrams.
 GHOST_PREFIXES = ("_last", "mbt::")
+# Params, not the action label: every _last* ghost except _lastAction itself,
+# and quint's own nondet record when the trace came from `quint run --mbt`.
+GHOST_PARAM_RE = re.compile(r"^_last(?!Action$)")
+NONDET_PICKS_VAR = "mbt::nondetPicks"
 
 # Spec-file layout: every spec JSON carries a type suffix in its filename.
 #   specs/<name>.area.json | specs/<name>.contract.json
@@ -321,6 +326,47 @@ def detect_action_var(trace, override=None):
         if cand in trace["states"][0]:
             return cand
     return None
+
+
+def action_params(state, ghost_vars=None):
+    """Rendered call arguments of the action that produced `state`, in
+    declaration order, deduplicated, empties dropped.
+
+    Two conventions carry the same fact, and both are read here rather than
+    at each call site:
+      - `mbt::nondetPicks` (from `quint run --mbt`) — ONE record var, one
+        field per nondet choice, each wrapped in an option: Some(v) was the
+        value picked, None means that choice did not apply to this action.
+      - `_last*` ghost vars (from the generated probe module) — one var per
+        parameter. This is what `quint verify` traces carry, because Apalache
+        has no --mbt: the probe module instruments the model instead.
+
+    Reading picks first and ghosts second means a trace that has both (a
+    probe module simulated with --mbt) reports quint's own record rather than
+    the hand-written mirror of it."""
+    out = []
+    picks = state.get(NONDET_PICKS_VAR)
+    if isinstance(picks, dict):
+        for key, val in picks.items():
+            if key.startswith("#"):
+                continue
+            if isinstance(val, dict) and set(val.keys()) == {"tag", "value"}:
+                # Option-wrapped: None = this choice was not made this step.
+                if val["tag"] in ("None", "none"):
+                    continue
+                val = val["value"]
+            rendered = render_value(val).strip('"')
+            if rendered and rendered not in out:
+                out.append(rendered)
+        if out:
+            return out
+    if ghost_vars is None:
+        ghost_vars = [v for v in state if GHOST_PARAM_RE.match(v)]
+    for ghost in ghost_vars:
+        rendered = render_value(state.get(ghost)).strip('"')
+        if rendered and rendered not in out:
+            out.append(rendered)
+    return out
 
 
 def step_label(state, idx, action_var):

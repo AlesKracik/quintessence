@@ -44,10 +44,35 @@ fi
 if command -v quint >/dev/null 2>&1; then
   qver="$(quint --version 2>/dev/null | head -1)"
   echo "✓ quint      ${qver:-(version unknown)}"
+  # Optional-flag report, not a gate. spec-record probes for each of these
+  # and degrades to the older command line when one is absent, so an older
+  # quint still checks everything — it just pays for it.
+  qrun_help="$(quint run --help 2>&1 || true)"
+  qver_help="$(quint verify --help 2>&1 || true)"
+  case "$qrun_help" in
+    *--backend*) echo "  ✓ run --backend       (Rust evaluator available for run/test)" ;;
+    *)           echo "  · run --backend       absent — simulator + quint test use the default evaluator" ;;
+  esac
+  case "$qrun_help" in
+    *--witnesses*) echo "  ✓ run --witnesses     (cheap witness pre-screen before Apalache)" ;;
+    *)             echo "  · run --witnesses     absent — witness reachability is only ever answered by the model checker" ;;
+  esac
+  case "$qver_help" in
+    *--invariants*) echo "  ✓ verify --invariants (batched green path: one Apalache start, not N)" ;;
+    *)              echo "  · verify --invariants absent — invariants are checked one model-check run each" ;;
+  esac
+  case "$qver_help" in
+    *--temporal*) echo "  ✓ verify --temporal   (properties[] / liveness are checkable)" ;;
+    *)            echo "  ✗ verify --temporal   absent — properties[] cannot be checked by this quint" ;;
+  esac
 else
   echo "✗ quint      not found"
   missing+=("quint")
 fi
+
+# TLC (the liveness backend behind `quint verify --temporal --backend=tlc`)
+# needs no entry of its own: it is a Java tool quint fetches on first use, and
+# the JVM it runs on is already checked above for Apalache.
 
 # -- Apalache ---------------------------------------------------------------
 # `quint verify` shells out to Apalache and auto-fetches a JAR on first use,
