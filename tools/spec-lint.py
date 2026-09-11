@@ -165,6 +165,17 @@ def parse_sidecar(path):
         # empty, and an empty graph would call every action unreachable.
         "action_calls":     ir.get("action_calls"),
         "const_values":     ir.get("const_values") or {},
+        # The EARS↔model bridge: which var holds a declared state
+        # (var_types × type_variants), what each action reads, and which
+        # variants any assignment can actually produce.
+        "var_types":        ir.get("var_types") or {},
+        "action_reads":     ir.get("action_reads") or {},
+        "action_preserves": ir.get("action_preserves") or {},
+        "action_produces":  ir.get("action_produces") or {},
+        "produced_variants": ir.get("produced_variants") or [],
+        # Which engine answered. `action_reads` is only complete under the
+        # CLI parser, so a check that FAILs on a missing read has to know.
+        "source":           ir.get("source"),
     }
 
 
@@ -330,11 +341,10 @@ def check_state_binding(area_data, area_name, findings):
     ('the Session is Active', not 'the user is logged in') — that's what
     makes the requirement↔state-machine link reviewable and matrix triage
     mechanical. Only fires when the area declares states at all."""
-    declared = set()
-    for ent in (area_data.get("concepts") or {}).get("entities", []) or []:
-        declared.update(ent.get("states") or [])
-    for sm in area_data.get("state_machines", []) or []:
-        declared.update(s.get("name") for s in sm.get("states") or [] if s.get("name"))
+    # Shared with the EARS↔model bridge checks: two definitions of "a
+    # declared state" drifting apart would let one check disagree with
+    # another about the same sentence.
+    declared = declared_states(area_data)
     if not declared:
         return
     gating = area_data.get("status") in ("in-review", "approved")
@@ -590,6 +600,227 @@ def sanity_one_predicate(rid, pred, req, vars_avail, mutations, area_name, findi
             f"`{qref}` assigns {sorted(assigned)} — the predicate may not capture "
             f"this requirement's own effect. Confirm it's the right postcondition.",
             ref=rid)
+
+
+def declared_states(area_data):
+    """Entity states the area declares, from concepts and state machines."""
+    declared = set()
+    for ent in (area_data.get("concepts") or {}).get("entities", []) or []:
+        declared.update(ent.get("states") or [])
+    for sm in area_data.get("state_machines", []) or []:
+        declared.update(s.get("name") for s in sm.get("states") or [] if s.get("name"))
+    return {s for s in declared if s}
+
+
+def _state_to_vars(sidecar):
+    """Declared state name -> the vars that can hold it.
+
+    Two hops through the IR: `type_variants` says which type declares the
+    variant `Locked`, `var_types` says which vars are annotated with that
+    type. `var accountStatus: UserId -> AccountStatus` therefore answers
+    "which variable does 'the account is Locked' talk about" without anyone
+    writing that mapping down."""
+    if not sidecar or "__no_module__" in sidecar:
+        return {}
+    holders = {}
+    for type_name, variants in (sidecar.get("type_variants") or {}).items():
+        for var, annotation in (sidecar.get("var_types") or {}).items():
+            if type_name in (annotation or []):
+                for variant in variants:
+                    holders.setdefault(variant, set()).add(var)
+    return holders
+
+
+def _states_named(text, states):
+    """Declared state names appearing in a sentence, word-boundary matched.
+    Case-sensitive on purpose: state names are identifiers in the sidecar,
+    and 'locked' in prose is a word while `Locked` is the variant."""
+    if not text:
+        return set()
+    return {s for s in states
+            if re.search(rf"\b{re.escape(s)}\b", text)}
+
+
+def check_ears_guard_correspondence(area_data, sidecar, area_name, findings):
+    """ears.state names a state; the requirement's own action must READ the
+    variable that holds it.
+
+    `state-not-bound` already checks that the sentence names a declared
+    state. This checks the other half — that the model actually gates on it.
+    A requirement saying "While the account is Locked" whose action never
+    looks at `accountStatus` is not a translation of that sentence, and that
+    is a mechanical fact, not a judgement about prose.
+
+    CLI engine only. The regex fallback scans action bodies and cannot see a
+    var a guard reaches through a helper (`not(isLocked(uid))`), so under it
+    a correct model would fail this check."""
+    if not sidecar or "__no_module__" in sidecar:
+        return
+    if sidecar.get("source") != "quint-cli":
+        return
+    states = declared_states(area_data)
+    holders = _state_to_vars(sidecar)
+    if not states or not holders:
+        return
+    reads = sidecar.get("action_reads") or {}
+    gating = area_data.get("status") in ("in-review", "approved")
+    severity = FAIL if gating else WARN
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") == "deferred" or req.get("type") == "non-functional":
+            continue
+        action = req.get("quint_ref")
+        if not action or action not in reads:
+            continue
+        named = _states_named((req.get("ears") or {}).get("state"), states)
+        for state in sorted(named):
+            candidates = holders.get(state) or set()
+            if not candidates:
+                continue
+            if candidates & set(reads.get(action) or []):
+                continue
+            add(findings, severity, "ears", "guard-not-in-action", area_name,
+                f"{rid}.ears.state names '{state}', which lives in "
+                f"{sorted(candidates)}, but its action `{action}` never reads "
+                f"{'that variable' if len(candidates) == 1 else 'any of those'} "
+                f"— the model does not gate on the precondition the sentence "
+                f"states. Add the guard, or fix the sentence.",
+                ref=rid)
+
+
+PRESERVE_TERMS = re.compile(
+    r"\b(leave|leaves|remain|remains|stay|stays|keep|keeps|unchanged|"
+    r"still|continue|continues|preserve|preserves|retain|retains)\b",
+    re.IGNORECASE)
+
+
+def check_ears_effect_correspondence(area_data, sidecar, area_name, findings):
+    """ears.response names a state; the requirement's own action must write
+    the variable that holds it.
+
+    The effect half of the bridge. `predicate-off-action` already asks
+    whether the WITNESS touches what the action assigns; this asks whether
+    the SENTENCE does.
+
+    Two kinds of response, and the difference is load-bearing:
+
+      - a CHANGE ("shall lock the account") is implemented by a mutation,
+        so the var must appear in action_mutations;
+      - a PRESERVATION ("shall LEAVE the subscription Active") is
+        implemented by an identity assignment `x' = x`, which
+        action_mutations deliberately excludes. Demanding a mutation there
+        would fail the model for being right.
+
+    So a preservation response is checked against action_preserves instead —
+    which makes the check stronger, not weaker: a response promising the
+    state is left alone, over an action that assigns it, is a contradiction
+    this reports rather than a case it skips. Both engines: mutations and
+    preserves are computed by the regex fallback too.
+
+    Granularity follows the engine, because a claim is only worth making at
+    the precision the parser supports. Under the CLI parser the check is
+    VARIANT-level: the response says 'Expired', so the action's own
+    assignment must build `Expired`. The regex fallback reads assignments
+    line by line and misses a variant built across a continuation, so under
+    it the check drops to VAR-level — the action must write the variable
+    that holds the state. Weaker, never wrong.
+
+    The preservation/change split is read off the prose with a wordlist —
+    the one soft edge here, and the reason a miss lands as a finding about
+    the sentence rather than about the model."""
+    if not sidecar or "__no_module__" in sidecar:
+        return
+    states = declared_states(area_data)
+    holders = _state_to_vars(sidecar)
+    if not states or not holders:
+        return
+    mutations = sidecar.get("action_mutations") or {}
+    preserves = sidecar.get("action_preserves") or {}
+    produces = (sidecar.get("action_produces") or {}
+                if sidecar.get("source") == "quint-cli" else {})
+    gating = area_data.get("status") in ("in-review", "approved")
+    severity = FAIL if gating else WARN
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") == "deferred" or req.get("type") == "non-functional":
+            continue
+        if req.get("modality") == "forbidden":
+            # A prohibition's response describes what does NOT happen. Its
+            # proof is an invariant, and demanding an assignment here would
+            # ask the model to implement the thing it forbids.
+            continue
+        action = req.get("quint_ref")
+        if not action or action not in mutations:
+            continue
+        response = (req.get("ears") or {}).get("response")
+        keeping = bool(response and PRESERVE_TERMS.search(response))
+        wrote = set(mutations.get(action) or [])
+        held = set(preserves.get(action) or [])
+        for state in sorted(_states_named(response, states)):
+            candidates = holders.get(state) or set()
+            if not candidates:
+                continue
+            if keeping:
+                if candidates & held:
+                    continue
+                if candidates & wrote:
+                    add(findings, severity, "ears", "effect-contradicts-action",
+                        area_name,
+                        f"{rid}.ears.response says '{state}' is left as it is, "
+                        f"but its action `{action}` assigns "
+                        f"{sorted(candidates & wrote)} — the sentence promises "
+                        f"no change and the model makes one.",
+                        ref=rid)
+                    continue
+            elif candidates & wrote:
+                # The action writes the right variable. Where the parser can
+                # see WHICH variant it builds, ask the sharper question.
+                built = produces.get(action)
+                if not built or state in built:
+                    continue
+                add(findings, severity, "ears", "effect-wrong-variant", area_name,
+                    f"{rid}.ears.response says the system reaches '{state}', but "
+                    f"its action `{action}` writes {sorted(candidates & wrote)} "
+                    f"to {sorted(built)} and never to '{state}' — the model "
+                    f"moves the right variable to the wrong state.",
+                    ref=rid)
+                continue
+            add(findings, severity, "ears", "effect-not-in-action", area_name,
+                f"{rid}.ears.response says the system reaches '{state}', which "
+                f"lives in {sorted(candidates)}, but its action `{action}` "
+                f"assigns {sorted(wrote) or 'nothing'} — the model never writes "
+                f"the state the sentence promises.",
+                ref=rid)
+
+
+def check_unproducible_states(area_data, sidecar, area_name, findings):
+    """A declared state no assignment in the model ever produces.
+
+    The spec claims the system enters this state; nothing in the sidecar can
+    put it there. Every requirement, invariant and matrix cell mentioning it
+    is then vacuously satisfied — the failure mode witnesses exist to catch,
+    one level up, at the state itself.
+
+    WARN, not FAIL, and deliberately: `produced_variants` counts variants
+    appearing on the right of an assignment. A state built only inside a
+    helper's RETURN value, never named in an assignment, is missed — so a
+    finding here is 'look at this', not 'this is broken'."""
+    if not sidecar or "__no_module__" in sidecar:
+        return
+    variants = {v for vs in (sidecar.get("type_variants") or {}).values() for v in vs}
+    if not variants:
+        return
+    produced = set(sidecar.get("produced_variants") or [])
+    states = declared_states(area_data)
+    for state in sorted(states & variants):
+        if state in produced:
+            continue
+        add(findings, WARN, "quint", "state-never-produced", area_name,
+            f"Declared state '{state}' is a variant in the sidecar, but no "
+            f"assignment in the model ever produces it — nothing can enter "
+            f"it, so every requirement and invariant mentioning it holds "
+            f"vacuously. Add the transition, or drop the state.",
+            ref=state)
 
 
 def check_constraint_values(area_data, sidecar, area_name, findings):
@@ -2016,6 +2247,9 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_quint_refs(area_data, sidecar, area_name, findings)
     check_orphan_actions(area_data, sidecar, area_name, findings)
     check_constraint_values(area_data, sidecar, area_name, findings)
+    check_ears_guard_correspondence(area_data, sidecar, area_name, findings)
+    check_ears_effect_correspondence(area_data, sidecar, area_name, findings)
+    check_unproducible_states(area_data, sidecar, area_name, findings)
     check_brief(area_data, area_name, findings)
     check_formal_model_consistency(area_data, sidecar, area_name, findings)
     check_alloy_backend(root, area_data, area_name, findings)

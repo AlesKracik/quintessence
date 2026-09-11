@@ -3639,3 +3639,181 @@ def test_a_temporal_counterexample_records_no_trace_it_does_not_have(
     assert entry["backend"] == "tlc"
     assert "trace" not in entry
     assert "Apalache-only" in entry["note"]
+
+
+# ── The EARS↔model bridge ───────────────────────────────────────────────────
+# Everything exact in this linter used to live on ONE side of the bridge:
+# predicate↔action, constraint↔literal. Everything crossing into prose was a
+# regex on the sentence alone — `state-not-bound` checks that ears.state names
+# a declared state, and never that the model gates on it. These three checks
+# cross it, using only facts the typed IR already carries: which var holds a
+# declared state, what each action reads, and which variant an assignment
+# builds. No NL understanding, no new authoring burden.
+
+BRIDGE_SIDECAR = {
+    "source": "quint-cli",
+    "type_variants": {"AccountStatus": ["Locked", "Unlocked"],
+                      "SessionStatus": ["Active", "Expired"]},
+    "var_types": {"accountStatus": ["UserId", "AccountStatus"],
+                  "sessions": ["SessionId", "SessionStatus"]},
+    "action_reads": {"login": ["sessions"], "lock": ["accountStatus"]},
+    "action_mutations": {"login": ["sessions"], "lock": ["accountStatus"]},
+    "action_preserves": {"login": ["accountStatus"], "lock": ["sessions"]},
+    "action_produces": {"login": ["Active"], "lock": ["Locked"]},
+    "produced_variants": ["Active", "Locked"],
+}
+
+BRIDGE_AREA = {
+    "area": "auth", "status": "approved",
+    "concepts": {"entities": [
+        {"name": "Account", "states": ["Locked", "Unlocked"]},
+        {"name": "Session", "states": ["Active", "Expired"]}]},
+}
+
+
+def _bridge(check, reqs, sidecar=None):
+    """Run one bridge check over a one-requirement area; return its codes."""
+    area = dict(BRIDGE_AREA, requirements=list(reqs))
+    findings = []
+    check(area, sidecar or BRIDGE_SIDECAR, "auth", findings)
+    return [f.check for f in findings]
+
+
+def test_a_precondition_the_action_never_reads_is_not_a_translation_of_it():
+    """'While the account is Locked' over an action that never looks at
+    accountStatus. The sentence and the model disagree, and which var holds
+    'Locked' is derivable — var_types × type_variants — so nobody has to
+    write the mapping down."""
+    assert _bridge(lint.check_ears_guard_correspondence,
+                   [{"id": "REQ-001", "quint_ref": "login",
+                     "ears": {"state": "While the account is Locked",
+                              "response": "x"}}]) == ["guard-not-in-action"]
+    # The same sentence over the action that does read it: silent.
+    assert _bridge(lint.check_ears_guard_correspondence,
+                   [{"id": "REQ-002", "quint_ref": "lock",
+                     "ears": {"state": "While the account is Locked",
+                              "response": "x"}}]) == []
+
+
+def test_the_guard_check_stands_down_under_the_regex_parser():
+    """The fallback scans action bodies only, so a var a guard reaches
+    through a helper (`not(isLocked(uid))`) is invisible to it. FAILing on a
+    read the parser cannot see would fail correct models, so the check asks
+    which engine answered."""
+    lossy = dict(BRIDGE_SIDECAR, source="regex")
+    assert _bridge(lint.check_ears_guard_correspondence,
+                   [{"id": "REQ-001", "quint_ref": "login",
+                     "ears": {"state": "While the account is Locked",
+                              "response": "x"}}], lossy) == []
+
+
+def test_a_response_promising_a_state_the_action_never_writes():
+    assert _bridge(lint.check_ears_effect_correspondence,
+                   [{"id": "REQ-004", "quint_ref": "login",
+                     "ears": {"response": "the account shall become Locked"}}]
+                   ) == ["effect-not-in-action"]
+
+
+def test_the_right_variable_moved_to_the_wrong_state():
+    """`login` does write `sessions` — so a var-level check passes it. The
+    CLI parser knows it builds `Active` and never `Expired`, which is the
+    sharper question and the one worth asking when it can be answered."""
+    assert _bridge(lint.check_ears_effect_correspondence,
+                   [{"id": "REQ-003", "quint_ref": "login",
+                     "ears": {"response": "the session shall become Expired"}}]
+                   ) == ["effect-wrong-variant"]
+    # Under the regex parser, which misses a variant built across a
+    # continuation line, the check drops to var-level rather than guessing.
+    lossy = dict(BRIDGE_SIDECAR, source="regex")
+    assert _bridge(lint.check_ears_effect_correspondence,
+                   [{"id": "REQ-003", "quint_ref": "login",
+                     "ears": {"response": "the session shall become Expired"}}],
+                   lossy) == []
+
+
+def test_a_preservation_response_is_verified_not_exempted():
+    """'LEAVE the subscription Active' is implemented by `x' = x`, which
+    action_mutations deliberately drops as a non-mutation. Demanding a
+    mutation there fails the model for being right — the shipped
+    subscription example is exactly that case. So a preservation is checked
+    against action_preserves instead, which also makes the opposite error
+    reportable: a sentence promising no change over an action that makes
+    one."""
+    assert _bridge(lint.check_ears_effect_correspondence,
+                   [{"id": "REQ-005", "quint_ref": "login",
+                     "ears": {"response": "leave the account Locked"}}]) == []
+    assert _bridge(lint.check_ears_effect_correspondence,
+                   [{"id": "REQ-006", "quint_ref": "login",
+                     "ears": {"response": "the session shall remain Active"}}]
+                   ) == ["effect-contradicts-action"]
+
+
+def test_a_correct_requirement_produces_no_bridge_findings():
+    assert _bridge(lint.check_ears_effect_correspondence,
+                   [{"id": "REQ-007", "quint_ref": "login",
+                     "ears": {"response": "the session shall become Active"}}]) == []
+
+
+def test_a_prohibition_is_not_asked_to_implement_what_it_forbids():
+    assert _bridge(lint.check_ears_effect_correspondence,
+                   [{"id": "REQ-008", "quint_ref": "login",
+                     "modality": "forbidden",
+                     "ears": {"response": "the account shall not become Locked"}}]) == []
+
+
+def test_a_declared_state_no_assignment_can_produce():
+    """One level above a vacuous witness: nothing can enter the state at
+    all, so every requirement and invariant naming it holds for free."""
+    codes = _bridge(lint.check_unproducible_states, [])
+    assert codes == ["state-never-produced", "state-never-produced"]
+    # Produced states are not flagged; only Expired and Unlocked are missing
+    # from produced_variants.
+    area = dict(BRIDGE_AREA, requirements=[])
+    findings = []
+    lint.check_unproducible_states(area, BRIDGE_SIDECAR, "auth", findings)
+    assert sorted(f.ref for f in findings) == ["Expired", "Unlocked"]
+    assert all(f.severity == lint.WARN for f in findings), (
+        "detection is conservative — a state built only inside a helper's "
+        "return value is missed, so this reports, it does not gate")
+
+
+def test_the_ir_separates_a_mutation_from_an_identity_assignment():
+    """`x' = x` is the no-change idiom and Quint requires every var to be
+    assigned in every action. Counting those as mutations would make the
+    effect check meaningless; discarding them entirely would make every
+    preservation look like a model that ignores the variable."""
+    qnt = TOOLS.parent / "examples" / "specs" / "subscription.qnt"
+    ir = quint_ir.parse_qnt(qnt, engine="regex")
+    assert ir["action_mutations"]["cancel_times_out"] == ["lastBillingResult"]
+    assert "status" in ir["action_preserves"]["cancel_times_out"]
+    assert "status" not in ir["action_mutations"]["cancel_times_out"]
+
+
+def test_the_ir_maps_a_declared_state_to_the_var_that_holds_it():
+    qnt = TOOLS.parent / "examples" / "specs" / "auth.qnt"
+    ir = quint_ir.parse_qnt(qnt, engine="regex")
+    assert ir["var_types"]["accountStatus"] == ["UserId", "AccountStatus"]
+    assert "Locked" in ir["type_variants"]["AccountStatus"]
+    assert ir["action_produces"]["login"] == ["Active"]
+    assert set(ir["produced_variants"]) == {
+        "Active", "Expired", "Locked", "LoggedOut", "Unlocked"}
+
+
+def test_the_shipped_examples_trip_no_bridge_check():
+    """These checks ship enabled. An example that fails them would teach the
+    wrong thing on the first run."""
+    specs = TOOLS.parent / "examples" / "specs"
+    for area_file in sorted(specs.glob("*.area.json")) + sorted(
+            specs.glob("*.contract.json")):
+        area = json.loads(area_file.read_text(encoding="utf-8"))
+        name = area_file.name.split(".")[0]
+        qnt = specs / f"{name}.qnt"
+        if not qnt.exists():
+            continue
+        sidecar = lint.parse_sidecar(qnt)
+        findings = []
+        lint.check_ears_guard_correspondence(area, sidecar, name, findings)
+        lint.check_ears_effect_correspondence(area, sidecar, name, findings)
+        lint.check_unproducible_states(area, sidecar, name, findings)
+        assert not findings, [
+            f"{name}: {f.check} [{f.ref}] {f.description}" for f in findings]

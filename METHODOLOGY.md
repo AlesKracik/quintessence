@@ -484,7 +484,9 @@ Config lives in the area JSON:
 
 The trust chain ends up: human approves EARS fields → mapping to Quint, reviewed via readback → Apalache produces traces (machine) → traces replay against code (machine, self-tested harness). The AI only does the two human-supervised steps; everything load-bearing is checked by a tool.
 
-**Honest residual gaps** — two places remain human-reviewed rather than machine-checked, by construction: (1) whether the Quint action *semantically* matches its EARS fields (the readback shows them side by side to make that review a diff, not a hunt), and (2) whether the adapter's abstraction mapping is faithful (mitigated by the tampered-trace self-test, reviewed as ordinary code). Know where the trust boundary is; don't pretend it isn't there.
+**Honest residual gaps** — two places remain human-reviewed rather than machine-checked, by construction: (1) whether the Quint action *semantically* matches its EARS fields, and (2) whether the adapter's abstraction mapping is faithful (mitigated by the tampered-trace self-test, reviewed as ordinary code). Know where the trust boundary is; don't pretend it isn't there.
+
+Gap (1) is **narrower than it used to be, and will never close.** No tool can decide whether a sentence and a formula mean the same thing — that is not a tooling limit, it is what natural language is. What *is* decidable is whether they can possibly agree, and `spec-lint` now answers that much from the typed IR alone (see "The EARS↔model bridge"): a precondition the action never reads, a response promising a state the action never writes, a response naming a state the action's own assignment never builds. Those are contradictions, not judgements, and they are caught mechanically. What remains — whether the right guard and the right postcondition were chosen at all — stays a human read, and the readback still shows the sentence and the Quint side by side to make it a diff rather than a hunt.
 
 ---
 
@@ -668,6 +670,15 @@ Stateful entities can have their state machine declared explicitly in `state_mac
 | WARN | A non-terminal state has no outgoing transitions (dangling — make it terminal or add a transition) |
 | WARN | A sidecar action mutates `quint_var` but isn't listed as a transition (silent state change) |
 | WARN | `entity` doesn't match any name in `concepts.entities[]` |
+| WARN | A declared state no assignment in the sidecar ever builds (`state-never-produced`) — nothing can enter it, so every requirement and invariant naming it holds vacuously |
+
+And across the prose↔model seam, from the same typed IR (see "The EARS↔Model Bridge"), FAIL from `in-review` on and WARN while authoring:
+
+| Severity | Check |
+|---|---|
+| FAIL/WARN | `ears.state` names a declared state the requirement's own action never reads (`guard-not-in-action`) — the model does not gate on the precondition the sentence states |
+| FAIL/WARN | `ears.response` names a state the action never writes (`effect-not-in-action`), or writes the right var to a different variant (`effect-wrong-variant`) |
+| FAIL/WARN | A response promising no change ("shall LEAVE it Active") over an action that assigns the var (`effect-contradicts-action`) |
 
 These run in `tools/spec-lint.py` against every area; structural errors get flagged before you ever invoke `/spec-check`.
 
@@ -842,6 +853,69 @@ The Alloy CLI is younger than the rest of this chain (introduced 6.2.0, January 
 
 
 ---
+
+## The EARS↔Model Bridge: What Can Be Checked Mechanically
+
+The trust boundary is elicitation — NL in, EARS fields out, human judgement
+throughout. Everything downstream of a captured field is mechanized. The
+seam between them is the one place where a *prose* claim and a *formal*
+artifact sit next to each other, and it used to be checked on one side only:
+`state-not-bound` asks whether `ears.state` names a declared state, never
+whether the model gates on it.
+
+**Translation cannot be verified. Contradiction can.** Nothing decides
+whether "the account locks after too many failures" and a Quint action mean
+the same thing — locks before or after the Nth attempt, does a live session
+survive, is the counter per-account or per-IP. Those are decisions. But
+whether the two can *possibly* agree is a structural question, and the typed
+IR already carries the facts needed to answer it.
+
+Three joins, all from `quint_ir.py`, none needing new authoring:
+
+| | The sentence says | The model must | Finding |
+|---|---|---|---|
+| Guard | `ears.state` names a declared state | its `quint_ref` action READS the var holding that state | `guard-not-in-action` |
+| Effect | `ears.response` names a declared state | its action WRITES that var — and, where the parser can tell, builds that variant | `effect-not-in-action`, `effect-wrong-variant` |
+| Reachability | a state is declared at all | some assignment somewhere BUILDS it | `state-never-produced` |
+
+The var behind a state name is derived, never written down: `type_variants`
+says `AccountStatus` declares `Locked`, `var_types` says
+`var accountStatus: UserId -> AccountStatus`, so "the account is Locked"
+resolves to `accountStatus` on its own.
+
+Three details that decide whether the checks are usable:
+
+- **Guards reach through helpers.** `not(isLocked(uid))` never names
+  `accountStatus`; the helper does. `action_reads` is closed transitively
+  over the module's own defs, because writing guards through helpers is the
+  idiom here and a check that punished it would be worse than none.
+- **Identity assignment is a fact, not noise.** `x' = x` is Quint's
+  no-change idiom, and `action_mutations` drops it — correctly, since Quint
+  requires every var assigned in every action. But a requirement whose
+  response is a *preservation* ("shall LEAVE the subscription Active") is
+  implemented by exactly that, so `action_preserves` records it. The
+  preservation case is then **verified rather than skipped**: the sentence
+  promises no change, so the model must hold the var constant, and a model
+  that assigns it instead is reported (`effect-contradicts-action`). The
+  change/preservation split is read from a wordlist — the one soft edge,
+  and the reason a miss reads as a finding about the sentence.
+- **Precision follows the parser.** Variant-level effect checking and the
+  guard check both need the CLI parser's expression tree; the regex fallback
+  misses a var reached through a helper and a variant built across a
+  continuation line. Under it the effect check drops to var-level and the
+  guard check stands down entirely. Weaker, never wrong — the same
+  discipline as `QUINT_IR_ENGINE=cli` everywhere else.
+
+**What this does not do.** It never says the requirement is right, or that
+the action is the right action. It says the sentence and the formula are not
+talking about different variables. That is a small claim, made exactly, at
+the one seam where nothing exact was being said before.
+
+The next step up would be typed EARS slots — `{"var": "accountStatus", "is":
+"Locked"}` alongside the prose — which would let the witness predicate be
+*generated* instead of hand-written, shrinking the human read from "does
+this paragraph mean this Quint" to "is this slot right". Not implemented;
+noted because it is where this goes.
 
 ## Architecture (Layers 0–6)
 
@@ -1232,14 +1306,14 @@ area.status:          raw → structured → formalized → in-review → approv
 | Behavior reachability (witnesses) | Yes (negated-predicate probes; counterexample = witness trace) |
 | Liveness (eventually X) | **Not by Apalache.** A `properties[]` entry is a temporal formula, so it runs as `quint verify --temporal=<quint_name>` — and quint checks temporal properties on **TLC** (`--backend=tlc`, the default for this path in `quint.temporal_backend`); Apalache's temporal support is partial. TLC enumerates explicitly: a pass is exhaustive over the model's own finite state space, with no step bound, but also no instance larger than the model declares, and TLC writes no ITF, so a liveness `✗` arrives without a trace to diagram. Rendered `✓ (TLC)`, distinct from a bounded `✓`. State explosion is the failure mode — when it bites, demoting to a witnessed scenario (`run` demonstrating the eventuality once) plus a fairness note is still the honest fallback. |
 | Action vacuity (dead actions) | Free: path-constrained witnesses prove referenced actions fire; `spec-lint` flags unreferenced ones statically |
-| Unreachable declared states | No (vacuously satisfied; caught by `spec-lint` structurally) |
+| Unreachable declared states | No (vacuously satisfied). Caught by `spec-lint` structurally, from two directions: reachability over the declared `state_machines` graph, and `state-never-produced` — a declared state that no assignment anywhere in the sidecar builds, so nothing can enter it. |
 | Actor-permission completeness | No (caught by `spec-lint`) |
 | Numeric threshold correctness | Yes (as guards in actions) |
 | Code matches the model | No — that's `/spec-code-verify` conformance replay |
 
 ### spec-lint
 
-`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording and state-binding on `ears.state`/`response` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so (WARN) instead of silently skipping schema validation, and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
+`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording and state-binding on `ears.state`/`response` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), the EARS↔model bridge (a precondition the action never reads, a response promising a state the action never writes or never builds, a declared state no assignment can produce — see "The EARS↔Model Bridge"), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so (WARN) instead of silently skipping schema validation, and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
 
 ### spec-record
 

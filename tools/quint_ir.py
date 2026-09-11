@@ -23,7 +23,12 @@ Normalized output (same shape from both engines):
     "vals":        ["atMostOneActiveSession", ...],   # top-level val/invariant
     "temporals":   ["eventualLogout", ...],
     "runs":        ["happyPath", ...],
-    "action_mutations": {"login": ["sessions", ...], ...},
+    "action_mutations": {"login": ["sessions", ...], ...},   # x' = <new>
+    "action_preserves": {"login": ["accountStatus", ...], ...},  # x' = x
+    "action_produces":  {"login": ["Active"], ...},   # variants this action builds
+    "action_reads":     {"login": ["accountStatus", ...], ...},  # transitive
+    "var_types":        {"accountStatus": ["UserId", "AccountStatus"], ...},
+    "produced_variants": ["Active", "Locked", ...],  # variants an assign builds
     "action_params":    {"login": ["uid", "sid"], ...},
     "action_calls":     {"step": ["login", "logout"], ...}  # action -> actions
                                                             # it calls
@@ -104,6 +109,146 @@ def _collect_mutations(expr):
 
     _walk_expr(expr, visit)
     return mutated
+
+
+def _collect_preserved(expr):
+    """Vars EXPLICITLY held constant (`x' = x`) inside an expression.
+
+    The mirror of _collect_mutations, which skips exactly these. Recorded
+    rather than discarded because a requirement whose response is a
+    preservation ("shall LEAVE the subscription Active") is implemented by
+    an identity assignment: without this, that correct model looks like an
+    action that ignores the variable its sentence is about."""
+    preserved = []
+
+    def visit(node):
+        if node.get("kind") == "app" and node.get("opcode") == "assign":
+            args = node.get("args") or []
+            lhs = args[0] if args else None
+            rhs = args[1] if len(args) > 1 else None
+            if not (isinstance(lhs, dict) and lhs.get("kind") == "name"):
+                return
+            name = lhs.get("name")
+            if (isinstance(rhs, dict) and rhs.get("kind") == "name"
+                    and name and rhs.get("name") == name
+                    and name not in preserved):
+                preserved.append(name)
+
+    _walk_expr(expr, visit)
+    return preserved
+
+
+def _collect_reads(expr):
+    """Var names READ inside an expression, in first-seen order.
+
+    Two exclusions make the answer mean something:
+      - the LHS of an assignment (`x' = ...`) is the target, not a read;
+      - the RHS of an IDENTITY assignment (`x' = x`) is the explicit
+        no-change idiom. Quint requires every var to be assigned in every
+        action, so counting those would make almost every action 'read'
+        almost every var, and any check built on this would be vacuous.
+
+    Over-collects otherwise (params, vals and operator names land here too);
+    the caller narrows to declared vars."""
+    names = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("kind") == "app" and node.get("opcode") == "assign":
+                args = node.get("args") or []
+                lhs = args[0] if args else None
+                rhs = args[1] if len(args) > 1 else None
+                lhs_name = (lhs.get("name")
+                            if isinstance(lhs, dict) and lhs.get("kind") == "name"
+                            else None)
+                if (isinstance(rhs, dict) and rhs.get("kind") == "name"
+                        and lhs_name and rhs.get("name") == lhs_name):
+                    return
+                walk(rhs)  # the LHS is deliberately not walked
+                return
+            if node.get("kind") == "name" and node.get("name"):
+                names.append(node["name"])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(expr)
+    return names
+
+
+def _collect_assign_rhs(expr):
+    """Every name appearing on the RIGHT of an assignment. A variant
+    constructor found here is one the model can actually PRODUCE, as opposed
+    to one it only ever compares against."""
+    names = []
+
+    def walk(node, in_rhs=False):
+        if isinstance(node, dict):
+            if node.get("kind") == "app" and node.get("opcode") == "assign":
+                args = node.get("args") or []
+                if len(args) > 1:
+                    walk(args[1], True)
+                return
+            if in_rhs and node.get("kind") == "name" and node.get("name"):
+                names.append(node["name"])
+            if in_rhs and node.get("opcode"):
+                names.append(node["opcode"])
+            for v in node.values():
+                walk(v, in_rhs)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, in_rhs)
+
+    walk(expr)
+    return names
+
+
+def _type_names(type_expr):
+    """Type names mentioned anywhere in a type annotation. `SessionId ->
+    SessionStatus` yields both, which is what lets a declared state name be
+    traced back to the var that holds it."""
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            name = node.get("name")
+            if isinstance(name, str):
+                found.append(name)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(type_expr)
+    return found
+
+
+def _resolve_reads(raw_reads, raw_calls, var_set, def_names):
+    """Reads, closed transitively over the module's own defs.
+
+    An action that gates through a helper (`not(isLocked(uid))`) never names
+    the var itself — the helper does. Without the closure, every guard
+    written through a helper would look like no guard at all, which is the
+    idiomatic way to write these models and would make the check worse than
+    useless."""
+    direct = {name: [n for n in names if n in var_set]
+              for name, names in raw_reads.items()}
+    callees = {name: [n for n in names if n in def_names and n != name]
+               for name, names in raw_calls.items()}
+    resolved = {name: list(vals) for name, vals in direct.items()}
+    changed = True
+    while changed:
+        changed = False
+        for name in resolved:
+            for callee in callees.get(name) or []:
+                for v in resolved.get(callee) or []:
+                    if v not in resolved[name]:
+                        resolved[name].append(v)
+                        changed = True
+    return resolved
 
 
 def _collect_calls(expr):
@@ -251,8 +396,17 @@ def _normalize_ir(ir_json, qnt_path):
         "action_mutations": {},
         "action_params": {},
         "action_calls": {},
+        "var_types": {},
+        "action_reads": {},
+        "action_preserves": {},
+        "action_produces": {},
+        "produced_variants": [],
     }
     raw_calls = {}
+    # Reads and calls for EVERY def, not just actions: the guard an action
+    # states through a helper is only visible once the helper is resolved.
+    all_reads, all_calls = {}, {}
+    assign_rhs = []
 
     for d in main.get("declarations") or []:
         kind = d.get("kind")
@@ -272,11 +426,17 @@ def _normalize_ir(ir_json, qnt_path):
             out["consts"].append(name)
         elif kind == "var":
             out["vars"].append(name)
+            out["var_types"][name] = _type_names(d.get("type"))
         elif kind == "def":
             q = d.get("qualifier")
+            all_reads[name] = _collect_reads(d.get("expr"))
+            all_calls[name] = _collect_calls(d.get("expr"))
+            assign_rhs.extend(_collect_assign_rhs(d.get("expr")))
             if q == "action":
                 out["actions"].append(name)
                 out["action_mutations"][name] = _collect_mutations(d.get("expr"))
+                out["action_preserves"][name] = _collect_preserved(d.get("expr"))
+                out["action_produces"][name] = _collect_assign_rhs(d.get("expr"))
                 out["action_params"][name] = _lambda_params(d.get("expr"))
                 raw_calls[name] = _collect_calls(d.get("expr"))
             elif q == "run":
@@ -287,6 +447,15 @@ def _normalize_ir(ir_json, qnt_path):
                 out["vals"].append(name)
             # def/puredef/nondet: helpers, not surfaced
     out["action_calls"] = _narrow_to_actions(raw_calls, out["actions"])
+    resolved = _resolve_reads(all_reads, all_calls, set(out["vars"]),
+                              set(all_reads))
+    out["action_reads"] = {a: resolved.get(a, []) for a in out["actions"]}
+    variants = {v for vs in out["type_variants"].values() for v in vs}
+    out["produced_variants"] = [v for v in sorted(variants) if v in set(assign_rhs)]
+    out["action_produces"] = {
+        a: sorted(variants & set(names))
+        for a, names in out["action_produces"].items()
+    }
     return out
 
 
@@ -340,6 +509,8 @@ IMPORT_RE = re.compile(
 )
 ACTION_RE   = re.compile(r"^\s*action\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:\(=]")
 VAR_RE      = re.compile(r"^\s*var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", re.MULTILINE)
+VAR_TYPE_RE = re.compile(
+    r"^\s*var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$", re.MULTILINE)
 CONST_RE    = re.compile(r"^\s*const\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", re.MULTILINE)
 TYPE_RE     = re.compile(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=", re.MULTILINE)
 # `type Status = Active | Locked(int) | Expired`, possibly wrapped across
@@ -511,6 +682,8 @@ def _parse_action_bodies(text):
     _narrow_to_actions() decide. Same input, same narrowed answer, whichever
     engine ran."""
     mutations = {}
+    preserved = {}
+    produces = {}
     locals_ = set()
     raw_calls = {}
     current = None
@@ -523,6 +696,8 @@ def _parse_action_bodies(text):
         if action_match:
             current = action_match.group(1)
             mutations.setdefault(current, [])
+            preserved.setdefault(current, [])
+            produces.setdefault(current, [])
             raw_calls.setdefault(current, [])
             action_depth = depth_before
 
@@ -532,7 +707,10 @@ def _parse_action_bodies(text):
                 rest_match = re.search(rf"\b{re.escape(name)}'\s*=\s*(.*)", line)
                 if rest_match:
                     rest = rest_match.group(1).strip().rstrip(",").rstrip(";").strip()
+                    produces[current].extend(IDENT_RE.findall(rest))
                     if rest == name:
+                        if name not in preserved[current]:
+                            preserved[current].append(name)
                         continue
                 if name not in mutations[current]:
                     mutations[current].append(name)
@@ -545,7 +723,30 @@ def _parse_action_bodies(text):
         if current is not None and depth <= action_depth:
             current = None
             action_depth = 0
-    return mutations, locals_, raw_calls
+    return mutations, preserved, produces, locals_, raw_calls
+
+
+def _scan_var_types(text):
+    """var -> type names in its annotation. `SessionId -> SessionStatus`
+    yields both. As reliable here as in the CLI engine: a var declaration is
+    one line with its type on the right of the colon."""
+    out = {}
+    for name, annotation in VAR_TYPE_RE.findall(text):
+        out[name] = IDENT_RE.findall(annotation)
+    return out
+
+
+def _scan_produced_variants(text, variants):
+    """Variant constructors appearing on the RIGHT of an assignment — the
+    ones the model can produce, as opposed to the ones it only compares
+    against. Scans the whole module, helpers included, so a state built
+    inside a helper still counts."""
+    produced = set()
+    for line in text.splitlines():
+        for m in MUTATION_RE.finditer(line):
+            rhs = line[m.end():]
+            produced.update(v for v in IDENT_RE.findall(rhs) if v in variants)
+    return sorted(produced)
 
 
 def _parse_via_regex(qnt_path):
@@ -563,7 +764,12 @@ def _parse_via_regex(qnt_path):
     mod_name, start, end = _pick_main(named, Path(qnt_path))
     text = clean[start:end]  # scope EVERY scan to the selected module
 
-    mutations, action_locals, raw_calls = _parse_action_bodies(text)
+    (mutations, preserved, produces, action_locals,
+     raw_calls) = _parse_action_bodies(text)
+    var_types = _scan_var_types(text)
+    var_set = set(VAR_RE.findall(text))
+    type_variants = _scan_type_variants(text)
+    all_variants = {v for vs in type_variants.values() for v in vs}
     actions = []
     for line in text.splitlines():
         am = ACTION_RE.match(line)
@@ -585,7 +791,7 @@ def _parse_via_regex(qnt_path):
         "module_name": mod_name,
         "imports": imports,
         "types": TYPE_RE.findall(text),
-        "type_variants": _scan_type_variants(text),
+        "type_variants": type_variants,
         "consts": CONST_RE.findall(text),
         "vars": VAR_RE.findall(text),
         "actions": actions,
@@ -593,8 +799,25 @@ def _parse_via_regex(qnt_path):
         "temporals": TEMPORAL_RE.findall(text),
         "runs": RUN_RE.findall(text),
         "action_mutations": mutations,
+        "action_preserves": preserved,
+        "action_produces": {
+            a: sorted(set(names) & all_variants)
+            for a, names in produces.items()
+        },
         "action_params": _scan_action_params(text),
         "action_calls": _narrow_to_actions(raw_calls, actions),
+        "var_types": var_types,
+        # PARTIAL under this engine, and callers must treat it as such: the
+        # fallback scans action bodies only, so a var a guard reaches through
+        # a helper (`not(isLocked(uid))`) is absent here while the CLI engine
+        # resolves it. A check that FAILs on a missing read must therefore
+        # require source == "quint-cli", or it would fail correct models.
+        "action_reads": {
+            a: [n for n in dict.fromkeys(raw_calls.get(a) or []) if n in var_set]
+            for a in actions
+        },
+        "produced_variants": _scan_produced_variants(
+            text, {v for vs in type_variants.values() for v in vs}),
     }
 
 
