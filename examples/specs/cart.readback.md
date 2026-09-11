@@ -232,7 +232,9 @@ _One number would hide which half is missing. Each row is derived from declared 
 
 <details><summary>Concepts, architecture, decisions, resolved questions, traceability, verification history</summary>
 
-**Entities:** **Cart** (Open / CheckedOut) — CLOSED, read off the code: `status` is only ever compared to "checked_out" and only ever assigned it. Anything else a regenerated implementation invents (Abandoned, Locked) would be new behavior nobody specified.
+**Entities:**
+
+- **Cart** (Open / CheckedOut) — CLOSED, read off the code: `status` is only ever compared to "checked_out" and only ever assigned it. Anything else a regenerated implementation invents (Abandoned, Locked) would be new behavior nobody specified.
 
 **Actors:** Shopper, System
 

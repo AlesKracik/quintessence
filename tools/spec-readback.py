@@ -442,7 +442,12 @@ def ship_verdict(area):
     # keeps READY from reading as a claim about everything.
     scope = area.get("scope") or {}
     if scope.get("included"):
-        rel = " — scope: " + ", ".join(scope["included"])
+        # The verdict is a one-line glance. A long scope list belongs in the
+        # Scope section, not inlined here where it would bury the verdict.
+        inc = scope["included"]
+        joined = ", ".join(inc)
+        rel = (" — scope: " + joined if len(joined) <= 80
+               else f" — scope: {len(inc)} declared area(s), see Scope")
     elif scope.get("excluded"):
         rel = " — relative to the declared scope"
     else:
@@ -819,11 +824,17 @@ def reference_section(root, area, project):
     concepts = area.get("concepts") or {}
     ents = concepts.get("entities") or []
     if ents:
-        ent_strs = []
+        # One per line. Each entity carries a name, a state set AND a prose
+        # description, and the descriptions are the long part — joined with
+        # "·" they run together into a paragraph whose separator is invisible
+        # and in which no single entity can be found by scanning.
+        lines.append("**Entities:**")
+        lines.append("")
         for e in ents:
             states = f" ({' / '.join(e['states'])})" if e.get("states") else ""
-            ent_strs.append(f"**{e.get('name')}**{states} — {e.get('description', '')}")
-        lines.append("**Entities:** " + " · ".join(ent_strs))
+            desc = e.get("description", "")
+            lines.append(f"- **{e.get('name')}**{states}"
+                         + (f" — {desc}" if desc else ""))
         lines.append("")
     if concepts.get("actors"):
         lines.append(f"**Actors:** {', '.join(concepts['actors'])}")
@@ -1062,6 +1073,41 @@ def _slug(name):
     return re.sub(r"[^A-Za-z0-9_]", "_", str(name))
 
 
+# A comma-joined list stops being a list the moment one of its items contains
+# a comma: "create, update, soft delete" is ONE scope item that reads as
+# three, and the reader has no way to tell where one ends. Length matters too,
+# but ambiguity is the real failure — so the comma test alone forces bullets,
+# at any length.
+INLINE_MAX_ITEMS = 3
+INLINE_MAX_CHARS = 72
+
+
+def render_list(label, items, code=False, trailing=""):
+    """A labelled list, inline when that stays readable and bulleted when it
+    does not. Returns markdown lines (with the trailing blank), or [] for an
+    empty list.
+
+    Bullets whenever any item contains a comma (the separator would be
+    ambiguous), there are more than INLINE_MAX_ITEMS of them, or the joined
+    line would run past INLINE_MAX_CHARS. Deterministic in the items alone,
+    so identical input still produces identical output — the readback is
+    reviewed as a diff, and a layout that drifted with anything else would
+    make that diff unreadable."""
+    items = [str(i) for i in (items or []) if str(i).strip()]
+    if not items:
+        return []
+    shown = [f"`{i}`" for i in items] if code else items
+    joined = ", ".join(shown)
+    if (len(items) <= INLINE_MAX_ITEMS
+            and len(joined) <= INLINE_MAX_CHARS
+            and not any("," in i for i in items)):
+        return [f"**{label}:** {joined}{trailing}", ""]
+    out = [f"**{label}:**" + (f" {trailing.strip()}" if trailing.strip() else ""), ""]
+    out += [f"- {i}" for i in shown]
+    out.append("")
+    return out
+
+
 def scope_section(area):
     """Gap A. Printed before anything claims completeness, because every such
     claim below is relative to this boundary."""
@@ -1071,7 +1117,7 @@ def scope_section(area):
         return []
     lines = ["## Scope", ""]
     if inc:
-        lines += ["**In scope:** " + ", ".join(inc), ""]
+        lines += render_list("In scope", inc)
     if exc:
         lines += ["**Deliberately out of scope** — these are decisions, not oversights:", ""]
         for e in exc:
@@ -1090,18 +1136,14 @@ def boundary_section(area):
     if not b:
         return []
     lines = ["## What a Replacement Must Preserve", ""]
-    if b.get("entry_points"):
-        lines += ["**Entry points:** " + ", ".join(f"`{e}`" for e in b["entry_points"]), ""]
-    if b.get("observable_state"):
-        lines += ["**Observable state** (what the differential comparator diffs): "
-                  + ", ".join(f"`{v}`" for v in b["observable_state"]), ""]
-    if b.get("emits"):
-        lines += ["**Emits:** " + ", ".join(b["emits"]), ""]
+    lines += render_list("Entry points", b.get("entry_points"), code=True)
+    lines += render_list("Observable state (what the differential comparator diffs)",
+                         b.get("observable_state"), code=True)
+    lines += render_list("Emits", b.get("emits"))
     if b.get("persistence_contract"):
         lines += ["**Persistence:** " + b["persistence_contract"], ""]
-    if b.get("free"):
-        lines += ["**Deliberately free** \u2014 a replacement may do these differently: "
-                  + ", ".join(b["free"]) + ".", ""]
+    lines += render_list("Deliberately free", b.get("free"),
+                         trailing=" \u2014 a replacement may do these differently.")
     diff = (area.get("check_results") or {}).get("differential") or {}
     if diff:
         result = diff.get("result")

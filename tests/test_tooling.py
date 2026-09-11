@@ -4055,3 +4055,83 @@ def test_the_readback_shows_provenance_and_flags_moved_claims():
     out = "\n".join(readback.reference_section(Path("."), area, {}))
     assert "have moved since" in out
     assert "predates the current requirements" in out
+
+
+# ── Readback legibility: lists that stop being lists ────────────────────────
+# A comma-joined list stops being a list the moment one of its items contains
+# a comma. "Protection Group lifecycle: create, update, soft delete" is ONE
+# scope item that reads as three, and nothing in the rendered text tells the
+# reader where one ends. Length is the lesser problem; ambiguity is the bug.
+
+
+def test_an_item_containing_a_comma_forces_bullets_at_any_length():
+    out = readback.render_list("Emits", ["GroupCreated", "GroupUpdated, GroupDeleted"])
+    assert out[0] == "**Emits:**"
+    assert "- GroupCreated" in out
+    assert "- GroupUpdated, GroupDeleted" in out
+    # Short, comma-free, few: still inline, because bullets for two words
+    # would be noise.
+    assert readback.render_list("Emits", ["GroupCreated", "GroupDeleted"])[0] == (
+        "**Emits:** GroupCreated, GroupDeleted")
+
+
+def test_many_or_long_items_go_to_bullets_too():
+    assert readback.render_list("X", ["a", "b", "c", "d"])[0] == "**X:**"
+    long_pair = ["x" * 50, "y" * 50]
+    assert readback.render_list("X", long_pair)[0] == "**X:**"
+
+
+def test_render_list_is_deterministic_and_drops_empties():
+    items = ["alpha", "beta, gamma", "", "   "]
+    once = readback.render_list("Scope", items)
+    assert once == readback.render_list("Scope", items), "same input, same output"
+    assert not any(ln.strip() == "-" for ln in once)
+    assert readback.render_list("Scope", []) == []
+    assert readback.render_list("Scope", None) == []
+
+
+def test_a_real_scope_list_renders_as_one_bullet_per_item():
+    """The reported case: seven scope items, most containing commas, joined
+    into a single 600-character paragraph."""
+    scope = [
+        "Protection Group lifecycle: create, update, soft delete, protection "
+        "enable/disable, VM ordering",
+        "Service Level Policy lifecycle: create, update, delete, RPO and "
+        "retention validation",
+        "RPO-driven scheduling of protection runs and the concurrency guard",
+    ]
+    out = readback.scope_section({"scope": {"included": scope}})
+    body = [ln for ln in out if ln.startswith("- ")]
+    assert len(body) == 3, out
+    assert body[0].endswith("VM ordering")
+    assert max(len(ln) for ln in out) < 130
+
+
+def test_the_ship_verdict_stays_one_line_when_the_scope_is_long():
+    """Go/no-go is meant to be a glance. Inlining a long scope buries it."""
+    # READY is the only branch that prints the scope clause, so the area has
+    # to actually be ready.
+    area = {"area": "x", "open_questions": [],
+            "requirements": [{"id": "REQ-001", "status": "verified"}],
+            "invariants": [{"id": "INV-001", "formal_status": "verified"}],
+            "scope": {"included": ["a very long scope item " * 4,
+                                   "another long one " * 4]}}
+    verdict = readback.ship_verdict(area)
+    assert len(verdict) < 200, verdict
+    assert "see Scope" in verdict
+
+    short = dict(area, scope={"included": ["Login", "Logout"]})
+    assert "Login, Logout" in readback.ship_verdict(short)
+
+
+def test_entities_render_one_per_line():
+    """Each entity carries a prose description; joined with a middle dot they
+    run together into a paragraph with an invisible separator."""
+    area = {"area": "x", "concepts": {"entities": [
+        {"name": "Subscription", "states": ["Active", "Expired"],
+         "description": "CLOSED: exactly these two states exist, and nothing else."},
+        {"name": "Invoice", "description": "Issued per billing period."}]}}
+    out = "\n".join(readback.reference_section(Path("."), area, {}))
+    assert "**Entities:**\n\n- **Subscription** (Active / Expired) —" in out
+    assert "\n- **Invoice** — Issued per billing period." in out
+    assert " · " not in out

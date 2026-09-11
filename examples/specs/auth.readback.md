@@ -298,7 +298,11 @@ _One number would hide which half is missing. Each row is derived from declared 
 
 <details><summary>Concepts, architecture, decisions, resolved questions, traceability, verification history</summary>
 
-**Entities:** **User** — Registered actor with login credentials. · **Session** (Active / Expired / LoggedOut) — A logged-in instance of a User. · **Account** (Unlocked / Locked) — Lockout state derived from failed attempts.
+**Entities:**
+
+- **User** — Registered actor with login credentials.
+- **Session** (Active / Expired / LoggedOut) — A logged-in instance of a User.
+- **Account** (Unlocked / Locked) — Lockout state derived from failed attempts.
 
 **Actors:** User, System, Admin
 

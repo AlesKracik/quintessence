@@ -318,7 +318,9 @@ _One number would hide which half is missing. Each row is derived from declared 
 
 <details><summary>Concepts, architecture, decisions, resolved questions, traceability, verification history</summary>
 
-**Entities:** **Subscription** (Active / Cancelled / Expired) — CLOSED: exactly these three states exist. 'Paused', 'PendingCancellation' and friends are the states an implementation invents when nobody wrote the list down — the marker is what stops that.
+**Entities:**
+
+- **Subscription** (Active / Cancelled / Expired) — CLOSED: exactly these three states exist. 'Paused', 'PendingCancellation' and friends are the states an implementation invents when nobody wrote the list down — the marker is what stops that.
 
 **Actors:** Customer, System, BillingProvider
 
