@@ -854,6 +854,70 @@ The Alloy CLI is younger than the rest of this chain (introduced 6.2.0, January 
 
 ---
 
+## Provenance: Which Spec, Which Code
+
+`verification_log[]` records that a spec commit and a code commit were once
+**checked together**. That is not the same as recording what the code was
+**built to**, or what the spec was **read from** — different facts,
+established at different moments, and the ones that answer "what has moved
+since". Two optional blocks carry them, both written mechanically:
+
+| Block | Written by | Answers |
+|---|---|---|
+| `generated_from` | `spec-record stamp <area> --generated`, at the end of `/spec-code-generate` | which spec version this code was built to |
+| `extracted_from` | `spec-record stamp <area> --extracted`, after a brownfield extraction or re-extraction | which code version this spec was read out of |
+
+**`generated_from` pins the claims, not just the commit.** It stores
+`spec_sha` (git) *and* `spec_content_sha` — `itf_tools.compute_spec_sha`, a
+hash of what the area *claims*: EARS fields, modality, invariant and property
+statements, constraint values, entity states, scope. The git sha moves on
+every commit to the spec repo, including ones that changed nothing this area
+says; the content hash moves only when the meaning moves. So `spec-lint`
+compares the content hash and emits `generated-from-stale` — WARN, because a
+spec moving after generation is the normal case the moment anyone edits a
+requirement. It means "this code predates the current claims", which is worth
+knowing before trusting a green `/spec-code-verify`, not worth blocking a
+commit over. The blocking question is conformance replay's, and it is asked
+there.
+
+**`extracted_from` exists to give re-extraction a commit range.** Site
+identity stays with the fingerprints in `extraction_triage[]` — those survive
+reformatting, rebases and squashes, which a sha does not, and that is exactly
+why they are content-addressed. But a set of fingerprints can only ever say
+*which sites are new*. It cannot say what a changed guard used to be, or how
+many commits ago it moved, because the previous text is not in the ledger.
+`spec-record changed <area>` supplies that narrative:
+
+```
+> tools/spec-record.py changed auth
+auth: 3 file(s) changed in ../auth-svc since extracted_from @ 081a752
+      (the code this spec was read from) -> HEAD @ ed36df8
+
+In the extracted subtree (src/auth) — 1:
+  src/auth/login.js
+
+Touching a traced file (1 of 1 traced) — these are the ones a requirement
+claims to describe:
+  src/auth/login.js
+```
+
+Run it *before* `spec-extract-audit`, not instead of it: the diff says what
+moved, the fingerprints say which decision sites are new. Baselines are tried
+most-specific first — `extracted_from`, then `generated_from`, then the newest
+`verification_log` entry — and the fallback is named in the output rather than
+applied silently, because each is a weaker answer to the question than the one
+before it.
+
+**Absent means unknown, never current.** Neither block can be backfilled: no
+tool can discover after the fact which commit generated code that shipped
+months ago. Areas predating this stay unstamped, and the readback renders
+provenance as absent rather than omitting the section. Two failure modes are
+refused outright rather than answered: `stamp` with no git repo (a block
+holding no sha reads as "recorded" while answering nothing), and `changed`
+against a baseline git cannot resolve — a rebase or squash can delete the
+commit a stamp points at, and diffing from nothing would report the entire
+tree as changed, which reads as catastrophic drift.
+
 ## The EARS↔Model Bridge: What Can Be Checked Mechanically
 
 The trust boundary is elicitation — NL in, EARS fields out, human judgement
@@ -1324,6 +1388,8 @@ area.status:          raw → structured → formalized → in-review → approv
   - Bounded invariants are tried **batched first** (`quint verify --invariants=a --invariants=b …`): each `quint verify` pays a JVM start and an Apalache compile, so the green path collapses from N of those to one. A batch that is not clean falls through to the per-id loop, which produces exactly the verdicts and traces it always did — the optimisation can cost one extra run, never change an outcome. Off with `quint.batch_invariants: false`.
   - Flags that arrived in later quint releases (`run --backend`, `run --witnesses`, `verify --invariants`) are **probed** via `--help` before use, so an older quint runs the command line it always ran instead of failing on an unknown flag.
 - `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
+- `stamp <area> --generated|--extracted` — writes the spec↔code provenance block (see "Provenance: Which Spec, Which Code"). Reads the shas from git itself; an agent never types one, for the same reason it never types a verdict.
+- `changed <area>` — what moved in the code since the spec was read out of it. Diffs the recorded baseline against HEAD, through two lenses: the extracted subtree, and the files a requirement claims to describe via `traceability[]`.
 
 The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-code-verify`.
 

@@ -32,6 +32,7 @@ import importlib.util
 import io
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -3817,3 +3818,240 @@ def test_the_shipped_examples_trip_no_bridge_check():
         lint.check_unproducible_states(area, sidecar, name, findings)
         assert not findings, [
             f"{name}: {f.check} [{f.ref}] {f.description}" for f in findings]
+
+
+# ── Spec↔code provenance ────────────────────────────────────────────────────
+# verification_log records that a spec commit and a code commit were once
+# CHECKED together. It does not record what the code was BUILT TO, or what the
+# spec was READ FROM — different facts, established at different moments, and
+# the ones that answer "what has moved since". generated_from and
+# extracted_from carry those; `spec-record changed` reads them.
+
+
+class _StampArgs:
+    def __init__(self, root, area, generated=False, extracted=False,
+                 code_path=None, code_root=None, since=None):
+        self.root, self.area = str(root), area
+        self.generated, self.extracted = generated, extracted
+        self.code_path, self.code_root, self.since = code_path, code_root, since
+
+
+def _git_repo(path, files):
+    """A real git repo — these commands shell out to git on purpose, so a
+    faked sha would test the mock rather than the behavior."""
+    path.mkdir(parents=True, exist_ok=True)
+    for rel, text in files.items():
+        f = path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+    for cmd in (["git", "init", "-q", "."],
+                ["git", "config", "user.email", "t@t.t"],
+                ["git", "config", "user.name", "t"],
+                ["git", "add", "-A"],
+                ["git", "commit", "-qm", "initial"]):
+        subprocess.run(cmd, cwd=str(path), capture_output=True)
+    out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(path),
+                         capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def _prov_project(tmp_path):
+    (tmp_path / ".spec").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".spec" / "project.json").write_text(json.dumps(
+        {"project": "demo",
+         "areas": [{"name": "auth", "kind": "area", "code_path": "src/auth"}]}),
+        encoding="utf-8")
+    (tmp_path / "specs").mkdir(exist_ok=True)
+    area_path = tmp_path / "specs" / "auth.area.json"
+    area_path.write_text(json.dumps({
+        "kind": "area", "area": "auth", "version": "1.0.0",
+        "status": "formalized",
+        "requirements": [{"id": "REQ-001", "description": "lock after 5",
+                          "ears": {"response": "lock the account"}}],
+        "traceability": [{"id": "REQ-001", "code": "src/auth/login.js:2"}],
+    }), encoding="utf-8")
+    return area_path
+
+
+def test_stamp_reads_the_shas_itself_rather_than_being_told_them(tmp_path):
+    """Mechanism over trust applies to provenance too. An agent that could
+    type a sha could type the wrong one, for the same reason it must never
+    type a verdict."""
+    sha = _git_repo(tmp_path, {"src/auth/login.js": "// x\n"})
+    area_path = _prov_project(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_stamp(_StampArgs(tmp_path, "auth", extracted=True,
+                                    code_path="src/auth"))
+    assert exc.value.code == 0
+    block = json.loads(area_path.read_text(encoding="utf-8"))["extracted_from"]
+    assert block["code_sha"] == sha
+    assert block["code_path"] == "src/auth"
+    assert block["date"]
+
+
+def test_stamp_generated_pins_the_claims_not_just_the_commit(tmp_path):
+    """spec_sha moves on every commit to the spec repo, including ones that
+    changed nothing this area claims. spec_content_sha moves only when the
+    claims move, which is why it is the one the staleness check compares."""
+    _git_repo(tmp_path, {"src/auth/login.js": "// x\n"})
+    area_path = _prov_project(tmp_path)
+    with pytest.raises(SystemExit):
+        record.cmd_stamp(_StampArgs(tmp_path, "auth", generated=True))
+    area = json.loads(area_path.read_text(encoding="utf-8"))
+    block = area["generated_from"]
+    assert block["spec_content_sha"] == itf.compute_spec_sha(area)
+    assert block["code_sha"]
+
+
+def test_stamp_refuses_when_there_is_no_code_version_to_record(tmp_path):
+    """A provenance block with no sha in it reads as 'recorded' while
+    answering nothing — worse than its absence, which reads as unknown."""
+    (tmp_path / "src" / "auth").mkdir(parents=True)
+    _prov_project(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_stamp(_StampArgs(tmp_path, "auth", extracted=True))
+    assert exc.value.code == 2
+
+
+def test_changed_says_what_moved_and_narrows_to_what_the_spec_claims(tmp_path):
+    _git_repo(tmp_path, {"src/auth/login.js": "if (n >= 5) {}\n",
+                         "src/other.js": "x\n"})
+    area_path = _prov_project(tmp_path)
+    with pytest.raises(SystemExit):
+        record.cmd_stamp(_StampArgs(tmp_path, "auth", extracted=True,
+                                    code_path="src/auth"))
+
+    # Nothing has moved yet.
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_changed(_StampArgs(tmp_path, "auth"))
+    assert exc.value.code == 0
+
+    # The threshold changes, and an untraced file is touched alongside it.
+    (tmp_path / "src" / "auth" / "login.js").write_text("if (n >= 3) {}\n",
+                                                        encoding="utf-8")
+    (tmp_path / "src" / "other.js").write_text("y\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "lower"], cwd=str(tmp_path),
+                   capture_output=True)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(SystemExit) as exc:
+            record.cmd_changed(_StampArgs(tmp_path, "auth"))
+    assert exc.value.code == 1
+    out = buf.getvalue()
+    assert "src/auth/login.js" in out
+    # The traced lens is what a requirement claims to describe; the untraced
+    # file changed too and must not be reported under it.
+    traced_section = out.split("Touching a traced file")[1]
+    assert "src/auth/login.js" in traced_section
+    assert "src/other.js" not in traced_section
+    assert json.loads(area_path.read_text(encoding="utf-8"))["extracted_from"]
+
+
+def test_changed_names_which_baseline_it_fell_back_to(tmp_path):
+    """extracted_from, then generated_from, then the verification log. Each
+    is a weaker answer to 'what changed since the spec was read' than the one
+    before it, so the fallback is stated rather than applied silently."""
+    first = _git_repo(tmp_path, {"src/auth/login.js": "// x\n"})
+    area_path = _prov_project(tmp_path)
+    (tmp_path / "src" / "auth" / "login.js").write_text("// y\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "second"], cwd=str(tmp_path),
+                   capture_output=True)
+    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area["verification_log"] = [{"date": "2026-01-01T00:00:00+00:00",
+                                 "status": "pass", "code_sha": first}]
+    area_path.write_text(json.dumps(area), encoding="utf-8")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(SystemExit):
+            record.cmd_changed(_StampArgs(tmp_path, "auth"))
+    assert "verification_log" in buf.getvalue()
+
+
+def test_changed_refuses_a_baseline_git_cannot_resolve(tmp_path):
+    """A rebase or a squash can delete the commit a stamp points at. Diffing
+    from nothing would report the whole tree as changed, which reads as
+    catastrophic drift — so this is a setup error, not a result."""
+    _git_repo(tmp_path, {"src/auth/login.js": "// x\n"})
+    area_path = _prov_project(tmp_path)
+    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area["extracted_from"] = {"code_sha": "0" * 40}
+    area_path.write_text(json.dumps(area), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_changed(_StampArgs(tmp_path, "auth"))
+    assert exc.value.code == 2
+
+
+def test_changed_with_no_baseline_says_so_instead_of_inventing_one(tmp_path):
+    _git_repo(tmp_path, {"src/auth/login.js": "// x\n"})
+    _prov_project(tmp_path)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        with pytest.raises(SystemExit) as exc:
+            record.cmd_changed(_StampArgs(tmp_path, "auth"))
+    assert exc.value.code == 2
+    out = buf.getvalue()
+    assert "No baseline recorded" in out
+    assert "stamp auth --extracted" in out
+
+
+def test_generated_from_goes_stale_when_a_claim_moves_not_when_a_trace_does():
+    """The whole reason the block stores a CONTENT hash. Recording a witness
+    trace changes the area file; it does not change what the code was built
+    to, and a check that fired on it would be noise nobody reads."""
+    area = {"area": "auth", "status": "approved",
+            "requirements": [{"id": "REQ-001",
+                              "ears": {"response": "lock the account"}}]}
+    area["generated_from"] = {"code_sha": "c" * 40,
+                              "spec_content_sha": itf.compute_spec_sha(area)}
+
+    findings = []
+    lint.check_provenance(area, "auth", findings)
+    assert findings == []
+
+    # Bookkeeping churn: still quiet.
+    area["check_results"] = {"ran_at": "2026-09-11T00:00:00+00:00", "checks": []}
+    area["requirements"][0]["witness"] = {"status": "witnessed",
+                                          "trace": "auth/traces/REQ-001.itf.json"}
+    findings = []
+    lint.check_provenance(area, "auth", findings)
+    assert findings == [], "bookkeeping must not invalidate generated_from"
+
+    # A claim moves: now it fires, and only as a WARN.
+    area["requirements"][0]["ears"]["response"] = "something else"
+    findings = []
+    lint.check_provenance(area, "auth", findings)
+    assert [f.check for f in findings] == ["generated-from-stale"]
+    assert findings[0].severity == lint.WARN
+
+
+def test_an_unstamped_area_is_not_reported_as_fresh():
+    """Absent means unknown. Silence here would let an area with no
+    provenance read exactly like one whose provenance is current."""
+    findings = []
+    lint.check_provenance({"area": "auth"}, "auth", findings)
+    assert findings == []          # nothing claimed, so nothing to contradict
+    lines = readback.reference_section(Path("."), {"area": "auth"}, {})
+    assert not any("Provenance" in ln for ln in lines)
+
+
+def test_the_readback_shows_provenance_and_flags_moved_claims():
+    area = json.loads((TOOLS.parent / "examples" / "specs" / "auth.area.json")
+                      .read_text(encoding="utf-8"))
+    area["extracted_from"] = {"date": "2026-09-01T10:00:00+00:00",
+                              "code_sha": "a" * 40, "code_path": "src/auth"}
+    area["generated_from"] = {"date": "2026-09-02T10:00:00+00:00",
+                              "spec_sha": "b" * 40, "code_sha": "c" * 40,
+                              "spec_content_sha": itf.compute_spec_sha(area)}
+    out = "\n".join(readback.reference_section(Path("."), area, {}))
+    assert "Spec read from code @ `aaaaaaa`" in out
+    assert "subtree `src/auth`" in out
+    assert "Code generated from spec @ `bbbbbbb`" in out
+    assert "have moved since" not in out
+
+    area["requirements"][0]["ears"]["response"] = "something else entirely"
+    out = "\n".join(readback.reference_section(Path("."), area, {}))
+    assert "have moved since" in out
+    assert "predates the current requirements" in out

@@ -200,7 +200,15 @@ Ask for real call sequences — from logs, from existing tests, from a recording
 
 ##### 5. Keep it true as the code moves
 
-Tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-code-verify`, adapter or test command needed first.
+**Stamp what you read it from**, before telling the user anything about keeping it current:
+
+```bash
+tools/spec-record.py stamp <target> --extracted --code-path <subtree>
+```
+
+That records `extracted_from` — the code repo's git sha and the subtree you read. One line in the area JSON, and the thing that makes re-extraction able to say *what changed and since when* instead of only *which fingerprints are new*. Do it now: the sha you need is the one you just read, and it is unrecoverable later. If the code repo is not a git repo, the tool refuses and says so — carry on without it rather than inventing a value.
+
+Then tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-code-verify`, adapter or test command needed first. Re-stamp at the end of each reconciliation, so the next one has a fresh baseline.
 
 ##### 6. Then formalize — and offer fidelity measurement only if it fits
 
@@ -331,7 +339,9 @@ An extracted spec is true of the code on the day it is written and decays from t
 
 Tell the user: "`<target>`'s spec was extracted against code that has changed. I'll re-read `<resolved-code-path>` and show you what no longer matches."
 
-1. **Re-run the audit.** `tools/spec-extract-audit.py <target> --emit`. Fingerprints are stable across reformatting, so what surfaces is real movement: decision sites the ledger has never seen, and ledger entries matching no current site — the code moved out from under a triaged decision.
+1. **Ask what moved, then ask which sites are new.** `tools/spec-record.py changed <target>` first: if the area was stamped (`extracted_from`), this diffs the code the spec was actually read from against HEAD and shows you the changed files, narrowed to the extracted subtree and to the files `traceability[]` claims to describe. It answers *what changed and since when* — which a set of fingerprints cannot, because the ledger does not store the previous text. If it reports no baseline, say so and carry on with step 1b; the audit still works, it just cannot tell you when anything moved.
+
+   1b. **Re-run the audit.** `tools/spec-extract-audit.py <target> --emit`. Fingerprints are stable across reformatting, so what surfaces is real movement: decision sites the ledger has never seen, and ledger entries matching no current site — the code moved out from under a triaged decision. The diff says what moved; the fingerprints say which decision sites are new. Use both.
 
 2. **Re-read the fields that carry literals.** Every `CON-NNN` whose value came from a guard, every `closed: true` state set, every `externals[].outcomes[]` read out of a `catch`. These drift silently: a threshold changes in code and the spec keeps asserting the old number, which is worse than saying nothing because `spec-check` will happily prove things about it.
 

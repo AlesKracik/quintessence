@@ -864,6 +864,31 @@
       }
     },
 
+    "generated_from": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The spec version this area's CODE was generated against, stamped mechanically by `spec-record stamp <area> --generated` at the end of /spec-code-generate. verification_log records that a spec and a code commit were once checked together; this records what the code was BUILT TO, which is a different fact and the one that decides whether regenerating is safe. Absent on any area generated before this block existed, and on every hand-written one — absent means unknown, never means current.",
+      "properties": {
+        "date":             { "type": "string", "format": "date-time" },
+        "spec_sha":         { "type": "string", "description": "git HEAD of the SPEC repo at generation. Locates the exact spec text; moves on every commit, including ones that changed nothing this code depends on." },
+        "spec_content_sha": { "type": "string", "description": "itf_tools compute_spec_sha of the area at generation — a hash of the CLAIMS (EARS fields, modality, invariant statements, constraint values, entity states, scope), not of the file. This is the one worth comparing: it moves when the spec's meaning moves and stays put through bookkeeping churn, so `generated-from-stale` fires on a real divergence rather than on a re-run of the checker." },
+        "code_sha":         { "type": "string", "description": "git HEAD of the CODE repo immediately after generation — the commit the generated code landed in." },
+        "code_repo":        { "type": ["string", "null"], "description": "Logical repo name from project.json repos, for the multi-repo case." }
+      }
+    },
+
+    "extracted_from": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The code version this area's spec was READ OUT OF, stamped mechanically by `spec-record stamp <area> --extracted` after a brownfield extraction or a re-extraction. Its whole purpose is to give re-extraction a commit range: with it, `spec-record changed <area>` shows WHAT changed since the spec was read; without it, re-extraction can only report which fingerprints are new, never what moved or when. Fingerprints stay the identity mechanism — they survive reformatting and rebases, which a sha does not. This adds the narrative, it does not replace them.",
+      "properties": {
+        "date":      { "type": "string", "format": "date-time" },
+        "code_sha":  { "type": "string", "description": "git HEAD of the code repo when the spec was read from it." },
+        "code_repo": { "type": ["string", "null"] },
+        "code_path": { "type": "string", "description": "Subtree the extraction read, relative to the code repo root. Narrows the diff to what the spec actually claims to describe." }
+      }
+    },
+
     "verification_log": {
       "type": "array",
       "description": "Appended by /spec-code-verify each run.",

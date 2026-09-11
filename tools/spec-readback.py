@@ -42,10 +42,23 @@ from itf_tools import (  # noqa: E402
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
     skip_discharge, brief_status, action_params, GHOST_PARAM_RE,
+    compute_spec_sha,
 )
 from quint_ir import _strip_noise  # noqa: E402
 
 MAX_DIAGRAM_STEPS = 12
+CHANGED_HINT = " — `spec-record changed <area>` says what has moved since."
+
+
+def short_sha(sha, width=7):
+    """First `width` chars of a sha, or an em dash when it is absent.
+
+    A named helper rather than an inline conditional inside the f-string:
+    the em dash has to be written as an escape to keep this file's source
+    ASCII-safe, and a backslash inside an f-string expression is a
+    SyntaxError before Python 3.12 (PEP 701). This tooling is still
+    byte-compiled for 3.8."""
+    return sha[:width] if sha else "—"
 
 LEGEND = ("*Legend: ✓ verified — witness trace replayed green against real code · "
           "◐ witnessed — proven possible in the model, not yet demonstrated in code · "
@@ -885,6 +898,40 @@ def reference_section(root, area, project):
         lines.append("")
     else:
         lines.append("_No code generated yet. Run /spec-code-generate._")
+        lines.append("")
+    # Provenance before history: "what was this built from" is the question
+    # a reader has before "when was it last checked", and the two are
+    # different facts. An absent block reads as unknown, never as current —
+    # so it is rendered as absent rather than omitted.
+    gen = area.get("generated_from") or {}
+    ext = area.get("extracted_from") or {}
+    if gen or ext:
+        lines.append("**Provenance:**")
+        lines.append("")
+        if ext:
+            ext_sha = short_sha(ext.get("code_sha"))
+            lines.append(
+                f"- Spec read from code @ `{ext_sha}`"
+                + (f" ({ext['code_repo']})" if ext.get("code_repo") else "")
+                + (f", subtree `{ext['code_path']}`" if ext.get("code_path") else "")
+                + (f" on {ext['date'][:10]}" if ext.get("date") else "")
+                + CHANGED_HINT)
+        if gen:
+            claims = gen.get("spec_content_sha")
+            current = compute_spec_sha(area)
+            moved = bool(claims and current and claims != current)
+            gen_sha = short_sha(gen.get("spec_sha"))
+            now = current[:7] if current else "?"
+            stale = (f"  \u2014 \u26a0 the spec's claims have moved since (now "
+                     f"`{now}`): this code predates the current requirements."
+                     ) if moved else ""
+            lines.append(
+                f"- Code generated from spec @ `{gen_sha}`"
+                + (f", claims @ `{claims[:7]}`" if claims else "")
+                + (f", landing in code @ `{gen['code_sha'][:7]}`"
+                   if gen.get("code_sha") else "")
+                + (f" on {gen['date'][:10]}" if gen.get("date") else "")
+                + stale)
         lines.append("")
     log = area.get("verification_log") or []
     if log:

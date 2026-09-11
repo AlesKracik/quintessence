@@ -22,6 +22,9 @@ Subcommands:
   verify <area> [--root .] [--code-root PATH]
                 [--skip-conformance] [--skip-tests] [--json]
   equiv  <area> [--root .] [--code-root PATH] [--sequences N] [--json]
+  stamp  <area> (--generated | --extracted) [--root .] [--code-root PATH]
+                [--code-path SUBTREE]
+  changed <area> [--root .] [--code-root PATH] [--since SHA] [--code-path P]
 
 What `check` does, in order:
   0. Simulator pre-gate (unless --no-simulate): `quint run` over the area's
@@ -113,6 +116,22 @@ What `equiv` does (brownfield only, and only where it is configured):
   'equivalent-in-sequences' and always carries the sequence count, because
   no number of sequences proves equivalence.
 
+What `stamp` and `changed` do (spec↔code provenance):
+  verification_log records that a spec commit and a code commit were once
+  CHECKED together. It does not record what the code was BUILT TO, or what
+  the spec was READ FROM — different facts, established at different
+  moments, and the ones that answer "what has moved since".
+  `stamp --generated` writes generated_from (spec sha + the content hash of
+  the area's claims + the code sha) at the end of /spec-code-generate;
+  `stamp --extracted` writes extracted_from (code sha + subtree) after a
+  brownfield extraction. Both read git themselves — an agent must never
+  type a sha, for the same reason it never types a verdict.
+  `changed` then answers the question re-extraction actually has: what moved
+  in the code since the spec was read out of it. Fingerprints stay the
+  identity mechanism (they survive reformatting and rebases, a sha does
+  not); this adds the narrative a set of fingerprints cannot carry — what
+  changed, and since when.
+
 Exit codes: 0 = all verified/witnessed/fresh; 1 = any counterexample,
 no-witness, error, timeout, or failed replay/tests; 2 = setup problem
 (missing files/tools).
@@ -129,7 +148,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from itf_tools import (compute_model_sha, load_trace, witness_status,  # noqa: E402
+from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
+                       load_trace, witness_status,
                        area_json_path, is_rejection, skip_discharge)
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
@@ -1064,7 +1084,7 @@ def cmd_check(args):
                 witness["trace"] = trace_rel
                 if current_sha:
                     witness["model_sha"] = current_sha
-                print(f"{rid:<12} WITNESSED        → specs/{trace_rel} ({duration:.1f}s)")
+                print(f"{rid:<12} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s)")
             elif result == "verified":
                 witness["status"] = "no-witness"
                 witness.pop("model_sha", None)
@@ -1456,6 +1476,174 @@ def cmd_verify(args):
     sys.exit(1 if bad else 0)
 
 
+# ── stamp / changed (spec↔code provenance) ───────────────────────────────────
+
+
+def cmd_stamp(args):
+    """Record which spec version code was generated from, or which code
+    version a spec was extracted from.
+
+    Mechanism over trust applies here too: these are git shas and a content
+    hash, so an agent must never type them. It calls this; the tool reads
+    them. That is the same reason check_results and witness blocks are
+    written by a runner rather than by whoever ran it.
+
+    Why the pair is not already in verification_log: that log records that a
+    spec commit and a code commit were once CHECKED together. It does not
+    record what the code was built to, or what the spec was read from —
+    different facts, established at different moments, and the ones that
+    answer "what has moved since".
+    """
+    root = Path(args.root)
+    area_path = area_json_path(root, args.area)
+    area = load_json(area_path)
+    if area is None:
+        fail_setup(f"{area_path} not found.")
+    project = load_json(root / ".spec" / "project.json") or {}
+    repo_root, entry = resolve_code_root(root, args.area, project, args.code_root)
+
+    code_sha = git_head(repo_root)
+    if not code_sha:
+        fail_setup(f"{repo_root} is not a git repo (or git failed) — there is "
+                   f"no code version to record. Commit the code first; a "
+                   f"provenance block with no sha in it would be worse than "
+                   f"none, because it reads as 'recorded'.")
+
+    if args.generated:
+        spec_sha = git_head(root)
+        block = {"date": now_iso(), "code_sha": code_sha}
+        if spec_sha:
+            block["spec_sha"] = spec_sha
+        content_sha = compute_spec_sha(area)
+        if content_sha:
+            block["spec_content_sha"] = content_sha
+        if entry.get("code_repo"):
+            block["code_repo"] = entry["code_repo"]
+        area["generated_from"] = block
+        label = "generated_from"
+    else:
+        block = {"date": now_iso(), "code_sha": code_sha}
+        if entry.get("code_repo"):
+            block["code_repo"] = entry["code_repo"]
+        code_path = args.code_path or entry.get("code_path")
+        if code_path:
+            block["code_path"] = code_path
+        area["extracted_from"] = block
+        label = "extracted_from"
+
+    save_area(area_path, area)
+    print(f"{label}: code @ {code_sha[:7]}"
+          + (f", spec @ {block['spec_sha'][:7]}" if block.get("spec_sha") else "")
+          + (f", claims @ {block['spec_content_sha'][:7]}"
+             if block.get("spec_content_sha") else "")
+          + (f", path {block['code_path']}" if block.get("code_path") else ""))
+    print(f"recorded in {area_path}")
+    sys.exit(0)
+
+
+def cmd_changed(args):
+    """What moved in the code since this spec was read out of it.
+
+    The question re-extraction actually has, and the one fingerprints cannot
+    answer. `extraction_triage[]` is content-addressed on purpose — a
+    fingerprint survives reformatting and rebases, where a line number or a
+    sha does not — but a set of fingerprints only ever says WHICH sites are
+    new. It cannot say what a changed guard used to be, or how many commits
+    ago it moved, because the previous text is not in the ledger.
+
+    So: fingerprints stay the identity mechanism, and this adds the
+    narrative. Run it before `spec-extract-audit`, not instead of it.
+
+    Baseline order, most specific first: extracted_from.code_sha (what the
+    spec was read from), then generated_from.code_sha (what was generated),
+    then the newest verification_log entry (what was last checked). Each is a
+    weaker answer to the question than the one before it, so the fallback is
+    named in the output rather than applied silently.
+    """
+    root = Path(args.root)
+    area_path = area_json_path(root, args.area)
+    area = load_json(area_path)
+    if area is None:
+        fail_setup(f"{area_path} not found.")
+    project = load_json(root / ".spec" / "project.json") or {}
+    repo_root, entry = resolve_code_root(root, args.area, project, args.code_root)
+
+    sources = [
+        ("extracted_from", (area.get("extracted_from") or {}).get("code_sha"),
+         "the code this spec was read from"),
+        ("generated_from", (area.get("generated_from") or {}).get("code_sha"),
+         "the code generated from this spec"),
+    ]
+    log = area.get("verification_log") or []
+    sources.append(
+        ("verification_log",
+         next((e.get("code_sha") for e in reversed(log) if e.get("code_sha")), None),
+         "the last code version verified against this spec"))
+    if args.since:
+        sources.insert(0, ("--since", args.since, "the baseline you named"))
+
+    baseline = next(((name, sha, why) for name, sha, why in sources if sha), None)
+    if baseline is None:
+        print(f"No baseline recorded for '{args.area}'. Nothing pins this spec "
+              f"to a code version, so 'what changed since' has no answer yet.\n"
+              f"  After a brownfield extraction:  "
+              f"tools/spec-record.py stamp {args.area} --extracted\n"
+              f"  After /spec-code-generate:      "
+              f"tools/spec-record.py stamp {args.area} --generated\n"
+              f"Until then, tools/spec-extract-audit.py {args.area} still "
+              f"reports unclaimed sites by fingerprint — it just cannot say "
+              f"what moved, or when.")
+        sys.exit(2)
+
+    source, sha, why = baseline
+    head = git_head(repo_root)
+    if head is None:
+        fail_setup(f"{repo_root} is not a git repo (or git failed).")
+    if head == sha:
+        print(f"{args.area}: code unchanged since {source} ({sha[:7]} — {why}).")
+        sys.exit(0)
+
+    changed = git_changed_files(repo_root, sha)
+    if changed is None:
+        fail_setup(f"git could not diff {sha[:7]}..HEAD in {repo_root}. The "
+                   f"recorded baseline may be gone (rebased, squashed, or a "
+                   f"shallow clone) — re-stamp after reconciling.")
+
+    # Two lenses on the same diff, because they answer different questions.
+    scope = args.code_path or (area.get("extracted_from") or {}).get("code_path")
+    in_scope = [c for c in changed
+                if not scope or c.replace("\\", "/").startswith(scope.rstrip("/") + "/")
+                or c.replace("\\", "/") == scope]
+    traced = {(t.get("code") or "").split(":", 1)[0]
+              for t in area.get("traceability", []) or []}
+    traced.discard("")
+    touching_traced = sorted({c for c in changed for t in traced if path_match(c, t)})
+
+    print(f"{args.area}: {len(changed)} file(s) changed in {repo_root} "
+          f"since {source} @ {sha[:7]} ({why}) -> HEAD @ {head[:7]}")
+    if scope:
+        print(f"\nIn the extracted subtree ({scope}) — {len(in_scope)}:")
+        for c in in_scope:
+            print(f"  {c}")
+    if traced:
+        print(f"\nTouching a traced file ({len(touching_traced)} of "
+              f"{len(traced)} traced) — these are the ones a requirement "
+              f"claims to describe:")
+        for c in touching_traced:
+            print(f"  {c}")
+    if not scope and not traced:
+        print("\n(no extracted_from.code_path and no traceability[] — showing "
+              "the whole diff; narrow it by stamping --extracted with "
+              "--code-path, or by filling traceability[])")
+        for c in changed:
+            print(f"  {c}")
+
+    print(f"\nNext: tools/spec-extract-audit.py {args.area} --emit — the diff "
+          f"says what moved, the fingerprints say which decision sites are "
+          f"new. Re-stamp once the spec is reconciled.")
+    sys.exit(1 if (in_scope or touching_traced or not (scope or traced)) else 0)
+
+
 def main():
     p = argparse.ArgumentParser(description="Deterministic check runner + ledger.")
     sub = p.add_subparsers(dest="command", required=True)
@@ -1500,6 +1688,33 @@ def main():
     pv.add_argument("--json", dest="emit_json", action="store_true",
                     help="Also print the recorded entry as JSON.")
     pv.set_defaults(func=cmd_verify)
+
+    ps = sub.add_parser("stamp", help="Record which spec version code was "
+                                      "generated from, or which code version "
+                                      "a spec was extracted from.")
+    ps.add_argument("area")
+    ps.add_argument("--root", default=".")
+    ps.add_argument("--code-root", dest="code_root")
+    ps.add_argument("--code-path", dest="code_path",
+                    help="Subtree the extraction read, relative to the code "
+                         "repo root. Narrows what `changed` reports.")
+    mode = ps.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--generated", action="store_true",
+                      help="Code was just generated from this spec.")
+    mode.add_argument("--extracted", action="store_true",
+                      help="This spec was just read out of the code.")
+    ps.set_defaults(func=cmd_stamp)
+
+    pg = sub.add_parser("changed", help="What moved in the code since this "
+                                        "spec was read out of it.")
+    pg.add_argument("area")
+    pg.add_argument("--root", default=".")
+    pg.add_argument("--code-root", dest="code_root")
+    pg.add_argument("--code-path", dest="code_path",
+                    help="Override the recorded subtree for this run.")
+    pg.add_argument("--since", help="Diff from this sha instead of the "
+                                    "recorded baseline.")
+    pg.set_defaults(func=cmd_changed)
 
     args = p.parse_args()
 

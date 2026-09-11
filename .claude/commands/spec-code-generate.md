@@ -244,3 +244,17 @@ git commit -m "spec(<target>): apply — <summary>"
 ```
 
 In multi-repo, you'll have two commits — one in the spec repo (updates to traceability + version), one in the code repo. Show both diffs; commit each in its own repo.
+
+### Step 8 — Stamp what this code was built to
+
+**After the code commit exists**, not before — the stamp records the commit the generated code landed in, so it has to be there to record:
+
+```bash
+tools/spec-record.py stamp <target> --generated
+```
+
+This writes `generated_from`: the spec's git sha, the **content hash of its claims** (`spec_content_sha` — EARS fields, modality, invariant statements, constraint values, entity states, scope), and the code sha. You never type any of them; the tool reads git itself, for the same reason you never type a verdict.
+
+Why it is worth a step of its own: `verification_log` records that a spec and a code commit were once *checked together*, which is a different fact from what the code was *built to*. With `generated_from` in place, `spec-lint` can tell the user "this code predates the current requirements" (`generated-from-stale`) the moment someone edits a requirement — and it stays quiet through witness traces and check results, because the hash covers claims, not the file. Skip the stamp and that question has no answer; nothing else in the chain records it.
+
+Then commit the stamped spec — it is a one-line change to the area JSON.

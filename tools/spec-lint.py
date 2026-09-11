@@ -105,6 +105,7 @@ try:
     from itf_tools import is_rejection, witness_entries, skip_discharge
     from itf_tools import brief_status as _brief_status
     from itf_tools import compute_model_sha as _compute_model_sha
+    from itf_tools import compute_spec_sha as _compute_spec_sha
     from itf_tools import load_trace as _load_trace
 except ImportError as e:
     sys.exit(f"ERROR: spec-lint needs tools/quint_ir.py and tools/itf_tools.py "
@@ -1602,6 +1603,46 @@ def check_refusal_artifacts(area_data, area_name, findings):
                 f"refuse.", ref=rid)
 
 
+def check_provenance(area_data, area_name, findings):
+    """Has the spec's MEANING moved since the code was generated from it?
+
+    `generated_from.spec_content_sha` is a hash of the area's claims — EARS
+    fields, modality, invariant and property statements, constraint values,
+    entity states, scope — not of the file. That is the point: re-running
+    the checker, recording a witness trace or appending to the verification
+    log all change the file and none of them change what the code was built
+    to. Comparing content hashes therefore fires on a real divergence and
+    stays quiet through bookkeeping churn.
+
+    WARN, never FAIL. A spec that moved after generation is the normal case
+    the moment anyone edits a requirement; it says "this code predates the
+    current claims", which is a thing to know before trusting a green
+    /spec-code-verify, not a thing to block a commit on. The blocking
+    question — does the code still satisfy the spec — is conformance
+    replay's, and it is asked there.
+
+    The git shas are recorded but deliberately not compared: spec_sha moves
+    on every commit to the spec repo, including ones that changed nothing
+    this area claims, so a check on it would cry wolf on the first unrelated
+    typo fix.
+    """
+    gen = area_data.get("generated_from") or {}
+    stamped = gen.get("spec_content_sha")
+    if not stamped:
+        return
+    current = _compute_spec_sha(area_data)
+    if not current or current == stamped:
+        return
+    add(findings, WARN, "provenance", "generated-from-stale", area_name,
+        f"The code was generated against a different version of this spec's "
+        f"claims (generated at {stamped[:7]}, now {current[:7]}"
+        + (f", code @ {gen['code_sha'][:7]}" if gen.get("code_sha") else "")
+        + f"). Requirements, constraints or scope have moved since. Re-run "
+        f"/spec-code-verify before trusting the traceability, and re-stamp "
+        f"with `spec-record stamp {area_name} --generated` once the code "
+        f"matches again.")
+
+
 def check_brief(area_data, area_name, findings):
     """A prose brief is the one unverifiable thing in the readback, so it is
     pinned like a witness rather than trusted like a README.
@@ -2251,6 +2292,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_ears_effect_correspondence(area_data, sidecar, area_name, findings)
     check_unproducible_states(area_data, sidecar, area_name, findings)
     check_brief(area_data, area_name, findings)
+    check_provenance(area_data, area_name, findings)
     check_formal_model_consistency(area_data, sidecar, area_name, findings)
     check_alloy_backend(root, area_data, area_name, findings)
     check_scope(area_data, area_name, findings)

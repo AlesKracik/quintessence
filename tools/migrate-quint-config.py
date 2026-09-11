@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-migrate-quint-config.py — one-shot migration for the quint-surface change.
+migrate-quint-config.py — one-shot migration for the quint-surface and
+spec↔code-provenance changes.
 
-The schema change it accompanies is ADDITIVE: .spec/project.json gains an
-optional `quint` block, and area JSONs gain check_results.simulation plus two
-optional fields on checks[]. Every existing file therefore still validates,
-and a project that never runs this script keeps working on the defaults.
+The schema changes it accompanies are ADDITIVE: .spec/project.json gains an
+optional `quint` block, and area JSONs gain check_results.simulation, two
+optional fields on checks[], and the generated_from / extracted_from
+provenance blocks. Every existing file therefore still validates, and a
+project that never runs this script keeps working on the defaults.
 
 So this is not a data migration in the "your rows are in the wrong shape"
-sense. It does two things worth doing anyway:
+sense. It does three things worth doing anyway:
 
   1. Writes the `quint` block explicitly into .spec/project.json, with the
      values the tools would have used implicitly. A setting nobody can see is
@@ -24,6 +26,15 @@ sense. It does two things worth doing anyway:
      result. It does not clear them on your behalf — deleting a recorded
      verdict is the kind of edit that should be a visible diff someone
      approved, not a side effect of running a migration.
+
+  3. Reports areas carrying no spec↔code provenance (generated_from /
+     extracted_from). It does NOT backfill them, and no tool can: nothing
+     discovers after the fact which commit generated code that shipped
+     months ago, or which commit a spec was read out of. A fabricated
+     baseline is worse than an absent one, because `spec-record changed`
+     would then diff from the wrong place and report the difference as
+     movement. The forward path is `spec-record stamp` at the next
+     generation or extraction.
 
 Usage:
   python tools/migrate-quint-config.py [--root .] [--apply]
@@ -119,6 +130,34 @@ def audit_areas(root):
     return 1
 
 
+def audit_provenance(root):
+    """Which areas cannot answer "what changed since?" yet.
+
+    Report only. See the module docstring: a backfilled sha would be a guess
+    wearing the costume of a record."""
+    unstamped = []
+    specs = root / "specs"
+    for path in sorted(specs.glob("*.area.json")) + sorted(specs.glob("*.contract.json")):
+        area = load(path)
+        if not isinstance(area, dict) or area.get("kind") == "contract":
+            continue
+        if area.get("generated_from") or area.get("extracted_from"):
+            continue
+        unstamped.append(path)
+    if not unstamped:
+        return
+    print("\n-  areas with no spec/code provenance recorded (absent = unknown, "
+          "not current):")
+    for path in unstamped:
+        name = path.name.split(".")[0]
+        print(f"     {path.name:<32} stamp at the next generation or extraction:")
+        print(f"     {'':<32}   tools/spec-record.py stamp {name} --generated")
+        print(f"     {'':<32}   tools/spec-record.py stamp {name} --extracted")
+    print("   Not backfilled on purpose: which commit built this code is not "
+          "recoverable, and a guessed baseline would make "
+          "`spec-record changed` report the wrong diff as movement.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -128,7 +167,9 @@ def main():
     args = ap.parse_args()
     root = Path(args.root)
     migrate_project(root, args.apply)
-    sys.exit(audit_areas(root))
+    status = audit_areas(root)
+    audit_provenance(root)
+    sys.exit(status)
 
 
 if __name__ == "__main__":
