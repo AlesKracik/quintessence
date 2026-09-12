@@ -25,8 +25,8 @@
 
 | # | Step | Area | Status |
 |---|---|---|---|
-| 1 | [UI-001](./specs/auth-ui.readback.md#ui-001) — While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login. | auth-ui | ⏳ |
-| 2 | [REQ-001](./specs/auth.readback.md#req-001) — When a registered user submits valid credentials, the system shall create an Active session owned by that user. | auth | ⏳ |
-| 3 | [UI-002](./specs/auth-ui.readback.md#ui-002) — While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard. | auth-ui | ⏳ |
-| 4 | [REQ-003](./specs/auth.readback.md#req-003) — While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS. — failure branch: repeated bad credentials lock the account | auth | ⏳ |
-| 5 | [UI-003](./specs/auth-ui.readback.md#ui-003) — While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice. — locked-account counterpart of the submit step | auth-ui | ⏳ |
+| 1 | [UI-001](./specs/auth-ui.readback.md#ui-001) — From the home page, the Sign in button takes the user to the login page. Nothing else happens yet — no credentials have been entered. | auth-ui | ⏳ |
+| 2 | [REQ-001](./specs/auth.readback.md#req-001) — Signing in with correct credentials gives the user a live session of their own — the thing every later request is checked against. | auth | ⏳ |
+| 3 | [UI-002](./specs/auth-ui.readback.md#ui-002) — A user who enters credentials that check out is taken straight to the dashboard; the login page does not stay in the way. | auth-ui | ⏳ |
+| 4 | [REQ-003](./specs/auth.readback.md#req-003) — Every failed sign-in on an account that is still usable counts against it, and once the count reaches MAX_FAILED_ATTEMPTS the account is locked. The lock happens on the attempt that reaches the limit, not the one after it. — failure branch: repeated bad credentials lock the account | auth | ⏳ |
+| 5 | [UI-003](./specs/auth-ui.readback.md#ui-003) — If the credentials belong to an account that has been locked, the user is sent to a page that tells them so, rather than to the dashboard or back to a login form that will never work. — locked-account counterpart of the submit step | auth-ui | ⏳ |

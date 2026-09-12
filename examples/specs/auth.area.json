@@ -82,6 +82,11 @@
       "description": "When a registered user submits valid credentials, the system shall create an Active session owned by that user.",
       "status": "specified",
       "quint_ref": "login",
+      "meaning": {
+        "text": "Signing in with correct credentials gives the user a live session of their own — the thing every later request is checked against.",
+        "author": "agent",
+        "written_against": "fd06fe25998b93c889b7bf339e0e1d4d89a5abdfae436374c664efba6d2a1589"
+      },
       "ears": {
         "trigger": "a registered user submits valid credentials",
         "response": "create an Active session owned by that user"
@@ -100,6 +105,11 @@
       "description": "While a user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.",
       "status": "specified",
       "quint_ref": "logout",
+      "meaning": {
+        "text": "Logging out ends the session it was asked about. The session record stays, marked as logged out, rather than disappearing.",
+        "author": "agent",
+        "written_against": "6d4ab6aa5fb117da5a0856fbf2feba83a3233296453cff79caf04dfa99b7c171"
+      },
       "ears": {
         "state": "the user's session is Active",
         "trigger": "the user requests logout",
@@ -119,6 +129,11 @@
       "description": "If a login attempt fails while the account is Unlocked, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS.",
       "status": "specified",
       "quint_ref": "login_failed",
+      "meaning": {
+        "text": "Every failed sign-in on an account that is still usable counts against it, and once the count reaches MAX_FAILED_ATTEMPTS the account is locked. The lock happens on the attempt that reaches the limit, not the one after it.",
+        "author": "agent",
+        "written_against": "ecf85c06c99cbacbcb1d53b4929e4aaa44a1bfccb3c95aedd42c670905f467bd"
+      },
       "ears": {
         "unwanted": true,
         "state": "the account is Unlocked",
@@ -139,6 +154,11 @@
       "description": "While a session is Active and has been inactive for longer than MAX_SESSION_AGE, the system shall transition it to Expired.",
       "status": "specified",
       "quint_ref": "expire_session",
+      "meaning": {
+        "text": "A session left idle for longer than MAX_SESSION_AGE stops being usable on its own, without anyone having to log out.",
+        "author": "agent",
+        "written_against": "ac0dcb7e9ae2a452b2223f3811aa22fee352c5461767c36990d51ed51f397f0e"
+      },
       "ears": {
         "state": "the session is Active and has been inactive for longer than MAX_SESSION_AGE",
         "response": "transition it to Expired"
@@ -158,6 +178,11 @@
       "status": "specified",
       "modality": "forbidden",
       "quint_ref": "login",
+      "meaning": {
+        "text": "A locked account cannot be signed into, even with the right password. The attempt changes nothing — no new session, and the failure count does not move either.",
+        "author": "agent",
+        "written_against": "d9bad7537d4e1e65eff8f69aa7acad3d718660f560d2f6e13d40c9982abee3d2"
+      },
       "ears": {
         "state": "the Account is Locked",
         "trigger": "the user submits valid credentials",

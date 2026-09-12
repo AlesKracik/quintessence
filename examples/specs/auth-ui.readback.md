@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 3 of 3 requirement(s) not verified against code; 1 of 1 invariant(s) not holding.
 
-**Status:** formalized  |  **Requirements:** 0/3 verified, 0/3 witnessed  |  **Invariants:** 0 proven + 0 bounded / 1  |  **Coverage:** matrix not run  |  **Open questions:** 0  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/3 verified, 0/3 witnessed  |  **Invariants:** 0 proven + 0 bounded / 1  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Open questions:** 0  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (rejection-style requirement; an invariant carries the proof)*
 
@@ -14,9 +14,9 @@ Login flow UI: Home screen, Login form, Dashboard (auth-required), LockedNotice.
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — UI-001: While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
-- **Unchecked requirement** — UI-002: While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
-- **Unchecked requirement** — UI-003: While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
+- **Unchecked requirement** — UI-001: From the home page, the Sign in button takes the user to the login page. Nothing else happens yet — no credentials have been entered.
+- **Unchecked requirement** — UI-002: A user who enters credentials that check out is taken straight to the dashboard; the login page does not stay in the way.
+- **Unchecked requirement** — UI-003: If the credentials belong to an account that has been locked, the user is sent to a page that tells them so, rather than to the dashboard or back to a login form that will never work.
 
 ## Navigation
 
@@ -50,9 +50,9 @@ graph TB
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [UI-001](#ui-001) | navigate to Login | must |
-| ⏳ | [UI-002](#ui-002) | navigate to Dashboard | must |
-| ⏳ | [UI-003](#ui-003) | navigate to LockedNotice | must |
+| ⏳ | [UI-001](#ui-001) | From the home page, the Sign in button takes the user to the login page. Nothing else h… | must |
+| ⏳ | [UI-002](#ui-002) | A user who enters credentials that check out is taken straight to the dashboard; the lo… | must |
+| ⏳ | [UI-003](#ui-003) | If the credentials belong to an account that has been locked, the user is sent to a pag… | must |
 
 ## What the System Does
 
@@ -60,9 +60,11 @@ graph TB
 
 #### UI-001
 
-⏳ While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
+⏳ From the home page, the Sign in button takes the user to the login page. Nothing else happens yet — no credentials have been entered.
 
-<details><summary>Quint action `click_sign_in`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `click_sign_in`, witness predicate + trace</summary>
+
+**As specified (EARS):** While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
 
 `specs/auth-ui.qnt:L47-L52` · model `24b0c5487088`
 
@@ -83,9 +85,11 @@ graph TB
 
 #### UI-002
 
-⏳ While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
+⏳ A user who enters credentials that check out is taken straight to the dashboard; the login page does not stay in the way.
 
-<details><summary>Quint action `submit_success`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `submit_success`, witness predicate + trace</summary>
+
+**As specified (EARS):** While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 
 `specs/auth-ui.qnt:L56-L63` · model `24b0c5487088`
 
@@ -110,9 +114,11 @@ graph TB
 
 #### UI-003
 
-⏳  *(failure path)* While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
+⏳  *(failure path)* If the credentials belong to an account that has been locked, the user is sent to a page that tells them so, rather than to the dashboard or back to a login form that will never work.
 
-<details><summary>Quint action `submit_locked`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `submit_locked`, witness predicate + trace</summary>
+
+**As specified (EARS):** While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 
 `specs/auth-ui.qnt:L66-L72` · model `24b0c5487088`
 
@@ -149,7 +155,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | External systems | — | none declared — if the area calls anything, this is a gap |
 | Assumptions | — | none recorded |
 | Temporal behavior | — | none declared |
-| Extraction coverage | — | not audited — `tools/spec-extract-audit.py` |
+| Extraction coverage | — | n/a (no code) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | — | no rejection requirements |
 | Examples | — | none written |

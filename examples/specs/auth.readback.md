@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 5 of 5 requirement(s) not verified against code; 4 of 4 invariant(s) not holding; 3 open question(s).
 
-**Status:** formalized  |  **Requirements:** 0/5 verified, 0/5 witnessed  |  **Invariants:** 0 proven + 0 bounded / 4  |  **Coverage:** 13 cells, 4 covered, 9 triaged, 0 untriaged  |  **Open questions:** 3  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/5 verified, 0/5 witnessed  |  **Invariants:** 0 proven + 0 bounded / 4  |  **Coverage:** 13 cells, 4 covered, 9 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Open questions:** 3  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (rejection-style requirement; an invariant carries the proof)*
 
@@ -47,10 +47,10 @@ flowchart LR
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
-- **Unchecked requirement** — REQ-002: While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
-- **Unchecked requirement** — REQ-003: While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
-- **Unchecked requirement** — REQ-004: While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
+- **Unchecked requirement** — REQ-001: Signing in with correct credentials gives the user a live session of their own — the thing every later request is checked against.
+- **Unchecked requirement** — REQ-002: Logging out ends the session it was asked about. The session record stays, marked as logged out, rather than disappearing.
+- **Unchecked requirement** — REQ-003: Every failed sign-in on an account that is still usable counts against it, and once the count reaches MAX_FAILED_ATTEMPTS (= 5, CON-001) the account is locked. The lock happens on the attempt that reaches the limit, not the one after it.
+- **Unchecked requirement** — REQ-004: A session left idle for longer than MAX_SESSION_AGE (= 24 step-units, CON-002) stops being usable on its own, without anyone having to log out.
 - **Open coverage GAPs** — Q-003 (spec is silent on triaged-real cells).
 - **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
@@ -60,11 +60,11 @@ flowchart LR
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [REQ-001](#req-001) | create an Active session owned by that user | must |
-| ⏳ | [REQ-002](#req-002) | transition that session to LoggedOut | must |
-| ⏳ | [REQ-003](#req-003) | increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS | must |
-| ⏳ | [REQ-004](#req-004) | transition it to Expired | must |
-| ⊘ | [REQ-005](#req-005) | refuse the login and leave every session and counter untouched | forbidden |
+| ⏳ | [REQ-001](#req-001) | Signing in with correct credentials gives the user a live session of their own — the th… | must |
+| ⏳ | [REQ-002](#req-002) | Logging out ends the session it was asked about. The session record stays, marked as lo… | must |
+| ⏳ | [REQ-003](#req-003) | Every failed sign-in on an account that is still usable counts against it, and once the… | must |
+| ⏳ | [REQ-004](#req-004) | A session left idle for longer than MAX_SESSION_AGE stops being usable on its own, with… | must |
+| ⊘ | [REQ-005](#req-005) | A locked account cannot be signed into, even with the right password. The attempt chang… | forbidden |
 
 ## What the System Does
 
@@ -74,9 +74,11 @@ flowchart LR
 
 #### REQ-001
 
-⏳ When a registered user submits valid credentials, the system shall create an Active session owned by that user.
+⏳ Signing in with correct credentials gives the user a live session of their own — the thing every later request is checked against.
 
-<details><summary>Quint action `login`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `login`, witness predicate + trace</summary>
+
+**As specified (EARS):** When a registered user submits valid credentials, the system shall create an Active session owned by that user.
 
 `specs/auth.qnt:L75-L87` · model `ff015ad88937`
 
@@ -106,9 +108,11 @@ flowchart LR
 
 #### REQ-003
 
-⏳  *(failure path)* While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
+⏳  *(failure path)* Every failed sign-in on an account that is still usable counts against it, and once the count reaches MAX_FAILED_ATTEMPTS (= 5, CON-001) the account is locked. The lock happens on the attempt that reaches the limit, not the one after it.
 
-<details><summary>Quint action `login_failed`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `login_failed`, witness predicate + trace</summary>
+
+**As specified (EARS):** While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
 
 `specs/auth.qnt:L112-L128` · model `ff015ad88937`
 
@@ -142,9 +146,11 @@ flowchart LR
 
 #### REQ-002
 
-⏳ While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
+⏳ Logging out ends the session it was asked about. The session record stays, marked as logged out, rather than disappearing.
 
-<details><summary>Quint action `logout`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `logout`, witness predicate + trace</summary>
+
+**As specified (EARS):** While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
 
 `specs/auth.qnt:L90-L104` · model `ff015ad88937`
 
@@ -172,9 +178,11 @@ flowchart LR
 
 #### REQ-004
 
-⏳ While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
+⏳ A session left idle for longer than MAX_SESSION_AGE (= 24 step-units, CON-002) stops being usable on its own, without anyone having to log out.
 
-<details><summary>Quint action `expire_session`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `expire_session`, witness predicate + trace</summary>
+
+**As specified (EARS):** While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
 
 `specs/auth.qnt:L131-L145` · model `ff015ad88937`
 
@@ -202,7 +210,7 @@ flowchart LR
 
 #### REQ-005
 
-⊘  *(failure path)* While the Account is Locked, if the user submits valid credentials, then the system shall refuse the login and leave every session and counter untouched.
+⊘  *(failure path)* A locked account cannot be signed into, even with the right password. The attempt changes nothing — no new session, and the failure count does not move either.
 
 > **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-002**.
 
@@ -211,7 +219,9 @@ flowchart LR
 
 > **Witness skipped:** A prohibition has no reachable state to witness — there is no step in which 'the login did not happen' becomes visible. INV-002 (noSessionWhileLocked) carries the model-side proof.
 
-<details><summary>Quint action `login`, witness predicate + trace</summary>
+<details><summary>EARS sentence, Quint action `login`</summary>
+
+**As specified (EARS):** While the Account is Locked, if the user submits valid credentials, then the system shall refuse the login and leave every session and counter untouched.
 
 `specs/auth.qnt:L75-L87` · model `ff015ad88937`
 
@@ -287,7 +297,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | External systems | — | none declared — if the area calls anything, this is a gap |
 | Assumptions | — | none recorded |
 | Temporal behavior | — | none declared |
-| Extraction coverage | — | not audited — `tools/spec-extract-audit.py` |
+| Extraction coverage | — | n/a (no code) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | ! | 1/1 rejection(s) with an artifact, 0 passing |
 | Examples | — | none written |

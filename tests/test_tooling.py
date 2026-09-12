@@ -3383,6 +3383,129 @@ def test_the_shipped_example_carries_a_current_brief():
     assert itf.brief_status(area)[0] == "current", "example brief pin is stale"
 
 
+# ── The meaning: the requirement in plain words, pinned per requirement ─────
+# EARS fields speak the system's vocabulary, identifiers and exception names
+# included. `meaning.text` says what that amounts to for a reviewer who has
+# never seen the code. It is authored prose, so it is pinned, not derived —
+# and a stale one is never rendered.
+
+def _req_with_meaning(text="In plain words: the thing happens.", **meaning):
+    req = {"id": "REQ-001", "status": "specified",
+           "ears": {"trigger": "an update carries a different serviceLevelPolicyId",
+                    "unwanted": True,
+                    "response": "refuse with NonMatchingTopologyException"}}
+    if text:
+        req["meaning"] = dict(text=text, **meaning)
+    return req
+
+
+def test_meaning_sha_ignores_bookkeeping_and_moves_with_the_requirement():
+    req = _req_with_meaning()
+    before = itf.compute_meaning_sha(req)
+    req["witness"] = {"status": "witnessed", "trace": "t.json"}
+    req["extraction"] = {"evidence": "svc.ts:10-20"}
+    assert itf.compute_meaning_sha(req) == before, \
+        "re-running the checker cannot make a plain-words sentence wrong"
+    req["ears"]["response"] = "accept the update"
+    assert itf.compute_meaning_sha(req) != before
+
+
+def test_meaning_pins_are_independent_per_requirement():
+    a, b = _req_with_meaning(), _req_with_meaning()
+    b["id"] = "REQ-002"
+    b_before = itf.compute_meaning_sha(b)
+    a["ears"]["response"] = "moved"
+    assert itf.compute_meaning_sha(b) == b_before, \
+        "editing one requirement must not unpin another's meaning"
+
+
+def test_meaning_status_reports_absent_current_and_stale():
+    assert itf.meaning_status(_req_with_meaning(text=""))[0] == "absent"
+    req = _req_with_meaning()
+    assert itf.meaning_status(req)[0] == "stale", "unpinned prose is not trustworthy"
+    req["meaning"]["written_against"] = itf.compute_meaning_sha(req)
+    assert itf.meaning_status(req)[0] == "current"
+    req["ears"]["response"] = "moved"
+    assert itf.meaning_status(req)[0] == "stale"
+
+
+@pytest.mark.parametrize("status,severity", [
+    ("structured", "warn"), ("formalized", "warn"),
+    ("in-review", "fail"), ("approved", "fail"),
+])
+@pytest.mark.parametrize("check,req", [
+    ("meaning-missing", _req_with_meaning(text="")),
+    ("meaning-stale", _req_with_meaning(written_against="0" * 64)),
+])
+def test_missing_or_stale_meaning_warns_then_fails_at_review(status, severity,
+                                                             check, req):
+    findings = []
+    lint.check_meaning({"status": status, "requirements": [json.loads(json.dumps(req))]},
+                       "auth", findings)
+    hits = [f for f in findings if f.check == check]
+    assert len(hits) == 1 and hits[0].severity == severity
+
+
+@pytest.mark.parametrize("status", ["raw", "deferred"])
+def test_requirements_with_nothing_to_distil_are_exempt(status):
+    req = _req_with_meaning(text="")
+    req["status"] = status
+    findings = []
+    lint.check_meaning({"status": "approved", "requirements": [req]}, "auth", findings)
+    assert findings == []
+
+
+def test_a_current_meaning_is_the_sentence_the_readback_leads_with():
+    req = _req_with_meaning()
+    req["meaning"]["written_against"] = itf.compute_meaning_sha(req)
+    out = "\n".join(readback.render_requirement(".", {"area": "auth"}, req, [], set()))
+    assert "In plain words: the thing happens." in out
+    # What was specified stays reachable, one click away.
+    assert "**As specified (EARS):** If an update carries a different " \
+           "serviceLevelPolicyId" in out
+    assert "EARS sentence" in out, "the fold has to say what it hides"
+
+
+def test_a_stale_meaning_is_not_rendered_as_the_headline():
+    """A distillation of an earlier requirement reads like it was reviewed."""
+    req = _req_with_meaning(text="STALE PROSE", written_against="0" * 64)
+    out = "\n".join(readback.render_requirement(".", {"area": "auth"}, req, [], set()))
+    headline = [ln for ln in out.split("\n") if ln.startswith("⏳")][0]
+    assert "NonMatchingTopologyException" in headline, "fell back to EARS"
+    assert "Plain-words summary is stale" in out
+    assert "STALE PROSE" in out, "the superseded sentence is quoted, not hidden"
+
+
+def test_meaning_carries_constraint_values_inline_like_the_ears_sentence():
+    req = _req_with_meaning(text="The account locks once failures reach MAX_TRIES.")
+    req["meaning"]["written_against"] = itf.compute_meaning_sha(req)
+    cons = [{"id": "CON-001", "name": "MAX_TRIES", "value": 5, "unit": "attempts"}]
+    assert "MAX_TRIES (= 5 attempts, CON-001)" in readback.req_sentence(req, cons)
+
+
+def test_missing_meanings_roll_up_in_needs_your_attention(tmp_path):
+    area = {"area": "auth", "requirements": [
+        _req_with_meaning(text=""),
+        dict(_req_with_meaning(text=""), id="REQ-002"),
+        dict(_req_with_meaning(text=""), id="REQ-003", status="raw"),
+    ]}
+    items = readback.attention_items(str(tmp_path), "auth", area)
+    hits = [i for i in items if "No plain-words summary" in i]
+    assert len(hits) == 1
+    assert "2 requirement(s)" in hits[0] and "REQ-003" not in hits[0]
+
+
+def test_the_shipped_examples_carry_current_meanings():
+    for name in ("auth", "cart", "subscription", "auth-ui"):
+        area = json.loads((TOOLS.parent / "examples" / "specs" / f"{name}.area.json")
+                          .read_text(encoding="utf-8"))
+        for req in area["requirements"]:
+            if req.get("status") in ("raw", "deferred"):
+                continue
+            assert itf.meaning_status(req)[0] == "current", \
+                f"{name}/{req['id']} meaning pin is stale"
+
+
 # ── The quint surface beyond `verify --invariant` ───────────────────────────
 # Six accelerations/corrections landed at once, and five of them are
 # optimisations of an existing path. The property that matters across all of

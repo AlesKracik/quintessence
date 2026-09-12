@@ -349,6 +349,17 @@
               "inferred_by": { "type": "string", "description": "'agent' | 'human' | 'agent+confirmed'. A confirmed inference is not the same claim as an unreviewed one." }
             }
           },
+          "meaning": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "The requirement in plain words — what it MEANS, written by whoever understood what the identifiers and exception names in the EARS fields stand for. 'refuse with NonMatchingTopologyException on serviceLevelPolicyId' names two symbols and asserts nothing a reviewer without the code can agree or disagree with; the meaning says what condition holds and what the system does about it. This is the sentence the readback prints as the requirement's headline; the EARS sentence moves into the collapsed details beside the Quint action, so the names stay one click away. Like a brief, it is prose and cannot be machine-checked, so it carries a freshness pin per requirement: `written_against` records the requirement sha it was written for, and spec-lint flags it once that requirement moves.",
+            "required": ["text"],
+            "properties": {
+              "text": { "type": "string", "minLength": 1, "description": "One or two sentences, plain English, no identifiers carrying the load. Declared state, screen and entity names are welcome — those are the vocabulary, not the leakage." },
+              "written_against": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 from `tools/itf_tools.py meaning-sha <area>` — the requirement content this meaning restates. Mismatch means the requirement moved and the plain-words sentence may describe something no longer specified." },
+              "author": { "type": "string", "enum": ["agent", "human"], "description": "Who wrote it. A human-written meaning is not re-authored by the agent without asking." }
+            }
+          },
           "ears": {
             "type": "object",
             "description": "EARS-structured requirement (Easy Approach to Requirements Syntax). The fields ARE the structure — the EARS pattern is derived from which are filled (trigger → 'When …', state → 'While …', both → complex, feature → 'Where …'; none → ubiquitous, which belongs in invariants[] instead). Mapping to Quint: trigger → action, state → require guard, response → effect. spec-lint validates; a requirement without ears past status raw/needs-validation gets a WARN.",

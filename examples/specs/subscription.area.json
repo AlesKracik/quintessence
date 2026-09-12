@@ -117,6 +117,11 @@
       "modality": "must",
       "determinism": "deterministic",
       "quint_ref": "cancel_subscription",
+      "meaning": {
+        "text": "Cancelling a live subscription stops it being billed again and records it as cancelled.",
+        "author": "agent",
+        "written_against": "4510fd04d3e94e46e576e31c382ee830834bf1f98307582592b006778ab4a59d"
+      },
       "ears": {
         "state": "the Subscription is Active",
         "trigger": "the customer cancels",
@@ -147,6 +152,11 @@
       "status": "specified",
       "modality": "must",
       "quint_ref": "cancel_subscription",
+      "meaning": {
+        "text": "Cancelling does not cut the customer off immediately: they keep what they already paid for until the paid period runs out.",
+        "author": "agent",
+        "written_against": "07e7668fa44f25e30f37b971a5d7e30713d9347304bb19975f334509e17fd649"
+      },
       "ears": {
         "state": "the Subscription is Cancelled and the paid period has not ended",
         "response": "keep access available"
@@ -163,6 +173,11 @@
       "modality": "must",
       "determinism": "deterministic",
       "quint_ref": "cancel_again",
+      "meaning": {
+        "text": "Cancelling something already cancelled is treated as a no-op that succeeded, not as an error — a retried or duplicated request cannot do extra damage.",
+        "author": "agent",
+        "written_against": "8f172c24d2479575ec3e376bbca5b69111abb513e96d7c8fc3045765ad976713"
+      },
       "ears": {
         "state": "the Subscription is Cancelled",
         "trigger": "the customer cancels again",
@@ -179,6 +194,11 @@
       "status": "specified",
       "modality": "must",
       "quint_ref": "cancel_times_out",
+      "meaning": {
+        "text": "If the billing provider does not answer during a cancellation, the subscription stays live and billed. The system does not record a cancellation it could not confirm.",
+        "author": "agent",
+        "written_against": "fd855083018c8c6d0abf0a99898ccce2ee39e08ef31d87048a151769c66bfbb6"
+      },
       "ears": {
         "state": "the Subscription is Active",
         "trigger": "the billing provider times out during cancellation",
@@ -210,6 +230,11 @@
       "status": "specified",
       "modality": "must",
       "quint_ref": "expire_period",
+      "meaning": {
+        "text": "When the paid period ends on a cancelled subscription, access stops and the subscription is recorded as expired.",
+        "author": "agent",
+        "written_against": "e2b561903be4f6c814da6213acd83c1e6f7304e64cd07cfef616c5a716b9d26b"
+      },
       "ears": {
         "state": "the Subscription is Cancelled",
         "trigger": "the paid period ends",
@@ -226,6 +251,11 @@
       "status": "specified",
       "modality": "forbidden",
       "quint_ref": "cancel_subscription",
+      "meaning": {
+        "text": "Cancelling part-way through a paid period never refunds the unused part. The customer keeps the access instead of getting money back.",
+        "author": "agent",
+        "written_against": "c58269308634045ff100dc66850101ef2cae43f20d88af9802d2f13de37a02be"
+      },
       "ears": {
         "trigger": "a subscription is cancelled mid-period",
         "unwanted": true,
@@ -244,6 +274,11 @@
       "modality": "may",
       "determinism": "nondeterministic",
       "quint_ref": "cancel_subscription",
+      "meaning": {
+        "text": "A successful cancellation may be confirmed to the customer, by email or in the app. Which one, or whether to confirm at all, is left open on purpose.",
+        "author": "agent",
+        "written_against": "1d7cd0f0bed8a8e2a1a0a39d55b082ae0c835132ce68e7ad8b6a47800eba1c5a"
+      },
       "ears": {
         "trigger": "a cancellation succeeds",
         "response": "confirm to the customer by email or in-app notice"

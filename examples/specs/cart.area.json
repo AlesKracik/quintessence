@@ -116,6 +116,11 @@
       },
       "modality": "must",
       "quint_ref": "add_item",
+      "meaning": {
+        "text": "Adding something already in the basket makes that line bigger rather than adding a second line for the same product.",
+        "author": "agent",
+        "written_against": "5701d3054550115c5e61816d20e467e863a2e74f796b096575d1298a2fc59693"
+      },
       "ears": {
         "state": "the Cart is Open",
         "trigger": "a shopper adds a SKU already present",
@@ -134,6 +139,11 @@
       },
       "modality": "must",
       "quint_ref": "add_item",
+      "meaning": {
+        "text": "A product not yet in the basket gets its own line, as long as the basket is still open and has not already reached MAX_ITEMS lines.",
+        "author": "agent",
+        "written_against": "159ad27cded4d6795f46b2cfd827ea23062a695fd791069f9f72efcfdb9b2e73"
+      },
       "ears": {
         "state": "the Cart is Open and holds fewer than MAX_ITEMS lines",
         "trigger": "a shopper adds a new SKU",
@@ -152,6 +162,11 @@
       },
       "modality": "forbidden",
       "quint_ref": "add_item",
+      "meaning": {
+        "text": "Once a basket has been checked out it is finished: further attempts to add to it are refused and the basket's contents stay exactly as they were at checkout.",
+        "author": "agent",
+        "written_against": "5da07bf57be3c57afa7ea6de5a311aa1f1eec1ae8e99a6dc44f7e29ec08ba298"
+      },
       "ears": {
         "state": "the Cart is CheckedOut",
         "trigger": "a shopper adds an item",
@@ -185,6 +200,11 @@
       },
       "modality": "must",
       "quint_ref": "checkout_unavailable",
+      "meaning": {
+        "text": "If the payment provider fails during checkout, the basket stays open and the shopper is told the checkout did not go through — nothing is half-completed.",
+        "author": "agent",
+        "written_against": "0e90a5fe323a8811f5d1a6c8ffefdb60542a0a539df60d2ae4884c3bc880a021"
+      },
       "ears": {
         "state": "the Cart is Open",
         "trigger": "the payment gateway throws during checkout",

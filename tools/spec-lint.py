@@ -104,6 +104,7 @@ try:
     # not disagree about which requirements owe a refusal artifact.
     from itf_tools import is_rejection, witness_entries, skip_discharge
     from itf_tools import brief_status as _brief_status
+    from itf_tools import meaning_status as _meaning_status
     from itf_tools import compute_model_sha as _compute_model_sha
     from itf_tools import compute_spec_sha as _compute_spec_sha
     from itf_tools import load_trace as _load_trace
@@ -1689,6 +1690,50 @@ def check_provenance(area_data, area_name, findings):
         f"matches again.")
 
 
+def check_meaning(area_data, area_name, findings):
+    """Each requirement carries its behavior twice: the EARS fields, which say
+    it in the system's own vocabulary, and `meaning.text`, which says what that
+    amounts to for someone who has never seen the code.
+
+    The EARS fields alone are not review material once they lean on
+    identifiers — 'refuse with NonMatchingTopologyException on
+    serviceLevelPolicyId' is a sentence only the implementation can check, and
+    a reviewer nodding at it is nodding at a name. Distilling the meaning is a
+    judgement no pattern match can make, which is exactly why it is authored
+    prose and pinned rather than derived.
+
+    Graded like every other precision lint: WARN while the area is being
+    authored, FAIL from in-review on. `raw` requirements are exempt — they have
+    no EARS fields to distil yet.
+    """
+    gating = at_review(area_data)
+    severity = FAIL if gating else WARN
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status") in ("deferred", "raw"):
+            continue
+        state, detail = _meaning_status(req)
+        if state == "absent":
+            add(findings, severity, "meaning", "meaning-missing", area_name,
+                f"{rid} has no `meaning.text` — the readback renders it as the "
+                f"EARS fields, identifiers and exception names included. Write "
+                f"one or two plain sentences saying what the requirement means, "
+                f"then pin them with `tools/itf_tools.py meaning-sha "
+                f"{area_name} --req {rid}`.", ref=rid)
+        elif state == "stale":
+            add(findings, severity, "meaning", "meaning-stale", area_name,
+                f"{rid}'s plain-words meaning is stale — {detail}. It is the "
+                f"sentence the readback leads with, and nothing else on the "
+                f"page can contradict it. Reread it against the requirement, "
+                f"then re-pin with `tools/itf_tools.py meaning-sha {area_name} "
+                f"--req {rid}`.", ref=rid)
+        elif not (req.get("meaning") or {}).get("author"):
+            add(findings, WARN, "meaning", "meaning-unattributed", area_name,
+                f"{rid}.meaning records no `author`. A human-written meaning is "
+                f"not re-authored without asking; an unattributed one gives the "
+                f"agent no way to know that.", ref=rid)
+
+
 def check_brief(area_data, area_name, findings):
     """A prose brief is the one unverifiable thing in the readback, so it is
     pinned like a witness rather than trusted like a README.
@@ -2411,6 +2456,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_ears_guard_correspondence(area_data, sidecar, area_name, findings)
     check_ears_effect_correspondence(area_data, sidecar, area_name, findings)
     check_unproducible_states(area_data, sidecar, area_name, findings)
+    check_meaning(area_data, area_name, findings)
     check_brief(area_data, area_name, findings)
     check_provenance(area_data, area_name, findings)
     check_extraction_coverage(area_data, area_name, findings)

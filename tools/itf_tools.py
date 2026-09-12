@@ -187,6 +187,51 @@ def compute_spec_sha(area_data):
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def compute_meaning_sha(req):
+    """Canonical sha256 over the ONE requirement a distilled meaning restates.
+
+    The meaning is prose — the plain-words sentence a reviewer actually reads,
+    written by an agent that understood what the identifiers and exception
+    names stand for. Prose cannot be checked the way a witness can, so it is
+    pinned, exactly like a brief. Pinned per requirement rather than per area:
+    editing REQ-007 must not silently unpin the other forty meanings, and it
+    must certainly unpin REQ-007's own.
+
+    Covers only what the meaning restates — the EARS fields, modality, type and
+    fit criterion. Witness traces, check results and extraction bookkeeping are
+    excluded: re-running the checker cannot make a plain-words sentence wrong.
+    """
+    if not isinstance(req, dict):
+        return None
+    payload = {
+        "id": req.get("id"),
+        "ears": req.get("ears"),
+        "modality": req.get("modality"),
+        "determinism": req.get("determinism"),
+        "type": req.get("type"),
+        "fit_criterion": req.get("fit_criterion"),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def meaning_status(req):
+    """(state, detail) for a requirement's distilled meaning: "absent",
+    "stale" or "current"."""
+    meaning = (req or {}).get("meaning") or {}
+    if not (meaning.get("text") or "").strip():
+        return "absent", None
+    pinned = meaning.get("written_against")
+    current = compute_meaning_sha(req)
+    if not pinned:
+        return "stale", "no written_against pin — freshness unverifiable"
+    if current and pinned != current:
+        return "stale", (f"the requirement has changed since the meaning was "
+                         f"written ({pinned[:12]})")
+    return "current", (current or "")[:12]
+
+
 def brief_status(area_data):
     """(state, detail) for a prose brief: "absent", "stale" or "current"."""
     brief = (area_data or {}).get("brief") or {}
@@ -484,6 +529,35 @@ def cmd_spec_sha(args):
         print("brief is current", file=sys.stderr)
 
 
+def cmd_meaning_sha(args):
+    """The pin each requirement's plain-words meaning is written against.
+    Prints one line per requirement — sha, state — so re-pinning after an
+    edit is a copy, not a recomputation by hand. Exits 1 if any is stale."""
+    root = Path(args.root)
+    area_path = area_json_path(root, args.area)
+    if not area_path.exists():
+        print(f"ERROR: {area_path} not found", file=sys.stderr)
+        sys.exit(2)
+    area = json.loads(area_path.read_text(encoding="utf-8"))
+    stale = 0
+    for req in area.get("requirements", []) or []:
+        if not isinstance(req, dict) or req.get("status") == "deferred":
+            continue
+        rid = req.get("id", "?")
+        if args.req and rid != args.req:
+            continue
+        state, detail = meaning_status(req)
+        if state == "stale":
+            stale += 1
+        note = {"absent": "no meaning recorded — paste this sha into "
+                          "meaning.written_against when you write one",
+                "stale": f"STALE: {detail}",
+                "current": "current"}[state]
+        print(f"{rid}\t{compute_meaning_sha(req)}\t{note}")
+    if stale:
+        sys.exit(1)
+
+
 def cmd_sha(args):
     root = Path(args.root)
     area_path = area_json_path(root, args.area)
@@ -705,6 +779,14 @@ def main():
     ps.add_argument("area")
     ps.add_argument("--root", default=".")
     ps.set_defaults(func=cmd_spec_sha)
+
+    pms = sub.add_parser("meaning-sha",
+                         help="Per-requirement sha — the pin a requirement's "
+                              "plain-words meaning is written against.")
+    pms.add_argument("area")
+    pms.add_argument("--req", help="Only this requirement ID.")
+    pms.add_argument("--root", default=".")
+    pms.set_defaults(func=cmd_meaning_sha)
 
     args = p.parse_args()
     args.func(args)

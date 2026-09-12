@@ -42,7 +42,7 @@ from itf_tools import (  # noqa: E402
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
     skip_discharge, brief_status, action_params, GHOST_PARAM_RE,
-    compute_spec_sha,
+    compute_spec_sha, meaning_status,
 )
 from quint_ir import _strip_noise  # noqa: E402
 
@@ -217,6 +217,27 @@ def resolve_constraints(sentence, constraints):
     return sentence
 
 
+def req_sentence(req, constraints):
+    """The sentence a reviewer reads for this requirement.
+
+    The distilled plain-words meaning when one is recorded and still pinned to
+    the requirement it restates; the rendered EARS sentence otherwise. A
+    meaning that has gone stale is NOT used — a sentence written against an
+    earlier version of the requirement is worse than the mechanical one,
+    because it reads like it was reviewed.
+
+    Both go through constraint resolution: the boundary number belongs beside
+    the rule whichever wording carries it.
+    """
+    if not req:
+        return ""
+    meaning = req.get("meaning") or {}
+    text = (meaning.get("text") or "").strip()
+    if text and meaning_status(req)[0] == "current":
+        return resolve_constraints(text, constraints)
+    return resolve_constraints(ears_sentence(req), constraints)
+
+
 def witness_one_liner(root, trace_rel):
     """'6 steps: login_failed(bob) ×5 → accountStatus = {bob: Locked}' —
     compressed action runs plus the final state delta."""
@@ -367,11 +388,36 @@ def attention_items(root, area_name, area):
             # Render the EARS sentence inline — a reviewer shouldn't have to
             # scroll to learn what 'UI-001' is.
             req = req_by_id.get(rid)
-            sentence = resolve_constraints(ears_sentence(req), constraints) if req else ""
+            sentence = req_sentence(req, constraints) if req else ""
             line = f"**{label}** — {rid}" + (f": {sentence}" if sentence else "")
             if detail:
                 line += f" _({detail})_" if sentence else f": {detail}"
             items.append(line)
+    # Plain-words meanings: prose, so they can only be pinned, not checked.
+    # A stale one is named individually — someone has to reread that
+    # requirement; missing ones roll up, because on an area that has never
+    # used them the per-requirement list would be the whole area.
+    missing_meaning = []
+    for req in area.get("requirements", []) or []:
+        if req.get("status") in ("deferred", "raw"):
+            continue
+        state, detail = meaning_status(req)
+        rid = req.get("id", "?")
+        if state == "stale":
+            items.append(f"**Stale plain-words summary** — {rid}: {detail}. The "
+                         f"readback has fallen back to the EARS sentence; reread "
+                         f"the requirement and re-pin with "
+                         f"`tools/itf_tools.py meaning-sha {area_name} --req {rid}`.")
+        elif state == "absent":
+            missing_meaning.append(rid)
+    if missing_meaning:
+        items.append(
+            f"**No plain-words summary** — {len(missing_meaning)} requirement(s) "
+            f"({', '.join(missing_meaning[:5])}"
+            f"{', …' if len(missing_meaning) > 5 else ''}) render as the EARS "
+            f"fields rendered mechanically, identifiers and exception names "
+            f"included. A reviewer without the code cannot agree or disagree "
+            f"with those. Run `/spec {area_name}` to distil them.")
     matrix = cr.get("matrix")
     if matrix:
         if matrix.get("uncovered", 0) > 0:
@@ -579,9 +625,18 @@ def render_requirement(root, area, req, constraints, rendered_full):
     tag = "  *(failure path)*" if (req.get("ears") or {}).get("unwanted") else ""
     lines.append(f"#### {rid}")
     lines.append("")
-    sentence = resolve_constraints(ears_sentence(req), constraints)
+    ears_rendered = resolve_constraints(ears_sentence(req), constraints)
+    sentence = req_sentence(req, constraints)
     lines.append(f"{mark}{tag} {sentence}")
     lines.append("")
+    m_state, m_detail = meaning_status(req)
+    if m_state == "stale":
+        # The headline fell back to the EARS sentence. Say why, and show the
+        # sentence that was superseded — a reviewer who read it last time
+        # needs to know it no longer describes this requirement.
+        lines.append(f"> ⚠ **Plain-words summary is stale** — {m_detail}. "
+                     f"It said: “{(req.get('meaning') or {}).get('text', '').strip()}”")
+        lines.append("")
     prov = req.get("extraction") or {}
     if prov.get("evidence"):
         conf = prov.get("confidence")
@@ -596,6 +651,8 @@ def render_requirement(root, area, req, constraints, rendered_full):
         fc = req.get("fit_criterion") or {}
         lines.append(f"> **Fit:** {fc.get('metric', '?')} — {fc.get('target', '?')} — "
                      f"measured by {fc.get('measurement', '?')}")
+        if sentence != ears_rendered:
+            lines.append(f"> **As specified (EARS):** {ears_rendered}")
         lines.append("")
         return lines
     w = req.get("witness") or {}
@@ -653,6 +710,12 @@ def render_requirement(root, area, req, constraints, rendered_full):
                          f"state, not merely find it already there.")
         lines.append("")
     details = []
+    if sentence != ears_rendered:
+        # The headline is prose. What was actually specified — identifiers,
+        # exception names and all — has to stay reachable, or the readback
+        # stops being reviewable against the spec it renders.
+        details.append(f"**As specified (EARS):** {ears_rendered}")
+        details.append("")
     qref = req.get("quint_ref")
     if qref:
         excerpt, ln1, ln2, qnt_rel = quint_excerpt(root, area, qref)
@@ -683,8 +746,16 @@ def render_requirement(root, area, req, constraints, rendered_full):
                 details.append(f"_trace too long to diagram — see `specs/{trace_rel}`_")
             details.append("")
     if details:
-        summary = f"Quint action `{qref}`, witness predicate + trace" if qref \
-            else "Witness predicate + trace"
+        # Name what is actually behind the fold, so the summary never promises
+        # a trace that isn't there or hides the EARS text without saying so.
+        parts = []
+        if sentence != ears_rendered:
+            parts.append("EARS sentence")
+        if qref:
+            parts.append(f"Quint action `{qref}`")
+        if w.get("predicate") or trace_rel:
+            parts.append("witness predicate + trace")
+        summary = ", ".join(parts) if parts else "Details"
         lines.append(f"<details><summary>{summary}</summary>")
         lines.append("")
         lines.extend(details)
@@ -1102,7 +1173,12 @@ def at_a_glance(area):
              "| | ID | Behavior | Modality |", "|---|---|---|---|"]
     for r in reqs:
         rid = r.get("id", "?")
-        response = ((r.get("ears") or {}).get("response") or "").strip()
+        # Plain words when they are pinned and current; the raw response
+        # otherwise. The index has to read like the detail it indexes.
+        meaning = r.get("meaning") or {}
+        response = (meaning.get("text") or "").strip() \
+            if meaning_status(r)[0] == "current" \
+            else ((r.get("ears") or {}).get("response") or "").strip()
         if len(response) > 88:
             response = response[:87].rstrip() + "…"
         modality = r.get("modality") or "must"
@@ -1722,7 +1798,7 @@ def emit_change(root, slug, since=None):
             key, item = kind_item
             if key == "req":
                 mark = status_mark(item)
-                sent = resolve_constraints(ears_sentence(item), constraints)
+                sent = req_sentence(item, constraints)
                 lines.append(f"- {mark} **[{iid}]({anchor})** — {sent}")
                 qref = item.get("quint_ref")
                 w = item.get("witness") or {}
@@ -1825,7 +1901,7 @@ def emit_project(root):
                 req = next((r for r in (d or {}).get("requirements", []) or []
                             if r.get("id") == rid), None)
                 mark = status_mark(req) if req else "?"
-                sent = ears_sentence(req) if req else "_(not found)_"
+                sent = req_sentence(req, []) if req else "_(not found)_"
                 note = f" — {step['note']}" if step.get("note") else ""
                 lines.append(f"| {idx} | [{rid}](./specs/{a}.readback.md#{rid.lower()}) — "
                              f"{sent}{note} | {a} | {mark} |")
