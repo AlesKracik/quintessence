@@ -33,6 +33,7 @@ import io
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,7 @@ lint = _load("spec_lint", "spec-lint.py")
 matrix = _load("spec_matrix", "spec-matrix.py")
 diff = _load("spec_diff", "spec-diff.py")
 quint_ir = _load("quint_ir_mod", "quint_ir.py")
+probes = _load("spec_probes", "spec-probes.py")
 itf = _load("itf_tools_mod", "itf_tools.py")
 mutate = _load("spec_mutate", "spec-mutate.py")
 sep = _load("spec_separation", "spec-separation.py")
@@ -2183,8 +2185,14 @@ def _may_area(root, outcomes):
     (root / "specs" / "a.qnt").write_text("module a { var x: int }", encoding="utf-8")
     for oc in outcomes:
         if oc.get("trace"):
+            # Two states, not one. These tests are about per-outcome trace
+            # LOOKUP, and the content was a placeholder — but a one-state
+            # counterexample means the predicate already held at init, which
+            # the hollow-witness gate now (correctly) refuses to discharge.
+            # A trace that discharges anything has to contain a step.
             (root / "specs" / oc["trace"]).write_text(
-                json.dumps({"vars": ["x"], "states": [{"x": 1}]}), encoding="utf-8")
+                json.dumps({"vars": ["x"], "states": [{"x": 0}, {"x": 1}]}),
+                encoding="utf-8")
     return {"kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
             "formal_model": {"quint_file": "a.qnt"},
             "requirements": [{"id": "REQ-007", "status": "specified", "modality": "may",
@@ -4135,3 +4143,323 @@ def test_entities_render_one_per_line():
     assert "**Entities:**\n\n- **Subscription** (Active / Expired) —" in out
     assert "\n- **Invoice** — Issued per billing period." in out
     assert " · " not in out
+
+
+# ── Hollow witnesses: a proof that proves nothing ───────────────────────────
+# Two requirements came back WITNESSED in under 8 seconds while demonstrating
+# nothing: their predicates were already true in the initial state. Nothing
+# caught it. A witness probe asserts `not(predicate)` and the checker returns
+# the SHORTEST counterexample, so a one-state trace means the predicate held
+# before anything ran — structural, free, and checkable without evaluating
+# Quint.
+
+def test_a_one_state_trace_is_hollow_and_a_two_state_one_is_not():
+    assert itf.is_hollow({"states": [{"x": 1}]})
+    assert itf.is_hollow({"states": []})
+    assert itf.is_hollow({})
+    assert not itf.is_hollow({"states": [{"x": 0}, {"x": 1}]})
+
+
+def _hollow_area(tmp_path, states_by_req):
+    (tmp_path / "specs" / "a" / "traces").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "a.qnt").write_text("module a { var x: int }",
+                                              encoding="utf-8")
+    reqs = []
+    for rid, states in states_by_req.items():
+        rel = f"a/traces/{rid}.itf.json"
+        (tmp_path / "specs" / rel).write_text(
+            json.dumps({"vars": ["x"], "states": states}), encoding="utf-8")
+        reqs.append({"id": rid, "status": "specified", "quint_ref": "f",
+                     "witness": {"predicate": "x > 0", "status": "witnessed",
+                                 "trace": rel}})
+    area = {"kind": "area", "area": "a", "version": "1.0.0",
+            "status": "formalized", "formal_model": {"quint_file": "a.qnt"},
+            "requirements": reqs}
+    sha = itf.compute_model_sha(tmp_path, "a", area)
+    for r in area["requirements"]:
+        r["witness"]["model_sha"] = sha
+    return area
+
+
+def test_a_hollow_witness_does_not_discharge_even_when_stamped(tmp_path):
+    """Retroactive on purpose. The two that shipped are already sitting in
+    an area JSON marked witnessed with a fresh model_sha — a gate that only
+    fired at mint time would never look at them again."""
+    area = _hollow_area(tmp_path, {"REQ-008": [{"x": 1}],
+                                   "REQ-009": [{"x": 0}, {"x": 1}]})
+    rows, missing, discharged = itf.witness_status(tmp_path, "a", area)
+    by_id = {rid: (st, detail) for rid, st, _t, detail in rows}
+    assert by_id["REQ-008"][0] == "HOLLOW"
+    assert "initial state" in by_id["REQ-008"][1]
+    assert by_id["REQ-009"][0] == "witnessed"
+    assert (missing, discharged) == (1, 1)
+
+
+def test_lint_fails_a_hollow_trace(tmp_path):
+    area = _hollow_area(tmp_path, {"REQ-008": [{"x": 1}]})
+    findings = []
+    lint.check_witnesses(tmp_path, area, "a", findings)
+    codes = [f.check for f in findings]
+    assert "witness-hollow" in codes
+    assert all(f.severity == lint.FAIL for f in findings if f.check == "witness-hollow")
+
+
+def test_the_recorder_refuses_to_mint_a_hollow_witness(tmp_path, monkeypatch):
+    """The moment it would have been written. A false proof that reaches the
+    ledger is indistinguishable from a real one to everything downstream."""
+    (tmp_path / ".spec").mkdir()
+    (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
+                                                     encoding="utf-8")
+    (tmp_path / "specs" / "a" / "traces").mkdir(parents=True)
+    (tmp_path / "specs" / "a.qnt").write_text("module a { var x: int }",
+                                              encoding="utf-8")
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n  val witness_REQ_008: bool = true\n}\n",
+        encoding="utf-8")
+    area_path = tmp_path / "specs" / "a.area.json"
+    area_path.write_text(json.dumps({
+        "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
+        "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
+        "requirements": [{"id": "REQ-008", "status": "specified",
+                          "quint_ref": "f",
+                          "witness": {"predicate": "x > 0"}}],
+    }), encoding="utf-8")
+
+    def fake_verify(quint, target, name, *a, **k):
+        # What Apalache writes when the predicate holds at init.
+        Path(k["out_itf"]).write_text(
+            json.dumps({"vars": ["x"], "states": [{"x": 1}]}), encoding="utf-8")
+        return ("counterexample", "", 0.3)
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", fake_verify)
+
+    args = _Args(tmp_path, "a")
+    args.no_witness = False
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    assert exc.value.code == 1, "a hollow witness must fail the run"
+    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    assert w["status"] == "hollow"
+    assert "model_sha" not in w, "a hollow witness must not be stamped fresh"
+
+
+# ── The probe generator ─────────────────────────────────────────────────────
+# Hand-rolled every time, and it broke twice in one session: once stale
+# against the model after an action gained a parameter, once with two actions
+# miscounted out of stepP so four probes could never fire. Both are
+# mechanical properties of the generated text.
+
+PROBE_QNT = '''module a {
+  type UserId = str
+  type Status = | Active | Closed
+  var accounts: UserId -> Status
+  var count: int
+  action init = all { accounts' = Map(), count' = 0 }
+  action open_acct(uid: UserId): bool = all {
+    accounts' = accounts.put(uid, Active), count' = count + 1 }
+  action close_acct(uid: UserId): bool = all {
+    accounts' = accounts.put(uid, Closed), count' = count }
+  action step = { nondet u = oneOf(Set("a")) any { open_acct(u), close_acct(u) } }
+}
+'''
+
+
+def _probe_area(tmp_path, reqs=None, domains=None, invariants=None):
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "a.qnt").write_text(PROBE_QNT, encoding="utf-8")
+    fm = {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"}
+    if domains is not None:
+        fm["probe_domains"] = domains
+    area = {"kind": "area", "area": "a", "version": "1.0.0",
+            "status": "formalized", "formal_model": fm,
+            "invariants": invariants or [],
+            "requirements": reqs if reqs is not None else [
+                {"id": "REQ-001", "description": "opening makes it Active",
+                 "quint_ref": "open_acct",
+                 "witness": {"predicate": "accounts.get(_lastUid) == Active",
+                             "delta": {"pre": "not(_prevAccounts.keys()"
+                                              ".contains(_lastUid))"}}}]}
+    (tmp_path / "specs" / "a.area.json").write_text(json.dumps(area),
+                                                    encoding="utf-8")
+    return area
+
+
+def _gen(tmp_path, area):
+    ir = quint_ir.parse_qnt(tmp_path / "specs" / "a.qnt")
+    return "\n".join(probes.build(area, "a", ir, "a.qnt"))
+
+
+def test_every_declared_action_gets_a_branch_in_step_p(tmp_path):
+    """The reported miscount: two actions silently left out, so four probes
+    could never fire and the run still looked healthy."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1", "u2")'})
+    out = _gen(tmp_path, area)
+    assert '_lastAction\' = "open_acct"' in out
+    assert '_lastAction\' = "close_acct"' in out
+    assert "open_acct(uid)" in out and "close_acct(uid)" in out
+    # init and step are the harness, not actions to mirror.
+    assert '_lastAction\' = "step"' not in out
+
+
+def test_generation_is_deterministic(tmp_path):
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'})
+    assert _gen(tmp_path, area) == _gen(tmp_path, area)
+
+
+def test_a_missing_domain_is_a_setup_error_that_prints_what_to_add(tmp_path):
+    """Which values to explore is a scope decision: too small and a probe
+    cannot fire, too large and every check pays. Not guessable."""
+    area = _probe_area(tmp_path, domains=None)
+    with pytest.raises(SystemExit) as exc:
+        _gen(tmp_path, area)
+    assert exc.value.code == 2
+
+
+def test_ghosts_cover_the_parameters_and_the_deltas_only(tmp_path):
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'})
+    out = _gen(tmp_path, area)
+    assert "var _lastUid: UserId" in out
+    assert "var _prevAccounts: UserId -> Status" in out
+    # `count` is a state var but no delta reads it: snapshotting it would
+    # double the state space for a comparison nobody makes.
+    assert "_prevCount" not in out
+    # Explicit initial values — before init there is no prior state to read.
+    assert '_lastUid\' = ""' in out
+    assert "_prevAccounts' = Map()" in out
+
+
+def test_the_probe_carries_predicate_path_and_delta(tmp_path):
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'})
+    out = _gen(tmp_path, area)
+    assert "val witness_REQ_001: bool =" in out
+    assert "accounts.get(_lastUid) == Active" in out
+    assert '_lastAction == "open_acct"' in out
+    assert "_prevAccounts.keys()" in out
+
+
+def test_a_requirement_owing_no_probe_is_named_not_silently_absent(tmp_path):
+    """An unexplained gap in the generated file is indistinguishable from
+    the omission bug this generator exists to prevent."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[
+        {"id": "REQ-002", "description": "never two open", "modality": "forbidden",
+         "quint_ref": "open_acct", "witness": {"enforced_by": "INV-001"}},
+        {"id": "REQ-003", "description": "fast", "type": "non-functional"},
+    ])
+    out = _gen(tmp_path, area)
+    assert "REQ-002: forbidden" in out and "INV-001" in out
+    assert "REQ-003: non-functional" in out
+    assert "witness_REQ_002" not in out
+
+
+def test_check_mode_detects_a_stale_module(tmp_path, monkeypatch, capsys):
+    """The other reported failure: an action gains a parameter and the
+    hand-written stepP still calls it with the old arity."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'})
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes { /* written by hand, long ago */ }", encoding="utf-8")
+
+    class Args:
+        pass
+    monkeypatch.setattr(sys, "argv",
+                        ["spec-probes.py", "a", "--root", str(tmp_path), "--check"])
+    assert probes.main() == 1
+    assert "STALE" in capsys.readouterr().out
+
+    # Generate it, and --check goes quiet.
+    monkeypatch.setattr(sys, "argv",
+                        ["spec-probes.py", "a", "--root", str(tmp_path)])
+    assert probes.main() == 0
+    monkeypatch.setattr(sys, "argv",
+                        ["spec-probes.py", "a", "--root", str(tmp_path), "--check"])
+    assert probes.main() == 0
+    assert area is not None
+
+
+# ── Invariants over the probe module ────────────────────────────────────────
+# The invariant loop ran the main module with its own init/step, so no
+# invariant could reference the `_prev` ghosts — which meant no transition
+# property was provable, and a whole class of requirements fell back to prose.
+
+def test_a_probe_module_invariant_runs_against_the_probe_module(tmp_path,
+                                                                monkeypatch):
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[],
+                       invariants=[
+        {"id": "INV-001", "description": "state", "quint_name": "alwaysP"},
+        {"id": "INV-003", "description": "policy never changes",
+         "over": "probes", "quint_name": "policyStable"}])
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n  val policyStable: bool = true\n}\n",
+        encoding="utf-8")
+    (tmp_path / ".spec").mkdir(exist_ok=True)
+    (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
+                                                     encoding="utf-8")
+    (tmp_path / "specs" / "a.area.json").write_text(json.dumps(area),
+                                                    encoding="utf-8")
+    seen = []
+
+    def fake_verify(quint, target, name, *a, **k):
+        seen.append((name, Path(target).name, k.get("init"), k.get("step")))
+        return ("verified", "", 0.1)
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", fake_verify)
+    monkeypatch.setattr(record, "run_verify_batch",
+                        lambda *a, **k: pytest.fail("probe invariant was batched"))
+    with pytest.raises(SystemExit):
+        record.cmd_check(_Args(tmp_path, "a"))
+
+    assert ("alwaysP", "a.qnt", None, None) in seen
+    assert ("policyStable", "a.probes.qnt", "initP", "stepP") in seen
+    written = json.loads(
+        (tmp_path / "specs" / "a.area.json").read_text(encoding="utf-8"))
+    entry = {c["id"]: c for c in written["check_results"]["checks"]}
+    assert entry["INV-003"]["over"] == "probes"
+    assert "over" not in entry["INV-001"]
+
+
+def test_over_probes_without_a_probe_module_is_an_error_not_a_pass(tmp_path,
+                                                                   monkeypatch):
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[],
+                       invariants=[{"id": "INV-003", "description": "x",
+                                    "over": "probes", "quint_name": "p"}])
+    area["formal_model"].pop("probes_file")
+    (tmp_path / ".spec").mkdir(exist_ok=True)
+    (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
+                                                     encoding="utf-8")
+    (tmp_path / "specs" / "a.area.json").write_text(json.dumps(area),
+                                                    encoding="utf-8")
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify",
+                        lambda *a, **k: pytest.fail("ran without a probe module"))
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "a"))
+    assert exc.value.code == 1
+    written = json.loads(
+        (tmp_path / "specs" / "a.area.json").read_text(encoding="utf-8"))
+    assert written["check_results"]["checks"][0]["result"] == "error"
+
+
+def test_lint_looks_up_a_probe_invariant_in_the_probe_module(tmp_path):
+    """Checking it against the model sidecar would FAIL every correct
+    transition property."""
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "a.qnt").write_text(PROBE_QNT, encoding="utf-8")
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n  val policyStable: bool = true\n}\n",
+        encoding="utf-8")
+    model = lint.parse_sidecar(tmp_path / "specs" / "a.qnt")
+    probe_ir = lint.parse_sidecar(tmp_path / "specs" / "a.probes.qnt")
+    area = {"area": "a", "invariants": [
+        {"id": "INV-003", "over": "probes", "quint_name": "policyStable"}]}
+
+    findings = []
+    lint.check_quint_refs(area, model, "a", findings, probes=probe_ir)
+    assert findings == [], [f.check for f in findings]
+
+    findings = []
+    lint.check_quint_refs(area, model, "a", findings, probes=None)
+    assert [f.check for f in findings] == ["invariant-over-probes-unparseable"]

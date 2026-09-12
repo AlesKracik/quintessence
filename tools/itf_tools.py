@@ -505,6 +505,31 @@ def cmd_sha(args):
     print(sha)
 
 
+def is_hollow(trace):
+    """True when a witness trace proves nothing: the predicate already held
+    before anything happened.
+
+    A witness probe asserts `not(predicate)` as an invariant, so the
+    counterexample is a run in which the predicate becomes true. The checker
+    returns the SHORTEST such run. A counterexample of one state therefore
+    means the predicate was satisfied by the initial state — no action fired,
+    nothing moved, and the "witness" is a photograph of the starting
+    position. Fast to find, too: these come back in seconds, which is exactly
+    why they read as healthy.
+
+    Structural, so no Quint evaluator is needed and the answer cannot drift
+    from what the checker actually produced: the trace either has a step in
+    it or it does not. The remedy is a witness.delta (the probe then has to
+    show the state MOVING, over the `_prev*` ghosts) and usually a predicate
+    that was too weak to tell before from after.
+
+    Deliberately independent of whether a delta is declared: a delta whose
+    `pre` also holds at init still yields a one-state trace, and the trace is
+    the evidence, not the field."""
+    states = (trace or {}).get("states") or []
+    return len(states) <= 1
+
+
 def witness_status(root, area_name, area_data):
     """Witness-obligation status for every gating requirement.
     Returns (rows, missing, discharged) where rows = [(rid, status, trace_rel,
@@ -565,6 +590,17 @@ def witness_status(root, area_name, area_data):
                                 else f"invalid: {errs[0]}")
                     if errs:
                         e_status = "INVALID"
+                    elif e_status == "witnessed" and is_hollow(t):
+                        # The recorded status says witnessed; the trace says
+                        # the predicate held at init. The trace wins. Checked
+                        # here as well as at mint time so that witnesses
+                        # stamped before this gate existed \u2014 or edited by
+                        # hand \u2014 cannot keep a proof the evidence never
+                        # supported.
+                        e_status = "HOLLOW"
+                        e_detail = ("predicate already true in the initial state "
+                                    "(1-state counterexample) \u2014 proves nothing "
+                                    "happened; add a witness.delta")
                     elif e_status == "witnessed":
                         stamped = entry.get("model_sha")
                         if current_sha is None:

@@ -88,7 +88,12 @@ def status_mark(req):
         return "✓"
     if w.get("status") == "skipped" and skip_discharge(w):
         return "⊘"
-    if w.get("status") == "no-witness":
+    if w.get("status") in ("no-witness", "hollow"):
+        # Both are failures to demonstrate the behavior, so both render as
+        # a cross. Which one it is comes from the Needs-Your-Attention
+        # entry, where the fix differs: unreachable means look at the
+        # guard, hollow means the predicate never distinguished before
+        # from after.
         return "✗"
     if w.get("status") == "witnessed":
         return "◐"
@@ -350,10 +355,15 @@ def attention_items(root, area_name, area):
                          + (f": {c.get('error')}" if c.get("error") else ""))
     rows, _missing, _ok = witness_status(root, area_name, area)
     for rid, st, _trace, detail in rows:
-        if st in ("not-run", "no-witness", "STALE", "UNSTAMPED", "UNVERIFIABLE",
+        if st in ("not-run", "no-witness", "hollow", "HOLLOW", "STALE",
+                  "UNSTAMPED", "UNVERIFIABLE",
                   "MISSING-FILE", "INVALID", "SKIPPED-UNJUSTIFIED"):
+            hollow_label = ("HOLLOW witness — the predicate already held "
+                            "before anything happened; add witness.delta")
             label = {"not-run": "Unchecked requirement",
-                     "no-witness": "UNREACHABLE behavior (no witness)"}.get(st, f"Witness {st}")
+                     "no-witness": "UNREACHABLE behavior (no witness)",
+                     "hollow": hollow_label,
+                     "HOLLOW": hollow_label}.get(st, f"Witness {st}")
             # Render the EARS sentence inline — a reviewer shouldn't have to
             # scroll to learn what 'UI-001' is.
             req = req_by_id.get(rid)
@@ -534,7 +544,8 @@ def render_requirement(root, area, req, constraints, rendered_full):
                      "following, and the choice is not this spec's to make. Each needs "
                      "its own witness, or the permission has quietly become a rule:")
         for oc in (w.get("outcomes") or []):
-            ocm = {"witnessed": "◐", "no-witness": "✗"}.get(oc.get("status"), "⏳")
+            ocm = {"witnessed": "◐", "no-witness": "✗",
+                   "hollow": "✗"}.get(oc.get("status"), "⏳")
             trace = ""
             if oc.get("trace") and oc.get("status") == "witnessed":
                 trace = f" — {witness_one_liner(root, oc['trace'])}"
@@ -686,9 +697,13 @@ def invariants_section(area):
         mark = under_assumptions(mark, asms.get(inv.get("id")))
         name = (inv.get("quint_name") or inv.get("alloy_command")
                 or inv.get("smt_file") or "—")
+        # A transition property is checked against the probe module, where
+        # the pre-state is a variable. Same bound, different module — and a
+        # reader comparing two ✓ marks should be able to tell which is which.
+        over = " _(transition property, checked over the probe module)_"             if (inv.get("over") or "model") == "probes" else ""
         lines.append(f"- **{inv.get('id')}** (`{name}`) — "
                      f"{inv.get('description', '')} Criticality: "
-                     f"{inv.get('criticality', 'high')}. {mark}{tail}")
+                     f"{inv.get('criticality', 'high')}. {mark}{tail}{over}")
     lines.append("")
     props = area.get("properties", []) or []
     if props:

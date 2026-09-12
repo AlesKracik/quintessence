@@ -26,6 +26,9 @@ Normalized output (same shape from both engines):
     "action_mutations": {"login": ["sessions", ...], ...},   # x' = <new>
     "action_preserves": {"login": ["accountStatus", ...], ...},  # x' = x
     "action_produces":  {"login": ["Active"], ...},   # variants this action builds
+    "action_param_types": {"login": [("uid", "UserId"), ...], ...},  # as written
+    "var_type_strs":    {"sessions": "SessionId -> SessionStatus", ...},
+    "type_aliases":     {"UserId": "str", ...},       # plain aliases only
     "action_reads":     {"login": ["accountStatus", ...], ...},  # transitive
     "var_types":        {"accountStatus": ["UserId", "AccountStatus"], ...},
     "produced_variants": ["Active", "Locked", ...],  # variants an assign builds
@@ -452,6 +455,11 @@ def _normalize_ir(ir_json, qnt_path):
     out["action_reads"] = {a: resolved.get(a, []) for a in out["actions"]}
     variants = {v for vs in out["type_variants"].values() for v in vs}
     out["produced_variants"] = [v for v in sorted(variants) if v in set(assign_rhs)]
+    module_text = _module_text(qnt_path)
+    param_types, var_type_strs = _scan_surface_types(module_text)
+    out["action_param_types"] = param_types
+    out["var_type_strs"] = var_type_strs
+    out["type_aliases"] = _scan_type_aliases(module_text)
     out["action_produces"] = {
         a: sorted(variants & set(names))
         for a, names in out["action_produces"].items()
@@ -749,6 +757,91 @@ def _scan_produced_variants(text, variants):
     return sorted(produced)
 
 
+# Written as source text because that is what consumes them: the probe
+# generator emits Quint, and it needs the annotation the author wrote
+# ("SessionId -> SessionStatus"), not a type tree it would have to
+# pretty-print back. Both engines fill these from the module text for the
+# same reason — the CLI's typed IR is the better answer to every OTHER
+# question, and the wrong shape for this one.
+ACTION_SIG_RE = re.compile(
+    r"^\s*action\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", re.MULTILINE)
+
+
+def _split_params(text):
+    """`uid: UserId, sid: SessionId` -> [("uid", "UserId"), ...]. Splits on
+    top-level commas only, so `m: SessionId -> SessionStatus` and
+    `s: Set[(int, int)]` survive intact."""
+    out, depth, current = [], 0, ""
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(current)
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        out.append(current)
+    params = []
+    for chunk in out:
+        name, sep, type_text = chunk.partition(":")
+        if sep and name.strip():
+            params.append((name.strip(), type_text.strip()))
+    return params
+
+
+TYPE_ALIAS_RE = re.compile(
+    r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\n|]+)$", re.MULTILINE)
+
+
+def _scan_type_aliases(text):
+    """`type UserId = str` -> {"UserId": "str"}.
+
+    Plain aliases only. A sum type is written with `|` alternatives, and its
+    variants are already reported under type_variants; matching one here
+    would claim `type S = | A | B` aliases the empty string. The probe
+    generator follows these to work out a ghost's initial value \u2014 a
+    `_lastUid: UserId` starts at `""` only because UserId resolves to str."""
+    out = {}
+    for name, rhs in TYPE_ALIAS_RE.findall(text):
+        rhs = rhs.split("//")[0].strip()
+        if rhs and "|" not in rhs:
+            out[name] = rhs
+    return out
+
+
+def _scan_surface_types(text):
+    """(action_param_types, var_type_strs) as the author wrote them."""
+    param_types = {}
+    for name, raw in ACTION_SIG_RE.findall(text):
+        param_types[name] = _split_params(raw)
+    var_types = {}
+    for name, annotation in VAR_TYPE_RE.findall(text):
+        # Strip a trailing line comment; `var x: int  // REQ-001` is common.
+        var_types[name] = annotation.split("//")[0].strip().rstrip(",").strip()
+    return param_types, var_types
+
+
+def _module_text(qnt_path):
+    """The selected main module's text, or "" when the file does not parse
+    as one. Shared so the CLI engine reads exactly the module the typed IR
+    describes, not the whole file."""
+    try:
+        raw = Path(qnt_path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    clean = _strip_noise(raw)
+    spans = _module_spans(clean)
+    if not spans:
+        return ""
+    named = [(name, bool(VAR_RE.search(clean[start:end])), (name, start, end))
+             for name, start, end in spans]
+    _mod, start, end = _pick_main(named, Path(qnt_path))
+    return clean[start:end]
+
+
 def _parse_via_regex(qnt_path):
     raw = Path(qnt_path).read_text(encoding="utf-8")
     clean = _strip_noise(raw)
@@ -767,6 +860,7 @@ def _parse_via_regex(qnt_path):
     (mutations, preserved, produces, action_locals,
      raw_calls) = _parse_action_bodies(text)
     var_types = _scan_var_types(text)
+    surface_params, surface_var_types = _scan_surface_types(text)
     var_set = set(VAR_RE.findall(text))
     type_variants = _scan_type_variants(text)
     all_variants = {v for vs in type_variants.values() for v in vs}
@@ -807,6 +901,9 @@ def _parse_via_regex(qnt_path):
         "action_params": _scan_action_params(text),
         "action_calls": _narrow_to_actions(raw_calls, actions),
         "var_types": var_types,
+        "action_param_types": surface_params,
+        "var_type_strs": surface_var_types,
+        "type_aliases": _scan_type_aliases(text),
         # PARTIAL under this engine, and callers must treat it as such: the
         # fallback scans action bodies only, so a var a guard reaches through
         # a helper (`not(isLocked(uid))`) is absent here while the CLI engine

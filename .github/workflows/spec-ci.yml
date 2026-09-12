@@ -146,6 +146,21 @@ jobs:
             python tools/spec-matrix.py "$area" --outcomes --stdout --strict > /dev/null
           done
 
+      - name: Probe modules current (areas that declare probe_domains)
+        if: steps.boot.outputs.ok == 'true'
+        run: |
+          set -e
+          # Opt-in by construction: only areas that declare
+          # formal_model.probe_domains have adopted the generator, so a project
+          # still hand-writing its probe module is not failed for it. For the
+          # ones that have, a stale module means every witness was checked
+          # against something that no longer matches the model.
+          areas=$(python -c "import json,pathlib; print(' '.join(p.name.split('.')[0] for p in sorted(pathlib.Path('specs').glob('*.area.json')) if (json.loads(p.read_text(encoding='utf-8')).get('formal_model') or {}).get('probe_domains')))")
+          for area in $areas; do
+            echo "── probes: $area"
+            python tools/spec-probes.py "$area" --check
+          done
+
       - name: Quint typecheck (sidecars + probe modules)
         if: steps.boot.outputs.ok == 'true'
         run: |

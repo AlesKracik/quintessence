@@ -369,7 +369,7 @@
             "properties": {
               "predicate":  { "type": "string", "description": "Quint boolean expression (or val name) over state that is true exactly when the required behavior has happened. Example for 'account locks after N failures': accountStatus.keys().exists(u => accountStatus.get(u) == Locked)." },
               "trace":      { "type": "string", "description": "ITF trace path relative to specs/, e.g. 'auth/traces/REQ-003.itf.json'. Written by /spec-check." },
-              "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "skipped"], "default": "not-run" },
+              "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow", "skipped"], "default": "not-run", "description": "'witnessed' = a trace shows the behavior happening. 'no-witness' = UNREACHABLE (impossible guard or missing action). 'hollow' = the predicate was ALREADY TRUE before anything happened: the checker returned a single-state counterexample, so the trace shows the initial state satisfying the predicate, not the behavior occurring. A hollow witness is a false proof and gates exactly like a missing one \u2014 the usual fix is a witness.delta forcing the step to move the state, and often a predicate that was too weak to distinguish before from after." },
               "justification": { "type": "string", "description": "Discharges a 'skipped' status when witness.enforced_by is not set; prefer enforced_by, which is checkable. Typical case: a rejection requirement ('shall be rejected') has no state change to witness — pair it with the invariant that stays true and point here, e.g. 'rejection — enforced by INV-002 noSessionWhileLocked'." },
               "enforced_by": { "type": "string", "pattern": "^INV(-CONTRACT)?-\\d{3}$", "description": "For modality 'forbidden': the invariant that carries the proof, as an ID rather than prose. Typing the old free-text justification means the link is checkable — spec-lint FAILs a dangling reference instead of trusting a sentence." },
               "outcomes": {
@@ -383,7 +383,7 @@
                     "name":       { "type": "string", "description": "Short label for this permitted outcome (used to name its probe)." },
                     "predicate":  { "type": "string", "description": "Quint boolean expression true exactly when THIS outcome happened." },
                     "trace":      { "type": "string", "description": "ITF trace path relative to specs/." },
-                    "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness"], "default": "not-run" },
+                    "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow"], "default": "not-run", "description": "Same values as witness.status; 'hollow' means this outcome's predicate already held in the initial state." },
                     "checked_at": { "type": "string", "format": "date-time" },
                     "model_sha":  { "type": "string" }
                   }
@@ -433,6 +433,7 @@
             "pattern": "^INV(-CONTRACT)?-\\d{3}$"
           },
           "description":   { "type": "string" },
+          "over":          { "type": "string", "enum": ["model", "probes"], "default": "model", "description": "Which module this invariant is checked against. 'model' (default): the area's Quint sidecar with its own init/step, so the invariant can only see one state. 'probes': the generated probe module, run with --init=initP --step=stepP, which puts the `_prev*` ghosts and `_lastAction` in scope. That is the difference between a state property and a TRANSITION property \u2014 \"a group's policy never changes\" is not expressible over a single state, but becomes an ordinary invariant once the pre-state is a variable (`groups.get(g).policy == _prevGroups.get(g).policy`). Without it such requirements have no checkable form and fall back to prose. Requires formal_model.probes_file. Bounded or inductive exactly as on the model path; the module changes, the honesty of the verdict does not." },
           "quint_name":    { "type": "string", "description": "Name of the Quint `val` or `invariant` that encodes this." },
           "proof": {
             "type": "string",
@@ -730,6 +731,7 @@
           "type": "string",
           "description": "Sidecar path, e.g. 'auth.qnt' (relative to this JSON). The Quint module is the source of truth for the formal spec; module name and imports are read from it directly via tools/quint_ir.py — never mirrored here."
         },
+        "probe_domains": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Finite domain each action PARAMETER TYPE is drawn from in the generated stepP, as a Quint set expression: {\"UserId\": \"Set(\\\"alice\\\", \\\"bob\\\")\"}. Keyed by type rather than by parameter name because types are stable while parameter names vary per action. Required by tools/spec-probes.py and deliberately not inferred: how much of the state space the probes explore is a scope decision \u2014 too small and a probe cannot fire, too large and every check pays for it \u2014 so it is stated in the spec rather than guessed by a generator." },
         "probes_file": {
           "type": "string",
           "description": "Generated probe module, e.g. 'auth.probes.qnt' (relative to this JSON). Contains the ghost-instrumented step wrapper and the path-constrained witness probes. Regenerated by /spec-check; never hand-edited."
@@ -1027,6 +1029,7 @@
               "id":              { "type": "string", "description": "INV-NNN or PROP-NNN. Witness results live in requirements[].witness, not here." },
               "kind":            { "type": "string", "enum": ["invariant", "property"], "default": "invariant" },
               "quint_name":      { "type": "string" },
+              "over":            { "type": "string", "enum": ["model", "probes"], "default": "model", "description": "Which module produced this result \u2014 echoed from the invariant's `over`. A verdict from the probe module was checked against initP/stepP rather than the sidecar's own init/step, and a reader comparing two \u2713 marks should be able to see that." },
               "proof":           { "type": "string", "enum": ["bounded", "inductive", "structural", "smt"], "default": "bounded", "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps; 'structural' results come from the Alloy backend and are valid only within this entry's `scope`." },
               "backend":         { "type": "string", "enum": ["apalache", "tlc", "alloy", "z3"], "default": "apalache", "description": "Which validator produced this result. 'alloy' entries are scope-bounded, not step-bounded — their honesty suffix comes from `scope`, not check_results.max_steps. 'tlc' entries come from the temporal path (properties[], `quint verify --temporal`): explicit-state, so they are bounded by the model's own finite state space rather than by check_results.max_steps, and they carry no `trace` because --out-itf is Apalache-only." },
               "alloy_command":   { "type": "string", "description": "For backend 'alloy': the .als check command that was run." },

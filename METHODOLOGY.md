@@ -138,13 +138,16 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   └── protocol.schema.json
 ├── templates/
 │   ├── spec.qnt.template         ← sidecar structure convention
-│   ├── probes.qnt.template       ← ghost instrumentation + witness probes
+│   ├── probes.qnt.template       ← reference shape; tools/spec-probes.py
+│   │                                generates the real thing
 │   └── contract.als.template     ← OPTIONAL Alloy structural sidecar
 ├── .github/workflows/
 │   └── spec-ci.yml               ← lint → matrix --strict → quint typecheck → quint test (rust)
 │                                    (Apalache + conformance replay are agent-driven, not CI)
 └── tools/
     ├── spec-lint.py              ← consistency checker (incl. EARS + witness obligations)
+    ├── spec-probes.py            ← generates the witness probe module from the area
+    │                                JSON + sidecar IR; --check gates staleness
     ├── spec-record.py            ← deterministic check+verify runner: quint run pre-gate,
     │                                quint verify (batched, then per-id), --temporal for
     │                                liveness, probes, conformance replay, drift; writes
@@ -408,6 +411,30 @@ One trace, three consumers:
 ---
 
 ## Witness Soundness: Three Conjuncts, Not One
+
+**A fourth failure, caught by the trace rather than the predicate: the hollow
+witness.** A probe asserts `not(predicate)` and the checker returns the
+*shortest* counterexample, so a counterexample of ONE state means the
+predicate was already satisfied before anything ran. No action fired, nothing
+moved, and the "witness" is a photograph of the starting position. These come
+back in seconds, which is exactly why they read as healthy.
+
+The detector is structural and needs no Quint evaluator: `itf_tools.is_hollow`
+asks whether the trace contains a step. It is enforced in three places, and
+that repetition is the point — a false proof that reaches the ledger is
+indistinguishable from a real one to everything downstream:
+
+| Where | When it fires |
+|---|---|
+| `spec-record check` | at mint time — stamps `witness.status: "hollow"`, refuses the `model_sha`, fails the run |
+| `itf_tools.witness_status` | retroactively — a stamped `witnessed` whose trace has one state reads as HOLLOW, so witnesses minted before this gate, or hand-edited, cannot keep a proof the evidence never supported |
+| `spec-lint` | `witness-hollow` FAIL, so it blocks approval and shows in CI |
+
+The remedy is a `witness.delta` (the probe then has to show the state *moving*
+over the `_prev*` ghosts) and usually a predicate that was too weak to tell
+before from after. The check is deliberately independent of whether a delta is
+declared: a delta whose `pre` also holds at init still yields a one-state
+trace, and the trace is the evidence, not the field.
 
 A witness proves a behavior is reachable. It does not automatically prove *the behavior the requirement describes* — and the gap between those two is where a green chain hides a wrong implementation. Each probe therefore carries three conjuncts, and each closes a distinct way a witness can prove strictly less than it appears to.
 
@@ -1362,6 +1389,34 @@ area.status:          raw → structured → formalized → in-review → approv
 
 **`verified` is bounded, not proven.** Apalache by default checks invariants by bounded model checking to `apalache.max_steps` (default 10) — `formal_status: "verified"` means *no counterexample within N steps*, not a proof. The readback renders it honestly as `✓ (≤N steps)`, never a bare `✓`. To get an unbounded proof, mark the invariant `proof: "inductive"`: `spec-record` then runs `quint verify --inductive-invariant=<quint_name>` (base case + one-step preservation), and a pass becomes `verified-inductive`, rendered `✓ proven`. Inductive invariants must be constrained enough (each state var pinned to its domain) or quint reports an error — an honest non-proof, not a false green.
 
+### Transition properties: invariants over the probe module
+
+An invariant is a predicate over *one* state, so "a group's policy never
+changes" has no invariant form: it needs the state before as well as the state
+after. The probe module already has that — the `_prev*` ghosts snapshot the
+pre-state so witness deltas can require the state to move — but the invariant
+loop ran the main module with its own `init`/`step`, where those ghosts do not
+exist. A whole class of requirements therefore had no checkable form and fell
+back to prose.
+
+`over: "probes"` on an invariant fixes that: `spec-record` runs it against the
+probe module with `--init=initP --step=stepP`, and the transition property
+becomes an ordinary state predicate over `_prevGroups`. Same bound —
+bounded or `proof: "inductive"` exactly as on the model path; the module
+changes, the honesty of the verdict does not.
+
+Three consequences worth knowing:
+
+- Probe-module invariants are **excluded from the batched run**. A batch is one
+  `quint verify` over one file, and quietly including them would check them
+  against the wrong module.
+- `spec-lint` looks their `quint_name` up in the **probe module**, not the
+  sidecar — that is where a val reading `_prev*` has to live — and FAILs
+  `invariant-over-probes-unparseable` when there is no probe module to check
+  against, rather than passing over nothing.
+- The readback marks them, because a ✓ checked over `initP/stepP` and a ✓
+  checked over the model are answers to different questions.
+
 ### What Apalache Verifies
 
 | Property | Verified? |
@@ -1392,6 +1447,37 @@ area.status:          raw → structured → formalized → in-review → approv
 - `changed <area>` — what moved in the code since the spec was read out of it. Diffs the recorded baseline against HEAD, through two lenses: the extracted subtree, and the files a requirement claims to describe via `traceability[]`.
 
 The agent's role in both phases is judgment only: predicates, probe-module generation, counterexample explanations (`nl_explanation` is the one field it writes in `check_results`), matrix triage, red-team, and the completeness/correctness/coherence reads of the code in `/spec-code-verify`.
+
+### spec-probes
+
+`tools/spec-probes.py <area>` generates the witness probe module from the area
+JSON and the sidecar's typed IR. Before it, there was a template and an
+instruction to "generate/refresh the probe module", which meant hand-rolling
+it every time — with two silent failure modes:
+
+- the module goes **stale** against the model (an action gains a parameter,
+  `stepP` still calls it with the old arity);
+- an action is **left out** of `stepP`, so every probe whose requirement points
+  at it can never fire — and the run still looks healthy.
+
+Both are mechanical properties of the generated text, so both are checked
+rather than hoped for: every declared action gets a branch or generation
+FAILS, and nothing partial is ever written. `--check` is the CI gate for
+staleness; `--stdout` prints without writing.
+
+What it will not do is guess `nondet uid = oneOf(...)`. How much of the state
+space the probes explore is a scope decision — too small and a probe cannot
+fire, too large and every check pays for it — so it is declared in
+`formal_model.probe_domains`, keyed by TYPE (types are stable; parameter names
+vary per action). A missing one is a setup error that prints the exact JSON to
+add. Ghost initial values are synthesized from the declared types (str, int,
+bool, maps, sets, lists, through plain aliases); a type it cannot answer for
+is an error rather than a guess.
+
+Adopting it on an area that already has a hand-written module regenerates that
+module, which changes `model_sha` and therefore stales every witness trace —
+correctly, since the model those traces were found against has changed. Budget
+one `/spec-check` run for the switch.
 
 ### spec-extract-audit
 

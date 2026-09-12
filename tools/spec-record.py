@@ -149,7 +149,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
-                       load_trace, witness_status,
+                       load_trace, witness_status, is_hollow,
                        area_json_path, is_rejection, skip_discharge)
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
@@ -685,17 +685,28 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
         )
         oc["checked_at"] = now_iso()
         if result == "counterexample":
-            _, errs = load_trace(trace_path)
+            trace, errs = load_trace(trace_path)
             if errs:
                 oc["status"] = "not-run"
                 print(f"{label:<24} error            (invalid trace: {errs[0]})")
                 bad += 1
                 continue
+            if is_hollow(trace):
+                # Same refusal as the single-witness path. A permission whose
+                # outcome "happens" at init has not been shown to be a choice
+                # the system makes.
+                oc["status"] = "hollow"
+                oc.pop("model_sha", None)
+                oc["trace"] = trace_rel
+                bad += 1
+                print(f"{label:<24} HOLLOW           (predicate already true in the "
+                      f"initial state \u2014 add witness.delta)")
+                continue
             oc["status"] = "witnessed"
             oc["trace"] = trace_rel
             if current_sha:
                 oc["model_sha"] = current_sha
-            print(f"{label:<24} WITNESSED        \u2192 specs/{trace_rel} ({duration:.1f}s)")
+            print(f"{label:<24} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s)")
         elif result == "verified":
             oc["status"] = "no-witness"
             oc.pop("model_sha", None)
@@ -711,6 +722,11 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
         witness["status"] = "witnessed"
         if current_sha:
             witness["model_sha"] = current_sha
+    elif any(st == "hollow" for st in statuses):
+        # Reported ahead of no-witness: an unreachable outcome and a vacuous
+        # one need different fixes, and the vacuous one is the more dangerous
+        # to leave unnamed because it looks like a pass.
+        witness["status"] = "hollow"
     elif any(st == "no-witness" for st in statuses):
         witness["status"] = "no-witness"
     else:
@@ -888,9 +904,14 @@ def cmd_check(args):
     # exactly the path it took before this optimisation existed.
     batch_clean, batch_duration = set(), 0.0
     if batch_enabled and qnt_file.exists():
+        # Model-module invariants only. A probe-module invariant runs against
+        # a different file with a different init/step, so it cannot share a
+        # batch — and quietly batching it would check it against the wrong
+        # module.
         batchable = [(i["id"], i["quint_name"]) for i in (area.get("invariants") or [])
                      if i.get("id") and i.get("quint_name") and selected(i)
-                     and i.get("proof") not in ("structural", "smt", "inductive")]
+                     and i.get("proof") not in ("structural", "smt", "inductive")
+                     and (i.get("over") or "model") == "model"]
         if len(batchable) >= 2:
             quint = need_quint()
             if quint_supports(quint, "verify", "--invariants"):
@@ -943,6 +964,26 @@ def cmd_check(args):
             # with --invariant. There is no step bound and no ITF trace on
             # that path; see run_verify.
             temporal = (kind == "property")
+            # An invariant declared `over: "probes"` is a TRANSITION property:
+            # it reads the `_prev*` ghosts, which exist only in the probe
+            # module, so it has to be checked there with initP/stepP. Without
+            # this the whole class ("X never changes", "Y only moves one way")
+            # has no checkable form and ends up as prose.
+            over = (item.get("over") or "model") if kind == "invariant" else "model"
+            target = qnt_file
+            init = step = None
+            if over == "probes":
+                if not probes_file or not probes_file.exists():
+                    entry = {"id": iid, "kind": kind, "quint_name": qname,
+                             "over": "probes", "result": "error",
+                             "error": ("over: 'probes' but formal_model.probes_file "
+                                       "is missing \u2014 generate it with "
+                                       "tools/spec-probes.py, then re-run.")}
+                    bad += 1
+                    checks.append(entry)
+                    print(f"{iid:<12} {'error':<26} no probes module for over:probes")
+                    continue
+                target, init, step = probes_file, "initP", "stepP"
             cex_rel = f"{args.area}/traces/{iid}.cex.itf.json"
             cex_path = root / "specs" / cex_rel
             if iid in batch_clean:
@@ -951,7 +992,8 @@ def cmd_check(args):
                 result, detail, duration = "verified", "", batch_duration
             else:
                 result, detail, duration = run_verify(
-                    need_quint(), qnt_file, qname, max_steps, timeout,
+                    need_quint(), target, qname, max_steps, timeout,
+                    init=init, step=step,
                     out_itf=cex_path, inductive=inductive, temporal=temporal,
                     backend=temporal_backend if temporal else None,
                 )
@@ -961,6 +1003,8 @@ def cmd_check(args):
             }
             if inductive:
                 entry["proof"] = "inductive"
+            if over == "probes":
+                entry["over"] = "probes"
             if temporal:
                 entry["backend"] = temporal_backend
             elif iid in batch_clean:
@@ -990,7 +1034,9 @@ def cmd_check(args):
             checks.append(entry)
             suffix = ""
             if result == "verified":
-                if inductive:
+                if over == "probes":
+                    suffix = " (probes)" + (" inductive" if inductive else "")
+                elif inductive:
                     suffix = " (inductive)"
                 elif temporal:
                     suffix = f" ({temporal_backend})"
@@ -1074,11 +1120,26 @@ def cmd_check(args):
             if result == "counterexample":
                 # Violation of the negated predicate = the behavior happened:
                 # the trace IS the witness.
-                _, errs = load_trace(trace_path)
+                trace, errs = load_trace(trace_path)
                 if errs:
                     print(f"{rid:<12} error            (trace written but invalid: {errs[0]})")
                     witness["status"] = "not-run"
                     bad += 1
+                    continue
+                if is_hollow(trace):
+                    # One state = the predicate held before anything ran. The
+                    # checker returns the shortest counterexample, so there was
+                    # no shorter run to find: nothing happened. Refused at the
+                    # moment it would have been minted, because a false proof
+                    # that reaches the ledger is indistinguishable from a real
+                    # one to everything downstream.
+                    witness["status"] = "hollow"
+                    witness.pop("model_sha", None)
+                    witness["trace"] = trace_rel
+                    bad += 1
+                    print(f"{rid:<12} HOLLOW           (predicate already true in the "
+                          f"initial state \u2014 1-state counterexample proves nothing "
+                          f"happened; add witness.delta and re-run)")
                     continue
                 witness["status"] = "witnessed"
                 witness["trace"] = trace_rel

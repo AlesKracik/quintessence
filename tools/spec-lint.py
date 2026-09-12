@@ -107,6 +107,7 @@ try:
     from itf_tools import compute_model_sha as _compute_model_sha
     from itf_tools import compute_spec_sha as _compute_spec_sha
     from itf_tools import load_trace as _load_trace
+    from itf_tools import is_hollow as _is_hollow
 except ImportError as e:
     sys.exit(f"ERROR: spec-lint needs tools/quint_ir.py and tools/itf_tools.py "
              f"next to it ({e}).")
@@ -238,9 +239,14 @@ def check_ids(area_data, area_name, findings):
             seen[list_name].add(iid)
 
 
-def check_quint_refs(area_data, sidecar, area_name, findings):
+def check_quint_refs(area_data, sidecar, area_name, findings, probes=None):
     """Each requirement's quint_ref maps to a real action; each invariant's
-    quint_name maps to a real val/invariant/temporal."""
+    quint_name maps to a real val/invariant/temporal.
+
+    An invariant declared `over: "probes"` is looked up in the PROBE module
+    instead: it reads the `_prev*` ghosts, so its val lives where those are
+    declared. Checking it against the model sidecar would FAIL every correct
+    transition property."""
     if not sidecar or "__no_module__" in sidecar:
         return
 
@@ -253,7 +259,25 @@ def check_quint_refs(area_data, sidecar, area_name, findings):
 
     for inv in area_data.get("invariants", []) or []:
         name = inv.get("quint_name")
-        if name and name not in sidecar["named"]:
+        if not name:
+            continue
+        if (inv.get("over") or "model") == "probes":
+            if probes is None or "__no_module__" in probes:
+                add(findings, FAIL, "quint", "invariant-over-probes-unparseable",
+                    area_name,
+                    f"{inv.get('id', '?')} declares over: 'probes' but the probe "
+                    f"module is missing or unparseable — the invariant cannot be "
+                    f"checked at all. Generate it with tools/spec-probes.py.",
+                    ref=inv.get("id"))
+            elif name not in probes["named"]:
+                add(findings, FAIL, "quint", "invariant-quint-missing", area_name,
+                    f"{inv.get('id', '?')}.quint_name '{name}' has no matching "
+                    f"val/invariant in the PROBE module (it declares over: "
+                    f"'probes'). Transition invariants live alongside the "
+                    f"`_prev*` ghosts they read.",
+                    ref=inv.get("id"))
+            continue
+        if name not in sidecar["named"]:
             add(findings, FAIL, "quint", "invariant-quint-missing", area_name,
                 f"{inv.get('id', '?')}.quint_name '{name}' has no matching val/invariant in the sidecar.",
                 ref=inv.get("id"))
@@ -495,12 +519,26 @@ def check_witnesses(root, area_data, area_name, findings):
                         f"{label}.witness.trace '{e_trace}' does not exist under "
                         f"specs/. Re-run /spec-check to regenerate it.", ref=rid)
                 elif e_status == "witnessed":
-                    _, trace_errs = _load_trace(trace_path)
+                    trace_obj, trace_errs = _load_trace(trace_path)
                     if trace_errs:
                         add(findings, FAIL, "witness", "witness-trace-invalid",
                             area_name,
                             f"{label}.witness.trace '{e_trace}' is not a valid ITF "
                             f"trace: {trace_errs[0]}", ref=rid)
+                    elif _is_hollow(trace_obj):
+                        # The stamp claims a witness; the trace shows a single
+                        # state, i.e. the predicate already held before
+                        # anything ran. Checked here as well as in the recorder
+                        # so a status hand-edited into the JSON, or minted
+                        # before this gate existed, still cannot pass review.
+                        add(findings, FAIL, "witness", "witness-hollow", area_name,
+                            f"{label}.witness.trace '{e_trace}' has ONE state: the "
+                            f"predicate was already true in the initial state, so "
+                            f"the trace proves the starting position satisfies it, "
+                            f"not that the behavior happens. Add a witness.delta so "
+                            f"the probe must show the state moving, and sharpen the "
+                            f"predicate if it cannot tell before from after.",
+                            ref=rid)
                     stamped = entry.get("model_sha")
                     if not stamped:
                         add(findings, FAIL, "witness", "witness-unstamped", area_name,
@@ -517,6 +555,14 @@ def check_witnesses(root, area_data, area_name, findings):
                 add(findings, FAIL, "witness", "witnessed-without-trace", area_name,
                     f"{label}.witness.status is 'witnessed' but no trace file is "
                     f"recorded.", ref=rid)
+
+        if wstatus == "hollow":
+            add(findings, FAIL, "witness", "witness-hollow-status", area_name,
+                f"{rid}: /spec-check found only a HOLLOW witness — the predicate "
+                f"already held in the initial state, so nothing was demonstrated. "
+                f"Add witness.delta (a pre-state the step must start from, over the "
+                f"`_prev*` ghosts) and re-run.",
+                ref=rid)
 
         if wstatus == "no-witness":
             add(findings, FAIL, "witness", "no-witness-found", area_name,
@@ -2285,7 +2331,13 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_fit_criteria(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
     check_predicate_sanity(area_data, sidecar, sidecars, area_name, findings)
-    check_quint_refs(area_data, sidecar, area_name, findings)
+    # The probe module, when the area has one: an invariant declared
+    # `over: "probes"` names a val that lives there, not in the sidecar.
+    _probes_rel = (area_data.get("formal_model") or {}).get("probes_file")
+    probes_sidecar = (parse_sidecar(Path(root) / "specs" / _probes_rel)
+                      if _probes_rel else None)
+    check_quint_refs(area_data, sidecar, area_name, findings,
+                     probes=probes_sidecar)
     check_orphan_actions(area_data, sidecar, area_name, findings)
     check_constraint_values(area_data, sidecar, area_name, findings)
     check_ears_guard_correspondence(area_data, sidecar, area_name, findings)
