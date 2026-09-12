@@ -120,7 +120,7 @@
       "meaning": {
         "text": "Cancelling a live subscription stops it being billed again and records it as cancelled.",
         "author": "agent",
-        "written_against": "4510fd04d3e94e46e576e31c382ee830834bf1f98307582592b006778ab4a59d"
+        "written_against": "ceb17865e326eb542c59e7c1f795861611734954669a5d020b2434c45573b378"
       },
       "ears": {
         "state": "the Subscription is Active",
@@ -155,7 +155,7 @@
       "meaning": {
         "text": "Cancelling does not cut the customer off immediately: they keep what they already paid for until the paid period runs out.",
         "author": "agent",
-        "written_against": "07e7668fa44f25e30f37b971a5d7e30713d9347304bb19975f334509e17fd649"
+        "written_against": "0535cb90348ccfaf0b94f3a4fb86bfda7d1abfdebdc0468a7a05e48cd9d69307"
       },
       "ears": {
         "state": "the Subscription is Cancelled and the paid period has not ended",
@@ -176,7 +176,7 @@
       "meaning": {
         "text": "Cancelling something already cancelled is treated as a no-op that succeeded, not as an error — a retried or duplicated request cannot do extra damage.",
         "author": "agent",
-        "written_against": "8f172c24d2479575ec3e376bbca5b69111abb513e96d7c8fc3045765ad976713"
+        "written_against": "82ac1867981caaa9f2f6ee69c5b57beab83beb41a400854ef86c09d22b852099"
       },
       "ears": {
         "state": "the Subscription is Cancelled",
@@ -197,7 +197,7 @@
       "meaning": {
         "text": "If the billing provider does not answer during a cancellation, the subscription stays live and billed. The system does not record a cancellation it could not confirm.",
         "author": "agent",
-        "written_against": "fd855083018c8c6d0abf0a99898ccce2ee39e08ef31d87048a151769c66bfbb6"
+        "written_against": "5b59afac3d809d4ea63136c82cf10edb65d011165c29b46db2a7d1e38cd6c6b0"
       },
       "ears": {
         "state": "the Subscription is Active",
@@ -233,7 +233,7 @@
       "meaning": {
         "text": "When the paid period ends on a cancelled subscription, access stops and the subscription is recorded as expired.",
         "author": "agent",
-        "written_against": "e2b561903be4f6c814da6213acd83c1e6f7304e64cd07cfef616c5a716b9d26b"
+        "written_against": "38ffc060b5f6d9bb6494a70047753d02e4eff074f49ca353bbb319fefb18d327"
       },
       "ears": {
         "state": "the Subscription is Cancelled",
@@ -254,7 +254,7 @@
       "meaning": {
         "text": "Cancelling part-way through a paid period never refunds the unused part. The customer keeps the access instead of getting money back.",
         "author": "agent",
-        "written_against": "c58269308634045ff100dc66850101ef2cae43f20d88af9802d2f13de37a02be"
+        "written_against": "2cdfc6ed63a90ef659f17c0dd56d360d1af42a181f831c5bcc69d75a6f035946"
       },
       "ears": {
         "trigger": "a subscription is cancelled mid-period",
@@ -277,7 +277,7 @@
       "meaning": {
         "text": "A successful cancellation may be confirmed to the customer, by email or in the app. Which one, or whether to confirm at all, is left open on purpose.",
         "author": "agent",
-        "written_against": "1d7cd0f0bed8a8e2a1a0a39d55b082ae0c835132ce68e7ad8b6a47800eba1c5a"
+        "written_against": "5ba0e166d741526609996ad0804c7ea1bd928e7ca358e5a3ff77333632ceea9f"
       },
       "ears": {
         "trigger": "a cancellation succeeds",

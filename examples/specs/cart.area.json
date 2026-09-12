@@ -119,7 +119,7 @@
       "meaning": {
         "text": "Adding something already in the basket makes that line bigger rather than adding a second line for the same product.",
         "author": "agent",
-        "written_against": "5701d3054550115c5e61816d20e467e863a2e74f796b096575d1298a2fc59693"
+        "written_against": "2c3572a6509004f5737beaadd40c882efdeb2c7679467f597b1c25e805732ed6"
       },
       "ears": {
         "state": "the Cart is Open",
@@ -142,7 +142,7 @@
       "meaning": {
         "text": "A product not yet in the basket gets its own line, as long as the basket is still open and has not already reached MAX_ITEMS lines.",
         "author": "agent",
-        "written_against": "159ad27cded4d6795f46b2cfd827ea23062a695fd791069f9f72efcfdb9b2e73"
+        "written_against": "3ccc4fc8c099081e8c22f32be362a94ac85054f595106744237839b17d07668f"
       },
       "ears": {
         "state": "the Cart is Open and holds fewer than MAX_ITEMS lines",
@@ -165,7 +165,7 @@
       "meaning": {
         "text": "Once a basket has been checked out it is finished: further attempts to add to it are refused and the basket's contents stay exactly as they were at checkout.",
         "author": "agent",
-        "written_against": "5da07bf57be3c57afa7ea6de5a311aa1f1eec1ae8e99a6dc44f7e29ec08ba298"
+        "written_against": "8d40197da1f4d0b01ac56fcbafc2717486d23ee9a97e0c34c81802061de68632"
       },
       "ears": {
         "state": "the Cart is CheckedOut",
@@ -203,7 +203,7 @@
       "meaning": {
         "text": "If the payment provider fails during checkout, the basket stays open and the shopper is told the checkout did not go through — nothing is half-completed.",
         "author": "agent",
-        "written_against": "0e90a5fe323a8811f5d1a6c8ffefdb60542a0a539df60d2ae4884c3bc880a021"
+        "written_against": "1e7b8eba045517d68ddf7f6e0ad9b3d75bba91312733bc1b5db00da6d44c1c1a"
       },
       "ears": {
         "state": "the Cart is Open",

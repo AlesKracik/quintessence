@@ -4748,3 +4748,203 @@ def test_the_documented_flow_records_the_number():
         "/spec-check must run the audit: running it once at extraction leaves "
         "the number resting on whoever last remembered the flag")
     assert "--record" in check_md.split("spec-extract-audit.py")[1][:200]
+
+
+# ── The consistency pass: one definition per rule ───────────────────────────
+# Six defects, all the same shape — a rule written down twice, or a `may`
+# requirement read only at the top level of its witness. Each test below pins
+# the single definition that replaced the duplicate.
+
+def test_spec_sha_covers_invariant_and_property_text():
+    """compute_spec_sha hashed a `statement` key that neither invariants nor
+    properties have (the schema declares `description` for both), so every
+    rule in the area sat outside the brief's freshness pin: the text could be
+    rewritten wholesale and the brief still read as current."""
+    area = _area_with_brief(text="x")
+    area["invariants"] = [{"id": "INV-001", "description": "at most one session"}]
+    area["properties"] = [{"id": "PROP-001", "description": "eventually settles"}]
+    before = itf.compute_spec_sha(area)
+
+    area["invariants"][0]["description"] = "any number of sessions"
+    assert itf.compute_spec_sha(area) != before, "invariant text is outside the pin"
+
+    mid = itf.compute_spec_sha(area)
+    area["properties"][0]["description"] = "may never settle"
+    assert itf.compute_spec_sha(area) != mid, "property text is outside the pin"
+
+
+def test_shas_cover_an_unstructured_requirement():
+    """`description` is the field the schema requires and the readback falls
+    back to when there is no EARS structure. Hashing only `ears` left every
+    unstructured requirement outside both pins."""
+    area = _area_with_brief(text="x")
+    area["requirements"] = [{"id": "REQ-001", "description": "the original claim"}]
+    before = itf.compute_spec_sha(area)
+    area["requirements"][0]["description"] = "a completely different claim"
+    assert itf.compute_spec_sha(area) != before
+
+    req = {"id": "REQ-001", "description": "the original claim"}
+    before = itf.compute_meaning_sha(req)
+    req["description"] = "a completely different claim"
+    assert itf.compute_meaning_sha(req) != before
+
+
+def _may_req(delta=None, status="specified"):
+    outcomes = [{"name": "email", "predicate": "sent", "status": "witnessed"},
+                {"name": "in-app", "predicate": "shown", "status": "witnessed"}]
+    if delta:
+        for oc in outcomes:
+            oc["delta"] = {"pre": delta}
+    return {"id": "REQ-007", "modality": "may", "status": status,
+            "type": "functional", "quint_ref": "notify",
+            "witness": {"outcomes": outcomes}}
+
+
+def test_may_delta_gate_reads_the_field_the_generator_consumes():
+    """spec-probes takes a `may` requirement's deltas from
+    witness.outcomes[].delta; the lint demanded witness.delta, which the
+    generator never reads — so a correctly authored permission could not
+    satisfy the gate at all."""
+    area = {"kind": "area", "area": "x", "status": "formalized",
+            "requirements": [_may_req(delta="_prevSent != sent")]}
+    findings = []
+    lint.check_witness_delta(Path("."), area, {}, "x", findings)
+    assert not findings, [f.description for f in findings]
+
+    area["requirements"] = [_may_req(delta=None)]
+    findings = []
+    lint.check_witness_delta(Path("."), area, {}, "x", findings)
+    # One per permitted outcome: which one lacks a delta is the fix.
+    assert len(findings) == 2
+    assert {f.check for f in findings} == {"witness-delta-missing"}
+
+
+def test_probe_body_does_not_match_a_longer_probe_name():
+    """A plain find() for "val witness_REQ_007" also matches
+    "val witness_REQ_007_email", so a may requirement's delta was compared
+    against one of its outcomes' probe bodies instead of its own."""
+    text = ("  val witness_REQ_007_email: bool =\n"
+            "    not(sent and _prevSent != sent)\n"
+            "\n"
+            "  val witness_REQ_007_in_app: bool =\n"
+            "    not(shown)\n")
+    assert lint.probe_body(text, "witness_REQ_007") is None
+    body = lint.probe_body(text, "witness_REQ_007_email")
+    assert "_prevSent" in body and "witness_REQ_007_in_app" not in body
+
+
+def test_unhashable_model_gates_a_may_requirement_too(tmp_path):
+    """The freshness gate read only witness.status, which a `may` requirement
+    leaves at the top level while its statuses live per outcome — so a
+    permission whose model cannot be hashed reported clean."""
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "x.qnt").write_text("module x { var s: bool }\n",
+                                              encoding="utf-8")
+    area = {"kind": "area", "area": "x", "status": "formalized",
+            # probes_file recorded but absent => model_sha is unverifiable
+            "formal_model": {"quint_file": "x.qnt", "probes_file": "x.probes.qnt"},
+            "requirements": [_may_req(delta="_prevSent != sent")]}
+    findings = []
+    lint.check_witnesses(tmp_path, area, "x", findings)
+    assert "model-files-missing" in {f.check for f in findings}
+
+    # And the shared gate agrees, which is the point of sharing it.
+    _rows, missing, _ok = itf.witness_status(tmp_path, "x", area)
+    assert missing == 1
+
+
+def test_a_fully_witnessed_permission_does_not_read_as_unchecked():
+    """status_mark and the header count read only witness.status, so a `may`
+    whose every permitted outcome is witnessed rendered as untouched."""
+    req = _may_req(delta="_prevSent != sent")
+    assert readback.req_is_witnessed(req)
+    assert readback.status_mark(req) == "◐"
+
+    req["witness"]["outcomes"][1]["status"] = "not-run"
+    assert not readback.req_is_witnessed(req), "one outcome is not all of them"
+
+
+def test_readback_counts_a_typed_rejection_as_discharged():
+    """The readback re-spelled is_rejection locally and read only
+    `justification`, missing every skip discharged by `enforced_by` — the
+    form spec-record actually writes."""
+    req = {"id": "REQ-005", "modality": "forbidden",
+           "witness": {"status": "skipped", "enforced_by": "INV-002"}}
+    assert itf.is_rejection(req)
+    assert readback.req_is_discharged(req)
+    # ...but a skip is not a witness: it discharges, it demonstrates nothing.
+    assert not readback.req_is_witnessed(req)
+
+
+def test_matrix_stdout_survives_a_console_that_cannot_encode_arrows():
+    """Coverage cells carry an arrow. On a cp1252 console csv.writer raised
+    UnicodeEncodeError mid-file instead of degrading."""
+    area = {"kind": "area", "area": "x",
+            "concepts": {"entities": [{"name": "Cart", "states": ["Open", "Closed"]}],
+                         "verbs": ["checkout"]},
+            "state_machines": [{"entity": "Cart", "initial_state": "Open",
+                                "states": [{"name": "Open"}, {"name": "Closed"}],
+                                "transitions": [{"from": "Open", "to": "Closed",
+                                                 "trigger": "checkout"}]}]}
+    rows = matrix.collect_rows(area)
+    events = matrix.all_events(area, [])
+    scope = matrix.scope_events_per_entity(area, events)
+    idx = matrix.build_coverage_index(area)
+
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="")
+    itf.soften_stdout(out)
+    matrix.emit_csv(rows, scope, idx, out)      # must not raise
+    out.flush()
+
+
+# Identity, not equality: each tool is loaded by path here but imports the
+# real itf_tools off sys.path, so two tools holding the SAME object is proof
+# there is one definition. (`itf` above is a second, separately loaded copy of
+# that module, so it is deliberately not the thing compared against.)
+
+@pytest.mark.parametrize("attr", ["probe_name", "outcome_probe_name"])
+def test_generated_name_conventions_have_one_definition(attr):
+    """The probe generator writes these names, the recorder looks them up and
+    the lint checks predicates against them. Three copies is how they drift."""
+    assert getattr(probes, attr) is getattr(record, attr)
+    assert getattr(probes, attr).__module__ == "itf_tools"
+    assert getattr(lint, attr) is getattr(probes, attr)
+
+
+def test_ghost_and_plumbing_conventions_are_shared():
+    assert lint.ghost_for is probes.ghost_for_param
+    assert lint.ghost_for.__module__ == "itf_tools"
+    assert probes.ghost_for_var.__module__ == "itf_tools"
+    assert lint.PLUMBING_ACTIONS is matrix.PLUMBING_ACTIONS
+    assert lint.soften_stdout.__module__ == "itf_tools"
+    assert matrix.soften_stdout is lint.soften_stdout
+    assert matrix.TRIAGE_VALUES == itf.TRIAGE_VALUES
+
+
+def test_a_permitted_outcome_may_carry_the_delta_the_generator_reads():
+    """spec-probes takes a `may` requirement's delta from
+    witness.outcomes[].delta, but the schema declared the outcome object
+    additionalProperties:false without it — so writing the field the
+    generator consumes made the whole area fail validation. One definition,
+    referenced from the witness and from each permitted outcome."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((TOOLS.parent / "schemas" / "area.schema.json")
+                        .read_text(encoding="utf-8"))
+    jsonschema.Draft7Validator.check_schema(schema)
+
+    witness = (schema["properties"]["requirements"]["items"]
+               ["properties"]["witness"]["properties"])
+    outcome = witness["outcomes"]["items"]["properties"]
+    assert witness["delta"] == outcome["delta"] == {"$ref": "#/$defs/witnessDelta"}
+    assert "pre" in schema["$defs"]["witnessDelta"]["properties"]
+
+    area = {"kind": "area", "area": "x", "version": "0.1.0",
+            "requirements": [{
+                "id": "REQ-007", "description": "d", "modality": "may",
+                "witness": {"outcomes": [
+                    {"name": "email", "predicate": "sent",
+                     "delta": {"pre": "_prevSent != sent"}},
+                    {"name": "in-app", "predicate": "shown",
+                     "delta": {"pre": "_prevShown != shown"}}]}}]}
+    errors = list(jsonschema.Draft7Validator(schema).iter_errors(area))
+    assert not errors, [e.message for e in errors]

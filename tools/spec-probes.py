@@ -53,7 +53,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from itf_tools import area_json_path  # noqa: E402
+from itf_tools import (area_json_path, ghost_for_param,  # noqa: E402
+                       ghost_for_var, probe_name, outcome_probe_name)
 from quint_ir import parse_qnt  # noqa: E402
 
 BASE_ZERO = {
@@ -66,26 +67,6 @@ BASE_ZERO = {
 def fail(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(2)
-
-
-def ghost_for_param(name):
-    """uid -> _lastUid. One ghost per distinct parameter NAME across the
-    module, not per action: two actions taking `uid` are talking about the
-    same argument, and the replay harness reads one field for it."""
-    return "_last" + name[:1].upper() + name[1:]
-
-
-def ghost_for_var(name):
-    return "_prev" + name[:1].upper() + name[1:]
-
-
-def probe_name(req_id):
-    return "witness_" + req_id.replace("-", "_")
-
-
-def outcome_probe_name(req_id, outcome_name):
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", outcome_name or "").strip("_")
-    return probe_name(req_id) + "_" + (slug or "outcome")
 
 
 def resolve_alias(type_str, aliases, seen=None):

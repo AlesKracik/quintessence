@@ -59,6 +59,76 @@ NONDET_PICKS_VAR = "mbt::nondetPicks"
 #   specs/journeys/<slug>.journey.json
 AREA_SUFFIXES = ("area", "contract")
 
+# Model plumbing, never domain events. Shared so the matrix and the
+# orphan-action lint cannot disagree about which actions are bookkeeping.
+PLUMBING_ACTIONS = {"init", "step", "initP", "stepP"}
+
+# The verdicts a triaged (state, event) or (external, outcome) cell may carry.
+# Shared so the matrix generator and the schema-backed lint stay in step.
+TRIAGE_VALUES = {"GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"}
+
+
+# ── Console encoding ──────────────────────────────────────────────────────────
+# A tool's output must never be the thing that crashes it. A legacy Windows
+# console reports cp1252, which cannot encode the arrows, em dashes and status
+# marks these tools emit, and print()/csv.writer raise UnicodeEncodeError
+# rather than degrading. Shared here because every tool that writes to stdout
+# needs the same guard — spec-matrix did not have it and died mid-CSV on the
+# first "→" of a coverage cell.
+
+def stream_encodes(stream, probe):
+    enc = getattr(stream, "encoding", None)
+    if not enc:
+        return False
+    try:
+        probe.encode(enc)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+def soften_stdout(stream=None):
+    """Last-resort guard: never let an unencodable character abort the output.
+    Only touches error handling, never the encoding — re-encoding a cp1252
+    console as UTF-8 would trade the crash for mojibake."""
+    stream = sys.stdout if stream is None else stream
+    if stream_encodes(stream, "—→"):
+        return
+    try:
+        stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
+
+
+# ── Generated-name conventions ────────────────────────────────────────────────
+# The probe generator writes these names, the recorder looks them up, and the
+# lint checks predicates against them. The convention is fixed rather than
+# configurable precisely so those three can agree without consulting each
+# other — which only holds while there is ONE implementation of it.
+
+def ghost_for_param(name):
+    """uid -> _lastUid. One ghost per distinct parameter NAME across the
+    module, not per action: two actions taking `uid` are talking about the
+    same argument, and the replay harness reads one field for it."""
+    return "_last" + name[:1].upper() + name[1:]
+
+
+def ghost_for_var(name):
+    """status -> _prevStatus. The pre-state snapshot a witness delta reads."""
+    return "_prev" + name[:1].upper() + name[1:]
+
+
+def probe_name(req_id):
+    """The `val` a requirement's witness probe is emitted as."""
+    return "witness_" + req_id.replace("-", "_")
+
+
+def outcome_probe_name(req_id, outcome_name):
+    """Probe for one permitted outcome of a `may` requirement. Distinct name
+    per outcome, since each is proven separately."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", outcome_name or "").strip("_")
+    return probe_name(req_id) + "_" + (slug or "outcome")
+
 
 def witness_entries(req):
     """Every witness-bearing entry of a requirement, as (label, entry).
@@ -152,6 +222,11 @@ def compute_spec_sha(area_data):
                 continue
             yield {
                 "id": r.get("id"),
+                # `description` as well as `ears`: it is the field the schema
+                # requires, and the one the readback renders when a
+                # requirement has no EARS structure yet. Hashing only `ears`
+                # left every unstructured requirement outside the pin.
+                "description": r.get("description"),
                 "ears": r.get("ears"),
                 "modality": r.get("modality"),
                 "determinism": r.get("determinism"),
@@ -170,8 +245,12 @@ def compute_spec_sha(area_data):
         "purpose": area_data.get("purpose"),
         "scope": area_data.get("scope"),
         "requirements": list(reqs()),
-        "invariants": named("invariants", "id", "statement", "criticality"),
-        "properties": named("properties", "id", "statement"),
+        # `description` is the field the schema declares (and requires) for
+        # both. Hashing a "statement" key that no invariant has left every
+        # rule in the area outside the pin: the text could be rewritten
+        # wholesale and the brief still read as current.
+        "invariants": named("invariants", "id", "description", "criticality"),
+        "properties": named("properties", "id", "description"),
         "constraints": named("constraints", "id", "name", "value"),
         "assumptions": named("assumptions", "id", "statement"),
         "decisions": named("decisions", "id", "decision"),
@@ -205,6 +284,10 @@ def compute_meaning_sha(req):
         return None
     payload = {
         "id": req.get("id"),
+        # Same reason as compute_spec_sha: the meaning restates whichever of
+        # the two the readback would otherwise render, and for an
+        # unstructured requirement that is `description`.
+        "description": req.get("description"),
         "ears": req.get("ears"),
         "modality": req.get("modality"),
         "determinism": req.get("determinism"),

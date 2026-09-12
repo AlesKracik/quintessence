@@ -12,7 +12,7 @@
     "why_this_way": "Lockout counts attempts rather than rate-limiting time because the threshold has to be reviewable as a number (CON-001 = 5) rather than argued about as a policy. One active session per user (INV-001) is a deliberate narrowing: multi-device was cheaper to add later than to remove once anything depended on it.",
     "watch_out_for": "The counter and the lock are two facts, not one, and REQ-003 is the only thing that keeps them consistent — read it before changing either. Q-003 is open on what a failed login against an already-locked account should do, so the Locked row of the matrix is a triaged gap rather than a settled answer.",
     "author": "human",
-    "written_against": "0eafe45ee4a630810b7fbab1c534d4f341b7c346f2898f1d7fda36a1ce40ce38"
+    "written_against": "976d3f776808a3ffb17a70ef6402f1fcc3b0c28150d736a9b63d28a71c2fa4a2"
   },
   "scope": {
     "included": [
@@ -85,7 +85,7 @@
       "meaning": {
         "text": "Signing in with correct credentials gives the user a live session of their own — the thing every later request is checked against.",
         "author": "agent",
-        "written_against": "fd06fe25998b93c889b7bf339e0e1d4d89a5abdfae436374c664efba6d2a1589"
+        "written_against": "2fe9d5560d301b421702efef5a8c15dd00de7e51dd1dbb9343ceb3a711215fc0"
       },
       "ears": {
         "trigger": "a registered user submits valid credentials",
@@ -108,7 +108,7 @@
       "meaning": {
         "text": "Logging out ends the session it was asked about. The session record stays, marked as logged out, rather than disappearing.",
         "author": "agent",
-        "written_against": "6d4ab6aa5fb117da5a0856fbf2feba83a3233296453cff79caf04dfa99b7c171"
+        "written_against": "8596b335386f098e630d2419c3e9b7b4c3c5e7bb7d10122471892b5c27a5f6ab"
       },
       "ears": {
         "state": "the user's session is Active",
@@ -132,7 +132,7 @@
       "meaning": {
         "text": "Every failed sign-in on an account that is still usable counts against it, and once the count reaches MAX_FAILED_ATTEMPTS the account is locked. The lock happens on the attempt that reaches the limit, not the one after it.",
         "author": "agent",
-        "written_against": "ecf85c06c99cbacbcb1d53b4929e4aaa44a1bfccb3c95aedd42c670905f467bd"
+        "written_against": "6d65a2d95b432707d3f0c1f9f086c72c0d9633a32504cfa39cbdd78e2f0e4eb8"
       },
       "ears": {
         "unwanted": true,
@@ -157,7 +157,7 @@
       "meaning": {
         "text": "A session left idle for longer than MAX_SESSION_AGE stops being usable on its own, without anyone having to log out.",
         "author": "agent",
-        "written_against": "ac0dcb7e9ae2a452b2223f3811aa22fee352c5461767c36990d51ed51f397f0e"
+        "written_against": "3545075c580ee1411eff5cf4919c398d2631a009e52eb7be660d286e75f2f212"
       },
       "ears": {
         "state": "the session is Active and has been inactive for longer than MAX_SESSION_AGE",
@@ -181,7 +181,7 @@
       "meaning": {
         "text": "A locked account cannot be signed into, even with the right password. The attempt changes nothing — no new session, and the failure count does not move either.",
         "author": "agent",
-        "written_against": "d9bad7537d4e1e65eff8f69aa7acad3d718660f560d2f6e13d40c9982abee3d2"
+        "written_against": "2d50589442ca4dbf07bf075e79449389c2b73f637986cc83904abf551327e532"
       },
       "ears": {
         "state": "the Account is Locked",

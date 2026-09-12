@@ -58,11 +58,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
-from itf_tools import area_json_path  # noqa: E402
-
-# Triage values an LLM (or human) writes into the covered_by column during
-# /spec-check Step 4a. Preserved across regenerations.
-TRIAGE_VALUES = {"GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"}
+# TRIAGE_VALUES (verdicts an LLM or human writes into the covered_by column
+# during /spec-check Step 4a, preserved across regenerations) and
+# PLUMBING_ACTIONS both live in itf_tools: the lint gates on the same two
+# sets, and a second copy is how they drift.
+from itf_tools import (area_json_path, TRIAGE_VALUES,  # noqa: E402
+                       PLUMBING_ACTIONS, soften_stdout)
 
 
 def load_area(root: Path, area: str) -> dict:
@@ -86,10 +87,10 @@ def discover_qnt_actions(root: Path, area_data: dict, area: str) -> list:
     if not qnt_path.exists():
         return []
     if DEFAULT_ENGINE == "cli" and not cli_available():
-        sys.exit(f"ERROR: QUINT_IR_ENGINE=cli but the quint CLI is not on PATH. "
-                 f"The event axis would be empty and --strict would pass over an "
-                 f"empty matrix. Install quint (tools/check-tooling.sh) or unset "
-                 f"QUINT_IR_ENGINE.")
+        sys.exit("ERROR: QUINT_IR_ENGINE=cli but the quint CLI is not on PATH. "
+                 "The event axis would be empty and --strict would pass over an "
+                 "empty matrix. Install quint (tools/check-tooling.sh) or unset "
+                 "QUINT_IR_ENGINE.")
     ir = parse_qnt(qnt_path)
     if ir is None:
         sys.exit(f"ERROR: {qnt_path} exists but did not parse "
@@ -117,10 +118,6 @@ def collect_rows(area_data: dict) -> list:
                 declared.add(key)
     return rows
 
-
-# Model plumbing, never domain events — excluding them kills the noise
-# orphans (init/step showed up as "candidate missing entity↔event links").
-PLUMBING_ACTIONS = {"init", "step", "initP", "stepP"}
 
 
 def all_events(area_data: dict, qnt_actions: list) -> list:
@@ -394,6 +391,9 @@ def main():
                         "every declared externals[] outcome must be handled by a "
                         "requirement's error_outcomes[] or triaged in outcome_triage[].")
     args = p.parse_args()
+    # Coverage cells carry "→"; a cp1252 console cannot encode it and
+    # csv.writer raised UnicodeEncodeError mid-file rather than degrading.
+    soften_stdout()
 
     root = Path(args.root)
     area_data = load_area(root, args.area)

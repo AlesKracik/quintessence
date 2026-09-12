@@ -150,7 +150,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
                        load_trace, witness_status, is_hollow,
-                       area_json_path, is_rejection, skip_discharge)
+                       area_json_path, is_rejection, skip_discharge,
+                       probe_name, outcome_probe_name)
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 
@@ -629,17 +630,6 @@ def run_structural_check(item, iid, als_rel, als_file, root, area_name,
         entry["error"] = detail
         print(f"{iid:<12} {result:<26} {detail}")
     return entry
-
-
-def probe_name(req_id):
-    return "witness_" + req_id.replace("-", "_")
-
-
-def outcome_probe_name(req_id, outcome_name):
-    """Probe for one permitted outcome of a `may` requirement. Distinct name
-    per outcome, since each is proven separately."""
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", outcome_name or "").strip("_")
-    return probe_name(req_id) + "_" + (slug or "outcome")
 
 
 def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_name,

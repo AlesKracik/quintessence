@@ -44,7 +44,7 @@
       "meaning": {
         "text": "From the home page, the Sign in button takes the user to the login page. Nothing else happens yet — no credentials have been entered.",
         "author": "agent",
-        "written_against": "003ea42a9321b31ff77ffea41444d50823fea49ea001f3d3a01ed4a440106723"
+        "written_against": "26c658535b8ccd67b742f8e36e79885d8c9c6588526cdfeda41bcf3e94bec94f"
       },
       "ears": { "state": "the user is on Home", "trigger": "the user clicks 'Sign in'", "response": "navigate to Login" },
       "witness": { "predicate": "current == Login", "status": "not-run" }
@@ -57,7 +57,7 @@
       "meaning": {
         "text": "A user who enters credentials that check out is taken straight to the dashboard; the login page does not stay in the way.",
         "author": "agent",
-        "written_against": "771b7ce5c52729b1a612c1113decdb75ad732e087ffd0f9654c56e7e3264ad5e"
+        "written_against": "25f39dab9ee24a77530041e636cfde49c9aa64e2076db67bdebf2ace4986df4e"
       },
       "ears": { "state": "the user is on Login", "trigger": "the user submits valid credentials", "response": "navigate to Dashboard" },
       "witness": { "predicate": "current == Dashboard", "status": "not-run" }
@@ -70,7 +70,7 @@
       "meaning": {
         "text": "If the credentials belong to an account that has been locked, the user is sent to a page that tells them so, rather than to the dashboard or back to a login form that will never work.",
         "author": "agent",
-        "written_against": "667c5fe6557ae9fa87372d4b0cd9b253b8e6bcd35d7f4a65eb9e25d5bad3b75a"
+        "written_against": "43f5bb1b50eff0cfef5bdb2a1770ddef236384427da527e7be5550dab1849c45"
       },
       "ears": { "unwanted": true, "state": "the user is on Login", "trigger": "the user submits credentials for a Locked account", "response": "navigate to LockedNotice" },
       "witness": { "predicate": "current == LockedNotice", "status": "not-run" }

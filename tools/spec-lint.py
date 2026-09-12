@@ -103,6 +103,12 @@ try:
     # Shared rejection definition — lint, spec-record and the readback must
     # not disagree about which requirements owe a refusal artifact.
     from itf_tools import is_rejection, witness_entries, skip_discharge
+    # Generated-name conventions and the plumbing-action set live in
+    # itf_tools so the probe generator, the recorder and these checks
+    # cannot drift apart on what a probe or a ghost is called.
+    from itf_tools import ghost_for_param as ghost_for
+    from itf_tools import probe_name, outcome_probe_name, PLUMBING_ACTIONS
+    from itf_tools import stream_encodes as _stream_encodes, soften_stdout
     from itf_tools import brief_status as _brief_status
     from itf_tools import meaning_status as _meaning_status
     from itf_tools import compute_model_sha as _compute_model_sha
@@ -420,9 +426,14 @@ def check_witnesses(root, area_data, area_name, findings):
     trace found against an older model proves nothing about this one)."""
     approved = area_data.get("status") == "approved"
     current_sha = _compute_model_sha(root, area_name, area_data)
+    # Per ENTRY, not per requirement: a `may` requirement keeps its statuses
+    # in witness.outcomes[] and may carry nothing on the witness itself, so
+    # reading only the top level let a permission with witnessed outcomes
+    # sail past the unhashable-model gate below.
     any_witnessed = any(
-        (r.get("witness") or {}).get("status") == "witnessed"
+        entry.get("status") == "witnessed"
         for r in area_data.get("requirements", []) or []
+        for _label, entry in witness_entries(r)
     )
     if any_witnessed and current_sha is None:
         add(findings, FAIL, "witness", "model-files-missing", area_name,
@@ -886,10 +897,6 @@ def check_constraint_values(area_data, sidecar, area_name, findings):
                 f"but the model says {const_values[name]!r}. The checker is "
                 f"verifying a different number than the spec promises.",
                 ref=con.get("id"))
-
-
-# Actions that are model plumbing, never requirement-bearing.
-PLUMBING_ACTIONS = {"init", "step", "initP", "stepP"}
 
 
 def check_orphan_actions(area_data, sidecar, area_name, findings):
@@ -1455,15 +1462,6 @@ def check_examples(area_data, sidecar, all_areas, area_name, findings):
                     f"{eid}.refs references '{target}', which does not exist.", ref=eid)
 
 
-def ghost_for(param):
-    """Ghost var name for an action parameter: uid -> _lastUid.
-
-    The convention is fixed rather than configurable precisely so this check
-    can exist: a generated probe module and a hand-written predicate have to
-    agree on the name without consulting each other."""
-    return "_last" + param[:1].upper() + param[1:]
-
-
 def check_witness_binding(area_data, sidecar, area_name, findings):
     """Rule 1. `_lastAction == login` pins WHICH action ran last, not that
     this call produced the postcondition.
@@ -1506,6 +1504,33 @@ def check_witness_binding(area_data, sidecar, area_name, findings):
                 break          # one finding per requirement, not per predicate
 
 
+def delta_obligations(req, rid):
+    """(label, probe_val_name, declared delta.pre) for everything that owes a
+    pre-state condition — one entry for a `must`, one per permitted outcome
+    for a `may`. Mirrors spec-probes.probe_requirements, which is where the
+    deltas are actually consumed."""
+    witness = req.get("witness") or {}
+    if req.get("modality") == "may":
+        return [(f"{rid}/{oc.get('name', '?')}",
+                 outcome_probe_name(rid, oc.get("name")),
+                 (oc.get("delta") or {}).get("pre"))
+                for oc in (witness.get("outcomes") or [])]
+    return [(rid, probe_name(rid), (witness.get("delta") or {}).get("pre"))]
+
+
+def probe_body(probes_text, probe):
+    """Text of `val <probe>` in the generated module, or None if absent.
+
+    Anchored on the whole name: `find("val witness_REQ_007")` also matches
+    `val witness_REQ_007_email`, so a `may` requirement's delta was compared
+    against one of its outcomes' probe bodies rather than its own."""
+    m = re.search(rf"^\s*val\s+{re.escape(probe)}\b", probes_text, re.MULTILINE)
+    if not m:
+        return None
+    nxt = re.search(r"^\s*val\s+", probes_text[m.end():], re.MULTILINE)
+    return probes_text[m.start():m.end() + nxt.start()] if nxt else probes_text[m.start():]
+
+
 def check_witness_delta(root, area_data, sidecar, area_name, findings):
     """Rule 2. A postcondition alone proves reachability, not causation.
 
@@ -1536,32 +1561,36 @@ def check_witness_delta(root, area_data, sidecar, area_name, findings):
         witness = req.get("witness") or {}
         if not witness.get("predicate") and not (witness.get("outcomes") or []):
             continue                      # absence is the vagueness gate's job
-        delta = (witness.get("delta") or {}).get("pre")
-        if not delta:
-            add(findings, FAIL if review else WARN, "witness", "witness-delta-missing",
-                area_name,
-                f"{rid} has no witness.delta.pre. Without a pre-state condition the "
-                f"probe accepts a step that changed nothing \u2014 a guard implying its own "
-                f"postcondition witnesses green over dead text.", ref=rid)
-            continue
-        # A recorded delta that the generated probe dropped is worse than none:
-        # the JSON claims a check the model never performs.
-        if probes_text is not None:
-            probe = "witness_" + rid.replace("-", "_")
-            idx = probes_text.find("val " + probe)
-            if idx != -1:
-                end = probes_text.find("val ", idx + 4)
-                body = probes_text[idx:end if end != -1 else len(probes_text)]
-                # Compare modulo whitespace: the check is about the
-                # conjunct being present, not about how the generator
-                # wrapped it across lines.
-                def squash(t):
-                    return re.sub(r"\s+", " ", t).strip()
-                if squash(delta) not in squash(body):
-                    add(findings, FAIL, "witness", "witness-delta-not-in-probe", area_name,
-                        f"{rid}.witness.delta.pre is recorded but the generated probe "
-                        f"`{probe}` does not contain it \u2014 the JSON claims a check the "
-                        f"model does not make. Regenerate the probes module.", ref=rid)
+        # A `may` requirement's deltas live one per permitted outcome, which
+        # is where spec-probes reads them from. Reading only witness.delta
+        # here demanded a field the generator never consumes, so a correctly
+        # authored permission could not satisfy this gate at all.
+        for label, probe, delta in delta_obligations(req, rid):
+            if not delta:
+                add(findings, FAIL if review else WARN, "witness",
+                    "witness-delta-missing", area_name,
+                    f"{label} has no witness.delta.pre. Without a pre-state condition the "
+                    f"probe accepts a step that changed nothing \u2014 a guard implying its own "
+                    f"postcondition witnesses green over dead text.", ref=rid)
+                continue
+            # A recorded delta that the generated probe dropped is worse than
+            # none: the JSON claims a check the model never performs.
+            if probes_text is None:
+                continue
+            body = probe_body(probes_text, probe)
+            if body is None:
+                continue
+
+            def squash(t):
+                # Compare modulo whitespace: the check is about the conjunct
+                # being present, not how the generator wrapped it across lines.
+                return re.sub(r"\s+", " ", t).strip()
+
+            if squash(delta) not in squash(body):
+                add(findings, FAIL, "witness", "witness-delta-not-in-probe", area_name,
+                    f"{label}.witness.delta.pre is recorded but the generated probe "
+                    f"`{probe}` does not contain it \u2014 the JSON claims a check the "
+                    f"model does not make. Regenerate the probes module.", ref=rid)
 
 
 def check_paired_invariants(root, area_data, sidecar, area_name, findings):
@@ -2515,34 +2544,11 @@ ASCII_ICONS = {PASS: "OK", WARN: "!", FAIL: "X"}
 ICONS = UNICODE_ICONS
 
 
-def _stream_encodes(stream, probe):
-    enc = getattr(stream, "encoding", None)
-    if not enc:
-        return False
-    try:
-        probe.encode(enc)
-    except (UnicodeEncodeError, LookupError):
-        return False
-    return True
-
-
 def pick_icons(stream=None):
     """Unicode marks when the stream can encode them, ASCII marks otherwise."""
     stream = sys.stdout if stream is None else stream
     return UNICODE_ICONS if _stream_encodes(stream, "✓⚠✗") else ASCII_ICONS
 
-
-def soften_stdout(stream=None):
-    """Last-resort guard: never let an unencodable character abort the report.
-    Only touches error handling, never the encoding — re-encoding a cp1252
-    console as UTF-8 would trade the crash for mojibake."""
-    stream = sys.stdout if stream is None else stream
-    if _stream_encodes(stream, "—"):
-        return
-    try:
-        stream.reconfigure(errors="replace")
-    except (AttributeError, ValueError, OSError):
-        pass
 
 COLORS = {PASS: "\033[32m", WARN: "\033[33m", FAIL: "\033[31m"}
 RESET = "\033[0m"
