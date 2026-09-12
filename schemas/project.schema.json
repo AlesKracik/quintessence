@@ -141,8 +141,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300 },
-        "max_steps":       { "type": "integer", "minimum": 1, "default": 10 }
+        "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300, "description": "Wall-clock cap on ONE check. See budget_seconds for the cap on all of them." },
+        "max_steps":       { "type": "integer", "minimum": 1, "default": 10, "description": "The configured step CEILING — the depth the deep pass aims at. The depth each check actually reached is recorded per check in the area's check_results.checks[].steps, which may be lower when the run budget stopped the deep pass." },
+        "shallow_steps":   { "type": "integer", "minimum": 1, "default": 3, "description": "Step bound for the first pass. Counterexamples are shallow; depth is only needed to fail to find one. Clamped to max_steps, and when the two are equal the ladder collapses to the single pass this runner used before." },
+        "budget_seconds":  { "type": "integer", "minimum": 1, "default": 900, "description": "Wall-clock cap on the whole run. timeout_seconds caps one check; this caps all of them. Only the DEEP pass is gated by it — the shallow pass is the cheap half and the half that carries the findings, so every selected check always gets at least a shallow verdict." }
       }
     },
     "quint": {

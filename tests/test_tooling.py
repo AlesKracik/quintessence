@@ -3593,7 +3593,7 @@ def test_the_simulator_reports_witness_counts_and_never_a_verdict(
            "10000 explored (0.00%)\n"
            "[ok] No violation found (599ms).")
     _capture_cmds(monkeypatch, record, [_FakeProc(0, stdout=out)])
-    result, _, _, counts = record.run_simulate(
+    result, _, _, counts, falsified = record.run_simulate(
         "quint", tmp_path / "a.qnt", [], 10000, 20, 60,
         witnesses=["witness_REQ_001", "witness_REQ_002"])
     # "ok", not "verified". The word choice is the point: the simulator
@@ -3601,6 +3601,8 @@ def test_the_simulator_reports_witness_counts_and_never_a_verdict(
     assert result == "ok"
     assert counts["witness_REQ_001"] == (7094, 10000)
     assert counts["witness_REQ_002"] == (0, 10000)
+    # Nothing was violated, so there is nothing to order the checker by.
+    assert falsified == []
 
 
 def test_quint_supports_degrades_instead_of_failing(monkeypatch):
@@ -3657,7 +3659,12 @@ def test_a_clean_batch_records_the_same_verdicts_for_one_apalache_start(
 def test_a_dirty_batch_falls_back_to_exactly_the_old_per_id_path(
         tmp_path, monkeypatch):
     """The safety property of the whole optimisation: a batch that is not
-    clean must change nothing — same verdicts, same traces, same exit code."""
+    clean must change nothing — same verdicts, same traces, same exit code.
+
+    With the two-pass ladder the per-id path is walked twice for a check that
+    comes back clean: once at the shallow bound, once at the ceiling. The
+    counterexample is found at shallow and never re-run — depth cannot unfind
+    it — which is the whole reason the ladder is cheaper than one deep pass."""
     area_path = _quint_project(tmp_path, invariants=[
         {"id": "INV-001", "description": "a", "quint_name": "invA"},
         {"id": "INV-002", "description": "b", "quint_name": "invB"},
@@ -3676,11 +3683,18 @@ def test_a_dirty_batch_falls_back_to_exactly_the_old_per_id_path(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(_Args(tmp_path, "auth"))
     assert exc.value.code == 1
-    assert calls == ["invA", "invB"]
+    assert calls == ["invA", "invB", "invA"]
     written = json.loads(area_path.read_text(encoding="utf-8"))
     assert [i["formal_status"] for i in written["invariants"]] == [
         "verified", "counterexample-found"]
     assert not any(c.get("batched") for c in written["check_results"]["checks"])
+    # The bound each verdict is honest to, per check: the clean one was
+    # deepened to the ceiling, the counterexample stands at the shallow depth
+    # it was found at.
+    by_id = {c["id"]: c for c in written["check_results"]["checks"]}
+    assert by_id["INV-001"]["steps"] == 10
+    assert by_id["INV-002"]["steps"] == 3
+    assert written["check_results"]["max_steps"] == 10
 
 
 def test_only_simulate_writes_no_verdict_and_does_not_stamp_ran_at(
@@ -3693,7 +3707,8 @@ def test_only_simulate_writes_no_verdict_and_does_not_stamp_ran_at(
     monkeypatch.setattr(record, "find_quint", lambda: "quint")
     monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
     monkeypatch.setattr(record, "run_simulate",
-                        lambda *a, **k: ("violation", "[violation] found", 0.6, {}))
+                        lambda *a, **k: ("violation", "[violation] found", 0.6,
+                                         {}, ["invA"]))
     monkeypatch.setattr(
         record, "run_verify",
         lambda *a, **k: pytest.fail("model checker ran under --only-simulate"))
@@ -3705,6 +3720,9 @@ def test_only_simulate_writes_no_verdict_and_does_not_stamp_ran_at(
     written = json.loads(area_path.read_text(encoding="utf-8"))
     cr = written["check_results"]
     assert cr["simulation"]["invariants"]["result"] == "violation"
+    # Attribution is recorded, so the ordering it drives can be read back —
+    # and it is still not a verdict.
+    assert cr["simulation"]["invariants"]["falsified"] == ["invA"]
     assert "ran_at" not in cr, "an advisory run must not mark the area checked"
     assert "checks" not in cr
     # And above all: a simulator violation writes no formal_status.
@@ -5012,3 +5030,481 @@ def test_behaviors_outside_every_journey_say_so():
     assert "### Other behaviors" in out
     assert "not yet placed in any journey" in out
     assert out.index("### Other behaviors") < out.index("#### REQ-009")
+
+
+# ── The two-pass step ladder ────────────────────────────────────────────────
+# The run used to spend its whole cost in the wrong place: every check at full
+# depth, in declaration order, with nothing capping the run. A counterexample
+# is shallow — the simulator pre-gate falsifies invariants in milliseconds —
+# while depth is only needed to FAIL to find one. These tests pin the three
+# properties that makes honest: a shallow finding is final, a deep pass only
+# ever adds depth, and the depth each verdict actually reached is recorded.
+
+def _no_batch(tmp_path, invariants, apalache=None):
+    """A project with batching off, so each per-id run is observable."""
+    project = {"project": "p", "quint": {"batch_invariants": False}}
+    if apalache:
+        project["apalache"] = apalache
+    return _quint_project(tmp_path, invariants=invariants, project=project)
+
+
+def _steps_recorder(monkeypatch, answer):
+    """Record (name, steps) per `quint verify`, answering with `answer`."""
+    calls = []
+
+    def per_id(quint, qnt, name, steps, *a, **k):
+        calls.append((name, steps))
+        return answer(name, steps)
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", per_id)
+    return calls
+
+
+def test_a_counterexample_found_shallow_is_final_and_never_deepened(
+        tmp_path, monkeypatch):
+    """Depth cannot unfind a counterexample, so re-running one deeper buys
+    nothing and costs a full model-checking run."""
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"}])
+    calls = _steps_recorder(monkeypatch, lambda n, s: ("counterexample", "", 0.1))
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "auth"))
+    assert exc.value.code == 1
+    assert calls == [("invA", 3)]
+    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    assert entry["result"] == "counterexample"
+    assert entry["steps"] == 3
+
+
+def test_a_check_clean_at_the_shallow_bound_is_re_run_at_the_ceiling(
+        tmp_path, monkeypatch):
+    """Clean-at-shallow is the ONE outcome depth can change, so it is the only
+    one that earns a second run — and the record shows the depth it reached."""
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"}])
+    calls = _steps_recorder(monkeypatch, lambda n, s: ("verified", "", 0.1))
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "auth"))
+    assert exc.value.code == 0
+    assert calls == [("invA", 3), ("invA", 10)]
+    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    assert entry["steps"] == 10
+
+
+def test_shallow_equal_to_the_ceiling_collapses_to_one_pass(tmp_path, monkeypatch):
+    """A ladder with no rungs is not a ladder. shallow_steps is clamped to
+    max_steps, and when they meet the runner does exactly what it did before
+    the ladder existed: one run, at the configured bound."""
+    area_path = _no_batch(tmp_path,
+                          [{"id": "INV-001", "description": "a",
+                            "quint_name": "invA"}],
+                          apalache={"max_steps": 3, "shallow_steps": 5})
+    calls = _steps_recorder(monkeypatch, lambda n, s: ("verified", "", 0.1))
+    with pytest.raises(SystemExit):
+        record.cmd_check(_Args(tmp_path, "auth"))
+    assert calls == [("invA", 3)]
+    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    assert entry["steps"] == 3
+
+
+def test_the_run_budget_stops_the_deep_pass_and_says_which_bound_stands(
+        tmp_path, monkeypatch):
+    """The property the whole budget exists for: a shallow pass is NEVER
+    silently upgraded to a deep one. The verdict keeps the bound it was
+    actually found at, and the record says why it was not deepened."""
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"},
+        {"id": "INV-002", "description": "b", "quint_name": "invB"},
+    ])
+    clock = {"t": 0.0}
+    monkeypatch.setattr(record.time, "monotonic", lambda: clock["t"])
+
+    def answer(name, steps):
+        clock["t"] += 100.0        # each check eats more than the budget
+        return ("verified", "", 0.1)
+
+    calls = _steps_recorder(monkeypatch, answer)
+    args = _Args(tmp_path, "auth")
+    args.budget = 50
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    # Both got their shallow verdict; neither was deepened.
+    assert calls == [("invA", 3), ("invB", 3)]
+    cr = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]
+    by_id = {c["id"]: c for c in cr["checks"]}
+    assert all(c["steps"] == 3 and c["result"] == "verified" for c in cr["checks"])
+    assert "budget" in by_id["INV-001"]["note"]
+    # The configured ceiling is still recorded — as the ceiling, not as a
+    # depth anything reached.
+    assert cr["max_steps"] == 10
+    assert exc.value.code == 0
+
+
+def test_the_shallow_pass_runs_even_when_the_budget_is_already_spent(
+        tmp_path, monkeypatch):
+    """Pass 1 is the cheap half AND the half that carries the findings. Gating
+    it on the budget would discard exactly the information the run is for."""
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"}])
+    clock = {"t": 10_000.0}     # already past any deadline
+    monkeypatch.setattr(record.time, "monotonic", lambda: clock["t"])
+    calls = _steps_recorder(monkeypatch,
+                            lambda n, s: ("counterexample", "", 0.1))
+    args = _Args(tmp_path, "auth")
+    args.budget = 1
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    assert exc.value.code == 1
+    assert calls == [("invA", 3)]
+    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    assert entry["result"] == "counterexample"
+
+
+def test_a_deep_pass_that_does_not_answer_keeps_the_shallow_verdict(
+        tmp_path, monkeypatch):
+    """Recording the deep timeout would DISCARD a verdict already held: clean
+    to the shallow bound. Keep it, and say what the deep pass did."""
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"}])
+
+    def answer(name, steps):
+        if steps == 3:
+            return ("verified", "", 0.1)
+        return ("timeout", "timed out after 300s", 300.0)
+
+    _steps_recorder(monkeypatch, answer)
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "auth"))
+    written = json.loads(area_path.read_text(encoding="utf-8"))
+    entry = written["check_results"]["checks"][0]
+    assert entry["result"] == "verified"
+    assert entry["steps"] == 3
+    assert "deep pass" in entry["note"] and "timeout" in entry["note"]
+    assert written["invariants"][0]["formal_status"] == "verified"
+    assert exc.value.code == 0
+
+
+def test_the_first_pass_runs_what_the_simulator_already_falsified_first(
+        tmp_path, monkeypatch):
+    """The pre-gate's finding is the only information the run starts with: a
+    falsified invariant WILL produce a counterexample and will produce it
+    cheaply. Everything it could not falsify is the expensive tail."""
+    _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"},
+        {"id": "INV-002", "description": "b", "quint_name": "invB"},
+    ])
+    monkeypatch.setattr(
+        record, "run_simulate",
+        lambda *a, **k: ("violation", "[violation] invB", 0.1, {}, ["invB"]))
+    calls = _steps_recorder(monkeypatch,
+                            lambda n, s: (("counterexample", "", 0.1)
+                                          if n == "invB" else ("verified", "", 0.1)))
+    args = _Args(tmp_path, "auth")
+    args.no_simulate = False
+    with pytest.raises(SystemExit):
+        record.cmd_check(args)
+    # invB first, despite being declared second.
+    assert calls[0] == ("invB", 3)
+
+
+def test_an_interrupted_run_keeps_what_it_proved_without_claiming_a_check(
+        tmp_path, monkeypatch):
+    """Every verdict is persisted as it lands, and ran_at — the one field that
+    means 'this area was checked' — only at the end. So a run that dies keeps
+    its findings and still reads as unchecked."""
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"},
+        {"id": "INV-002", "description": "b", "quint_name": "invB"},
+    ])
+
+    def answer(name, steps):
+        if name == "invB":
+            raise KeyboardInterrupt
+        return ("counterexample", "", 0.1)
+
+    _steps_recorder(monkeypatch, answer)
+    with pytest.raises(KeyboardInterrupt):
+        record.cmd_check(_Args(tmp_path, "auth"))
+    cr = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]
+    assert [c["id"] for c in cr["checks"]] == ["INV-001"]
+    assert cr["checks"][0]["steps"] == 3
+    assert "ran_at" not in cr, "an interrupted run has not checked the area"
+
+
+def test_a_timed_out_check_takes_the_apalache_server_out_of_the_loop(
+        monkeypatch, tmp_path):
+    """A run-level budget is not enough on its own: killing a timed-out
+    `quint verify` leaves its query inside the server the NEXT check shares,
+    so one slow check taxes every check after it."""
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"},
+        {"id": "INV-002", "description": "b", "quint_name": "invB"},
+    ])
+    seen = []
+
+    def per_id(quint, qnt, name, steps, timeout, **k):
+        seen.append((name, k.get("no_server")))
+        return ("timeout", "t", 1.0) if name == "invA" else ("verified", "", 0.1)
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", per_id)
+    with pytest.raises(SystemExit):
+        record.cmd_check(_Args(tmp_path, "auth"))
+    assert seen[0] == ("invA", False)       # nothing congested yet
+    assert all(no_server for _, no_server in seen[1:])
+    assert area_path.exists()
+
+
+def test_run_verify_only_passes_server_false_when_asked(monkeypatch, tmp_path):
+    seen = _capture_cmds(monkeypatch, record, [_FakeProc(0), _FakeProc(0)])
+    record.run_verify("quint", tmp_path / "a.qnt", "p", 10, 60)
+    record.run_verify("quint", tmp_path / "a.qnt", "p", 10, 60, no_server=True)
+    assert "--server=false" not in seen[0]
+    assert "--server=false" in seen[1]
+
+
+def test_the_simulator_names_the_invariants_it_violated(monkeypatch, tmp_path):
+    """Attribution, not a verdict — and it degrades to nothing rather than to
+    a wrong answer when quint does not name the invariant."""
+    _capture_cmds(monkeypatch, record, [
+        _FakeProc(1, stdout="[violation] invariant invB violated"),
+        _FakeProc(1, stdout="[violation] Found an issue (12ms)."),
+    ])
+    _, _, _, _, named = record.run_simulate(
+        "quint", tmp_path / "a.qnt", ["invA", "invB"], 100, 5, 60)
+    assert named == ["invB"]
+    _, _, _, _, unnamed = record.run_simulate(
+        "quint", tmp_path / "a.qnt", ["invA", "invB"], 100, 5, 60)
+    assert unnamed == []
+
+
+# ── The ladder on witness probes ────────────────────────────────────────────
+
+def _probe_ladder_area(tmp_path):
+    (tmp_path / ".spec").mkdir(exist_ok=True)
+    (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
+                                                     encoding="utf-8")
+    (tmp_path / "specs" / "a" / "traces").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "a.qnt").write_text("module a { var x: int }",
+                                              encoding="utf-8")
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n  val witness_REQ_008: bool = true\n}\n",
+        encoding="utf-8")
+    area_path = tmp_path / "specs" / "a.area.json"
+    area_path.write_text(json.dumps({
+        "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
+        "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
+        "requirements": [{"id": "REQ-008", "status": "specified",
+                          "quint_ref": "f",
+                          "witness": {"predicate": "x > 0"}}],
+    }), encoding="utf-8")
+    return area_path
+
+
+def test_a_witness_the_shallow_pass_misses_is_found_by_the_deep_one(
+        tmp_path, monkeypatch):
+    """The shallow bound being too small is exactly the case the deep pass
+    exists for — and the record says which depth it took."""
+    area_path = _probe_ladder_area(tmp_path)
+
+    def fake_verify(quint, target, name, steps, *a, **k):
+        if steps < 10:
+            return ("verified", "", 0.1)
+        Path(k["out_itf"]).write_text(
+            json.dumps({"vars": ["x"], "states": [{"x": 0}, {"x": 1}]}),
+            encoding="utf-8")
+        return ("counterexample", "", 0.5)
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", fake_verify)
+    args = _Args(tmp_path, "a")
+    args.no_witness = False
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    assert exc.value.code == 0, "a witness found at depth is still a witness"
+    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    assert w["status"] == "witnessed"
+    assert w["steps"] == 10
+
+
+def test_a_budget_stopped_probe_keeps_the_bound_it_was_actually_run_to(
+        tmp_path, monkeypatch):
+    """'Unreachable' is only as strong as the depth it was looked for at.
+    Recording the configured ceiling here would claim a search nobody ran."""
+    area_path = _probe_ladder_area(tmp_path)
+    clock = {"t": 0.0}
+    monkeypatch.setattr(record.time, "monotonic", lambda: clock["t"])
+
+    def fake_verify(quint, target, name, steps, *a, **k):
+        clock["t"] += 100.0
+        return ("verified", "", 0.1)
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", fake_verify)
+    args = _Args(tmp_path, "a")
+    args.no_witness = False
+    args.budget = 50
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    assert exc.value.code == 1
+    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    assert w["status"] == "no-witness"
+    assert w["steps"] == 3, "the deep pass never ran; its bound must not be claimed"
+
+
+# ── Per-check depth reaches the readback ────────────────────────────────────
+
+def test_check_steps_reads_the_per_check_bound_and_rejects_nonsense():
+    area = {"check_results": {"checks": [
+        {"id": "INV-001", "result": "verified", "steps": 10},
+        {"id": "INV-002", "result": "verified", "steps": 3},
+        {"id": "INV-003", "result": "verified", "steps": 0},
+        {"id": "INV-004", "result": "verified", "steps": "7"},
+        {"id": "INV-005", "result": "verified"},
+    ]}}
+    assert readback.check_steps(area) == {"INV-001": 10, "INV-002": 3}
+
+
+def test_two_bounded_invariants_render_the_depths_they_actually_reached():
+    """The point of the change: an invariant verified only to depth 3 renders
+    beside a neighbour's depth 10, so a reviewer can SEE which claim is
+    weaker. Before, one global number made the difference invisible."""
+    area = {"area": "auth", "invariants": [
+        {"id": "INV-001", "description": "deep", "quint_name": "a",
+         "formal_status": "verified", "criticality": "high"},
+        {"id": "INV-002", "description": "shallow", "quint_name": "b",
+         "formal_status": "verified", "criticality": "high"},
+    ], "check_results": {"max_steps": 10, "checks": [
+        {"id": "INV-001", "result": "verified", "steps": 10},
+        {"id": "INV-002", "result": "verified", "steps": 3},
+    ]}}
+    out = "\n".join(readback.invariants_section(area))
+    assert "✓ (≤10 steps)" in out
+    assert "✓ (≤3 steps)" in out
+    # And the legend says the N is per invariant, or two marks read as one claim.
+    assert "PER INVARIANT" in out
+
+
+def test_a_record_without_per_check_steps_falls_back_to_the_run_bound():
+    """Records written before the ladder carry no per-check depth. They must
+    render exactly as they always did, not as '(bounded)'."""
+    area = {"area": "auth", "invariants": [
+        {"id": "INV-001", "description": "x", "quint_name": "a",
+         "formal_status": "verified", "criticality": "high"}],
+        "check_results": {"max_steps": 12, "checks": [
+            {"id": "INV-001", "result": "verified"}]}}
+    out = "\n".join(readback.invariants_section(area))
+    assert "✓ (≤12 steps)" in out
+    assert "PER INVARIANT" not in out
+
+
+def test_invariant_mark_prefers_the_per_check_depth_over_the_run_bound():
+    assert readback.invariant_mark(
+        {"formal_status": "verified"}, 10, None, 3) == "✓ (≤3 steps)"
+    assert readback.invariant_mark(
+        {"formal_status": "verified"}, 10, None, None) == "✓ (≤10 steps)"
+    assert readback.invariant_mark(
+        {"formal_status": "verified"}, None, None, 3) == "✓ (≤3 steps)"
+
+
+def test_the_header_bar_shows_the_range_of_depths_not_one_of_them():
+    area = {"status": "formalized", "requirements": [], "invariants": [
+        {"id": "INV-001", "formal_status": "verified"},
+        {"id": "INV-002", "formal_status": "verified"},
+    ], "check_results": {"max_steps": 10, "checks": [
+        {"id": "INV-001", "result": "verified", "steps": 10},
+        {"id": "INV-002", "result": "verified", "steps": 3},
+    ]}}
+    assert "0 proven + 2 bounded (≤3–10) / 2" in readback.header_bar(area, "auth")
+
+
+def test_the_new_apalache_settings_validate_against_the_project_schema():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((TOOLS.parent / "schemas" / "project.schema.json")
+                        .read_text(encoding="utf-8"))
+    jsonschema.Draft7Validator.check_schema(schema)
+    ok = {"project": "p", "areas": [],
+          "apalache": {"timeout_seconds": 300, "max_steps": 10,
+                       "shallow_steps": 3, "budget_seconds": 900}}
+    assert not list(jsonschema.Draft7Validator(schema).iter_errors(ok))
+    # And an existing config with no apalache block at all still validates —
+    # both new keys have working defaults.
+    assert not list(jsonschema.Draft7Validator(schema)
+                    .iter_errors({"project": "p", "areas": []}))
+
+
+def test_the_per_check_bound_validates_against_the_area_schema():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((TOOLS.parent / "schemas" / "area.schema.json")
+                        .read_text(encoding="utf-8"))
+    area = {"kind": "area", "area": "x", "version": "0.1.0",
+            "requirements": [{"id": "REQ-001", "description": "d",
+                              "witness": {"predicate": "x > 0",
+                                          "status": "no-witness", "steps": 3}}],
+            "check_results": {"max_steps": 10, "checks": [
+                {"id": "INV-001", "result": "verified", "steps": 3},
+            ], "simulation": {"invariants": {"result": "violation",
+                                             "checked": 2,
+                                             "falsified": ["invB"]}}}}
+    errors = list(jsonschema.Draft7Validator(schema).iter_errors(area))
+    assert not errors, [e.message for e in errors]
+
+
+def test_a_permitted_outcome_is_deepened_and_the_roll_up_is_derived_again(
+        tmp_path, monkeypatch):
+    """A `may` requirement is witnessed only when EVERY outcome has a trace.
+    The shallow pass may witness one and miss another, so the roll-up it
+    writes is provisional — it has to be derived again from what the deep
+    pass recorded, or a fully witnessed permission keeps reading no-witness."""
+    (tmp_path / ".spec").mkdir()
+    (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
+                                                     encoding="utf-8")
+    (tmp_path / "specs" / "a" / "traces").mkdir(parents=True)
+    (tmp_path / "specs" / "a.qnt").write_text("module a { var x: int }",
+                                              encoding="utf-8")
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n"
+        "  val witness_REQ_007_email: bool = true\n"
+        "  val witness_REQ_007_in_app: bool = true\n"
+        "}\n", encoding="utf-8")
+    area_path = tmp_path / "specs" / "a.area.json"
+    area_path.write_text(json.dumps({
+        "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
+        "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
+        "requirements": [{"id": "REQ-007", "status": "specified",
+                          "modality": "may", "quint_ref": "f",
+                          "witness": {"outcomes": [
+                              {"name": "email", "predicate": "sent"},
+                              {"name": "in-app", "predicate": "shown"}]}}],
+    }), encoding="utf-8")
+
+    def fake_verify(quint, target, name, steps, *a, **k):
+        # email witnesses shallow; in-app only at the ceiling.
+        if name.endswith("_email") or steps >= 10:
+            Path(k["out_itf"]).write_text(
+                json.dumps({"vars": ["x"], "states": [{"x": 0}, {"x": 1}]}),
+                encoding="utf-8")
+            return ("counterexample", "", 0.2)
+        return ("verified", "", 0.1)
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", fake_verify)
+    args = _Args(tmp_path, "a")
+    args.no_witness = False
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    assert exc.value.code == 0
+    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    by_name = {oc["name"]: oc for oc in w["outcomes"]}
+    assert by_name["email"]["status"] == "witnessed"
+    assert by_name["email"]["steps"] == 3
+    assert by_name["in-app"]["status"] == "witnessed"
+    assert by_name["in-app"]["steps"] == 10
+    # The roll-up the shallow pass wrote said no-witness. It must not survive.
+    assert w["status"] == "witnessed"

@@ -849,7 +849,7 @@ The readback never collapses the three:
 | Mark | Means |
 |---|---|
 | `✓ proven` | inductive — holds in ALL reachable states |
-| `✓ (≤N steps)` | bounded model check to depth N — not a proof |
+| `✓ (≤N steps)` | bounded model check to depth N — not a proof. N is **per invariant** (`check_results.checks[].steps`), not per run: the checker runs a shallow pass first and deepens only what the run budget allows, so a smaller N beside a larger one is a weaker claim, not a different kind of one. |
 | `✓ (scope: 4 Session, 4 Account)` | no counterexample among structures **that size** — not a proof |
 
 Alloy's small-scope hypothesis (most bugs show up in small instances) is a good heuristic, not a theorem. Widening the scope in the `.als` strengthens the claim; the scope travels next to the mark so the claim and its bound are never separated.
@@ -1392,7 +1392,8 @@ requirement.witness.status: not-run → witnessed | no-witness | skipped
                       (modality "may": witnessed only when EVERY witness.outcomes[] entry is)
 requirement.modality: must (default) | may | forbidden
 requirement.refusal.status: not-run → passing | failing   (code-side evidence for a prohibition)
-invariant.formal_status: specified | not-run → verified            (bounded ✓ — valid to max_steps only)
+invariant.formal_status: specified | not-run → verified            (bounded ✓ — valid only to this
+                                                          check's own checks[].steps)
                                   → verified-inductive   (proven over ALL reachable states; proof: inductive)
                                   → verified-in-scope    (Alloy: no counterexample within the declared
                                                           finite scope; proof: structural — not a proof)
@@ -1405,7 +1406,7 @@ area.status:          raw → structured → formalized → in-review → approv
                       (approval blocked while any requirement is unwitnessed)
 ```
 
-**`verified` is bounded, not proven.** Apalache by default checks invariants by bounded model checking to `apalache.max_steps` (default 10) — `formal_status: "verified"` means *no counterexample within N steps*, not a proof. The readback renders it honestly as `✓ (≤N steps)`, never a bare `✓`. To get an unbounded proof, mark the invariant `proof: "inductive"`: `spec-record` then runs `quint verify --inductive-invariant=<quint_name>` (base case + one-step preservation), and a pass becomes `verified-inductive`, rendered `✓ proven`. Inductive invariants must be constrained enough (each state var pinned to its domain) or quint reports an error — an honest non-proof, not a false green.
+**`verified` is bounded, not proven.** Apalache by default checks invariants by bounded model checking — `formal_status: "verified"` means *no counterexample within N steps*, not a proof. N is recorded per check in `check_results.checks[].steps`, because `spec-record` runs a **two-pass ladder**: every bounded check first at `apalache.shallow_steps` (default 3), then only the clean ones again at `apalache.max_steps` (default 10), for as long as `apalache.budget_seconds` (default 900) lasts. A counterexample is shallow — the simulator pre-gate falsifies invariants in milliseconds — while depth is only needed to *fail* to find one, so spending the deep pass on checks already known to be red buys nothing. A check the budget stopped keeps its shallow verdict and records why it was not deepened; a shallow pass is never silently upgraded to a deep one, and `check_results.max_steps` is the configured ceiling rather than a claim that anything reached it. The readback renders it honestly as `✓ (≤N steps)`, never a bare `✓`. To get an unbounded proof, mark the invariant `proof: "inductive"`: `spec-record` then runs `quint verify --inductive-invariant=<quint_name>` (base case + one-step preservation), and a pass becomes `verified-inductive`, rendered `✓ proven`. Inductive invariants must be constrained enough (each state var pinned to its domain) or quint reports an error — an honest non-proof, not a false green.
 
 ### Transition properties: invariants over the probe module
 
@@ -1439,7 +1440,7 @@ Three consequences worth knowing:
 
 | Property | Verified? |
 |---|---|
-| Safety invariant violations | **Bounded by default** (no counterexample to `max_steps`, rendered `✓ (≤N steps)`); **proven** only for invariants marked `proof: inductive` (rendered `✓ proven`). A bounded ✓ is not a proof — a violation at depth N+1 still ships green. Upgrade load-bearing invariants to inductive. |
+| Safety invariant violations | **Bounded by default** (no counterexample to the depth *that check* reached, rendered `✓ (≤N steps)`); **proven** only for invariants marked `proof: inductive` (rendered `✓ proven`). A bounded ✓ is not a proof — a violation at depth N+1 still ships green. Upgrade load-bearing invariants to inductive. |
 | Behavior reachability (witnesses) | Yes (negated-predicate probes; counterexample = witness trace) |
 | Liveness (eventually X) | **Not by Apalache.** A `properties[]` entry is a temporal formula, so it runs as `quint verify --temporal=<quint_name>` — and quint checks temporal properties on **TLC** (`--backend=tlc`, the default for this path in `quint.temporal_backend`); Apalache's temporal support is partial. TLC enumerates explicitly: a pass is exhaustive over the model's own finite state space, with no step bound, but also no instance larger than the model declares, and TLC writes no ITF, so a liveness `✗` arrives without a trace to diagram. Rendered `✓ (TLC)`, distinct from a bounded `✓`. State explosion is the failure mode — when it bites, demoting to a witnessed scenario (`run` demonstrating the eventuality once) plus a fairness note is still the honest fallback. |
 | Action vacuity (dead actions) | Free: path-constrained witnesses prove referenced actions fire; `spec-lint` flags unreferenced ones statically |

@@ -65,6 +65,10 @@ if command -v quint >/dev/null 2>&1; then
     *--temporal*) echo "  ✓ verify --temporal   (properties[] / liveness are checkable)" ;;
     *)            echo "  ✗ verify --temporal   absent — properties[] cannot be checked by this quint" ;;
   esac
+  case "$qver_help" in
+    *--server*) echo "  ✓ verify --server      (a timed-out check can be run one-shot, off the shared Apalache server)" ;;
+    *)          echo "  · verify --server      absent — after a timeout, later checks share a server still working on it" ;;
+  esac
 else
   echo "✗ quint      not found"
   missing+=("quint")

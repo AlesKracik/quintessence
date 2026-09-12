@@ -409,12 +409,14 @@
                     "trace":      { "type": "string", "description": "ITF trace path relative to specs/." },
                     "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow"], "default": "not-run", "description": "Same values as witness.status; 'hollow' means this outcome's predicate already held in the initial state." },
                     "checked_at": { "type": "string", "format": "date-time" },
+                    "steps":      { "type": "integer", "minimum": 1, "description": "Step bound this outcome's probe actually ran to — same honesty rule as witness.steps." },
                     "model_sha":  { "type": "string" }
                   }
                 }
               },
               "delta": { "$ref": "#/$defs/witnessDelta" },
               "checked_at": { "type": "string", "format": "date-time" },
+              "steps":      { "type": "integer", "minimum": 1, "description": "Step bound the probe actually ran to. A 'no-witness' is only as strong as this number — unreachable within 3 steps is a very different claim from unreachable within 10, and when the run budget stops the deep pass the shallow bound is what stands. Absent on records written before the two-pass ladder existed." },
               "model_sha":  { "type": "string", "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one." }
             }
           },
@@ -942,7 +944,7 @@
       "additionalProperties": false,
       "properties": {
         "ran_at": { "type": "string", "format": "date-time" },
-        "max_steps": { "type": "integer", "minimum": 1, "description": "Apalache step bound used for the bounded checks in this run. Drives honest '✓ (≤N steps)' rendering — a bounded ✓ is only valid up to this depth." },
+        "max_steps": { "type": "integer", "minimum": 1, "description": "The CONFIGURED Apalache step ceiling for this run (apalache.max_steps). With the two-pass ladder it is no longer the depth every check reached — that is per check, in checks[].steps — so it serves as the fallback bound for records written before that field existed, and as the number a budget-stopped check is honest about NOT having reached." },
         "extraction": {
           "type": "object",
           "description": "Code\u2192spec coverage stats from the last tools/spec-extract-audit.py run. The third completeness axis, and the only one that measures the specification against the implementation rather than the other way round.",
@@ -973,6 +975,7 @@
               "properties": {
                 "result":  { "type": "string", "enum": ["ok", "violation", "timeout", "error", "not-run"], "description": "'ok' is NOT 'verified' — it is 'no violation in max_samples random executions'. Only `checks` carries verdicts." },
                 "checked": { "type": "integer", "minimum": 0 },
+                "falsified": { "type": "array", "items": { "type": "string" }, "description": "Quint names the simulator NAMED as violated. Not a verdict — attribution: these are the invariants the model checker's first pass runs FIRST, because they are guaranteed to produce a counterexample and to produce it cheaply. Recorded so that ordering can be read back and checked; absent when the simulator found nothing or did not say which." },
                 "detail":  { "type": "string" }
               }
             },
@@ -1052,6 +1055,7 @@
               "solver":          { "type": "string", "description": "For backend 'alloy': the SAT solver id used (pinned via .spec/project.json alloy.solver). Recorded because a scope-bounded ✓ is only reproducible against a named solver." },
               "instance":        { "type": "string", "description": "For backend 'alloy': repo-relative path of the counterexample instance XML. Written under specs/<area>/gen/ — GITIGNORED and regenerable, because Alloy picks one instance out of many and its choice is not stable across solver/tool versions. The verdict is committed; the instance is not." },
               "result":          { "type": "string", "enum": ["verified", "counterexample", "timeout", "error", "not-checkable", "not-run"] },
+              "steps":           { "type": "integer", "minimum": 1, "description": "Step bound this check actually reached. A verified result is valid only to this depth — may be lower than check_results.max_steps when the run's budget stopped the deep pass. Absent on results that have no step bound at all (inductive proofs, Alloy, z3, TLC temporal) and on records written before the two-pass ladder existed; the readback falls back to check_results.max_steps for those." },
               "duration_s":      { "type": "number" },
               "batched":         { "type": "boolean", "description": "This verdict came from the batched `quint verify --invariants` run that checked every bounded invariant at once. Same check, same bound, one Apalache start for all of them — recorded because a batched ✓ and a per-id ✓ should not be indistinguishable when reading a ledger back." },
               "note":            { "type": "string", "description": "Mechanical note about HOW the result was obtained, never about what it means. Written for results whose usual evidence is absent by construction — e.g. a temporal counterexample found by TLC, which produces no ITF trace." },

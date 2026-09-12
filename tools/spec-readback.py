@@ -131,6 +131,20 @@ def check_bound(area):
     return b if isinstance(b, int) and b > 0 else None
 
 
+def check_steps(area):
+    """ID -> the step bound that check ACTUALLY reached, from the two-pass
+    ladder. This is the whole point of recording it per check: an invariant
+    verified only to depth 3 must render ✓ (≤3 steps) beside a neighbour's
+    ✓ (≤10 steps), so a reviewer can see which claim is the weaker one.
+    Without it both read identically and the difference is invisible."""
+    out = {}
+    for c in ((area.get("check_results") or {}).get("checks") or []):
+        n = c.get("steps")
+        if c.get("id") and isinstance(n, int) and n > 0:
+            out[c["id"]] = n
+    return out
+
+
 def check_scopes(area):
     """Per-invariant finite scope from the last Alloy run, keyed by ID. A
     structural ✓ is bounded by scope the way a bounded ✓ is bounded by depth,
@@ -181,19 +195,28 @@ def under_assumptions(mark, asms):
     return f"{mark} \u00b7 under {', '.join(asms)}"
 
 
-def invariant_mark(inv, bound, scope=None):
+def invariant_mark(inv, bound, scope=None, steps=None):
     """Honest render of an invariant's formal status. A bounded model check is
     NOT a proof — it only says 'no counterexample within N steps' — so a
     bounded ✓ always carries its depth, distinct from an inductive proof and
     from the requirement ✓ (which means 'witness replayed green in code').
     A structural ✓ carries its Alloy scope for the same reason: it says 'no
     counterexample among structures this size', which is a different claim
-    again."""
+    again.
+
+    `steps` is the depth THIS invariant reached (check_results.checks[].steps,
+    from the two-pass ladder); `bound` is the run-level fallback for records
+    written before that was recorded. The per-check number wins, because with
+    a ladder two bounded ✓ marks in the same area can rest on different
+    depths — one deepened to the ceiling, one stopped at the shallow pass by
+    the run budget — and rendering both from one global number would quietly
+    overclaim the weaker of the two."""
     st = inv.get("formal_status", "specified")
     if st == "verified-inductive":
         return "✓ proven"
     if st == "verified":
-        return f"✓ (≤{bound} steps)" if bound else "✓ (bounded)"
+        depth = steps or bound
+        return f"✓ (≤{depth} steps)" if depth else "✓ (bounded)"
     if st == "verified-in-scope":
         return f"✓ (scope: {scope})" if scope else "✓ (in scope)"
     if st == "verified-smt":
@@ -621,7 +644,21 @@ def header_bar(area, area_name):
               if q.get("status", "open") == "open")
     log = area.get("verification_log") or []
     last_ver = log[-1]["date"][:10] if log else "never"
-    bsuffix = f" (≤{bound})" if bound else ""
+    # One number can no longer describe the bounded cell: the ladder deepens
+    # what it has budget for and leaves the rest at the shallow bound, so the
+    # header shows the RANGE the bounded ✓ marks actually rest on.
+    steps = check_steps(area)
+    depths = sorted(d for d in {steps.get(i.get("id"), bound) for i in invs
+                                if i.get("formal_status") == "verified"}
+                    if d)
+    if len(depths) > 1:
+        bsuffix = f" (≤{depths[0]}–{depths[-1]})"
+    elif depths:
+        bsuffix = f" (≤{depths[0]})"
+    else:
+        # Nothing bounded to describe (or nothing recorded): the run's
+        # configured ceiling, exactly as this cell read before the ladder.
+        bsuffix = f" (≤{bound})" if bound else ""
     inv_cell = f"{n_inv_proven} proven + {n_inv_bounded} bounded{bsuffix} / {len(invs)}"
     if n_inv_scoped:
         # Only shown when structural checks exist, so the bar of an
@@ -901,11 +938,17 @@ def invariants_section(area):
         return []
     bound = check_bound(area)
     scopes = check_scopes(area)
+    steps = check_steps(area)
     asms = assumption_index(area)
     legend = ("_Invariant legend: ✓ proven — inductive, holds in ALL reachable states · "
               "✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, "
               "NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a "
               "bounded ✓ by raising the bound or marking the invariant `proof: inductive`._")
+    if len({n for n in steps.values()}) > 1:
+        legend = legend[:-1] + (" · N is PER INVARIANT: the checker runs a shallow "
+                                "pass first and deepens only what it has budget for, "
+                                "so a smaller N here is a weaker claim, not a "
+                                "different kind of one._")
     if scopes:
         legend = legend[:-1] + (" · ✓ (scope: …) — Alloy found no counterexample among "
                                 "structures that size; outside that scope it was never "
@@ -913,7 +956,8 @@ def invariants_section(area):
     lines = ["## What Must Always Be True", "", legend, ""]
     for inv in sorted(invs, key=lambda i: i.get("id", "")):
         st = inv.get("formal_status", "specified")
-        mark = invariant_mark(inv, bound, scopes.get(inv.get("id")))
+        mark = invariant_mark(inv, bound, scopes.get(inv.get("id")),
+                              steps.get(inv.get("id")))
         tail = " — see Needs Your Attention." if st == "counterexample-found" else ""
         # A structural invariant has no Quint name — it points at the Alloy
         # check that carries it, so the reader can find the actual assertion.
@@ -1902,7 +1946,8 @@ def emit_change(root, slug, since=None):
                         sub.append("  </details>")
                 lines.extend(sub)
             elif key == "inv":
-                mark = invariant_mark(item, check_bound(area))
+                mark = invariant_mark(item, check_bound(area),
+                                      steps=check_steps(area).get(iid))
                 lines.append(f"- {mark} **{iid}** — {item.get('description', '')}")
             elif key == "con":
                 lines.append(f"- **{iid}** — `{item.get('name')}` = {item.get('value')}"
