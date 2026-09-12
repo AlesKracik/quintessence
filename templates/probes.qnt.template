@@ -112,6 +112,33 @@ module {{MODULE_NAME}}_probes {
   //     --out-itf=specs/{{AREA}}/traces/{{REQ_ID}}.itf.json \
   //     specs/{{AREA}}.probes.qnt
 
+  // ----------------------------------------------------------
+  // TRANSITION INVARIANTS — one per invariant with over: "probes"
+  // A property of a STEP, not of a state: "X never changes", "Y
+  // only moves one way", "DELETED is terminal". It lives here
+  // because the _prev* ghosts it reads exist only here, and it is
+  // authored in the area JSON (invariants[].predicate) because
+  // this module is generated. Not `always(P(next(x)))`: quint
+  // compiles that to [](x = x'), which TLA+ rejects — it wants
+  // box-action form [][A]_vars.
+  //
+  // Emitted POSITIVELY, unlike a probe: a probe is negated so its
+  // counterexample is the witness, while a counterexample to one
+  // of these is a VIOLATION.
+  //
+  // /// {{INV_ID}}: <invariant description>
+  // val {{INV_QUINT_NAME}}: bool =
+  //   {{INV_PREDICATE}}
+  //
+  // e.g.  val policyStable: bool =
+  //         groups.keys().forall(g =>
+  //           groups.get(g).policy == _prevGroups.get(g).policy)
+  //
+  // Run with (same --init/--step as a probe, asserted directly):
+  //   quint verify --invariant={{INV_QUINT_NAME}} \
+  //     --init=initP --step=stepP specs/{{AREA}}.probes.qnt
+  // ----------------------------------------------------------
+
   // Action coverage falls out of the witness probes (each is
   // path-constrained on _lastAction == quint_ref, so a witnessed
   // REQ proves its action fires). Unreferenced actions are

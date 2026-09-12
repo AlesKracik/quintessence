@@ -266,9 +266,32 @@ def check_quint_refs(area_data, sidecar, area_name, findings, probes=None):
 
     for inv in area_data.get("invariants", []) or []:
         name = inv.get("quint_name")
+        over_probes = (inv.get("over") or "model") == "probes"
+        if over_probes and not inv.get("predicate"):
+            # The probe module is generated, so a transition invariant has
+            # exactly one place its Quint text can come from. Without it the
+            # val is never emitted and the `over: 'probes'` path dead-ends in
+            # invariant-quint-missing, which reads as a stale module rather
+            # than as a field nobody filled in.
+            add(findings, FAIL, "quint", "invariant-over-probes-without-predicate",
+                area_name,
+                f"{inv.get('id', '?')} declares over: 'probes' but carries no "
+                f"predicate. The probe module is GENERATED — write the Quint "
+                f"expression (it may read the `_prev*` ghosts) in "
+                f"invariants[].predicate and regenerate with "
+                f"tools/spec-probes.py, or drop over: 'probes' and state it "
+                f"over a single state in the sidecar.",
+                ref=inv.get("id"))
+        elif not over_probes and inv.get("predicate"):
+            add(findings, WARN, "quint", "invariant-predicate-ignored", area_name,
+                f"{inv.get('id', '?')}.predicate is set but `over` is 'model', "
+                f"where the val is hand-written in the sidecar — the field is "
+                f"read only by the probe generator, so nothing emits it. Set "
+                f"over: 'probes' if this reads the pre-state.",
+                ref=inv.get("id"))
         if not name:
             continue
-        if (inv.get("over") or "model") == "probes":
+        if over_probes:
             if probes is None or "__no_module__" in probes:
                 add(findings, FAIL, "quint", "invariant-over-probes-unparseable",
                     area_name,
@@ -281,7 +304,8 @@ def check_quint_refs(area_data, sidecar, area_name, findings, probes=None):
                     f"{inv.get('id', '?')}.quint_name '{name}' has no matching "
                     f"val/invariant in the PROBE module (it declares over: "
                     f"'probes'). Transition invariants live alongside the "
-                    f"`_prev*` ghosts they read.",
+                    f"`_prev*` ghosts they read, and the module is generated "
+                    f"— re-run tools/spec-probes.py to emit it.",
                     ref=inv.get("id"))
             continue
         if name not in sidecar["named"]:
@@ -501,7 +525,24 @@ def check_witnesses(root, area_data, area_name, findings):
         # Trace presence/validity/freshness run UNCONDITIONALLY — they must
         # not depend on the predicate being present, or deleting the
         # predicate would silence the freshness FAILs on a witnessed REQ.
-        if not predicate and req.get("status") not in EARLY_STATUSES:
+        if (not predicate and req.get("status") not in EARLY_STATUSES
+                and not witness.get("outcomes")
+                and skip_discharge(witness) is not None):
+            # The author already discharged this one — named an enforcing
+            # invariant, or wrote the prose justification — but the discharge
+            # only counts at witness.status 'skipped'. At any other status
+            # nothing consults it, so every runner reads the requirement as a
+            # missing predicate and tells the author to draft one they
+            # deliberately did not write. Name the actual gap instead.
+            add(findings, FAIL, "witness", "justification-without-skip", area_name,
+                f"{rid} discharges its witness ({skip_discharge(witness)}) but "
+                f"witness.status is '{wstatus}', not 'skipped' — so the "
+                f"discharge counts for nothing and spec-record reports it as "
+                f"no-predicate. Set witness.status to 'skipped'"
+                + (", and prefer witness.enforced_by over prose."
+                   if not witness.get("enforced_by") else "."),
+                ref=rid)
+        elif not predicate and req.get("status") not in EARLY_STATUSES:
             # Past the draft phase (raw/needs-validation), an absent predicate
             # is the mechanized vagueness gate: a functional response you can't
             # write a boolean witness for is too vague to ever be witnessed or

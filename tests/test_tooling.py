@@ -201,6 +201,75 @@ def test_nonfunctional_requirement_exempt(tmp_path):
     assert hits == []
 
 
+# ── A justification discharges only at witness.status 'skipped' ──────────────
+# 19 requirements carried an explicit witness.justification and every runner
+# reported them as `no-predicate` — which sends the author to draft a predicate
+# they deliberately did not write. Nothing consults a discharge unless the
+# status says 'skipped', so the status is the gap to name.
+
+def _witness_codes(tmp_path, reqs):
+    findings = []
+    lint.check_witnesses(tmp_path, _area_with(reqs), "auth", findings)
+    return [f.check for f in findings]
+
+
+def test_justification_without_skip_names_the_status_not_the_predicate(tmp_path):
+    codes = _witness_codes(tmp_path, [
+        {"id": "REQ-001", "status": "specified",
+         "witness": {"justification": "rejection — INV-002 keeps it true"}},
+    ])
+    assert codes == ["justification-without-skip"]
+
+
+def test_justification_without_skip_says_what_to_set(tmp_path):
+    findings = []
+    lint.check_witnesses(tmp_path, _area_with([
+        {"id": "REQ-001", "status": "specified",
+         "witness": {"justification": "rejection — INV-002 keeps it true"}},
+    ]), "auth", findings)
+    assert findings[0].severity == lint.FAIL
+    assert "skipped" in findings[0].description
+    # ... and steers the prose form toward the checkable one.
+    assert "enforced_by" in findings[0].description
+
+
+def test_an_undischarged_requirement_is_still_asked_for_a_predicate(tmp_path):
+    codes = _witness_codes(tmp_path, [
+        {"id": "REQ-001", "status": "specified", "witness": {"status": "not-run"}},
+    ])
+    assert codes == ["no-witness-predicate"]
+
+
+def test_a_justified_skip_is_unchanged(tmp_path):
+    codes = _witness_codes(tmp_path, [
+        {"id": "REQ-001", "status": "specified",
+         "witness": {"status": "skipped",
+                     "justification": "rejection — INV-002 keeps it true"}},
+    ])
+    assert codes == []
+
+
+def test_witness_status_flags_a_discharge_that_counts_for_nothing(tmp_path):
+    area = {"kind": "area", "area": "a", "formal_model": {"quint_file": "a.qnt"},
+            "requirements": [
+                {"id": "REQ-001", "witness": {"justification": "prose"}}]}
+    rows, missing, discharged = itf.witness_status(tmp_path, "a", area)
+    assert (missing, discharged) == (1, 0)
+    assert rows[0][1] == "JUSTIFIED-UNSET"
+    assert "not 'skipped'" in rows[0][3]
+
+
+def test_a_forbidden_requirement_naming_its_enforcer_is_not_flagged_early(tmp_path):
+    """spec-record sets its status itself; before that first run the
+    requirement is correct as written."""
+    area = {"kind": "area", "area": "a", "formal_model": {"quint_file": "a.qnt"},
+            "requirements": [
+                {"id": "REQ-005", "modality": "forbidden",
+                 "witness": {"enforced_by": "INV-002"}}]}
+    rows, _missing, _discharged = itf.witness_status(tmp_path, "a", area)
+    assert rows[0][1] != "JUSTIFIED-UNSET"
+
+
 # ── Finding A (pass 2): predicate sanity — no fake witnesses ─────────────────
 
 _SIDECAR = {"vars": {"sessions", "accountStatus"},
@@ -4595,7 +4664,8 @@ def test_lint_looks_up_a_probe_invariant_in_the_probe_module(tmp_path):
     model = lint.parse_sidecar(tmp_path / "specs" / "a.qnt")
     probe_ir = lint.parse_sidecar(tmp_path / "specs" / "a.probes.qnt")
     area = {"area": "a", "invariants": [
-        {"id": "INV-003", "over": "probes", "quint_name": "policyStable"}]}
+        {"id": "INV-003", "over": "probes", "quint_name": "policyStable",
+         "predicate": "policy == _prevPolicy"}]}
 
     findings = []
     lint.check_quint_refs(area, model, "a", findings, probes=probe_ir)
@@ -4604,6 +4674,149 @@ def test_lint_looks_up_a_probe_invariant_in_the_probe_module(tmp_path):
     findings = []
     lint.check_quint_refs(area, model, "a", findings, probes=None)
     assert [f.check for f in findings] == ["invariant-over-probes-unparseable"]
+
+
+# ── Transition invariants are emitted, not merely referenced ────────────────
+# `over: "probes"` was documented, schema'd, linted and run — and nothing
+# emitted the val. The probe generator read only requirements[].witness, and
+# the module it writes is never hand-edited, so a transition property had
+# nowhere to be declared and the documented path dead-ended in a lint FAIL.
+# ("X never changes" has no other route: always(P(next(x))) compiles to
+# [](x = x'), which TLA+ rejects — it wants box-action form [][A]_vars.)
+
+_CLOSED_IS_TERMINAL = {
+    "id": "INV-003", "description": "a closed account never reopens",
+    "over": "probes", "quint_name": "closedIsTerminal",
+    "predicate": ("accounts.keys().forall(u => _prevAccounts.get(u) == Closed "
+                  "implies accounts.get(u) == Closed)"),
+}
+
+
+def test_a_transition_invariant_is_declared_in_the_generated_module(tmp_path):
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[],
+                       invariants=[dict(_CLOSED_IS_TERMINAL)])
+    out = _gen(tmp_path, area)
+    assert "val closedIsTerminal: bool =" in out
+    assert _CLOSED_IS_TERMINAL["predicate"] in out
+    # Asserted POSITIVELY: a probe is negated to make the counterexample the
+    # witness, an invariant is not — a counterexample here is a violation.
+    assert "not(accounts.keys().forall" not in out
+
+
+def test_a_transition_invariant_pulls_in_the_ghost_it_reads(tmp_path):
+    """No witness.delta asks for _prevAccounts here — the invariant is the
+    only reader, and a ghost that is never declared is an unresolved name at
+    check time."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[],
+                       invariants=[dict(_CLOSED_IS_TERMINAL)])
+    out = _gen(tmp_path, area)
+    assert "var _prevAccounts:" in out
+    assert "_prevAccounts' = Map()" in out       # explicit initial value
+    assert "_prevAccounts' = accounts" in out    # snapshotted in every branch
+
+
+def test_the_generated_module_satisfies_the_probe_invariant_lookup(tmp_path):
+    """End to end: generate, then run the lint that used to FAIL."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[],
+                       invariants=[dict(_CLOSED_IS_TERMINAL)])
+    (tmp_path / "specs" / "a.probes.qnt").write_text(_gen(tmp_path, area),
+                                                     encoding="utf-8")
+    model = lint.parse_sidecar(tmp_path / "specs" / "a.qnt")
+    probe_ir = lint.parse_sidecar(tmp_path / "specs" / "a.probes.qnt")
+    findings = []
+    lint.check_quint_refs(area, model, "a", findings, probes=probe_ir)
+    assert [f.check for f in findings] == []
+
+
+@pytest.mark.parametrize("inv", [
+    {"id": "INV-003", "over": "probes", "quint_name": "closedIsTerminal"},
+    {"id": "INV-003", "over": "probes", "predicate": "count >= _prevCount"},
+])
+def test_an_incomplete_transition_invariant_fails_generation(tmp_path, inv):
+    """Nothing partial is written: without both halves there is no val to
+    emit, and a silently absent one is the omission this generator exists to
+    prevent."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[],
+                       invariants=[inv])
+    with pytest.raises(SystemExit) as exc:
+        _gen(tmp_path, area)
+    assert exc.value.code == 2
+
+
+def test_a_transition_invariant_reading_an_unknown_ghost_fails_generation(tmp_path):
+    """`_prevAcounts` for `_prevAccounts` would compile to an unresolved name
+    at check time, long after the spec looked fine."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[],
+                       invariants=[{"id": "INV-003", "description": "x",
+                                    "over": "probes", "quint_name": "p",
+                                    "predicate": "accounts == _prevAcounts"}])
+    with pytest.raises(SystemExit) as exc:
+        _gen(tmp_path, area)
+    assert exc.value.code == 2
+
+
+def test_a_transition_invariant_cannot_claim_a_probe_name(tmp_path):
+    """The probe name is derived from its requirement id and cannot move, so
+    the collision has to be refused rather than resolved."""
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'},
+                       invariants=[{"id": "INV-003", "description": "x",
+                                    "over": "probes",
+                                    "quint_name": "witness_REQ_001",
+                                    "predicate": "count >= _prevCount"}])
+    with pytest.raises(SystemExit) as exc:
+        _gen(tmp_path, area)
+    assert exc.value.code == 2
+
+
+def test_over_probes_without_a_predicate_is_a_lint_failure(tmp_path):
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "a.qnt").write_text(PROBE_QNT, encoding="utf-8")
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n  val closedIsTerminal: bool = true\n}\n",
+        encoding="utf-8")
+    model = lint.parse_sidecar(tmp_path / "specs" / "a.qnt")
+    probe_ir = lint.parse_sidecar(tmp_path / "specs" / "a.probes.qnt")
+    area = {"area": "a", "invariants": [
+        {"id": "INV-003", "over": "probes", "quint_name": "closedIsTerminal"}]}
+    findings = []
+    lint.check_quint_refs(area, model, "a", findings, probes=probe_ir)
+    assert [f.check for f in findings] == [
+        "invariant-over-probes-without-predicate"]
+
+
+def test_a_predicate_on_a_model_invariant_warns_that_nothing_emits_it(tmp_path):
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "a.qnt").write_text(PROBE_QNT, encoding="utf-8")
+    model = lint.parse_sidecar(tmp_path / "specs" / "a.qnt")
+    area = {"area": "a", "invariants": [
+        {"id": "INV-001", "predicate": "count >= _prevCount"}]}
+    findings = []
+    lint.check_quint_refs(area, model, "a", findings, probes=None)
+    assert [f.check for f in findings] == ["invariant-predicate-ignored"]
+    assert findings[0].severity == lint.WARN
+
+
+def test_record_names_the_missing_status_instead_of_a_missing_predicate(
+        tmp_path, monkeypatch, capsys):
+    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[
+        {"id": "REQ-001", "description": "a closed account is not reopened",
+         "modality": "forbidden",
+         "witness": {"justification": "rejection — INV-003 keeps it true"}}])
+    (tmp_path / "specs" / "a.probes.qnt").write_text(_gen(tmp_path, area),
+                                                     encoding="utf-8")
+    (tmp_path / ".spec").mkdir(exist_ok=True)
+    (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
+                                                     encoding="utf-8")
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", lambda *a, **k: ("verified", "", 0.1))
+    args = _Args(tmp_path, "a")
+    args.no_witness = False
+    with pytest.raises(SystemExit):
+        record.cmd_check(args)
+    out = capsys.readouterr().out
+    assert "JUSTIFIED-UNSET" in out
+    assert "no-predicate" not in out
 
 
 # ── Extraction coverage: absent must not read as clean ──────────────────────

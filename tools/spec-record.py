@@ -1411,7 +1411,17 @@ def cmd_check(args):
                     bad += 1
                 continue
             if not witness.get("predicate"):
-                print(f"{rid:<12} no-predicate     (draft one via /spec, then re-run)")
+                if skip_discharge(witness) is not None:
+                    # Discharged in substance but not in status: only
+                    # 'skipped' consults the justification, so reporting this
+                    # as a missing predicate asks for work the author already
+                    # decided against. Still counts against the gate — an
+                    # undeclared skip discharges nothing.
+                    print(f"{rid:<12} JUSTIFIED-UNSET  (witness.status is "
+                          f"'{witness.get('status', 'not-run')}', not 'skipped' "
+                          f"— the justification discharges nothing until it is)")
+                else:
+                    print(f"{rid:<12} no-predicate     (draft one via /spec, then re-run)")
                 bad += 1
                 continue
             req["witness"] = witness  # persist only for reqs we actually process

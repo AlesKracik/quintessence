@@ -730,6 +730,22 @@ def witness_status(root, area_name, area_data):
                 missing += 1
             rows.append((rid, status, trace_rel or "—", detail))
             continue
+        if (not w.get("predicate") and not w.get("outcomes")
+                and skip_discharge(w) is not None
+                and not (req.get("modality") == "forbidden"
+                         and w.get("enforced_by"))):
+            # A discharge is only consulted at status 'skipped'. Carrying one
+            # at any other status leaves the requirement with no predicate,
+            # no trace and no discharge — a gate failure whose cause is a
+            # missing status, not a missing predicate. (A `forbidden`
+            # requirement naming its enforcer is exempt: spec-record sets its
+            # status itself, and before that first run it is correct as
+            # written.)
+            rows.append((rid, "JUSTIFIED-UNSET", trace_rel or "—",
+                         f"witness.status is '{status}', not 'skipped' — "
+                         f"discharges nothing until it is"))
+            missing += 1
+            continue
         worst_status, worst_detail, entry_traces, bad_entries = None, "", [], 0
         for label, entry in entries:
             e_status = entry.get("status", "not-run") if multi else status

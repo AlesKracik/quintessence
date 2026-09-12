@@ -54,7 +54,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (area_json_path, ghost_for_param,  # noqa: E402
-                       ghost_for_var, probe_name, outcome_probe_name)
+                       ghost_for_var, probe_name, outcome_probe_name,
+                       skip_discharge)
 from quint_ir import parse_qnt  # noqa: E402
 
 BASE_ZERO = {
@@ -100,12 +101,11 @@ def zero_value(type_str, aliases):
     return None
 
 
-def collect_delta_vars(area, model_vars):
-    """State vars some witness.delta actually reads, via its `_prev` ghost.
-
-    Only the ones needed: a _prev ghost per state var would double the state
-    space for snapshots nothing compares against."""
-    needed = set()
+def prev_readers(area):
+    """Every piece of authored Quint in this area that may read a `_prev`
+    ghost: witness deltas (the pre-state a probe had to start from) and the
+    predicates of invariants checked over this module (transition
+    properties)."""
     text = []
     for req in area.get("requirements") or []:
         w = req.get("witness") or {}
@@ -116,11 +116,59 @@ def collect_delta_vars(area, model_vars):
             oc_pre = (oc.get("delta") or {}).get("pre")
             if oc_pre:
                 text.append(oc_pre)
-    blob = "\n".join(text)
+    for _inv, _name, predicate in transition_invariants(area):
+        text.append(predicate)
+    return text
+
+
+def collect_delta_vars(area, model_vars):
+    """State vars something in this area reads through a `_prev` ghost.
+
+    Only the ones needed: a _prev ghost per state var would double the state
+    space for snapshots nothing compares against."""
+    needed = set()
+    blob = "\n".join(prev_readers(area))
     for var in model_vars:
         if re.search(rf"\b{re.escape(ghost_for_var(var))}\b", blob):
             needed.add(var)
     return sorted(needed)
+
+
+def transition_invariants(area):
+    """(inv, quint_name, predicate) per invariant declared over: "probes".
+
+    An invariant whose truth depends on the state BEFORE as well as after —
+    "X never changes", "Y only moves one way" — is not expressible over a
+    single state, and `always(P(next(x)))` is no way out: quint compiles it to
+    `[](x = x')`, which TLA+ rejects because it wants box-action form
+    `[][A]_vars`. What does work is making the pre-state an ordinary variable,
+    which is exactly what the `_prev*` ghosts in this module are — so the
+    invariant is checked here, with --init=initP --step=stepP.
+
+    Its Quint text therefore cannot live in the sidecar (the ghosts are not in
+    scope there), and this module is generated — so it lives in the area JSON
+    as invariants[].predicate and is emitted from here. Before that field
+    existed, the documented `over: "probes"` path had nowhere to declare the
+    val at all and spec-lint FAILed every invariant that took it."""
+    out = []
+    for inv in area.get("invariants") or []:
+        if (inv.get("over") or "model") != "probes":
+            continue
+        iid = inv.get("id", "?")
+        name, predicate = inv.get("quint_name"), inv.get("predicate")
+        if not name or not predicate:
+            missing = " and ".join(f for f in (
+                None if name else "quint_name",
+                None if predicate else "predicate") if f)
+            fail(f'{iid} declares over: "probes" but has no {missing}.\n'
+                 f"A transition invariant is checked in THIS module, so this "
+                 f"generator writes its val: it needs the name to declare "
+                 f"(quint_name) and the Quint expression to declare it as "
+                 f"(predicate), which may read the _prev* ghosts.\n"
+                 f"Either add both to {iid}, or drop over: \"probes\" and "
+                 f"state it over a single state in the sidecar.")
+        out.append((inv, name, predicate))
+    return out
 
 
 def probe_requirements(area):
@@ -211,6 +259,24 @@ def build(area, area_name, ir, quint_rel):
                "plain alias to one of those, or snapshot a different var.")
 
     probes = probe_requirements(area)
+    transitions = transition_invariants(area)
+
+    # A transition invariant reading a ghost that does not exist is the same
+    # staleness this generator exists to catch: `_prevSesions` for
+    # `_prevSessions` compiles to an unresolved name at check time, long after
+    # the spec looked fine. The ghosts that DO exist are the _prev of a state
+    # var, so an unknown one is answerable here.
+    known_ghosts = {ghost_for_var(v) for v in (ir.get("vars") or [])}
+    for inv, name, predicate in transitions:
+        unknown = sorted({g for g in re.findall(r"\b_prev\w+\b", predicate)
+                          if g not in known_ghosts})
+        if unknown:
+            fail(f"{inv.get('id', '?')}.predicate reads "
+                 + ", ".join(unknown)
+                 + ", which is not a ghost of any state var in the sidecar.\n"
+                   "The pre-state ghosts available are: "
+                 + (", ".join(sorted(known_ghosts)) or "(the sidecar declares "
+                    "no state vars)") + ".")
 
     L = []
     a = L.append
@@ -218,6 +284,7 @@ def build(area, area_name, ir, quint_rel):
     a(f"// Witness Probe Module: {area_name}")
     a("// GENERATED by tools/spec-probes.py — regenerate, never hand-edit.")
     a(f"// Source of predicates: requirements[].witness in specs/{area_name}.area.json")
+    a("// Transition invariants come from invariants[].predicate in the same file.")
     a("//")
     a("// To prove a behavior is REACHABLE, assert its negation as an")
     a("// invariant — the checker's counterexample IS the witness trace.")
@@ -275,6 +342,25 @@ def build(area, area_name, ir, quint_rel):
         a("      },")
     a("    }")
     a("  }")
+    if transitions:
+        a("")
+        a("  // -- Transition invariants ----------------------------------")
+        a("  // Declared over: \"probes\" because they read the pre-state. These")
+        a("  // are asserted POSITIVELY, unlike the probes below: a")
+        a("  // counterexample to one of these is a VIOLATION, not a witness.")
+        claimed = {name for _r, name, _p, _d, _o in probes}
+        for inv, name, predicate in transitions:
+            if name in claimed:
+                fail(f"{inv.get('id', '?')}.quint_name '{name}' collides with "
+                     f"a generated witness probe of the same name. Rename the "
+                     f"invariant's val — the probe name is derived from its "
+                     f"requirement id and cannot move.")
+            claimed.add(name)
+            desc = (inv.get("description") or "").strip().replace("\n", " ")
+            a("")
+            a(f"  /// {inv.get('id', '?')}: {desc}")
+            a(f"  val {name}: bool =")
+            a(f"    {predicate.strip()}")
     a("")
     a("  // -- Witness probes -----------------------------------------")
     if not probes:
@@ -312,7 +398,16 @@ def build(area, area_name, ir, quint_rel):
         elif req.get("status") == "deferred":
             skipped.append(f"{rid}: deferred")
         elif not (w.get("predicate") or w.get("outcomes")):
-            skipped.append(f"{rid}: NO PREDICATE YET — spec-lint FAILs this")
+            # A justification with any status other than 'skipped' discharges
+            # nothing, and reading it as "no predicate yet" sends the author
+            # to draft one they already decided not to write.
+            if skip_discharge(w):
+                skipped.append(
+                    f"{rid}: justified, but witness.status is "
+                    f"'{w.get('status', 'not-run')}' — set it to 'skipped' "
+                    f"or the discharge does not count")
+            else:
+                skipped.append(f"{rid}: NO PREDICATE YET — spec-lint FAILs this")
     if skipped:
         a("  // No probe, by design or because one is owed:")
         for line in skipped:

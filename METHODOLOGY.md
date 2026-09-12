@@ -414,6 +414,8 @@ Each requirement carries a `witness` block:
 
 **Rejection requirements have no witness — by design.** "If the account is Locked, login shall be rejected" produces no state change; reachability probes can't demonstrate a non-event. The rule: encode the rejection as (or pair it with) the **invariant that stays true** (`noSessionWhileLocked`), set `modality: "forbidden"` and point `witness.enforced_by` at that invariant. `/spec-check`'s recorder then writes `status: "skipped"` for you — the skip is a *result*, not something you author. Don't delete the requirement and don't force a meaningless predicate: the invariant carries the proof, `enforced_by` carries the checkable link back to it. The prose form (`justification: "rejection — enforced by INV-002"`) still discharges the gate, but only the typed form FAILs when the invariant it names does not exist.
 
+**A discharge is only read at `witness.status: "skipped"`.** A `justification` (or an `enforced_by` on a requirement that is not `modality: "forbidden"`) sitting on a witness whose status is still `not-run` discharges *nothing*: no gate consults it, so the requirement counts as unwitnessed and predicate-less. That combination is its own FAIL — `justification-without-skip` in `spec-lint`, `JUSTIFIED-UNSET` in `spec-record` and `itf_tools status` — rather than the `no-predicate` it used to read as, because the fix is to set the status, not to draft a predicate the author deliberately did not write. For `forbidden` + `enforced_by` the recorder sets the status itself, which is why that pair is correct as written before its first run.
+
 `spec-lint` enforces the bookkeeping, with no soft-pass paths: `status: approved` is blocked while any requirement is unwitnessed — including requirements whose witness block is empty or predicate-less (a skip counts as discharged when it carries `witness.enforced_by` or a `justification`; a skip with **neither** is itself a FAIL). A recorded trace file that doesn't exist, is invalid ITF, whose `model_sha` is stale, **or that carries no `model_sha` at all** (freshness unverifiable) is a FAIL. If witnesses exist but the model files can't be hashed (probes file recorded but missing), every witness is suspect — FAIL.
 
 Cost control: `spec-record` skips probes whose `model_sha` already matches (byte-identical model → existing trace still valid); `/spec-check` cascades only to contracts spanning changed areas.
@@ -1424,7 +1426,35 @@ becomes an ordinary state predicate over `_prevGroups`. Same bound —
 bounded or `proof: "inductive"` exactly as on the model path; the module
 changes, the honesty of the verdict does not.
 
-Three consequences worth knowing:
+Note what you do *not* write: `always(P(next(x)))`. Quint compiles it to
+`[](x = x')`, which TLA+ rejects — it wants box-action form `[][A]_vars`, and
+quint does not emit that. Making the pre-state an ordinary variable is the
+route that works, and the `_prev*` ghosts are exactly that.
+
+**Where the Quint text lives.** The probe module is generated and never
+hand-edited, and the ghosts are not in scope in the sidecar — so a transition
+invariant has nowhere to be declared by hand. It is authored in the area JSON
+instead, as `invariants[].predicate`, and `tools/spec-probes.py` emits
+`val <quint_name>: bool = <predicate>` from it, positively (a probe is negated
+so its counterexample is a witness; a counterexample to one of these is a
+violation). Regenerate the module after adding one:
+
+```json
+{ "id": "INV-004", "description": "a group's policy never changes",
+  "over": "probes", "quint_name": "policyStable",
+  "predicate": "groups.keys().forall(g => groups.get(g).policy == _prevGroups.get(g).policy)" }
+```
+
+The generator declares, initializes and snapshots every `_prev*` ghost the
+predicate reads, exactly as it does for a witness delta, and refuses one that
+reads a ghost no state var has — `_prevGroupss` for `_prevGroups` would
+otherwise surface as an unresolved name at check time, long after the spec
+looked fine. An `over: "probes"` invariant with no `predicate` FAILs
+(`invariant-over-probes-without-predicate`): before that field existed, the
+documented path had nowhere to declare the val at all and spec-lint FAILed
+every invariant that took it.
+
+Four consequences worth knowing:
 
 - Probe-module invariants are **excluded from the batched run**. A batch is one
   `quint verify` over one file, and quietly including them would check them
@@ -1451,7 +1481,7 @@ Three consequences worth knowing:
 
 ### spec-lint
 
-`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording and state-binding on `ears.state`/`response`, and a missing or stale per-requirement `meaning` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), the EARS↔model bridge (a precondition the action never reads, a response promising a state the action never writes or never builds, a declared state no assignment can produce — see "The EARS↔Model Bridge"), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so (WARN) instead of silently skipping schema validation, and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
+`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording and state-binding on `ears.state`/`response`, and a missing or stale per-requirement `meaning` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; a discharge carried at any status *other* than `skipped` → FAIL (`justification-without-skip`), reported as the missing status rather than as a missing predicate; an `over: "probes"` invariant with no `predicate` → FAIL (`invariant-over-probes-without-predicate`) — the probe generator has nothing to emit, so the val exists nowhere — and a `predicate` on an `over: "model"` invariant → WARN, since nothing reads it there; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), the EARS↔model bridge (a precondition the action never reads, a response promising a state the action never writes or never builds, a declared state no assignment can produce — see "The EARS↔Model Bridge"), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so (WARN) instead of silently skipping schema validation, and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
 
 ### spec-record
 
