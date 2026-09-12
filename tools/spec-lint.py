@@ -1757,10 +1757,78 @@ def check_boundary(area_data, area_name, findings):
             "a replacement may legitimately do differently.")
 
 
+def _declares_code(area_data):
+    """Does the area claim to describe code? Same three signals the readback
+    uses (traceability, a triage ledger, extraction evidence) \u2014 the two must
+    agree, or lint and the verdict would disagree about the same area."""
+    for t in area_data.get("traceability") or []:
+        if (t.get("code") or "").strip():
+            return True
+    if area_data.get("extraction_triage"):
+        return True
+    for req in area_data.get("requirements") or []:
+        if ((req.get("extraction") or {}).get("evidence") or "").strip():
+            return True
+    return False
+
+
+def check_extraction_coverage(area_data, area_name, findings):
+    """Was the audit RUN, and did it come back clean?
+
+    Distinct from the ledger check below, which only asks whether the rows
+    that exist are coherent. A ledger can be perfectly coherent and cover a
+    fraction of the code \u2014 which is how an area reaches full witnesses, full
+    invariants, zero untriaged matrix cells and zero lint failures with most
+    of its implementation unaccounted for. Every other completeness number
+    here measures the spec against itself; this is the only one that measures
+    it against the code, so an absent one cannot read the same as a clean
+    one.
+
+    `--record` is what makes the number exist. The audit was always
+    runnable, but nothing required the flag, so check_results.extraction
+    stayed absent and every surface read absent as 'nothing to say'."""
+    if not _declares_code(area_data):
+        return                      # nothing to audit; not a finding
+    review = at_review(area_data)
+    stats = (area_data.get("check_results") or {}).get("extraction") or {}
+    if not stats:
+        if area_data.get("extraction_triage"):
+            # Someone ran the audit and triaged from it, but never with
+            # --record, so the coverage number was never written down.
+            add(findings, FAIL if review else WARN, "extraction",
+                "extraction-audit-never-recorded", area_name,
+                "extraction_triage[] has entries, so the audit has been run \u2014 "
+                "but check_results.extraction is absent, so no coverage number "
+                "was ever recorded and nothing downstream can tell a "
+                "well-triaged area from a barely-audited one. Re-run with "
+                "`tools/spec-extract-audit.py " + area_name + " --record`.")
+        else:
+            add(findings, FAIL if review else WARN, "extraction",
+                "extraction-audit-missing", area_name,
+                "This area describes code and has never been audited against "
+                "it. Every other completeness check measures the spec against "
+                "itself; this is the only one that runs code \u2192 spec, so until "
+                "it does the spec can be missing behavior entirely with every "
+                "other mark green. Run `tools/spec-extract-audit.py "
+                + area_name + " --record`.")
+        return
+    unclaimed = stats.get("unclaimed", 0)
+    if unclaimed:
+        add(findings, FAIL if review else WARN, "extraction",
+            "extraction-sites-unclaimed", area_name,
+            f"{unclaimed} of {stats.get('sites', 0)} decision site(s) in the "
+            f"traced code are neither mapped to a spec element nor triaged in "
+            f"extraction_triage[]. This is the only check that runs code \u2192 "
+            f"spec: each unclaimed site is behavior the implementation has and "
+            f"the spec has not accounted for. Triage them with "
+            f"`tools/spec-extract-audit.py {area_name} --emit`.")
+
+
 def check_extraction_ledger(area_data, area_name, findings):
     """The code\u2192spec direction. Full site enumeration needs the source, which
     is tools/spec-extract-audit.py's job; what lint owns is the ledger's own
-    coherence, which is checkable from the JSON alone."""
+    coherence, which is checkable from the JSON alone. Whether the audit ran
+    at all, and whether it came back clean, is check_extraction_coverage."""
     rows = area_data.get("extraction_triage", []) or []
     if not rows:
         return
@@ -2345,6 +2413,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_unproducible_states(area_data, sidecar, area_name, findings)
     check_brief(area_data, area_name, findings)
     check_provenance(area_data, area_name, findings)
+    check_extraction_coverage(area_data, area_name, findings)
     check_formal_model_consistency(area_data, sidecar, area_name, findings)
     check_alloy_backend(root, area_data, area_name, findings)
     check_scope(area_data, area_name, findings)

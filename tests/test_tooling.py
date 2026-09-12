@@ -4463,3 +4463,165 @@ def test_lint_looks_up_a_probe_invariant_in_the_probe_module(tmp_path):
     findings = []
     lint.check_quint_refs(area, model, "a", findings, probes=None)
     assert [f.check for f in findings] == ["invariant-over-probes-unparseable"]
+
+
+# ── Extraction coverage: absent must not read as clean ──────────────────────
+# An area reached 24 witnessed requirements, 18 verified invariants, zero
+# untriaged matrix cells and zero lint failures with 79% of its code
+# unaccounted for. Every mechanism already existed — --record, the
+# check_results.extraction field, the readback's three readers, the ledger
+# lints — and the documented flow never invoked --record, so the field stayed
+# absent and every surface read absent as "nothing to say".
+
+_EX_BASE = {
+    "kind": "area", "area": "pg", "version": "1.0.0", "status": "in-review",
+    "requirements": [{"id": "REQ-001", "status": "verified",
+                      "extraction": {"evidence": "pg.ts:12-40"}}],
+    "invariants": [{"id": "INV-001", "formal_status": "verified"}],
+    "traceability": [{"id": "REQ-001", "code": "src/pg.ts"}],
+    "open_questions": [],
+}
+
+
+def _ex_area(**overlay):
+    area = dict(_EX_BASE)
+    area.update(overlay)
+    return area
+
+
+def _ex_stats(**kw):
+    base = {"sites": 341, "mapped": 41, "triaged": 30, "unclaimed": 270}
+    base.update(kw)
+    return {"check_results": {"extraction": base}}
+
+
+def test_an_area_with_code_and_no_audit_is_not_clean():
+    """The actual defect: 'unknown' and 'fine' were indistinguishable."""
+    area = _ex_area()
+    assert readback.extraction_state(area)[0] == "unaudited"
+    findings = []
+    lint.check_extraction_coverage(area, "pg", findings)
+    assert [f.check for f in findings] == ["extraction-audit-missing"]
+
+
+def test_a_triaged_area_that_never_recorded_is_reported_separately():
+    """The audit was run — someone triaged from its output — but never with
+    --record, so no coverage number was ever written down."""
+    area = _ex_area(extraction_triage=[{"file": "src/pg.ts",
+                                        "fingerprint": "aa11bb22",
+                                        "verdict": "MAPPED",
+                                        "maps_to": "REQ-001"}])
+    findings = []
+    lint.check_extraction_coverage(area, "pg", findings)
+    assert [f.check for f in findings] == ["extraction-audit-never-recorded"]
+
+
+def test_unclaimed_sites_warn_while_authoring_and_fail_at_review():
+    """Graded like every other precision lint: 'approved' has to mean
+    accounted-for, not accounted-for-ish."""
+    for status, severity in (("structured", lint.WARN), ("in-review", lint.FAIL),
+                             ("approved", lint.FAIL)):
+        area = _ex_area(status=status, **_ex_stats())
+        findings = []
+        lint.check_extraction_coverage(area, "pg", findings)
+        assert [f.check for f in findings] == ["extraction-sites-unclaimed"]
+        assert findings[0].severity == severity, status
+
+
+def test_an_area_with_no_code_is_not_nagged():
+    """A greenfield area has nothing to audit. Warning about it would train
+    people to ignore the warning."""
+    area = {"kind": "area", "area": "g", "status": "in-review",
+            "requirements": [{"id": "REQ-001", "status": "verified"}],
+            "invariants": [], "traceability": []}
+    findings = []
+    lint.check_extraction_coverage(area, "g", findings)
+    assert findings == []
+    assert readback.extraction_state(area) == ("n/a", "n/a (no code)")
+
+
+def test_a_clean_audit_is_clean():
+    area = _ex_area(**_ex_stats(mapped=300, triaged=41, unclaimed=0))
+    findings = []
+    lint.check_extraction_coverage(area, "pg", findings)
+    assert findings == []
+    assert readback.extraction_state(area)[0] == "clean"
+
+
+def test_the_ship_verdict_blocks_on_unaccounted_code():
+    """It sits alongside unverified requirements and open questions, because
+    it answers the same question: is this area finished?"""
+    v = readback.ship_verdict(_ex_area(**_ex_stats()))
+    assert "NOT READY" in v and "270 of 341 code site(s) unaccounted" in v
+
+    v = readback.ship_verdict(_ex_area())
+    assert "NOT READY" in v and "never audited" in v
+
+    v = readback.ship_verdict(_ex_area(**_ex_stats(mapped=300, triaged=41,
+                                                   unclaimed=0)))
+    assert "READY" in v and "NOT READY" not in v
+
+
+def test_the_header_bar_carries_extraction_next_to_coverage():
+    bar = readback.header_bar(_ex_area(**_ex_stats()), "pg")
+    assert "**Extraction:** 71/341 sites accounted, 270 unclaimed" in bar
+    assert "**Coverage:**" in bar
+    assert "**Extraction:** n/a (no code)" in readback.header_bar(
+        {"area": "g", "requirements": [], "invariants": []}, "g")
+
+
+def test_the_dimension_grid_tells_not_measured_from_nothing_to_measure():
+    """`—` means 'nothing declared to measure' everywhere else in that grid,
+    so an unaudited area with code must be `!`, not `—`."""
+    def cell(area):
+        row = [ln for ln in readback.dimensions_section(area)
+               if ln.startswith("| Extraction coverage")][0]
+        return row.split("|")[2].strip()
+
+    assert cell(_ex_area()) == "!"                       # code, never audited
+    assert cell(_ex_area(**_ex_stats())) == "!"          # sites unaccounted
+    assert cell(_ex_area(**_ex_stats(unclaimed=0))) == "✓"
+    assert cell({"area": "g", "requirements": [], "invariants": [],
+                 "traceability": []}) == "—"             # nothing to audit
+
+
+def test_the_attention_list_names_a_missing_audit():
+    items = "\n".join(readback.attention_items(Path("."), "pg", _ex_area()))
+    assert "Code never audited" in items
+    assert "only one that measures it against the implementation" in items
+
+
+def test_lint_and_the_readback_agree_about_what_counts_as_code():
+    """Two definitions would let lint stay quiet while the verdict blocks,
+    or the reverse."""
+    for overlay in ({"traceability": [{"id": "R", "code": "a.ts"}]},
+                    {"extraction_triage": [{"file": "a.ts",
+                                            "fingerprint": "aa11bb22"}]},
+                    {"requirements": [{"id": "R",
+                                       "extraction": {"evidence": "a.ts:1"}}]},
+                    {}):
+        area = {"kind": "area", "area": "x", "status": "in-review",
+                "requirements": [], "invariants": [], "traceability": []}
+        area.update(overlay)
+        findings = []
+        lint.check_extraction_coverage(area, "x", findings)
+        assert bool(findings) == readback.area_has_code(area), overlay
+
+
+def test_the_documented_flow_records_the_number():
+    """The root cause was documentation, not code: every audit invocation in
+    the flow said --emit and none said --record."""
+    spec_md = (TOOLS.parent / ".claude" / "commands" / "spec.md").read_text(
+        encoding="utf-8")
+    invocations = [ln for ln in spec_md.splitlines()
+                   if "spec-extract-audit.py" in ln and "`tools/" in ln]
+    assert invocations, "no audit invocation found — retarget this test"
+    for line in invocations:
+        assert "--record" in line, f"audit invoked without --record: {line[:120]}"
+
+    check_md = (TOOLS.parent / ".claude" / "commands" / "spec-check.md").read_text(
+        encoding="utf-8")
+    assert "spec-extract-audit.py" in check_md, (
+        "/spec-check must run the audit: running it once at extraction leaves "
+        "the number resting on whoever last remembered the flag")
+    assert "--record" in check_md.split("spec-extract-audit.py")[1][:200]

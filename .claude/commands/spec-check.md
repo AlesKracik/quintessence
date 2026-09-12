@@ -185,6 +185,14 @@ Format gap question:
 }
 ```
 
+### Step 4a-ter — Code → spec coverage
+
+Run `tools/spec-extract-audit.py <target> --record` whenever the area has code (`traceability[]` entries, a triage ledger, or requirements carrying `extraction.evidence`). Skip it only for an area with no implementation yet, and say so rather than passing over it silently.
+
+Why it belongs in `/spec-check` and not only in extraction: every other completeness pass measures the spec against itself — the matrix against its own state machine, the outcome pass against its own `externals[]`, the witnesses against the model. This is the only one that measures the spec against the **implementation**, which makes it the only one that can find behavior the spec never mentions. Running it once during extraction leaves the number resting on whoever last remembered the flag; running it every check keeps it true.
+
+Read a **rising** unclaimed count as drift: the code grew behavior the spec has not caught up with. Report the number either way — `spec-lint` FAILs `extraction-sites-unclaimed` from `in-review` on, and the ship verdict carries it (`⚠ NOT READY — … 270 of 341 code site(s) unaccounted`), so a silent pass here is not available to you.
+
 ### Step 4a-bis — External × outcome completeness
 
 Run `tools/spec-matrix.py <target> --outcomes --record` whenever the area declares `externals[]`. Every declared outcome must be handled by some requirement's `error_outcomes[]` or triaged in `outcome_triage[]`. Triage the uncovered cells with the same four verdicts as the state×event pass:

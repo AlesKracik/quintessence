@@ -1483,6 +1483,22 @@ one `/spec-check` run for the switch.
 
 `tools/spec-extract-audit.py <area>` enumerates the decision sites in the traced implementation and requires each to be claimed in `extraction_triage[]`. `--emit` prints paste-ready triage stubs, `--record` stamps `check_results.extraction`, `--strict` gates. The only check that runs code → spec. A regex scan under-counts exotic control flow, so a clean run means nothing OBVIOUS is unclaimed — never that the spec is complete.
 
+**Always `--record`, and it runs on every `/spec-check`, not just at extraction.** Without the flag the audit prints to a terminal and nothing is written down, so `check_results.extraction` stays absent — and an absent number is not a neutral state, because four surfaces read it. This is not hypothetical: an area reached 24 witnessed requirements, 18 verified invariants, zero untriaged matrix cells and zero lint failures with 79% of its code unaccounted for, because the documented flow said `--emit` and never `--record`. Every mechanism already existed; nothing invoked it.
+
+So the number is now load-bearing in four places, and none of them can render an absent audit as a clean one:
+
+| Surface | With code, never audited | Sites unaccounted | No code |
+|---|---|---|---|
+| Ship verdict | `⚠ NOT READY — code never audited` | `⚠ NOT READY — 270 of 341 code site(s) unaccounted` | silent |
+| Header bar | `Extraction: not audited` | `Extraction: 71/341 sites accounted, 270 unclaimed` | `Extraction: n/a (no code)` |
+| Needs Your Attention | `Code never audited` | `Unaccounted code` | silent |
+| Completeness grid | `!` | `!` | `—` |
+| `spec-lint` | `extraction-audit-missing` / `extraction-audit-never-recorded` | `extraction-sites-unclaimed` | silent |
+
+Lint grades these the way every other precision lint is graded: WARN while authoring, FAIL from `in-review` on. "Has code" is decided identically by lint and the readback — traceability entries naming files, a triage ledger, or a requirement carrying `extraction.evidence` — so the two cannot disagree about the same area.
+
+**The general rule, worth applying to anything added later:** no completeness number may live only in terminal scrollback, and no surface may render *not measured* the same as *measured clean*. The state×event and outcome passes got both right, which is why they never silently regressed. The extraction audit — the only check that can find behavior the spec never mentions, and therefore the one that matters most on brownfield — got neither.
+
 ### spec-record equiv
 
 `tools/spec-record.py equiv <area>` runs the differential comparator: the original implementation and the regenerated one, driven through identical sequences, diffed at `boundary.observable_state`. Preflight refuses a verdict without an observation boundary, without a comparator command, or when `parallel_path` sits inside the original's code path. Writes `check_results.differential` mechanically, always with the sequence count.

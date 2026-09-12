@@ -390,6 +390,15 @@ def attention_items(root, area_name, area):
                      f"external outcome(s) have no requirement saying what happens and no "
                      f"triage saying why not. Run `tools/spec-matrix.py <area> --outcomes`.")
     extraction = (area.get("check_results") or {}).get("extraction") or {}
+    if extraction_state(area)[0] == "unaudited":
+        items.append(
+            "**Code never audited** \u2014 this area describes code, and no "
+            "extraction audit has been recorded against it. Every completeness "
+            "number here measures the spec against itself; this is the only "
+            "one that measures it against the implementation, so until it runs "
+            "the spec could be missing behavior entirely and every other mark "
+            "would still be green. Run `tools/spec-extract-audit.py <area> "
+            "--record`.")
     if extraction.get("unclaimed"):
         items.append(f"**Unaccounted code** \u2014 {extraction['unclaimed']} decision site(s) "
                      f"in the implementation that no spec element claims and no triage "
@@ -417,6 +426,52 @@ def attention_items(root, area_name, area):
 
 # ── Section renderers (area) ─────────────────────────────────────────────────
 
+def area_has_code(area):
+    """Does this area claim to describe code that exists?
+
+    Decided from the area alone, because the verdict and the header bar are
+    functions of the area alone. Three signals, any of which means an
+    extraction audit has something to run against: traceability entries
+    naming files, a triage ledger (someone has already looked at sites), or a
+    requirement carrying extraction evidence (brownfield capture).
+
+    The distinction this exists to draw: an area with no code has nothing to
+    audit and must render `n/a`, while an area WITH code and no audit must
+    render a warning. Collapsing those two into one blank is the defect \u2014
+    "unknown" and "fine" have to look different or nobody looks."""
+    for t in area.get("traceability") or []:
+        if (t.get("code") or "").strip():
+            return True
+    if area.get("extraction_triage"):
+        return True
+    for req in area.get("requirements") or []:
+        if ((req.get("extraction") or {}).get("evidence") or "").strip():
+            return True
+    return False
+
+
+def extraction_state(area):
+    """(state, detail) for every surface that renders extraction coverage,
+    so the verdict, the header bar, the attention list and the dimension
+    grid cannot disagree about it.
+
+    state is 'n/a' (no code to audit), 'unaudited' (code, no recorded run),
+    'unclaimed' (sites nothing accounts for) or 'clean'."""
+    stats = (area.get("check_results") or {}).get("extraction") or {}
+    if not stats:
+        if not area_has_code(area):
+            return "n/a", "n/a (no code)"
+        return "unaudited", ("not audited \u2014 run `tools/spec-extract-audit.py "
+                             "<area> --record`")
+    sites = stats.get("sites", 0)
+    unclaimed = stats.get("unclaimed", 0)
+    accounted = sites - unclaimed
+    if unclaimed:
+        return "unclaimed", (f"{accounted}/{sites} sites accounted, "
+                             f"{unclaimed} unclaimed")
+    return "clean", f"{accounted}/{sites} sites accounted"
+
+
 def ship_verdict(area):
     """One-line go/no-go above the stats bar — a reviewer should know ship-
     readiness at a glance, not by doing arithmetic on the header. READY means
@@ -442,6 +497,17 @@ def ship_verdict(area):
     log = area.get("verification_log") or []
     if log and log[-1].get("drift_detected"):
         blockers.append("drift detected")
+    # The only check that runs code -> spec, so the only one that can find
+    # behavior the spec never mentions. It belongs next to unverified
+    # requirements and open questions, not in terminal scrollback.
+    ex_state, _ex_detail = extraction_state(area)
+    if ex_state == "unclaimed":
+        stats = (area.get("check_results") or {}).get("extraction") or {}
+        blockers.append(f"{stats.get('unclaimed', 0)} of {stats.get('sites', 0)} "
+                        f"code site(s) unaccounted")
+    elif ex_state == "unaudited":
+        blockers.append("code never audited against the spec "
+                        "(`spec-extract-audit --record`)")
     outcomes = (area.get("check_results") or {}).get("outcomes") or {}
     if outcomes.get("uncovered"):
         blockers.append(f"{outcomes['uncovered']} external outcome(s) with no "
@@ -496,6 +562,7 @@ def header_bar(area, area_name):
             f"**Requirements:** {n_ver}/{len(reqs)} verified, {n_wit}/{len(reqs)} witnessed  |  "
             f"**Invariants:** {inv_cell}  |  "
             f"**Coverage:** {cov}  |  "
+            f"**Extraction:** {extraction_state(area)[1]}  |  "
             f"**Open questions:** {n_q}  |  "
             f"**Last verified:** {last_ver}")
 
@@ -1384,12 +1451,16 @@ def dimensions_section(area):
             if assumptions else "none recorded"),
         row("Temporal behavior", bool(props) or None,
             f"{len(props)} liveness propert(ies)" if props else "none declared"),
+        # `\u2014` means "nothing declared to measure" everywhere else in this
+        # grid, so it may only appear here when there is genuinely no code.
+        # An area WITH code and no audit is outstanding work: `!`.
         row("Extraction coverage",
-            (extraction.get("unclaimed") == 0) if extraction else None,
+            {"clean": True, "unclaimed": False, "unaudited": False,
+             "n/a": None}[extraction_state(area)[0]],
             f"{extraction.get('mapped', 0)} mapped, {extraction.get('triaged', 0)} "
             f"triaged, {extraction.get('unclaimed', 0)} unclaimed of "
             f"{extraction.get('sites', 0)} site(s)"
-            if extraction else "not audited \u2014 `tools/spec-extract-audit.py`"),
+            if extraction else extraction_state(area)[1]),
         row("Substitutability",
             (differential.get("result") == "equivalent-in-sequences")
             if differential.get("result") in ("equivalent-in-sequences", "diverged")

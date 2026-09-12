@@ -171,7 +171,9 @@ Mark every extracted item `source: "extracted"`, `status: "needs-validation"`, a
 
 ##### 2. Account for the code you did NOT specify
 
-Run `tools/spec-extract-audit.py <target> --emit`. It enumerates the decision sites — branches, guard literals, error handlers, early exits — and prints triage stubs for every one no spec element claims.
+Run `tools/spec-extract-audit.py <target> --emit --record`. **`--record` is not optional.** Without it the audit prints to the terminal and nothing is written down: `check_results.extraction` stays absent, and the readback, the ship verdict and lint all read absent as "nothing to say". That is how an area reaches full witnesses, full invariants, zero untriaged matrix cells and zero lint failures with most of its code unaccounted for. The number has to land in the JSON or it does not exist.
+
+It enumerates the decision sites — branches, guard literals, error handlers, early exits — and prints triage stubs for every one no spec element claims.
 
 This is the only check in the framework that runs **code → spec**, and it is the one that matters here: the reason a regenerated implementation diverges is almost always a branch nobody wrote down, and nothing spec-shaped can look for a branch the spec does not mention. Give every site a verdict in `extraction_triage[]`:
 
@@ -341,7 +343,7 @@ Tell the user: "`<target>`'s spec was extracted against code that has changed. I
 
 1. **Ask what moved, then ask which sites are new.** `tools/spec-record.py changed <target>` first: if the area was stamped (`extracted_from`), this diffs the code the spec was actually read from against HEAD and shows you the changed files, narrowed to the extracted subtree and to the files `traceability[]` claims to describe. It answers *what changed and since when* — which a set of fingerprints cannot, because the ledger does not store the previous text. If it reports no baseline, say so and carry on with step 1b; the audit still works, it just cannot tell you when anything moved.
 
-   1b. **Re-run the audit.** `tools/spec-extract-audit.py <target> --emit`. Fingerprints are stable across reformatting, so what surfaces is real movement: decision sites the ledger has never seen, and ledger entries matching no current site — the code moved out from under a triaged decision. The diff says what moved; the fingerprints say which decision sites are new. Use both.
+   1b. **Re-run the audit.** `tools/spec-extract-audit.py <target> --emit --record` — `--record` every time, so the coverage number in `check_results.extraction` tracks the code instead of freezing at whenever someone last remembered the flag. A rising unclaimed count between runs IS the drift signal: the code grew behavior the spec has not caught up with. Fingerprints are stable across reformatting, so what surfaces is real movement: decision sites the ledger has never seen, and ledger entries matching no current site — the code moved out from under a triaged decision. The diff says what moved; the fingerprints say which decision sites are new. Use both.
 
 2. **Re-read the fields that carry literals.** Every `CON-NNN` whose value came from a guard, every `closed: true` state set, every `externals[].outcomes[]` read out of a `catch`. These drift silently: a threshold changes in code and the spec keeps asserting the old number, which is worse than saying nothing because `spec-check` will happily prove things about it.
 
