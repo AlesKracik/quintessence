@@ -4948,3 +4948,67 @@ def test_a_permitted_outcome_may_carry_the_delta_the_generator_reads():
                      "delta": {"pre": "_prevShown != shown"}}]}}]}
     errors = list(jsonschema.Draft7Validator(schema).iter_errors(area))
     assert not errors, [e.message for e in errors]
+
+
+# ── journey rendering: who / story / route, and a marker per step ──────────
+
+def _journey_area():
+    return {"area": "auth", "requirements": [
+        {"id": "REQ-001", "description": "sign in works",
+         "ears": {"trigger": "t", "response": "r"},
+         "witness": {"status": "witnessed"}},
+        {"id": "REQ-009", "description": "unjourneyed behavior",
+         "ears": {"trigger": "t", "response": "r"}}], "constraints": []}
+
+
+def _sign_in_journey():
+    return {"_file": "sign-in", "name": "Sign in", "actor": "Cluster operator",
+            "description": "An operator edits a group — settings and all.",
+            "steps": [{"ref": "auth-ui.UI-001", "note": "on the login screen"},
+                      {"ref": "auth.REQ-001"}]}
+
+
+def test_the_journey_header_separates_the_actor_from_the_story():
+    """The gloss used to join actor and description with the same em-dash the
+    description itself contains, so the two ran together into one sentence."""
+    out = "\n".join(readback.what_the_system_does(
+        ".", "auth", _journey_area(), [_sign_in_journey()]))
+    assert "### Sign in\n" in out
+    # Each on its own rendered line: without the break, Markdown reflows
+    # consecutive quote lines into one paragraph.
+    assert "> **Who** · Cluster operator<br>" in out
+    assert "> **Story** · An operator edits a group — settings and all.<br>" in out
+    assert "Sign in — *Cluster operator" not in out
+
+
+def test_the_journey_header_shows_the_route_with_its_marks():
+    out = "\n".join(readback.what_the_system_does(
+        ".", "auth", _journey_area(), [_sign_in_journey()]))
+    route = next(ln for ln in out.splitlines() if ln.startswith("> **Route**"))
+    # A step specified elsewhere is qualified and linked out; an own-area step
+    # carries the status mark this readback actually knows.
+    assert "[auth-ui.UI-001](auth-ui.readback.md#ui-001)" in route
+    assert "◐ [REQ-001](#req-001)" in route
+    assert route.count("→") == 1
+
+
+def test_every_step_gets_a_marker_not_only_the_annotated_ones():
+    """Without a marker on each step the requirement blocks run together and
+    the journey's order — the whole point of a journey — is invisible."""
+    out = "\n".join(readback.what_the_system_does(
+        ".", "auth", _journey_area(), [_sign_in_journey()]))
+    assert "**Step 1 of 2** · [auth-ui.UI-001](auth-ui.readback.md#ui-001)" in out
+    assert "specified in area *auth-ui*" in out
+    assert "*on the login screen*" in out
+    # Step 2 is rendered here, so its `#### REQ-001` block names it; the marker
+    # does not say the ID twice.
+    assert "**Step 2 of 2**\n" in out
+    assert out.index("**Step 2 of 2**") < out.index("#### REQ-001")
+
+
+def test_behaviors_outside_every_journey_say_so():
+    out = "\n".join(readback.what_the_system_does(
+        ".", "auth", _journey_area(), [_sign_in_journey()]))
+    assert "### Other behaviors" in out
+    assert "not yet placed in any journey" in out
+    assert out.index("### Other behaviors") < out.index("#### REQ-009")

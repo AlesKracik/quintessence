@@ -56,7 +56,13 @@ graph TB
 
 ## What the System Does
 
-### Sign in — *User — User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.*
+### Sign in
+
+> **Who** · User<br>
+> **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
+> **Route** · ⏳ [UI-001](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ⏳ [UI-002](#ui-002) → [auth.REQ-003](auth.readback.md#req-003) → ⏳ [UI-003](#ui-003)
+
+**Step 1 of 5**
 
 #### UI-001
 
@@ -81,7 +87,9 @@ graph TB
 
 </details>
 
-*(step 2: [auth.REQ-001](auth.readback.md#req-001) — see [auth](auth.readback.md))*
+**Step 2 of 5** · [auth.REQ-001](auth.readback.md#req-001) — specified in area *auth*
+
+**Step 3 of 5**
 
 #### UI-002
 
@@ -108,9 +116,13 @@ graph TB
 
 </details>
 
-*(step 4: [auth.REQ-003](auth.readback.md#req-003) — failure branch: repeated bad credentials lock the account — see [auth](auth.readback.md))*
+**Step 4 of 5** · [auth.REQ-003](auth.readback.md#req-003) — specified in area *auth*
 
-*step 5 — locked-account counterpart of the submit step:*
+*failure branch: repeated bad credentials lock the account*
+
+**Step 5 of 5**
+
+*locked-account counterpart of the submit step*
 
 #### UI-003
 

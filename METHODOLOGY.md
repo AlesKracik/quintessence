@@ -484,6 +484,8 @@ So a witness declares the pre-state it must start from:
 
 The probe module snapshots pre-state into `_prev*` ghosts and conjoins it. `spec-lint` checks two things: that the delta exists, and that the **generated probe actually kept it** — a recorded delta the probe dropped is worse than none, because the JSON then claims a check the model does not make.
 
+A `may` requirement declares its delta **per permitted outcome**, in `witness.outcomes[].delta`, alongside that outcome's predicate — each outcome is proven by its own probe, so each names its own pre-state. There is no delta on the witness itself.
+
 ### 3. Boundaries — reachability is one-sided
 
 A witness can show a threshold *can* fire. Nothing in it can show the threshold does not fire *early*. With `MAX_FAILED_ATTEMPTS = 5`, loosening the guard to `>= 1` leaves every invariant holding, the witness still found (in one step, which nothing looks at), and lint clean. Nothing in the chain notices.
@@ -1122,7 +1124,7 @@ A **journey** (`specs/journeys/<slug>.journey.json`, `schemas/journey.schema.jso
 
 **Journeys are born at capture time, in both directions.** In greenfield elicitation, one story told is one journey file — the story already arrives with a name and an order, so writing it down costs nothing and reconstructing it later from a flat ID list is guesswork. In brownfield, the order is in the call graph instead of in someone's memory: `/spec` deduces one journey per reachable entry point (route handler, CLI command, public method, queue consumer) as part of reverse engineering, with the extracted requirements as steps in call order, and **updates** those journeys on re-extraction rather than duplicating them — added, removed and reordered steps land in the extraction diff, and a journey whose entry point is gone is reported, not deleted. Journeys are also edited directly via `/spec _journeys/<name>`. A journey step with no matching REQ is a gap: capture the requirement in its owning area first.
 
-Readbacks are where journeys pay off: the per-area "What the System Does" groups requirements as **journey slices** (this area's steps in flow order, foreign steps as one-line connectors), and the project-wide readback renders each journey as a step table with status marks and links — review reads as flows a human walks, not ID-sorted lists.
+Readbacks are where journeys pay off: the per-area "What the System Does" groups requirements as **journey slices** — a who/story/route card per journey (the route is the whole flow as marked, linked hops, so the shape is visible before any requirement is read), then this area's steps in flow order under a `Step n of m` marker, foreign steps as one-line connectors into their own area, and the project-wide readback renders each journey as a step table with status marks and links — review reads as flows a human walks, not ID-sorted lists.
 
 Journeys carry no formal verification obligation (v1 is a documentation/review layer); a joint-reachability witness across modules is a natural later extension. `spec-lint` validates them: unique names, every ref resolves, no duplicate steps.
 

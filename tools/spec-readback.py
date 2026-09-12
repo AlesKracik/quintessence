@@ -42,7 +42,8 @@ from itf_tools import (  # noqa: E402
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
     skip_discharge, brief_status, action_params, GHOST_PARAM_RE,
-    compute_spec_sha, meaning_status,
+    compute_spec_sha, meaning_status, is_rejection, witness_entries,
+    GHOST_PREFIXES,
 )
 from quint_ir import _strip_noise  # noqa: E402
 
@@ -82,12 +83,37 @@ def write_doc(path, lines):
 
 # ── Derivations ───────────────────────────────────────────────────────────────
 
+def req_is_witnessed(req):
+    """True when every witness entry a requirement owes says 'witnessed'.
+
+    Per ENTRY, because a `may` requirement keeps its statuses in
+    witness.outcomes[] and may carry nothing on the witness itself. Reading
+    only the top level counted a fully-demonstrated permission as unchecked
+    in every headline number on the page.
+
+    Strictly about traces: a justified skip DISCHARGES the obligation but
+    demonstrates nothing, so it belongs in the discharged count, not here."""
+    entries = witness_entries(req)
+    return bool(entries) and all(e.get("status") == "witnessed" for _l, e in entries)
+
+
+def req_is_discharged(req):
+    """Witnessed, or a rejection whose skip names what carries the proof."""
+    return req_is_witnessed(req) or (
+        (req.get("witness") or {}).get("status") == "skipped"
+        and skip_discharge(req.get("witness")) is not None)
+
+
 def status_mark(req):
     w = req.get("witness") or {}
     if req.get("status") == "verified":
         return "✓"
     if w.get("status") == "skipped" and skip_discharge(w):
         return "⊘"
+    # Per entry, so a `may` whose every permitted outcome is witnessed reads
+    # as demonstrated rather than as untouched.
+    if req_is_witnessed(req):
+        return "◐"
     if w.get("status") in ("no-witness", "hollow"):
         # Both are failures to demonstrate the behavior, so both render as
         # a cross. Which one it is comes from the Needs-Your-Attention
@@ -95,8 +121,6 @@ def status_mark(req):
         # guard, hollow means the predicate never distinguished before
         # from after.
         return "✗"
-    if w.get("status") == "witnessed":
-        return "◐"
     return "⏳"
 
 
@@ -263,10 +287,10 @@ def witness_one_liner(root, trace_rel):
             compressed[-1][1] += 1
         else:
             compressed.append([lbl, 1])
-    seq = " → ".join(f"{l} ×{n}" if n > 1 else l for l, n in compressed)
+    seq = " → ".join(f"{lb} ×{n}" if n > 1 else lb for lb, n in compressed)
 
     model_vars = [v for v in state_vars(trace)
-                  if v != action_var and not v.startswith(("_last", "mbt::"))]
+                  if v != action_var and not v.startswith(GHOST_PREFIXES)]
     final_delta = [
         f"{v} = {render_value(states[-1].get(v))}"
         for v in model_vars
@@ -581,7 +605,7 @@ def ship_verdict(area):
 def header_bar(area, area_name):
     reqs = [r for r in area.get("requirements", []) or [] if r.get("status") != "deferred"]
     n_ver = sum(1 for r in reqs if r.get("status") == "verified")
-    n_wit = sum(1 for r in reqs if (r.get("witness") or {}).get("status") == "witnessed")
+    n_wit = sum(1 for r in reqs if req_is_witnessed(r))
     invs = area.get("invariants", []) or []
     n_inv_proven = sum(1 for i in invs if i.get("formal_status") == "verified-inductive")
     n_inv_bounded = sum(1 for i in invs if i.get("formal_status") == "verified")
@@ -764,6 +788,66 @@ def render_requirement(root, area, req, constraints, rendered_full):
     return lines
 
 
+def journey_card(area_name, j, reqs):
+    """Heading plus who/story/route card for one journey.
+
+    The gloss used to run the actor and the description together behind the
+    same em-dash the description itself uses, so a reader could not tell where
+    the actor stopped and the story started. Split them, and put the route
+    first: the shape of the flow, and which steps are specified in another
+    area, before any requirement block is read."""
+    lines = [f"### {j.get('name', j['_file'])}", ""]
+    card = []
+    if j.get("actor"):
+        card.append(f"> **Who** · {j['actor']}")
+    if j.get("description"):
+        card.append(f"> **Story** · {j['description']}")
+    hops = []
+    for s in journey_steps(j):
+        a, rid = s["ref"].split(".", 1)
+        if a != area_name:
+            # Qualified, because the same ID can exist in both areas and the
+            # route is the one place the two sit side by side.
+            hops.append(f"[{a}.{rid}]({a}.readback.md#{rid.lower()})")
+        elif rid in reqs:
+            hops.append(f"{status_mark(reqs[rid])} [{rid}](#{rid.lower()})")
+        else:
+            hops.append(f"⚠ {rid}")
+    if hops:
+        card.append("> **Route** · " + " → ".join(hops))
+    if card:
+        # Consecutive `> ` lines are one paragraph in Markdown, so Who/Story/
+        # Route would reflow into a single wrapped sentence. An explicit break
+        # keeps the three on three lines without opening a gap between them.
+        lines.extend([c + "<br>" for c in card[:-1]] + [card[-1]])
+        lines.append("")
+    return lines
+
+
+def journey_steps(j):
+    return [s for s in (j.get("steps", []) or []) if "." in (s.get("ref") or "")]
+
+
+def step_marker(idx, total, ref, note=None, elsewhere=None):
+    """The rule that separates one step from the next.
+
+    Every step gets one, not only the ones carrying a note: without it the
+    requirement blocks run together and the journey's order is invisible."""
+    rid = ref.split(".", 1)[1]
+    # An own-area step is followed immediately by its `#### ID` block, so
+    # repeating the ID here would say it twice. A step specified elsewhere has
+    # no block to follow it, so it has to carry its own name and its link.
+    head = f"**Step {idx} of {total}**"
+    if elsewhere:
+        head += (f" · [{ref}]({elsewhere}.readback.md#{rid.lower()}) — "
+                 f"specified in area *{elsewhere}*")
+    lines = [head, ""]
+    if note:
+        lines.append(f"*{note}*")
+        lines.append("")
+    return lines
+
+
 def what_the_system_does(root, area_name, area, journeys):
     lines = ["## What the System Does", ""]
     constraints = area.get("constraints", []) or []
@@ -774,32 +858,33 @@ def what_the_system_does(root, area_name, area, journeys):
                 if any(s.get("ref", "").startswith(f"{area_name}.")
                        for s in j.get("steps", []) or [])]
     for j in touching:
-        gloss = " — ".join(filter(None, [j.get("actor"), j.get("description")]))
-        lines.append(f"### {j.get('name', j['_file'])}" + (f" — *{gloss}*" if gloss else ""))
-        lines.append("")
-        for idx, step in enumerate(j.get("steps", []) or [], 1):
-            ref = step.get("ref", "")
-            if "." not in ref:
-                continue
+        lines.extend(journey_card(area_name, j, reqs))
+        steps = journey_steps(j)
+        total = len(steps)
+        for idx, step in enumerate(steps, 1):
+            ref = step["ref"]
             a, rid = ref.split(".", 1)
-            note = f" — {step['note']}" if step.get("note") else ""
+            note = step.get("note")
             if a != area_name:
-                lines.append(f"*(step {idx}: [{ref}]({a}.readback.md#{rid.lower()})"
-                             f"{note} — see [{a}]({a}.readback.md))*")
-                lines.append("")
+                lines.extend(step_marker(idx, total, ref, note, elsewhere=a))
             elif rid in reqs:
-                if step.get("note") and rid not in rendered_full:
-                    lines.append(f"*step {idx}{note}:*")
-                    lines.append("")
+                # A repeat of an already-rendered requirement keeps its step
+                # marker but not its note: the note belongs to the block, and
+                # the block is upstream.
+                lines.extend(step_marker(idx, total, ref,
+                                         note if rid not in rendered_full else None))
                 lines.extend(render_requirement(root, area, reqs[rid], constraints,
                                                 rendered_full))
             else:
-                lines.append(f"*(step {idx}: {ref} — requirement not found)*")
+                lines.extend(step_marker(idx, total, ref, note))
+                lines.append("⚠ _Requirement not found in this area._")
                 lines.append("")
     leftover = [r for rid, r in reqs.items() if rid not in rendered_full]
     if leftover:
         if touching:
             lines.append("### Other behaviors")
+            lines.append("")
+            lines.append("> _Specified here, but not yet placed in any journey above._")
             lines.append("")
         for r in sorted(leftover, key=lambda x: x.get("id", "")):
             lines.extend(render_requirement(root, area, r, constraints, rendered_full))
@@ -1209,7 +1294,7 @@ def shape_diagram(area):
             closed = " ▪ closed" if e.get("closed") else ""
             lines.append(f'        E_{_slug(e["name"])}["{label}{closed}"]')
     else:
-        lines.append(f'        E_none["(no entities declared)"]')
+        lines.append('        E_none["(no entities declared)"]')
     lines.append("    end")
     for x in externals:
         outcomes = x.get("outcomes") or []
@@ -1459,12 +1544,11 @@ def dimensions_section(area):
     examples = area.get("examples", []) or []
     props = area.get("properties", []) or []
     unwanted = [r for r in reqs if (r.get("ears") or {}).get("unwanted")]
-    rejections = [r for r in reqs
-                  if r.get("modality") == "forbidden"
-                  or ((r.get("witness") or {}).get("status") == "skipped"
-                      and (r.get("witness") or {}).get("justification"))]
-    witnessed = [r for r in reqs
-                 if (r.get("witness") or {}).get("status") in ("witnessed", "skipped")]
+    # The shared definition, not a local re-spelling of it: this copy read
+    # only `justification` and so missed every skip discharged by the typed
+    # `enforced_by` form — the one spec-record actually writes.
+    rejections = [r for r in reqs if is_rejection(r)]
+    witnessed = [r for r in reqs if req_is_discharged(r)]
     closed = [e for e in entities if e.get("closed")]
     all_redteam = [q for q in area.get("open_questions", []) or []
                    if str(q.get("source", "")).startswith("red-team")]
@@ -1810,7 +1894,7 @@ def emit_change(root, slug, since=None):
                                    f"(`specs/{qnt_rel}:L{ln1}-L{ln2}`) + predicate</summary>")
                         sub.append("")
                         sub.append("  ```quint")
-                        sub.extend("  " + l for l in excerpt.splitlines())
+                        sub.extend("  " + ln for ln in excerpt.splitlines())
                         sub.append("  ```")
                         if w.get("predicate"):
                             sub.append(f"  **Witness predicate:** `{w['predicate']}`")

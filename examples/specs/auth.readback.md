@@ -22,7 +22,7 @@ Auth owns exactly three things: who is signed in, for how long, and when to stop
 
 **What to watch out for.** The counter and the lock are two facts, not one, and REQ-003 is the only thing that keeps them consistent — read it before changing either. Q-003 is open on what a failed login against an already-locked account should do, so the Locked row of the matrix is a triaged gap rather than a settled answer.
 
-*Written by human; prose, not machine-checked. Spec pin: `0eafe45ee4a6`. Every section below is derived from the spec itself.*
+*Written by human; prose, not machine-checked. Spec pin: `976d3f776808`. Every section below is derived from the spec itself.*
 
 ## Shape
 
@@ -68,9 +68,15 @@ flowchart LR
 
 ## What the System Does
 
-### Sign in — *User — User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.*
+### Sign in
 
-*(step 1: [auth-ui.UI-001](auth-ui.readback.md#ui-001) — see [auth-ui](auth-ui.readback.md))*
+> **Who** · User<br>
+> **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
+> **Route** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) → ⏳ [REQ-001](#req-001) → [auth-ui.UI-002](auth-ui.readback.md#ui-002) → ⏳ [REQ-003](#req-003) → [auth-ui.UI-003](auth-ui.readback.md#ui-003)
+
+**Step 1 of 5** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) — specified in area *auth-ui*
+
+**Step 2 of 5**
 
 #### REQ-001
 
@@ -102,9 +108,11 @@ flowchart LR
 
 </details>
 
-*(step 3: [auth-ui.UI-002](auth-ui.readback.md#ui-002) — see [auth-ui](auth-ui.readback.md))*
+**Step 3 of 5** · [auth-ui.UI-002](auth-ui.readback.md#ui-002) — specified in area *auth-ui*
 
-*step 4 — failure branch: repeated bad credentials lock the account:*
+**Step 4 of 5**
+
+*failure branch: repeated bad credentials lock the account*
 
 #### REQ-003
 
@@ -140,9 +148,13 @@ flowchart LR
 
 </details>
 
-*(step 5: [auth-ui.UI-003](auth-ui.readback.md#ui-003) — locked-account counterpart of the submit step — see [auth-ui](auth-ui.readback.md))*
+**Step 5 of 5** · [auth-ui.UI-003](auth-ui.readback.md#ui-003) — specified in area *auth-ui*
+
+*locked-account counterpart of the submit step*
 
 ### Other behaviors
+
+> _Specified here, but not yet placed in any journey above._
 
 #### REQ-002
 
