@@ -6,6 +6,8 @@
 # Usage:
 #   tools/check-tooling.sh           # warn-only: prints status, exits 0
 #   tools/check-tooling.sh --strict  # exit 1 if anything is missing OR Java < 17
+#   tools/check-tooling.sh --install # also pip-install jsonschema when missing
+#                                    # (asked interactively on a terminal)
 #
 # Used by:
 #   tools/bootstrap.sh              (warn-only, end of bootstrap)
@@ -15,7 +17,13 @@
 set -u
 
 strict=0
-[ "${1:-}" = "--strict" ] && strict=1
+install=0
+for arg in "$@"; do
+  case "$arg" in
+    --strict)  strict=1 ;;
+    --install) install=1 ;;
+  esac
+done
 
 missing=()
 warn=()
@@ -112,8 +120,21 @@ elif "$py" -c "import jsonschema" >/dev/null 2>&1; then
   jver="$("$py" -c "import jsonschema; print(jsonschema.__version__)" 2>/dev/null)"
   echo "✓ jsonschema ${jver:-(version unknown)}"
 else
-  echo "⚠ jsonschema not installed  (spec-lint skips schema validation without it)"
-  warn+=("jsonschema")
+  echo "⚠ jsonschema not installed  (spec-lint skips schema validation without it — every lint result is PARTIAL)"
+  # The one missing piece this script can fix itself: a pip package, no
+  # system install. Offered on a terminal, done with --install, never
+  # silently.
+  if [ "$install" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+    read -r -p "  Install jsonschema now with '$py -m pip install jsonschema'? [y/N] " ans
+    case "${ans:-n}" in [Yy]*) install=1 ;; esac
+  fi
+  if [ "$install" -eq 1 ] && "$py" -m pip install jsonschema >/dev/null 2>&1 \
+      && "$py" -c "import jsonschema" >/dev/null 2>&1; then
+    echo "  ✓ installed jsonschema"
+  else
+    [ "$install" -eq 1 ] && echo "  ✗ pip install failed — install it by hand (below)"
+    warn+=("jsonschema")
+  fi
 fi
 
 # -- Alloy (OPTIONAL structural backend) ------------------------------------

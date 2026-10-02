@@ -43,6 +43,15 @@ Usage:
   tools/spec-extract-audit.py <area> --record     # stamp check_results.extraction
   tools/spec-extract-audit.py <area> --emit       # print triage stubs to paste
   tools/spec-extract-audit.py <area> --json
+  tools/spec-extract-audit.py <area> --triage-file 'src/admin/**' \
+      --verdict OUT-OF-SCOPE --scope-ref admin-api [--reason TEXT]
+                                     # bulk-triage every UNCLAIMED site in
+                                     # the matching files (never overwrites)
+
+Which files: traceability[] when it exists; otherwise the area's
+`code_paths: [glob, ...]` (or `code_path`) from .spec/project.json, minus its
+`exclude[]`, its `tests_path`, and test files (`__tests__/`, `*.test.*`,
+`*.spec.*`) unless the area sets `include_tests: true`.
 
 Exit codes: 0 = clean, 1 = with --strict, any unclaimed site, any ledger
 problem (a MAPPED row pointing at nothing, an unanchored OUT-OF-SCOPE), or any
@@ -230,7 +239,7 @@ def audit(area, sites):
 
     spec_ids = set()
     for key in ("requirements", "invariants", "properties", "constraints",
-                "decisions", "examples"):
+                "decisions", "examples", "navigation"):
         for item in area.get(key, []) or []:
             if isinstance(item, dict) and item.get("id"):
                 spec_ids.add(item["id"])
@@ -278,6 +287,72 @@ def audit(area, sites):
     return result
 
 
+# Above either, an area is a candidate for extraction in passes: one coherent
+# slice now, the rest in scope.excluded[] with `pass: 2`.
+SLICE_FILES = 25
+SLICE_SITES = 300
+
+DEFERRED_RE = re.compile(r"^\s*deferred\b.*?\bpass\s*(\d+)", re.I)
+
+
+def deferred_exclusions(area):
+    """scope.excluded[] entries deferred to a later extraction pass, each
+    with the number of sites triaged OUT-OF-SCOPE against it — the work the
+    next pass starts from."""
+    rows = area.get("extraction_triage", []) or []
+    out = []
+    for ex in ((area.get("scope") or {}).get("excluded") or []):
+        n = ex.get("pass")
+        if n is None:
+            m = DEFERRED_RE.match(ex.get("reason") or "")
+            n = int(m.group(1)) if m else None
+        if n is None:
+            continue
+        sites = sum(1 for r in rows if r.get("verdict") == "OUT-OF-SCOPE"
+                    and r.get("scope_ref") == ex.get("item"))
+        out.append({"item": ex.get("item"), "pass": n, "sites": sites,
+                    "reason": ex.get("reason", "")})
+    return out
+
+
+def bulk_triage(area, unclaimed, globs, verdict, reason=None, scope_ref=None,
+                maps_to=None, question=None):
+    """Ledger rows for every unclaimed site in a file matching one of
+    `globs`. Raises ValueError when the verdict lacks what it needs — the
+    same anchors the audit checks a hand-written row for."""
+    excluded = {e.get("item") for e in ((area.get("scope") or {}).get("excluded") or [])}
+    if verdict == "OUT-OF-SCOPE":
+        if not scope_ref:
+            raise ValueError("OUT-OF-SCOPE needs --scope-ref <scope.excluded[].item>")
+        if scope_ref not in excluded:
+            raise ValueError(f"--scope-ref '{scope_ref}' is not in scope.excluded[] — "
+                             f"add the exclusion (with its reason) first")
+    if verdict == "MAPPED" and not maps_to:
+        raise ValueError("MAPPED needs --maps-to <ID>[,<ID>]")
+    if verdict == "GAP" and not question:
+        raise ValueError("GAP needs --question Q-NNN")
+    patterns = [spec_source._glob_re(g) for g in globs]
+    rows = []
+    for site in unclaimed:
+        if not any(p.match(site["file"]) for p in patterns):
+            continue
+        row = {"file": site["file"], "fingerprint": site["fingerprint"],
+               "line": site["line"], "kind": site["kind"],
+               "snippet": site["snippet"], "verdict": verdict}
+        if verdict == "MAPPED":
+            row["maps_to"] = list(maps_to)
+        else:
+            row["reason"] = reason or (
+                f"bulk-triaged: every site in {', '.join(globs)} is {verdict}"
+                + (f" ({scope_ref})" if scope_ref else ""))
+        if scope_ref:
+            row["scope_ref"] = scope_ref
+        if question:
+            row["question"] = question
+        rows.append(row)
+    return rows
+
+
 def emit_stubs(unclaimed):
     """Paste-ready triage rows, so the human decides instead of transcribing."""
     rows = []
@@ -298,10 +373,19 @@ def main():
     p.add_argument("area")
     p.add_argument("--root", default=".")
     p.add_argument("--code-root", help="Override the resolved code repo root.")
-    p.add_argument("--code-path",
-                   help="Directory to scan when traceability[] is empty (during a "
-                        "brownfield extraction it always is). Defaults to the area's "
-                        "code_path.")
+    p.add_argument("--code-path", action="append",
+                   help="Path or glob to scan when traceability[] is empty (during a "
+                        "brownfield extraction it always is); repeatable. Defaults to "
+                        "the area's code_paths / code_path.")
+    p.add_argument("--triage-file", action="append", metavar="GLOB",
+                   help="Bulk-triage every unclaimed site in files matching GLOB "
+                        "(repeatable) with --verdict; writes extraction_triage[].")
+    p.add_argument("--verdict", choices=["MAPPED", "NOT-BEHAVIOR", "DEFENSIVE",
+                                         "DEAD", "GAP", "OUT-OF-SCOPE"])
+    p.add_argument("--scope-ref", help="For OUT-OF-SCOPE: the scope.excluded[].item.")
+    p.add_argument("--maps-to", help="For MAPPED: comma-separated spec ids.")
+    p.add_argument("--question", help="For GAP: the Q-NNN tracking it.")
+    p.add_argument("--reason", help="Reason recorded on every bulk-triaged row.")
     p.add_argument("--strict", action="store_true",
                    help="Exit 1 while any site is unclaimed or triaged GAP.")
     p.add_argument("--record", action="store_true",
@@ -346,12 +430,11 @@ def main():
         # brownfield EXTRACTION \u2014 exactly when this audit is most useful. Fall
         # back to the area's declared code_path so the documented workflow is
         # actually executable.
-        code_path = args.code_path or entry.get("code_path")
-        if code_path:
-            base = repo_root / code_path
-            files = sorted(f for f in base.rglob("*")
-                           if f.is_file() and f.suffix in SOURCE_SUFFIXES)
-            source = f"code_path {code_path}"
+        includes, excludes = spec_source.code_scope(entry, args.code_path)
+        if includes:
+            files = spec_source.code_files(repo_root, includes, excludes,
+                                           SOURCE_SUFFIXES)
+            source = "code_paths " + ", ".join(includes)
     if not files:
         print(f"ERROR: no source files found under {repo_root}. Set the area's "
               f"code_path in .spec/project.json, pass --code-path, or run "
@@ -362,6 +445,35 @@ def main():
     for path in files:
         sites.extend(scan_file(path, repo_root))
     report = audit(area, sites)
+    report["deferred"] = deferred_exclusions(area)
+    report["slice_suggested"] = (
+        (len(files) > SLICE_FILES or report["sites"] > SLICE_SITES)
+        and not report["deferred"] and not area.get("requirements"))
+
+    if args.triage_file:
+        if not args.verdict:
+            print("ERROR: --triage-file needs --verdict.", file=sys.stderr)
+            sys.exit(2)
+        try:
+            rows = bulk_triage(area, report["unclaimed_sites"], args.triage_file,
+                               args.verdict, args.reason, args.scope_ref,
+                               [m.strip() for m in (args.maps_to or "").split(",")
+                                if m.strip()], args.question)
+        except ValueError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(2)
+        area.setdefault("extraction_triage", []).extend(rows)
+        try:
+            spec_source.save_area(root, args.area, area)
+        except spec_source.SpecSourceError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(2)
+        print(f"bulk-triaged {len(rows)} unclaimed site(s) as {args.verdict} in "
+              f"{area_path}.", file=sys.stderr)
+        # The report below (and --record) is of the ledger as it now stands.
+        report = audit(area, sites)
+        report["deferred"] = deferred_exclusions(area)
+        report["slice_suggested"] = False
 
     if args.emit_json:
         print(json.dumps({**report, "unclaimed_sites": report["unclaimed_sites"]}, indent=2))
@@ -380,6 +492,16 @@ def main():
         if report["stale"]:
             print(f"    ! {len(report['stale'])} ledger entr(ies) match no current site "
                   f"(the code moved): {', '.join(report['stale'][:8])}")
+        for d in report["deferred"]:
+            print(f"    \u21b7 deferred to pass {d['pass']}: {d['item']} "
+                  f"({d['sites']} site(s) OUT-OF-SCOPE against it) \u2014 the next "
+                  f"pass starts here: drop the exclusion and re-triage them")
+        if report["slice_suggested"]:
+            print(f"\n    This area spans {len(files)} file(s) and {report['sites']} "
+                  f"site(s). Consider extracting it in passes: specify one coherent "
+                  f"slice now, put the rest in scope.excluded[] with `pass: 2` (or a "
+                  f"reason 'Deferred to pass 2 of this area: ...'), and bulk-triage "
+                  f"it with --triage-file <glob> --verdict OUT-OF-SCOPE --scope-ref <item>.")
         print("\nNOTE: a regex scan under-counts exotic control flow. A clean run means "
               "nothing OBVIOUS is unclaimed, not that the spec is complete.")
 

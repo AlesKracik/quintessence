@@ -31,8 +31,8 @@
         "properties": {
           "ref": {
             "type": "string",
-            "pattern": "^[a-z][a-z0-9-]*\\.(REQ|UI)(-CONTRACT)?-\\d{3}$",
-            "description": "Qualified requirement reference, <area>.<ID> — same form as cross_refs."
+            "pattern": "^[a-z][a-z0-9-]*\\.((REQ|UI)(-CONTRACT)?|NAV)-\\d{3}$",
+            "description": "Qualified requirement reference, <area>.<ID> — same form as cross_refs. A NAV-NNN navigation edge is a valid step too: 'opens Settings from the sidebar' is a step of the flow, not a requirement to invent."
           },
           "note": {
             "type": "string",

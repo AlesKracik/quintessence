@@ -14,8 +14,10 @@ failure modes came with that, and both are silent:
     — or worse, are quietly not attempted — and the run still looks healthy.
 
 Both are mechanical properties of the generated text, so they are checked
-here rather than hoped for: every action declared in the sidecar gets a
-branch, or generation FAILS. Nothing partial is ever written.
+here rather than hoped for: every action `step` calls gets a branch, or
+generation FAILS. Nothing partial is ever written. Helper actions — shared
+logic route actions call, never a step of their own — are not mirrored;
+write them as `def`s.
 
 What it emits, per the convention in templates/probes.qnt.template:
 
@@ -23,7 +25,8 @@ What it emits, per the convention in templates/probes.qnt.template:
              one _prev<Var> per state var some witness.delta reads
   initP      init plus explicit ghost initial values (never `= <var>`:
              before init there is no prior state to read)
-  stepP      the area module's step, mirrored, one branch per action,
+  stepP      the area module's step, mirrored, one branch per action it
+             calls,
              tagging _lastAction and the param ghosts, snapshotting _prev
   probes     one `val witness_<REQ>` per requirement carrying a predicate,
              composed of the three conjuncts the methodology requires:
@@ -34,8 +37,10 @@ Parameter domains cannot be inferred and are not guessed. `nondet uid =
 oneOf(<what?>)` is a scope decision — it decides how much of the state space
 the probes explore — so it is declared in the area's intent file under
 formal_model.probe_domains, keyed by TYPE (types are stable; parameter names
-vary per action). Missing one is a setup error that prints the exact JSON to
-add.
+vary per action) or by `param:<name>` for one parameter. Missing one is a
+setup error that prints the exact JSON to add. Ghost initial values are built
+from the declared types (records field by field, sums as their first
+variant); formal_model.ghost_zeros overrides or fills in.
 
 Usage:
   tools/spec-probes.py <area> [--root .]          # write the module
@@ -56,50 +61,41 @@ sys.path.insert(0, str(Path(__file__).parent))
 import spec_source  # noqa: E402
 from itf_tools import (area_json_path, ghost_for_param,  # noqa: E402
                        ghost_for_var, probe_name, outcome_probe_name,
-                       skip_discharge)
-from quint_ir import parse_qnt  # noqa: E402
-
-BASE_ZERO = {
-    "str": '""',
-    "int": "0",
-    "bool": "false",
-}
-
+                       skip_discharge, is_computed)
+from quint_ir import parse_qnt, zero_value as _ir_zero  # noqa: E402
 
 def fail(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(2)
 
 
-def resolve_alias(type_str, aliases, seen=None):
-    """Follow `type UserId = str` to its base. Cycle-guarded, because a
-    malformed sidecar should produce a diagnosable error, not a hang."""
-    seen = seen or set()
-    current = (type_str or "").strip()
-    while current in aliases and current not in seen:
-        seen.add(current)
-        current = aliases[current].strip()
-    return current
+def ghost_zeros(area):
+    """formal_model.ghost_zeros: explicit initial values, keyed by type."""
+    return ((area.get("formal_model") or {}).get("ghost_zeros")) or {}
 
 
-def zero_value(type_str, aliases):
-    """The initial value for a ghost of this type, or None when there isn't
-    an obvious one.
+def mirrored_actions(ir):
+    """The actions stepP mirrors: the ones `step` calls, in its order.
 
-    Ghost initial values are written EXPLICITLY rather than as `= <var>`,
-    because before init there is no prior state to read — so every ghost
-    needs a literal, and a type this cannot answer for has to be declared
-    rather than guessed."""
-    base = resolve_alias(type_str, aliases)
-    if base in BASE_ZERO:
-        return BASE_ZERO[base]
-    if "->" in base:
-        return "Map()"
-    if base.startswith("Set["):
-        return "Set()"
-    if base.startswith("List["):
-        return "[]"
-    return None
+    Not every declared action. A helper action shared by route actions —
+    `action refuse(r: Result, ...)`, `action commit(s1: State, ...)` — is
+    never a step of its own, and mirroring it put a ghost on each of its
+    parameters: name clashes between helpers, and ghosts of function type
+    that no literal can initialize. Only when `step` names no action (or
+    does not exist) does this fall back to every action but init/step."""
+    actions = [a for a in (ir.get("actions") or []) if a not in ("init", "step")]
+    called = [a for a in (ir.get("action_calls") or {}).get("step") or []
+              if a in actions]
+    return called or actions
+
+
+def domain_for(name, type_str, domains):
+    """The probe domain for one parameter: `param:<name>` first, then its
+    type. Keyed by type by default because types are stable while names vary
+    per action; the per-parameter key is for the model whose parameters all
+    share `str` and would otherwise draw role, collection and id from one
+    set."""
+    return domains.get(f"param:{name}", domains.get(type_str))
 
 
 def prev_readers(area):
@@ -210,15 +206,18 @@ def probe_requirements(area):
 def build(area, area_name, ir, quint_rel):
     """The whole module as a list of lines. Pure: same inputs, same bytes."""
     module = ir.get("module_name") or area_name
-    actions = [a for a in (ir.get("actions") or []) if a not in ("init", "step")]
+    actions = mirrored_actions(ir)
     if not actions:
         fail(f"{quint_rel} declares no actions besides init/step — there is "
              f"nothing for stepP to mirror.")
 
     param_types = ir.get("action_param_types") or {}
-    aliases = ir.get("type_aliases") or {}
     var_type_strs = ir.get("var_type_strs") or {}
     domains = ((area.get("formal_model") or {}).get("probe_domains")) or {}
+    overrides = ghost_zeros(area)
+
+    def zero(type_str):
+        return _ir_zero(type_str, ir, overrides)
 
     # ── parameter ghosts, and the domains stepP will draw from ──────────
     params = {}          # param name -> type as written
@@ -230,7 +229,21 @@ def build(area, area_name, ir, quint_rel):
                      f"both — rename one of the parameters.")
             params[name] = type_str
 
-    missing_domains = sorted({t for t in params.values() if t not in domains})
+    # A requirement whose witness must arrive through an action stepP never
+    # takes can never fire: its path constraint names a branch that does not
+    # exist. Said here, where the cause is known, not as a no-witness later.
+    unmirrored = sorted({(r.get("id"), r.get("quint_ref"))
+                         for r, _n, _p, _d, _o in probe_requirements(area)
+                         if r.get("quint_ref") and r["quint_ref"] not in actions})
+    if unmirrored:
+        fail("witness path through an action step never calls: "
+             + ", ".join(f"{rid} @via {ref}" for rid, ref in unmirrored)
+             + f".\nstepP mirrors only the actions `step` calls ("
+             + ", ".join(actions) + "). Point @via at the route-level action "
+               "the helper is called from, or call it from step.")
+
+    missing_domains = sorted({t for n, t in params.items()
+                              if domain_for(n, t, domains) is None})
     if missing_domains:
         suggestion = json.dumps(
             {"probe_domains": {t: "Set(/* values to explore */)"
@@ -240,24 +253,26 @@ def build(area, area_name, ir, quint_rel):
              "values to explore is a scope decision this tool will not guess — "
              "too small and probes cannot fire, too large and every check pays "
              "for it.\nAdd to formal_model in specs/" + area_name +
-             ".intent.json:\n\n" + suggestion)
+             ".intent.json (keys are types; `param:<name>` targets one "
+             "parameter):\n\n" + suggestion)
 
     missing_zero = {}
     for name, type_str in params.items():
-        zero = zero_value(type_str, aliases)
-        if zero is None:
+        if zero(type_str) is None:
             missing_zero[name] = type_str
     delta_vars = collect_delta_vars(area, ir.get("vars") or [])
     for var in delta_vars:
-        if zero_value(var_type_strs.get(var, ""), aliases) is None:
+        if zero(var_type_strs.get(var, "")) is None:
             missing_zero[ghost_for_var(var)] = var_type_strs.get(var, "?")
     if missing_zero:
         fail("cannot synthesize an initial value for: "
              + ", ".join(f"{g} ({t})" for g, t in sorted(missing_zero.items()))
              + ".\nGhost initial values are written explicitly — before init "
-               "there is no prior state to read — and this tool only knows the "
-               "zero of str/int/bool, maps, sets and lists. Give the type a "
-               "plain alias to one of those, or snapshot a different var.")
+               "there is no prior state to read. This tool builds the zero of "
+               "str/int/bool, maps, sets, lists, tuples, records (field by "
+               "field) and sum types (their first variant). For anything else, "
+               "declare one in formal_model.ghost_zeros, keyed by the type as "
+               "written: {\"ghost_zeros\": {\"<Type>\": \"<Quint literal>\"}}.")
 
     probes = probe_requirements(area)
     transitions = transition_invariants(area)
@@ -317,15 +332,15 @@ def build(area, area_name, ir, quint_rel):
     a("    init,")
     a('    _lastAction\' = "init",')
     for name in sorted(params):
-        a(f"    {ghost_for_param(name)}' = {zero_value(params[name], aliases)},")
+        a(f"    {ghost_for_param(name)}' = {zero(params[name])},")
     for var in delta_vars:
         a(f"    {ghost_for_var(var)}' = "
-          f"{zero_value(var_type_strs.get(var, ''), aliases)},")
+          f"{zero(var_type_strs.get(var, ''))},")
     a("  }")
     a("")
     a("  action stepP = {")
     for name in sorted(params):
-        a(f"    nondet {name} = oneOf({domains[params[name]]})")
+        a(f"    nondet {name} = oneOf({domain_for(name, params[name], domains)})")
     a("    any {")
     for action in actions:
         args = [n for n, _ in (param_types.get(action) or [])]
@@ -393,6 +408,10 @@ def build(area, area_name, ir, quint_rel):
         w = req.get("witness") or {}
         if req.get("modality") == "forbidden" and w.get("enforced_by"):
             skipped.append(f"{rid}: forbidden — proof is {w['enforced_by']}")
+        elif is_computed(req):
+            skipped.append(f"{rid}: computed — verified by "
+                           + (", ".join(req.get("verified_by") or [])
+                              or "NO TEST NAMED (add @verified-by)"))
         elif w.get("status") == "skipped":
             skipped.append(f"{rid}: discharged in prose (witness.status skipped)")
         elif req.get("type") == "non-functional":
@@ -403,7 +422,7 @@ def build(area, area_name, ir, quint_rel):
             # A justification with any status other than 'skipped' discharges
             # nothing, and reading it as "no predicate yet" sends the author
             # to draft one they already decided not to write.
-            if skip_discharge(w):
+            if skip_discharge(w, req):
                 skipped.append(
                     f"{rid}: justified, but witness.status is "
                     f"'{w.get('status', 'not-run')}' — set it to 'skipped' "

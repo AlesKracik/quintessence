@@ -27,6 +27,12 @@ module {{MODULE_NAME}} {
   // Example:
   //   type UserId = str
   //   type Status = Active | Inactive | Suspended
+  //
+  // One alias PER VALUE DOMAIN, even when they are all strings:
+  //   type Role = str     type Coll = str     type Id = str
+  // formal_model.probe_domains is keyed by type, so parameters
+  // that all say `str` would draw role, collection and id from
+  // one set. (Or key one parameter: "param:role": "Set(...)".)
 
 
   // ----------------------------------------------------------
@@ -39,6 +45,14 @@ module {{MODULE_NAME}} {
   // Example:
   //   var users: UserId -> UserRecord      // REQ-001
   //   var sessionCount: int                // CON-002
+  //
+  // A single record var is fine too — the shape a conformance
+  // adapter with st()/last() getters has:
+  //   type State = { users: UserId -> UserRecord, count: int }
+  //   var st: State
+  // Probe ghosts (_prevSt) are initialized field by field; a sum
+  // type to its FIRST variant. For a type with no buildable zero
+  // (parameterized, recursive) declare formal_model.ghost_zeros.
 
 
   // ----------------------------------------------------------
@@ -65,6 +79,22 @@ module {{MODULE_NAME}} {
   // ----------------------------------------------------------
 
   // {{HELPER_DEFINITIONS}}
+  //
+  // Shared logic is a `def` / `pure def`, never an `action`:
+  //   pure def commit(s: State, s1: State): State = s1
+  //   pure def refuse(s: State, r: Result): { st: State, last: Result } =
+  //     { st: s, last: r }
+  // The probe generator mirrors only the actions `step` calls; a
+  // helper written as an action gets no branch, and @via on it is
+  // refused.
+  //
+  // A COMPUTED requirement (derived value, no transition) sits on
+  // the pure def that computes it, verified by a unit test:
+  //   /// @req REQ-NNN
+  //   /// @shall compute effort as the sum of issue effort
+  //   /// @witness skipped: a derived value, no transition to witness
+  //   /// @verified-by src/utils/__tests__/score.test.ts
+  //   pure def effort(xs: List[int]): int = xs.foldl(0, (a, b) => a + b)
 
 
   // ----------------------------------------------------------
@@ -94,6 +124,19 @@ module {{MODULE_NAME}} {
   // guard it with `if (m.keys().contains(k)) m.get(k) else <d>`.
   // A `{ ... }` body may bind local `val`s and then yield ONE
   // expression — bare statements in a block are a parse error.
+  //
+  // Only ROUTE-LEVEL operations are actions (one per entry
+  // point `step` calls); shared logic is a def (see HELPERS).
+  //
+  // Built-in names cannot be reused for helpers (QNT101) —
+  // exists, forall, map, filter, fold, foldl, foldr, keys, get,
+  // set, put, setBy, mapBy, contains, in, union, intersect,
+  // exclude, subseteq, size, powerset, flatten, oneOf,
+  // chooseSome, append, concat, head, tail, length, nth,
+  // indices, range, select, slice, replaceAt, then, expect,
+  // reps, fail, assert, iff, implies, not, and, or, next,
+  // always, eventually, with, field, fieldNames, label, item.
+  // Name the helper for what it asks: hasEntity, entityIn.
   // ----------------------------------------------------------
 
   // {{ACTION_DEFINITIONS}}
@@ -172,6 +215,10 @@ module {{MODULE_NAME}} {
   // /// <X never changes>
   // /// @quint-name {{INV_NAME}}
   // def {{INV_NAME}}_over(_prevX: <type of x>): bool = x == _prevX
+  //
+  // The def's name and @quint-name MUST differ (hence `_over`):
+  // the probe module imports this module and declares
+  // `val {{INV_NAME}}`, so a shared name does not compile.
 
 
   // ----------------------------------------------------------
@@ -207,6 +254,8 @@ module {{MODULE_NAME}} {
   // /// @shall <response>
   // /// @meaning <plain words>
   // /// @via {{ACTION_NAME}}
+  // /// @refs REQ-001, DEC-002, billing.REQ-004
+  // ///   (bare ID = this area; <area>.<ID> = another; any kind)
   // /// @pre not(_prevX.keys().contains(_lastK))
   // def shall_REQ_NNN(_lastK: <param type>): bool =
   //   <postcondition over state, of the thing this call touched>
@@ -225,7 +274,11 @@ module {{MODULE_NAME}} {
   // /// @refs REQ-NNN
   // /// @source elicited
   // run {{TEST_NAME}} = {
-  //   init.then({{ACTION_SEQUENCE}})
+  //   init.then({{ACTION_SEQUENCE}}).expect({{EXPECTED_CONDITION}})
   // }
+  //
+  // The trailing .expect(...) IS the example's expectation — no
+  // @expect tag needed. `@expect {json}` is only for an example
+  // hosted on an action (no run yet).
 
 }

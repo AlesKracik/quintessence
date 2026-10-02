@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "local.schema.json",
+  "title": "Per-Developer Spec State (.spec/local.json)",
+  "description": "Gitignored, one per checkout. Holds what differs between developers: where each code repo is checked out on this machine, and which change this developer is working in. Never shared state — anything a teammate needs belongs in .spec/project.json or a change manifest. spec-lint validates it when present.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "repo_paths": {
+      "type": "object",
+      "description": "Logical repo name (a key of .spec/project.json repos{}, used by areas[].code_repo) → absolute path of this developer's checkout. Read by spec-extract-audit, spec-record (stamp / changed / verify / equiv), spec-route, /spec-code-generate and /spec-code-verify. An area whose code_repo has no entry here cannot be audited or verified on this machine; the tools say so rather than guessing.",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "last_change": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "The active change: a slug of specs/changes/<slug>.change.json. Every spec command resolves against it when run without a target. Cleared (null or absent) when the change lands or is abandoned."
+    }
+  }
+}

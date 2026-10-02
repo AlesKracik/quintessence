@@ -287,7 +287,7 @@ def test_an_undischarged_requirement_is_still_asked_for_a_predicate(tmp_path):
 
 def test_a_justified_skip_is_unchanged(tmp_path):
     codes = _witness_codes(tmp_path, [
-        {"id": "REQ-001", "status": "specified",
+        {"id": "REQ-001", "status": "specified", "ears": {"unwanted": True},
          "witness": {"status": "skipped",
                      "justification": "rejection — INV-002 keeps it true"}},
     ])
@@ -1643,7 +1643,11 @@ def test_non_numeric_constraint_is_exempt(tmp_path):
 
 def test_is_rejection_shared_definition():
     assert itf.is_rejection({"modality": "forbidden"})
-    assert itf.is_rejection({"witness": {"status": "skipped", "justification": "x"}})
+    assert itf.is_rejection({"ears": {"unwanted": True},
+                             "witness": {"status": "skipped", "justification": "x"}})
+    # A skip on a requirement that is neither unwanted nor forbidden is a
+    # COMPUTED requirement (a derived value), not a refusal.
+    assert not itf.is_rejection({"witness": {"status": "skipped", "justification": "x"}})
     # unwanted-behavior handling that CHANGES state is witnessable, and replay
     # already covers it — it is not a refusal.
     assert not itf.is_rejection({"ears": {"unwanted": True}})
@@ -3006,7 +3010,8 @@ def test_witness_status_still_gates_an_undischarged_skip(tmp_path):
 
 
 def test_a_typed_skip_is_a_rejection_for_refusal_purposes():
-    assert itf.is_rejection({"witness": {"status": "skipped",
+    assert itf.is_rejection({"ears": {"unwanted": True},
+                             "witness": {"status": "skipped",
                                          "enforced_by": "INV-001"}})
     assert not itf.is_rejection({"witness": {"status": "skipped"}})
 

@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # Install spec-lint as a git pre-commit hook.
 # Run once after cloning or initializing the repo: bash tools/setup-hooks.sh
+# Outside a git repo it installs nothing and exits 0 (spec-only, no-git projects).
 
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 
 if [ -z "$ROOT" ]; then
-  echo "ERROR: not inside a git repository. Run 'git init' first."
-  exit 1
+  # A spec-only project without git is legitimate (the user may not want
+  # one). There is no hook to install, so say so once and succeed: bootstrap
+  # calls this unconditionally and must not fail on a choice the user made.
+  echo "No git repository here — skipping the pre-commit hook."
+  echo "  Run lint by hand instead: python tools/spec-lint.py"
+  echo "  (After 'git init', re-run: bash tools/setup-hooks.sh)"
+  exit 0
 fi
 
 HOOKS_DIR="$ROOT/.git/hooks"

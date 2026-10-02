@@ -31,6 +31,11 @@ Subcommands:
 What `check` does, in order:
   0. Simulator pre-gate (unless --no-simulate): `quint run` over the area's
      bounded invariants and, with --witnesses, over the witness probes.
+     Invariants declared over: "probes" (they compare a step with the one
+     before, through the _prev* ghosts) run against the probe module with
+     --init=initP --step=stepP — the same place Apalache checks them. A run
+     that errors (a name the module does not declare) is recorded as
+     `error`, never as having falsified anything.
      ADVISORY ONLY — the simulator's "[ok] No violation found" means "not in
      the executions I explored", never "verified", so this step writes
      check_results.simulation and NEVER a formal_status. What it buys is the
@@ -191,6 +196,7 @@ from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
                        probe_name, outcome_probe_name)
 from spec_source import (load_area, save_area as save_records,  # noqa: E402
                          records_path, SpecSourceError)
+import spec_source  # noqa: E402
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 
@@ -646,10 +652,14 @@ def run_simulate(quint, qnt_file, invariants, max_samples, max_steps, timeout,
     # the trace between the violation and the summary, so the name can be
     # far from the end. A name that turns up for some other reason costs
     # at most a worse ordering.
-    falsified = sorted(n for n in (invariants or []) if n in out)
     if VIOLATION_MARKER in out:
+        falsified = sorted(n for n in (invariants or []) if n in out)
         return "violation", tail, duration, counts, falsified
-    return "error", tail, duration, counts, falsified
+    # Not a violation: the run did not start (a name the module does not
+    # declare, a type error). The invariant's name in a "Name not found"
+    # message is the CAUSE of the error, not a counterexample to it — read
+    # as falsified, it was recorded as one and reordered the shallow pass.
+    return "error", tail, duration, counts, []
 
 
 def run_structural_check(item, iid, als_rel, als_file, root, area_name,
@@ -948,13 +958,22 @@ def cmd_check(args):
     sim_falsified = set()      # quint_names the simulator violated
     sim_probe_hits = {}        # probe val name -> traces it appeared in
     if not args.no_simulate and qnt_file.exists():
-        sim_invs = [i["quint_name"] for i in (area.get("invariants") or [])
+        sim_pool = [i for i in (area.get("invariants") or [])
                     if i.get("quint_name") and selected(i)
                     and i.get("proof") not in ("structural", "smt")]
+        # A transition invariant compares each step with the one before: it
+        # reads the _prev* ghosts, which exist only in the probe module. So
+        # it is simulated THERE, with initP/stepP — exactly as Apalache
+        # checks it below. Against the main module it is an unknown name.
+        sim_invs = [i["quint_name"] for i in sim_pool
+                    if (i.get("over") or "model") != "probes"]
+        sim_trans = [i["quint_name"] for i in sim_pool
+                     if (i.get("over") or "model") == "probes"
+                     and i["quint_name"] in probe_vals]
         sim_probes = [probe_name(r["id"]) for r in (area.get("requirements") or [])
                       if r.get("id") and selected(r)
                       and probe_name(r["id"]) in probe_vals]
-        if sim_invs or sim_probes:
+        if sim_invs or sim_trans or sim_probes:
             quint = need_quint()
             backend = eval_backend if quint_supports(quint, "run", "--backend") else None
             simulation = {"ran_at": now_iso(), "max_samples": sim_samples,
@@ -963,27 +982,36 @@ def cmd_check(args):
                 simulation["backend"] = backend
             if sim_seed:
                 simulation["seed"] = str(sim_seed)
-            if sim_invs:
+            for key, names, target, init, step in (
+                    ("invariants", sim_invs, qnt_file, None, None),
+                    ("transition_invariants", sim_trans, probes_file, "initP", "stepP")):
+                if not names:
+                    continue
                 res, detail, dur, _, falsified = run_simulate(
-                    quint, qnt_file, sim_invs, sim_samples, sim_steps,
-                    sim_timeout, seed=sim_seed, backend=backend)
-                simulation["invariants"] = {"result": res, "checked": len(sim_invs)}
+                    quint, target, names, sim_samples, sim_steps,
+                    sim_timeout, seed=sim_seed, backend=backend,
+                    init=init, step=step)
+                simulation[key] = {"result": res, "checked": len(names)}
                 if detail:
-                    simulation["invariants"]["detail"] = detail
+                    simulation[key]["detail"] = detail
                 if falsified:
                     # Recorded, not merely used: this is what pass 1's order
                     # below is derived from, and an ordering nobody can read
                     # back is an ordering nobody can check.
-                    simulation["invariants"]["falsified"] = falsified
+                    simulation[key]["falsified"] = falsified
                     sim_falsified.update(falsified)
                 # A simulator violation is real (it found an execution), so it
                 # is worth shouting about — but the ledger entry still comes
                 # from the model checker below, which also produces the trace.
+                # An error is neither: the run never explored anything.
                 mark = {"ok": "no violation in explored runs",
                         "violation": "VIOLATION FOUND — Apalache below will trace it",
+                        "error": "ERROR — simulator did not run (not a verdict)",
                         }.get(res, res)
+                what = ("invariant(s)" if key == "invariants"
+                        else "transition invariant(s), probe module")
                 print(f"{'simulate':<12} {mark:<26} ({dur:.1f}s, "
-                      f"{len(sim_invs)} invariant(s), {sim_samples} samples)")
+                      f"{len(names)} {what}, {sim_samples} samples)")
             if sim_probes and quint_supports(quint, "run", "--witnesses"):
                 _, _, dur, counts, _ = run_simulate(
                     quint, probes_file, [], sim_samples, sim_steps, sim_timeout,
@@ -1422,7 +1450,7 @@ def cmd_check(args):
                       f"{witness['enforced_by']})")
                 continue
             if witness.get("status") == "skipped":
-                if skip_discharge(witness) is None:
+                if skip_discharge(witness, req) is None:
                     # Same gate as spec-lint — an unjustified skip must not
                     # let this runner report green.
                     print(f"{rid:<12} SKIPPED-UNJUST.  (skip with neither enforced_by "
@@ -1430,7 +1458,7 @@ def cmd_check(args):
                     bad += 1
                 continue
             if not witness.get("predicate"):
-                if skip_discharge(witness) is not None:
+                if skip_discharge(witness, req) is not None:
                     # Discharged in substance but not in status: only
                     # 'skipped' consults the justification, so reporting this
                     # as a missing predicate asks for work the author already
@@ -2052,9 +2080,15 @@ def cmd_stamp(args):
         block = {"date": now_iso(), "code_sha": code_sha}
         if entry.get("code_repo"):
             block["code_repo"] = entry["code_repo"]
-        code_path = args.code_path or entry.get("code_path")
-        if code_path:
-            block["code_path"] = code_path
+        includes, excludes = spec_source.code_scope(entry, args.code_path)
+        if len(includes) == 1 and not any(c in includes[0] for c in "*?["):
+            block["code_path"] = includes[0]
+        elif includes:
+            block["code_paths"] = includes
+        user_excludes = [e for e in excludes
+                         if e not in spec_source.DEFAULT_CODE_EXCLUDES]
+        if user_excludes:
+            block["exclude"] = user_excludes
         area["extracted_from"] = block
         label = "extracted_from"
 
@@ -2063,7 +2097,8 @@ def cmd_stamp(args):
           + (f", spec @ {block['spec_sha'][:7]}" if block.get("spec_sha") else "")
           + (f", claims @ {block['spec_content_sha'][:7]}"
              if block.get("spec_content_sha") else "")
-          + (f", path {block['code_path']}" if block.get("code_path") else ""))
+          + (f", path {block['code_path']}" if block.get("code_path") else "")
+          + (f", paths {', '.join(block['code_paths'])}" if block.get("code_paths") else ""))
     print(f"recorded in {area_path}")
     sys.exit(0)
 
@@ -2135,10 +2170,16 @@ def cmd_changed(args):
                    f"shallow clone) — re-stamp after reconciling.")
 
     # Two lenses on the same diff, because they answer different questions.
-    scope = args.code_path or (area.get("extracted_from") or {}).get("code_path")
+    ext = area.get("extracted_from") or {}
+    if args.code_path:
+        includes, excludes = spec_source.code_scope({}, args.code_path)
+    else:
+        includes = list(ext.get("code_paths") or
+                        ([ext["code_path"]] if ext.get("code_path") else []))
+        excludes = list(ext.get("exclude") or []) + list(spec_source.DEFAULT_CODE_EXCLUDES)
+    scope = ", ".join(includes)
     in_scope = [c for c in changed
-                if not scope or c.replace("\\", "/").startswith(scope.rstrip("/") + "/")
-                or c.replace("\\", "/") == scope]
+                if not includes or spec_source.in_code_scope(c, includes, excludes)]
     traced = {(t.get("code") or "").split(":", 1)[0]
               for t in area.get("traceability", []) or []}
     traced.discard("")
@@ -2226,9 +2267,10 @@ def main():
     ps.add_argument("area")
     ps.add_argument("--root", default=".")
     ps.add_argument("--code-root", dest="code_root")
-    ps.add_argument("--code-path", dest="code_path",
-                    help="Subtree the extraction read, relative to the code "
-                         "repo root. Narrows what `changed` reports.")
+    ps.add_argument("--code-path", dest="code_path", action="append",
+                    help="Subtree or glob the extraction read, relative to the "
+                         "code repo root; repeatable. Defaults to the area's "
+                         "code_paths / code_path. Narrows what `changed` reports.")
     mode = ps.add_mutually_exclusive_group(required=True)
     mode.add_argument("--generated", action="store_true",
                       help="Code was just generated from this spec.")
@@ -2241,8 +2283,8 @@ def main():
     pg.add_argument("area")
     pg.add_argument("--root", default=".")
     pg.add_argument("--code-root", dest="code_root")
-    pg.add_argument("--code-path", dest="code_path",
-                    help="Override the recorded subtree for this run.")
+    pg.add_argument("--code-path", dest="code_path", action="append",
+                    help="Override the recorded subtree(s) for this run; repeatable.")
     pg.add_argument("--since", help="Diff from this sha instead of the "
                                     "recorded baseline.")
     pg.set_defaults(func=cmd_changed)

@@ -47,7 +47,11 @@ comment and are ignored.
                      @outcome-of REQ-ID <name>   (one permitted outcome of a
                                                  `may` requirement)
                      @screen <Name>              (one screen of a UI)
-                     @nav <From> -> <To>         (one navigation edge)
+                     @nav [NAV-NNN] <From> -> <To>
+                                                 (one navigation edge; the id
+                                                 is optional and makes it a
+                                                 maps_to / @refs target;
+                                                 From `*` = every screen)
 
 Untagged lines right after the record tag are the record's DESCRIPTION
 (invariant statement, constant description, example title, a requirement's
@@ -69,17 +73,34 @@ A blank `///` line ends a continuation.
                                                  ghosts exist only there)
         @enforced-by INV-ID                      witness.enforced_by
         @witness skipped[: <reason>]             a deliberately skipped
-                                                 witness (+ justification)
+                                                 witness (+ justification).
+                                                 On an @unwanted or forbidden
+                                                 requirement it is a REFUSAL
+                                                 (owes @refusal + @unchanged);
+                                                 on any other it is COMPUTED —
+                                                 a derived value with no
+                                                 transition — and owes
+        @verified-by <path>, <path>              verified_by: the unit
+                                                 test(s) that check it
         @justification <text>                    justification, no skip
         @refusal <path>  @blocking <expr>  @unchanged a, b
-        @refs ID, ID                             cross_refs
+        @refs ID, ID                             cross_refs: `<area>.<ID>`
+                                                 for another area, a bare ID
+                                                 for this one (qualified when
+                                                 the view is derived). Any
+                                                 declared kind: REQ INV PROP
+                                                 CON EX DEC ASM Q
         @evidence @confidence @inferred-by @fingerprint   extraction.*
   INV   @criticality @proof @over @alloy <command> @smt <file>
-        @quint-name <name> @predicate <expr> @refs  + extraction tags
+        @quint-name <name> @predicate <expr> @refs @source
+        + extraction tags
   PROP  (host: a `temporal`)  @refs
-  CON   @unit @pairs INV-ID @value <json>  + extraction tags
+  CON   @unit @pairs INV-ID @value <json> @source  + extraction tags
   EX    @given <json> @when <action> [<json args>] @expect <json>
         @refs @source @trace
+        (@expect is needed only on an EX hosted on an action: on a `run`
+        whose body ends in `.expect(<cond>)`, that condition IS the
+        expectation, derived as expect = {"run.expect": "<cond>"})
   SCREEN  description = purpose  @auth-required  @components A, B
   NAV     description = the trigger, in the user's words  @guard <text>
 
@@ -113,7 +134,8 @@ Hosting — what the declaration under the block means for the record:
                                    and every variant has one (lint).
   NAV on `action <name>`           navigation[].action = name; the action
                                    must read the screen var at <From> and
-                                   set it to <To> (lint). Several edges may
+                                   set it to <To> (lint). From `*` (every
+                                   screen) only has to set it. Several edges may
                                    share an action.
   SCREEN / NAV on the `module`     a UI with no model yet (Tier 1).
 
@@ -202,6 +224,7 @@ TAGS = {
         "enforced-by": ("witness.enforced_by", "text"),
         "justification": ("witness.justification", "text"),
         "refusal": ("refusal.artifact", "text"),
+        "verified-by": ("verified_by", "list"),
         "blocking": ("refusal.blocking_state", "text"),
         "unchanged": ("refusal.unchanged", "list"),
         "refs": ("cross_refs", "list"),
@@ -217,6 +240,7 @@ TAGS = {
         "quint-name": ("quint_name", "text"),
         "predicate": ("predicate", "text"),
         "refs": ("cross_refs", "list"),
+        "source": ("source", "text"),
         **EXTRACTION_TAGS,
     },
     "properties": {
@@ -228,6 +252,7 @@ TAGS = {
         "name": ("name", "text"),
         "pairs": ("paired_invariant", "text"),
         "value": ("value", "json"),
+        "source": ("source", "text"),
         **EXTRACTION_TAGS,
     },
     "examples": {
@@ -258,14 +283,14 @@ EMIT_ORDER = {
                      "where", "while", "when", "unwanted", "shall",
                      "meaning", "meaning-author", "fit", "error", "via",
                      "predicate", "pre", "pre-note", "enforced-by", "witness",
-                     "justification", "refusal", "blocking", "unchanged",
-                     "refs", "evidence", "confidence", "inferred-by",
+                     "justification", "verified-by", "refusal", "blocking",
+                     "unchanged", "refs", "evidence", "confidence", "inferred-by",
                      "fingerprint"),
     "invariants": ("criticality", "proof", "over", "quint-name", "predicate",
-                   "alloy", "smt", "refs", "evidence", "confidence",
+                   "alloy", "smt", "refs", "source", "evidence", "confidence",
                    "inferred-by", "fingerprint"),
     "properties": ("quint-name", "refs"),
-    "constraints": ("name", "unit", "pairs", "value", "evidence", "confidence",
+    "constraints": ("name", "unit", "pairs", "value", "source", "evidence", "confidence",
                     "inferred-by", "fingerprint"),
     "examples": ("given", "when", "expect", "refs", "source", "trace"),
     "outcome": ("pre", "pre-note"),
@@ -320,6 +345,106 @@ def model_file(intent, name):
 
 def alloy_file(intent):
     return ((intent or {}).get("formal_model") or {}).get("alloy_file")
+
+
+# ── Where an area's code is ─────────────────────────────────────────────────
+# One answer for the audit, `spec-record stamp/changed` and the beat router.
+
+# Excluded unless an area says otherwise: test files are not the behavior
+# under extraction, and triaging them by hand one NOT-BEHAVIOR at a time is
+# what made an audit report 207 of them.
+DEFAULT_CODE_EXCLUDES = ("**/__tests__/**", "**/*.test.*", "**/*.spec.*",
+                         "**/test_*.py", "**/*_test.py", "**/*_test.go")
+
+
+def _glob_re(pattern):
+    """A path glob as a regex: `**` spans directories, `*` and `?` do not.
+    A pattern with no glob characters is a directory or file prefix."""
+    pat = pattern.replace("\\", "/")
+    if pat.startswith("./"):
+        pat = pat[2:]
+    if not any(c in pat for c in "*?["):
+        base = pat.rstrip("/")
+        return re.compile("^" + re.escape(base) + "(?:/.*)?$")
+    out, i = "", 0
+    while i < len(pat):
+        if pat.startswith("**/", i):
+            out += "(?:.*/)?"
+            i += 3
+        elif pat.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif pat[i] == "*":
+            out += "[^/]*"
+            i += 1
+        elif pat[i] == "?":
+            out += "[^/]"
+            i += 1
+        else:
+            out += re.escape(pat[i])
+            i += 1
+    return re.compile("^" + out + "$")
+
+
+def code_scope(entry, override=None):
+    """(includes, excludes) for an area's `.spec/project.json` entry.
+
+    `code_paths: [glob, ...]` for an area whose code is scattered (routes/,
+    utils/, services/), `code_path` for one that is not; `override` (a CLI
+    --code-path, repeatable) replaces both. Excludes are the area's
+    `exclude[]`, its `tests_path`, and test files by default — set
+    `include_tests: true` to scan them."""
+    entry = entry or {}
+    if override:
+        includes = [override] if isinstance(override, str) else list(override)
+    else:
+        includes = list(entry.get("code_paths") or [])
+        if not includes and entry.get("code_path"):
+            includes = [entry["code_path"]]
+    excludes = list(entry.get("exclude") or [])
+    if not entry.get("include_tests"):
+        excludes += list(DEFAULT_CODE_EXCLUDES)
+        if entry.get("tests_path"):
+            excludes.append(entry["tests_path"])
+    return includes, excludes
+
+
+def in_code_scope(rel, includes, excludes):
+    """True when repo-relative `rel` is inside the scope."""
+    rel = rel.replace("\\", "/")
+    if rel.startswith("./"):
+        rel = rel[2:]
+    if not any(_glob_re(p).match(rel) for p in includes):
+        return False
+    return not any(_glob_re(p).match(rel) for p in excludes)
+
+
+def code_files(repo_root, includes, excludes, suffixes=None):
+    """Files under repo_root in scope, sorted, optionally narrowed to
+    source suffixes."""
+    root = Path(repo_root)
+    out = set()
+    for pattern in includes:
+        # Walk from the longest literal prefix, not the whole repo.
+        literal = []
+        for part in pattern.replace("\\", "/").split("/"):
+            if any(c in part for c in "*?["):
+                break
+            literal.append(part)
+        base = root.joinpath(*[p for p in literal if p and p != "."])
+        if base.is_file():
+            candidates = [base]
+        elif base.is_dir():
+            candidates = (f for f in base.rglob("*") if f.is_file())
+        else:
+            continue
+        for f in candidates:
+            rel = str(f.relative_to(root)).replace("\\", "/")
+            if suffixes and f.suffix not in suffixes:
+                continue
+            if in_code_scope(rel, [pattern], excludes):
+                out.add(f)
+    return sorted(out)
 
 
 # ── Doc-comment reader ──────────────────────────────────────────────────────
@@ -674,11 +799,46 @@ def _run_last_action(body, actions):
     return calls[-1] if calls else None
 
 
+RUN_EXPECT_KEY = "run.expect"
+
+
+def _run_expectation(body):
+    """The condition of the trailing `.expect(<cond>)` of a run body, or
+    None. That call IS the run's assertion — quint test fails the run when it
+    is false — so an example hosted on such a run already claims something,
+    and asking for an `@expect {json}` beside it would be a second copy of
+    the same claim, in a weaker language. Several chained `.expect`s are
+    kept, joined with `and`."""
+    text = (body or "").strip()
+    conds = []
+    while text.endswith(")"):
+        depth, i = 0, len(text) - 1
+        while i >= 0:
+            if text[i] == ")":
+                depth += 1
+            elif text[i] == "(":
+                depth -= 1
+                if depth == 0:
+                    break
+            i -= 1
+        if i < 0 or not text[:i].rstrip().endswith(".expect"):
+            break
+        conds.insert(0, " ".join(text[i + 1:-1].split()))
+        text = text[:i].rstrip()[:-len(".expect")].rstrip()
+    return " and ".join(conds) if conds else None
+
+
 def _natural(rid):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", rid or "")]
 
 
-NAV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)$")
+# `@nav [NAV-NNN] <From> -> <To>`. The optional id is what lets an audit
+# site be MAPPED to an edge (no REQ invented to stand for it). From `*` is
+# an edge from EVERY screen — a sidebar, a global header link — which a
+# per-screen edge list cannot say without one record per screen.
+NAV_RE = re.compile(r"^(?:(?P<id>NAV-\d{3})\s+)?(?P<from>\*|[A-Za-z_][A-Za-z0-9_]*)"
+                    r"\s*->\s*(?P<to>[A-Za-z_][A-Za-z0-9_]*)$")
+ANY_SCREEN = "*"
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -708,9 +868,17 @@ def _derive_ui(rec, out, seen, problems):
     edge = f"{rec['id']} {rec['extra']}".strip()
     m = NAV_RE.match(edge)
     if not m:
-        problems.append(f"{_where(rec)}: @nav takes '<From> -> <To>', got {edge!r}")
+        problems.append(f"{_where(rec)}: @nav takes '<From> -> <To>' (optionally "
+                        f"'NAV-NNN' first; From may be '*'), got {edge!r}")
         return
-    item = {"from": m.group(1), "to": m.group(2)}
+    item = {"from": m.group("from"), "to": m.group("to")}
+    if m.group("id"):
+        if m.group("id") in seen:
+            problems.append(f"{_where(rec)}: duplicate navigation id {m.group('id')} "
+                            f"(first at {seen[m.group('id')]})")
+            return
+        seen[m.group("id")] = _where(rec)
+        item = {"id": m.group("id"), **item}
     if desc:
         item["trigger"] = desc
     else:
@@ -798,6 +966,9 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
                 item["title"] = desc
             if hk == "run":
                 item["quint_run"] = hn
+                cond = _run_expectation(host.get("body"))
+                if cond and not item.get("expect"):
+                    item["expect"] = {RUN_EXPECT_KEY: cond}
                 if "when" not in item:
                     a = _run_last_action(host.get("body"), actions)
                     if a:
@@ -891,6 +1062,17 @@ def has_model(text):
     return any(DECL_LINE.match(l) for l in strip_docs(text or "").splitlines())
 
 
+def _qualify_refs(model_part, name):
+    """A bare `@refs REQ-030` means this area's REQ-030. Qualified here, once,
+    so every tool downstream sees the one `<area>.<ID>` form and none of them
+    has to know an unqualified ref is legal."""
+    for kind in ("requirements", "invariants", "properties"):
+        for item in model_part.get(kind) or []:
+            refs = item.get("cross_refs")
+            if refs:
+                item["cross_refs"] = [r if "." in r else f"{name}.{r}" for r in refs]
+
+
 def derive_from_texts(name, get_text, problems=None):
     """Derive the area view from file contents. `get_text(relpath)` returns a
     file under specs/ as a string, or None — so the same derivation runs on
@@ -913,6 +1095,7 @@ def derive_from_texts(name, get_text, problems=None):
     afile = alloy_file(intent)
     atext = get_text(afile) if afile else None
     model_part, info = derive_records(qtext, qfile, atext, afile, problems)
+    _qualify_refs(model_part, name)
     area = compose_area(intent, model_part, records)
     if has_model(qtext):
         area.setdefault("formal_model", {}).setdefault("quint_file", qfile)
@@ -1281,16 +1464,23 @@ def screen_var(model_text, type_name):
 
 def nav_moves(body, var, frm, to):
     """True when an action body reads `var == frm` and sets `var' = to` — the
-    shape a navigation edge has in the model."""
+    shape a navigation edge has in the model.
+
+    From `*` (every screen) has no guard on the screen to read: the action
+    only has to set it — to `to`, or to a parameter (`navigate(target:
+    Screen)` behind a sidebar, where the destination is the argument)."""
     if not body or not var:
         return False
     v = re.escape(var)
+    if frm == ANY_SCREEN:
+        return bool(re.search(rf"\b{v}'\s*=\s*(?:{re.escape(to)}\b|(?!{v}\b)[a-z_][A-Za-z0-9_]*\s*(?:[,}}\n)]|$))",
+                              body))
     return bool(re.search(rf"\b{v}\s*==\s*{re.escape(frm)}\b", body)
                 and re.search(rf"\b{v}'\s*=\s*{re.escape(to)}\b", body))
 
 
 SCREEN_FIELDS = {"name", "auth_required", "purpose", "components"}
-NAV_FIELDS = {"from", "to", "trigger", "guard", "action"}
+NAV_FIELDS = {"id", "from", "to", "trigger", "guard", "action"}
 
 
 def emit_ui(tag, item, indent):
@@ -1302,7 +1492,8 @@ def emit_ui(tag, item, indent):
         if item.get("components"):
             lines += _wrap("@components", ", ".join(item["components"]), indent)
         return lines
-    lines = [f"{indent}/// @nav {item['from']} -> {item['to']}"]
+    nid = f"{item['id']} " if item.get("id") else ""
+    lines = [f"{indent}/// @nav {nid}{item['from']} -> {item['to']}"]
     lines += _wrap_desc(item.get("trigger"), indent)
     if item.get("guard"):
         lines += _wrap("@guard", item["guard"], indent)
@@ -1783,6 +1974,9 @@ def roundtrip(legacy, qtext, atext=None, ir=None):
     if not any("action" in n for n in legacy.get("navigation") or []):
         for n in derived.get("navigation") or []:
             n.pop("action", None)  # found by migration: added, not lost
+    # A bare ref is qualified on derive: a normalization, not a loss.
+    legacy = copy.deepcopy(legacy)
+    _qualify_refs(legacy, name)
     a, b = _normalize_for_compare(legacy), _normalize_for_compare(derived)
     return problems + _diff_paths(a, b)
 

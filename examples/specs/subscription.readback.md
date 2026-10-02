@@ -6,7 +6,7 @@
 
 **Status:** formalized  |  **Requirements:** 0/7 verified, 0/7 witnessed  |  **Invariants:** 0 proven + 0 bounded / 3  |  **Coverage:** 12 cells, 2 covered, 10 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Open questions:** 1  |  **Last verified:** never
 
-*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (rejection-style requirement; an invariant carries the proof)*
+*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof — or a computed value, checked by the unit test it names)*
 
 ## Purpose
 

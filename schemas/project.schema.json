@@ -26,7 +26,10 @@
           "kind":        { "type": "string", "enum": ["area", "contract", "ui"], "description": "'ui' is a deprecated alias for area-with-screens; use 'area'." },
           "description": { "type": "string" },
           "code_repo":   { "type": ["string", "null"], "description": "Key from repos[]. null = spec-only." },
-          "code_path":   { "type": "string", "description": "Inside the code repo, e.g. 'src/auth/'." },
+          "code_path":   { "type": "string", "description": "Inside the code repo, e.g. 'src/auth/'. For code spread over several places use code_paths." },
+          "code_paths":  { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Paths or globs inside the code repo, for an area whose code is scattered: ['backend/src/routes/entities*.ts', 'backend/src/services/entity/']. `**` spans directories, `*` does not; a path with no glob characters is a directory or file. Wins over code_path. Read by spec-extract-audit, spec-record stamp/changed and spec-route." },
+          "exclude":     { "type": "array", "items": { "type": "string" }, "description": "Globs removed from code_paths/code_path. Test files (`**/__tests__/**`, `**/*.test.*`, `**/*.spec.*`, …) and tests_path are excluded already." },
+          "include_tests": { "type": "boolean", "default": false, "description": "Scan test files too. Off by default: tests are not the behavior under extraction, and triaging them one NOT-BEHAVIOR at a time is pure cost." },
           "tests_path":  { "type": "string", "description": "Inside the code repo, e.g. 'tests/auth/'." },
           "test_command":{ "type": "string", "description": "What /spec-code-verify runs." }
         }

@@ -45,8 +45,16 @@ There are no other authoring subcommands — this command subsumes every authori
 - **Witnessed requirement** → a `val`/`def shall_<ID>` whose BODY is the witness predicate, with `@via <action>`. Name the parameters after the probe ghosts (`_lastUid: UserId` for the action's `uid`) so the predicate is bound to this call AND typechecks in the model. `@pre` (the delta) stays text: the `_prev*` ghosts exist only in the probe module.
 - **Prohibition / `may` / not yet formalized** → on the `action` it refuses or concerns (`@via` implied); a `may`'s outcomes are separate `shall_<ID>_<outcome>` hosts tagged `@outcome-of <ID> <name>`.
 - **No model yet** (raw requirement, NFR, Tier-1 area) → in the `module`'s own doc comment; `@predicate` carries a draft predicate as text until there is a model to host it.
-- **Invariant** → on its `val`; **property** → on its `temporal`; **constant** → on its `pure val` (the model's literal IS the value — never restate it with `@value`); **example** → on its `run`.
-- **Screen** → `/// @screen <Name>` on the screen sum type, one per variant, all in the type's block (description = purpose; `@auth-required`, `@components A, B`). **Navigation edge** → `/// @nav <From> -> <To>` on the action that takes it; the line below is the trigger in the user's words, `@guard` the precondition. Lint checks every variant has a screen record and every edge's action reads and sets the screen var as claimed.
+- **Computed requirement** (a derived value or pure calculation — a score formula, a total — with no state transition) → on the `pure def` that computes it, with `@witness skipped: <why>` and `@verified-by <test path>`. Without `@unwanted` or `@modality forbidden` a skipped witness is *computed*, not a refusal: it owes the unit test that checks it (lint WARNs `computed-without-verified-by`, FAIL from in-review), never `@refusal`/`@unchanged`.
+- **Invariant** → on its `val`; **property** → on its `temporal`; **constant** → on its `pure val` (the model's literal IS the value — never restate it with `@value`); **example** → on its `run`. A run that ends in `.expect(<cond>)` already states its expectation — no `@expect` needed; `@expect {json}` is only for an example hosted on an action.
+- **References** → `@refs REQ-030, DEC-002, billing.REQ-004`: a bare ID is this area's (qualified on derive), `<area>.<ID>` another's; any declared kind resolves (REQ, INV, PROP, CON, EX, DEC, ASM, Q). A decision's blast radius still goes in its `decisions[].affects`.
+- **Model shape the probe generator needs** (it mirrors your model into `specs/<target>.probes.qnt`):
+  - **Only route-level operations are `action`s** — the ones `step` calls. Shared logic (`refuse`, `commit`, an upsert taking `apply: State => State`) is a `def`/`pure def` returning the new state; `stepP` mirrors only what `step` calls, and a `@via` must name one of those.
+  - **One type alias per parameter value domain** — `type Role = str`, `type Coll = str`, `type Id = str` — because `formal_model.probe_domains` is keyed by type; parameters that all say `str` draw from one set. Where an alias would be noise, key one parameter directly: `"param:role": "Set(\"admin\", \"user\")"`.
+  - **State may be a record** (`var st: State`, the shape a conformance adapter with `st()`/`last()` getters has): `_prevSt` ghosts are initialized field by field, sum types to their first variant. A type with no buildable zero (parameterized, recursive) gets `formal_model.ghost_zeros: {"<Type>": "<literal>"}`; lint flags the gap (`ghost-zero-unsynthesizable`) as soon as a delta reads it.
+  - **Don't reuse Quint built-in names** for helpers — `exists`, `forall`, `map`, `filter`, `fold`, `keys`, `get`, `set`, `put`, `contains`, `size`, … fail the module with QNT101 (lint: `quint-builtin-redefined`). List: `templates/spec.qnt.template`, IDIOM.
+- **Screen** → `/// @screen <Name>` on the screen sum type, one per variant, all in the type's block (description = purpose; `@auth-required`, `@components A, B`). **Navigation edge** → `/// @nav [NAV-NNN] <From> -> <To>` on the action that takes it; the line below is the trigger in the user's words, `@guard` the precondition. Give an edge a `NAV-NNN` id whenever something must point at it — an audit site MAPPED to a route or link, a journey step — instead of inventing a REQ for it. A sidebar or global link is **`* -> <To>`** (from every screen): its action sets the screen var without reading it. Lint checks every variant has a screen record and every edge's action reads and sets the screen var as claimed.
+- **Transition invariant** (compares a step with the one before) → on a `def` whose parameters are `_prev*` ghosts, with `@quint-name` naming the val the probe module emits. That name must differ from the def's own name and from anything else the model declares (`def noDowngrade_over(...)` + `@quint-name noDowngrade`) — the probe module imports the model, and a duplicate does not compile (lint: `transition-invariant-name-clash`).
 - After writing or re-reading a `@meaning`, pin it: `tools/itf_tools.py pin <target> --req <ID>` (the brief: `--brief`). Never type a sha.
 - Never edit `records.json` verdicts, pins, logs or provenance by hand; the tools refuse to overwrite authored text and you must not overwrite theirs.
 
@@ -67,6 +75,7 @@ Resolve the change, then the target:
 1. `/spec change <slug>` → open `specs/changes/<slug>.change.json` (if new: run the **open-changes gate** below, then create it per `schemas/change.schema.json`, with `intent` from the `--` hint or one question; suggest branch `change/<slug>`. Switching to an existing change skips the gate). Write `last_change: "<slug>"` to `.spec/local.json` (create the file if missing; preserve other fields). Then show the change dashboard (beat below).
 2. Bare `/spec`, active change valid (`last_change` set, manifest exists, status not `landed`/`abandoned`) → **change dashboard** beat.
 3. Explicit `<target>` (area, not `_project`/`_patterns/*`/`_protocols/*`/`_journeys/*`/`_overview`):
+   - **not an existing area** → before creating anything, check it is not a typo of one: `tools/spec-route.py <target>` returns `confirm-target` with the close matches (edit distance or shared words, plurals folded). Ask "Did you mean `value-streams`? [Y/n/new]" — Y switches the target, `new` creates the area. Never create an area from a near-miss silently.
    - active change exists → work on that area within it; register the target in the manifest's `targets[]` if absent.
    - no active change → auto-open one first: `No active change. Name this work? [<target>-updates]` (Enter = default). Run the **open-changes gate**, create the manifest, set `last_change`, then proceed.
 4. Bare `/spec`, no valid active change: exactly one area → treat as `/spec <that-area>` (rule 3 auto-opens a change); otherwise show the project overview and ask.
@@ -86,27 +95,26 @@ Close any before starting `<new-slug>`?  For each: landed (PR merged) / abandone
 - **`abandoned` touches only the manifest.** Spec edits already committed under it stay in the areas; say so, and treat reverting them as a separate decision, not part of the gate.
 - Write each chosen status into its manifest (nothing else in it changes), then create the new change; `last_change` moves to the new change either way. Commit the status changes with the new manifest: `spec(<new-slug>): open — close <slugs>`.
 
-Then determine what exists:
+Then pick the entry beat. **Don't work it out by hand — ask the router:**
 
-1. `.spec/project.json` — does the project exist? (If not, the **bootstrap** beat runs regardless of target resolution.)
-2. For the resolved target:
-   - `specs/<target>.intent.json` — does the area exist?
-   - `specs/<target>.qnt` — does the formal model exist?
-   - For areas with `code_repo` set: does the code path on disk exist? (Resolve via `.spec/local.json`.)
+```bash
+tools/spec-route.py <target>          # beat + the reason (--json for fields)
+```
 
-This determines the entry beat:
+It routes on what has **happened**, not on which files exist. That matters because bootstrap scaffolds `specs/<area>.intent.json` (status raw, empty model) for every declared area: routing on "intent file missing" sent every bootstrapped area with code to resume, and brownfield extract — the strong case — was unreachable. The table it implements, first match wins:
 
 | State | Beat |
 |---|---|
 | No `.spec/project.json` | **bootstrap**: walk project setup |
 | `<target>` is `_project` | **project edit**: architecture defaults, repos, topology |
 | `<target>` is `_patterns/<name>`, `_protocols/<name>`, or `_journeys/<name>` | **catalog edit**: add/edit a catalog file |
-| `specs/<target>.intent.json` missing, code exists at the area's `code_path` | **brownfield extract** |
-| `specs/<target>.intent.json` missing, no code | **greenfield elicit** |
-| `specs/<target>.intent.json` exists, code at `code_path` changed since the last extraction | **re-extract**: reconcile the spec against the code as it is now |
-| `specs/<target>.intent.json` exists, sections incomplete | **resume**: pick up the next phase |
-| `specs/<target>.intent.json` exists, `verification_log` shows drift | **drift codify**: walk the drift items |
-| `specs/<target>.intent.json` exists, all phases complete | **review/idle**: present the readback, offer next action |
+| no such area, name close to an existing one | **confirm target**: "Did you mean …? [Y/n/new]" (rule 3 above) |
+| the area's `code_repo` has no `repo_paths` entry in `.spec/local.json` | **configure repo**: ask where it is checked out, write `repo_paths` |
+| the area has code (its `code_paths`/`code_path` resolves to source files), no `extracted_from` in records.json, and no requirements yet — **whether or not the intent file exists** | **brownfield extract** (the router also says when to extract in passes) |
+| no requirements, no extraction, no code | **greenfield elicit** |
+| newest `verification_log` entry has `drift_detected` | **drift codify**: walk the drift items |
+| spec exists and was extracted, and the code repo's HEAD moved since `extracted_from.code_sha` | **re-extract**: offer to reconcile the spec against the code as it is now |
+| anything else | **resume**: pick up the next phase (or **review/idle** when nothing is incomplete) |
 
 ### Step 2 — Run the beat
 
@@ -151,7 +159,7 @@ Ask only what's needed to start eliciting:
 1. Project name (slug).
 2. Greenfield or existing code?
 3. Repo layout: single-repo (code lives here), multi-repo (code in separate repos), or spec-only. If multi-repo: for each code repo, logical name + URL + default branch → `.spec/project.json` `repos`; prompt user to add per-dev paths to `.spec/local.json` (or do it for them).
-4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area whose model carries `@screen` + `@nav` records), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
+4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area whose model carries `@screen` + `@nav` records), one-line description, and — if it has code — code repo, where the code is, `tests_path`, `test_command`. Write each to the `areas[]` index. Where the code is: `code_path` for one directory; **`code_paths: [glob, ...]`** when the area is spread over several (`["backend/src/routes/entities*.ts", "backend/src/services/entity/"]`, plus `exclude: [glob]` if needed). Ask for the area's own files, not the whole `src/` — a scope of everything turns the audit into hundreds of OUT-OF-SCOPE verdicts. Test files (`__tests__/`, `*.test.*`, `*.spec.*`, `tests_path`) are excluded automatically.
 
 **Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-code-generate` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units. Apalache settings need no moment at all: the defaults carry a two-pass step ladder (`shallow_steps` 3, `max_steps` 10) and a run budget (`budget_seconds` 900), so a check's cost is declared up front rather than discovered by waiting for it. Don't raise it here — the point is that the default is safe, not that it wants configuring. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
@@ -159,7 +167,11 @@ Write `.spec/project.json`. Scaffold each declared area as `specs/<name>.intent.
 
 5. **Open the first change** — the change is the unit of work, so bootstrap ends inside one, not before one. Ask: `Name the first change? [initial-spec]` (Enter = default; intent defaults to "Initial specification of <area list>"). Create `specs/changes/<slug>.change.json` per `schemas/change.schema.json` with every declared area as a target (`status: "open"`, empty `ids[]`), write `last_change` to `.spec/local.json`, and suggest branch `change/<slug>`.
 
-Install pre-commit hook via `bash tools/setup-hooks.sh` (idempotent).
+**No git?** If the project is not a git repo (`git rev-parse` fails) or the user said they don't want one, say once: "No git repo — skipping the pre-commit hook and commit hints; run `python tools/spec-lint.py` by hand." Then skip the hook and every commit/branch hint for the rest of the session. Otherwise install the pre-commit hook via `bash tools/setup-hooks.sh` (idempotent; outside git it installs nothing and exits 0).
+
+**Per-dev config** goes in `.spec/local.json` (gitignored; schema: `schemas/local.schema.json`): `repo_paths` — logical repo name → this machine's checkout path, one per `repos` entry an area uses — and `last_change`. Write it for the user when you know the paths; lint validates it.
+
+**Check the Python tooling** once: `python3 -c "import jsonschema"`. If it is missing, offer to install it (`tools/check-tooling.sh --install`, or `python3 -m pip install jsonschema`): without it every lint run is PARTIAL — schema validation is skipped, so a malformed intent field passes unnoticed.
 
 Print: "Project initialized, change `<slug>` open. Next: `/spec <area>` for each area you declared — edits land in the change; bare `/spec` shows the dashboard."
 
@@ -181,7 +193,7 @@ If the user types `/spec _patterns`, `/spec _protocols`, or `/spec _journeys` (n
 
 #### brownfield extract
 
-(Runs when `specs/<target>.intent.json` is missing AND code exists at the area's `code_path`.)
+(Runs when the area has code at its `code_paths`/`code_path`, no `extracted_from` in its records, and no requirements yet — including the raw scaffold bootstrap wrote. `tools/spec-route.py <target>` decides.)
 
 Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-path>`. I'll extract a draft spec."
 
@@ -190,6 +202,31 @@ Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-p
 **What you are producing is a spec that is true of this code.** That is the deliverable and its whole value: the team can review behavior nobody wrote down, reason about a change before making it, and read in the readback what the system does today. Nothing has to be regenerated for that to pay off, so do not steer the user toward a rewrite they did not ask for, and do not open the beat by asking them to design a substitution boundary. If they *are* rewriting, there is machinery to measure how completely the spec captured the code — offer it at the end, as step 6.
 
 Extraction is also not a one-time event. Say so when you finish: the spec is true of the code as of today, and `/spec <target>` re-extracts when the code moves on.
+
+##### 0. Look for a prior spec first
+
+The spec files may be gone while their traces are not. Before reading behavior, look for what an earlier spec left in the code repo:
+
+- **Spec ids in the code**: `grep -rnE '\b(REQ|INV|CON|DEC|PROP|EX)-[0-9]{3}\b' <code paths>` — comments, test names, error codes.
+- **A conformance adapter / replay harness**: e.g. `conformance/adapter.ts` with one method per Quint action and a getter per state var, and the test that replays traces through it.
+- **Witness traces**: `find <repo> -name '*.itf.json'`. Decode them: `tools/itf_tools.py summarize <dir>` prints, per trace, each step's action, its arguments and the state diff — what each old id *meant*. The file name is usually the id.
+
+If any of these exist:
+- **Keep the ids the code cites.** A comment saying `// REQ-030` must still point at REQ-030; renumbering orphans every one of them.
+- **Align the model with the adapter**: same state var names, action names and parameter names, so the existing replay suite runs against the new model unchanged — a spec that matches the adapter is verifiable on day one.
+- **An id the code cites that you cannot recover** (no trace, no decodable comment) becomes an open question: `Q-NNN: what did REQ-017 (cited in routes/x.ts:40) specify?` — not a guess.
+
+Say what you found in one line ("Found 33 witness traces and a conformance adapter — reusing their ids and names") before moving on.
+
+##### Large areas: extract in passes
+
+If the router reports `passes` (more than ~25 files or ~300 decision sites), don't extract it all at once — ask which slice is coherent to do first (the write API, one resource). Then:
+
+- Specify that slice fully.
+- Put the rest in `scope.excluded[]` with `"pass": 2` (or a reason starting "Deferred to pass 2 of this area: …"), so the audit's OUT-OF-SCOPE verdicts for it cite a real, honest exclusion.
+- Bulk-triage it instead of site by site: `tools/spec-extract-audit.py <target> --triage-file '<glob>' --verdict OUT-OF-SCOPE --scope-ref <item> --record`.
+
+The audit lists every deferred exclusion with its site count; the next pass starts from that list (see **re-extract**).
 
 ##### 1. Read fields out of the code, not prose
 
@@ -212,7 +249,7 @@ Apply the four capture-time checks **against the code rather than the user** —
 3. **Boundary semantics.** The code *knows* whether it is `>=` or `>`. Do not ask; read it, and record it in the response ("locks on the 5th failure").
 4. **Quantifier scope.** The data structure answers it: `Map<UserId, int>` is per-user, a bare `int` is global.
 
-Mark every extracted item `@source extracted`, `@status needs-validation`, and record where it came from:
+Mark every extracted item `@source extracted` (requirements, invariants, constants and examples all take it) and requirements `@status needs-validation`, and record where it came from:
 
 ```quint
   /// @evidence authService.ts:78-91
@@ -239,6 +276,8 @@ This is the only check in the framework that runs **code → spec**, and it is t
 
 Sites are keyed by fingerprint, not line number, so the ledger survives reformatting. Work through the GAPs with the user; they are the highest-value questions in the whole beat.
 
+Whole files with one verdict (a deferred slice, a logging module) are triaged in bulk — `--triage-file '<glob>' --verdict <V> --record` with `--scope-ref` (OUT-OF-SCOPE), `--maps-to` (MAPPED) or `--question` (GAP); it only fills unclaimed sites and never overwrites a row. Test files are not scanned at all unless the area sets `include_tests: true`.
+
 ##### 3. Deduce the journeys from the code
 
 The flows are in the code too, and reading them there is cheaper than asking someone to recall them. In greenfield a journey is born at capture time — one story told is one journey file, because the story already arrives with a name and an order. Here the order is in the call graph: every entry point a user or client can reach (route handler, CLI command, public method, queue consumer, scheduled job) starts one flow, and what it calls, in the order it calls it, is that flow.
@@ -258,10 +297,10 @@ Ask for real call sequences — from logs, from existing tests, from a recording
 **Stamp what you read it from**, before telling the user anything about keeping it current:
 
 ```bash
-tools/spec-record.py stamp <target> --extracted --code-path <subtree>
+tools/spec-record.py stamp <target> --extracted        # records the area's code_paths
 ```
 
-That records `extracted_from` — the code repo's git sha and the subtree you read. One entry in the ledger, and the thing that makes re-extraction able to say *what changed and since when* instead of only *which fingerprints are new*. Do it now: the sha you need is the one you just read, and it is unrecoverable later. If the code repo is not a git repo, the tool refuses and says so — carry on without it rather than inventing a value.
+That records `extracted_from` — the code repo's git sha and the paths you read (the area's `code_paths`/`code_path`; `--code-path`, repeatable, to override). One entry in the ledger, and the thing that makes re-extraction able to say *what changed and since when* instead of only *which fingerprints are new*. Do it now: the sha you need is the one you just read, and it is unrecoverable later. If the code repo is not a git repo, the tool refuses and says so — carry on without it rather than inventing a value.
 
 Then tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-code-verify`, adapter or test command needed first. Re-stamp at the end of each reconciliation, so the next one has a fresh baseline.
 
@@ -416,7 +455,9 @@ Tell the user: "`<target>`'s spec was extracted against code that has changed. I
 
 4. **Re-stamp what you touched.** Updated items get fresh `extraction.evidence` and honest `confidence`; anything whose behavior changed goes back to `status: "needs-validation"`. Editing a requirement invalidates its witness freshness automatically (the model sha moves), so `/spec-check` is the natural next step — say so.
 
-5. **Land it in the change.** Re-extraction is a spec edit like any other: register the target in the active change's `targets[]` and add every touched ID to `ids[]`.
+5. **Promote deferred slices.** The audit lists every `scope.excluded[]` entry deferred to a later pass, with how many sites are triaged OUT-OF-SCOPE against it. If this is that pass: remove the exclusion, delete its bulk OUT-OF-SCOPE rows, re-run the audit — those sites come back unclaimed — and extract them like step 1. Defer what is still too big to `pass: 3`.
+
+6. **Land it in the change.** Re-extraction is a spec edit like any other: register the target in the active change's `targets[]` and add every touched ID to `ids[]`.
 
 Finish with what moved, not just a count: "3 requirements updated, 1 new GAP (Q-004), 1 constraint whose code value changed — CON-002 said 5, the guard says 3."
 
@@ -462,7 +503,7 @@ Don't accumulate state in memory. After each meaningful turn:
 - Update `last_modified`
 - Bump `version` only when the user signals a meaningful change (added requirement, modified invariant, etc.) — minor for additions, patch for refinements, major for breaking changes
 - **Update the change manifest**: any ID added or modified in the area goes into the manifest target's `ids[]`. (No phase flags to maintain — staleness is automatic: editing the spec bumps `last_modified`/changes the model sha, which un-derives "checked"/"verified".) When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
-- Commit hint: at sensible checkpoints, suggest `git add specs/<target>.qnt specs/<target>.intent.json specs/<target>.records.json specs/changes/<change>.change.json && git commit -m "spec(<change>): <what>"`
+- Commit hint (git projects only — skip it when bootstrap found no git repo): at sensible checkpoints, suggest `git add specs/<target>.qnt specs/<target>.intent.json specs/<target>.records.json specs/changes/<change>.change.json && git commit -m "spec(<change>): <what>"`
 
 ### Step 4 — Suggest next action
 

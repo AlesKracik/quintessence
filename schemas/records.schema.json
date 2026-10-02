@@ -134,6 +134,36 @@
                 }
               }
             },
+            "transition_invariants": {
+              "type": "object",
+              "description": "Same shape and meaning as `invariants`, for the invariants declared over: \"probes\" — they compare each step with the one before, read the _prev* ghosts, and so are simulated against the probe module with --init=initP --step=stepP. 'error' means the run did not start (e.g. a name the module does not declare); it never contributes to `falsified`.",
+              "additionalProperties": false,
+              "properties": {
+                "result": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "violation",
+                    "timeout",
+                    "error",
+                    "not-run"
+                  ]
+                },
+                "checked": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "falsified": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "detail": {
+                  "type": "string"
+                }
+              }
+            },
             "witnesses": {
               "type": "array",
               "description": "Per-probe result of `quint run --witnesses`: in how many explored traces the witness predicate held. 0 of N is the vacuity red flag found cheap — a strong hint the behavior is unreachable, and only a hint, because the simulator is incomplete and the model checker still decides.",
@@ -540,6 +570,20 @@
         "code_path": {
           "type": "string",
           "description": "Subtree the extraction read, relative to the code repo root. Narrows the diff to what the spec actually claims to describe."
+        },
+        "code_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The paths/globs the extraction read, for an area whose code is scattered (the project entry's code_paths). Replaces code_path when there is more than one or any is a glob."
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The area's own exclude[] globs at extraction time (test files are excluded by default and not repeated here)."
         }
       }
     },

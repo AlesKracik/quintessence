@@ -199,6 +199,11 @@
               "owner": {
                 "type": "string",
                 "description": "The area or team that owns it instead, when there is one."
+              },
+              "pass": {
+                "type": "integer",
+                "minimum": 2,
+                "description": "Brownfield: this slice of the area's code is DEFERRED to that extraction pass, not excluded for good. spec-extract-audit lists every deferred exclusion with the sites triaged OUT-OF-SCOPE against it, so the next pass starts from them. A reason starting 'Deferred to pass N' reads the same."
               }
             }
           }
@@ -755,7 +760,14 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Finite domain each action PARAMETER TYPE is drawn from in the generated stepP, as a Quint set expression: {\"UserId\": \"Set(\\\"alice\\\", \\\"bob\\\")\"}. Keyed by type rather than by parameter name because types are stable while parameter names vary per action. Required by tools/spec-probes.py and deliberately not inferred: how much of the state space the probes explore is a scope decision — too small and a probe cannot fire, too large and every check pays for it — so it is stated in the spec rather than guessed by a generator."
+          "description": "Finite domain each action PARAMETER TYPE is drawn from in the generated stepP, as a Quint set expression: {\"UserId\": \"Set(\\\"alice\\\", \\\"bob\\\")\"}. Keyed by type rather than by parameter name because types are stable while parameter names vary per action. Required by tools/spec-probes.py and deliberately not inferred: how much of the state space the probes explore is a scope decision — too small and a probe cannot fire, too large and every check pays for it — so it is stated in the spec rather than guessed by a generator. A key of the form `param:<name>` targets one parameter by name and wins over its type's key — for a model whose parameters all share one type (every id a `str`). Prefer a type alias per value domain (`type Role = str`); use `param:` where an alias would be noise."
+        },
+        "ghost_zeros": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Explicit initial value of a probe ghost, keyed by TYPE as written in the model: {\"Result\": \"Ok\"}. tools/spec-probes.py builds the zero of base types, maps, sets, lists, tuples, records (field by field, aliases resolved) and sum types (their first variant) on its own; this is for a type it cannot build (parameterized, recursive) or whose first variant is the wrong zero. Wins over the synthesized value."
         },
         "probes_file": {
           "type": "string",

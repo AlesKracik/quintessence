@@ -52,6 +52,7 @@ ID_PATTERNS = {
     "Q":    re.compile(r"^Q-\d{3}$"),
     "ASM":  re.compile(r"^ASM-\d{3}$"),
     "EX":   re.compile(r"^EX-\d{3}$"),
+    "NAV":  re.compile(r"^NAV-\d{3}$"),
 }
 
 
@@ -102,13 +103,15 @@ try:
     from quint_ir import parse_qnt as _ir_parse_qnt
     from quint_ir import cli_available as _quint_cli_available
     from quint_ir import DEFAULT_ENGINE as _quint_engine
+    from quint_ir import zero_value as _zero_value
     # Shared rejection definition — lint, spec-record and the readback must
     # not disagree about which requirements owe a refusal artifact.
-    from itf_tools import is_rejection, witness_entries, skip_discharge
+    from itf_tools import is_rejection, is_computed, witness_entries, skip_discharge
     # Generated-name conventions and the plumbing-action set live in
     # itf_tools so the probe generator, the recorder and these checks
     # cannot drift apart on what a probe or a ghost is called.
     from itf_tools import ghost_for_param as ghost_for
+    from itf_tools import ghost_for_var as _ghost_for_var
     from itf_tools import probe_name, outcome_probe_name, PLUMBING_ACTIONS
     from itf_tools import stream_encodes as _stream_encodes, soften_stdout
     from itf_tools import brief_status as _brief_status
@@ -188,6 +191,10 @@ def parse_sidecar(path):
         # Which engine answered. `action_reads` is only complete under the
         # CLI parser, so a check that FAILs on a missing read has to know.
         "source":           ir.get("source"),
+        # The whole IR and the file, for the checks that need the declared
+        # type shapes (ghost zeros) or the declarations as written (names).
+        "ir":               ir,
+        "file":             str(path),
     }
 
 
@@ -226,10 +233,12 @@ def check_ids(area_data, area_name, findings):
     for list_name, prefix in [
         ("requirements", "REQ"), ("invariants", "INV"), ("properties", "PROP"),
         ("constraints", "CON"), ("decisions", "DEC"), ("open_questions", "Q"),
-        ("assumptions", "ASM"), ("examples", "EX"),
+        ("assumptions", "ASM"), ("examples", "EX"), ("navigation", "NAV"),
     ]:
         for item in area_data.get(list_name, []) or []:
             iid = item.get("id")
+            if not iid and list_name == "navigation":
+                continue  # optional: only an edge something maps to needs one
             if not iid:
                 add(findings, FAIL, "ids", "missing-id", area_name,
                     f"Item in {list_name}[] has no id.")
@@ -506,13 +515,26 @@ def check_witnesses(root, area_data, area_name, findings):
             # Deliberate opt-out — legitimate for rejection requirements
             # (no state change to witness; an invariant carries the proof).
             # Only a JUSTIFIED skip discharges the obligation.
-            if skip_discharge(witness) is None:
+            if skip_discharge(witness, req) is None:
                 add(findings, FAIL, "witness", "skipped-no-justification", area_name,
                     f"{rid}.witness is skipped with neither witness.enforced_by "
                     f"nor a justification — an undischarged skip proves nothing. "
                     f"Rejection requirement? Set modality 'forbidden' and "
                     f"witness.enforced_by to the invariant that enforces it.",
                     ref=rid)
+            if is_computed(req) and not req.get("verified_by"):
+                # A derived value (a score, a total) has no transition to
+                # witness and nothing to refuse, so the skip is fine — but
+                # then the calculation is checked by a unit test or by
+                # nothing, and the spec has to say which test.
+                add(findings, FAIL if at_review(area_data) else WARN, "witness",
+                    "computed-without-verified-by", area_name,
+                    f"{rid} skips its witness but is neither @unwanted nor "
+                    f"forbidden, so it is a COMPUTED requirement — a derived "
+                    f"value with no state transition. Name the unit test that "
+                    f"checks it: `/// @verified-by <test path>`. (If it is a "
+                    f"refusal, mark it @unwanted or @modality forbidden; it "
+                    f"then owes @refusal and @unchanged instead.)", ref=rid)
             continue
 
         # Approval gate: every non-deferred functional REQ must be witnessed
@@ -1138,7 +1160,8 @@ def local_ids(area_data):
     """Every ID this area declares, for resolving intra-area references."""
     out = set()
     for src in ("requirements", "invariants", "properties", "constraints",
-                "decisions", "open_questions", "assumptions", "examples"):
+                "decisions", "open_questions", "assumptions", "examples",
+                "navigation"):
         for item in area_data.get(src, []) or []:
             if item.get("id"):
                 out.add(item["id"])
@@ -1495,9 +1518,13 @@ def check_examples(area_data, sidecar, all_areas, area_name, findings):
                 f"{eid}.when.action '{action}' has no matching action in the sidecar.",
                 ref=eid)
         if not (ex.get("expect") or {}):
+            # A run ending in `.expect(cond)` derives expect from it, so this
+            # fires only for an example that is genuinely silent: one hosted
+            # on an action with no @expect, or a run with no trailing expect.
             add(findings, WARN, "examples", "example-asserts-nothing", area_name,
-                f"{eid} has an empty expect block \u2014 it exercises the action but claims "
-                f"nothing about the result.", ref=eid)
+                f"{eid} claims nothing about the result \u2014 it exercises the action "
+                f"but asserts nothing. End its run in `.expect(<cond>)`, or (on an "
+                f"action) add `@expect {{json}}`.", ref=eid)
         run = ex.get("quint_run")
         if run and have_module and run not in (sidecar.get("runs") or []):
             add(findings, FAIL, "examples", "example-run-missing", area_name,
@@ -2050,30 +2077,159 @@ def check_harvested_examples(root, area_data, area_name, findings):
                 ref=ex.get("id"))
 
 
+def _prev_reader_texts(area_data):
+    """Authored Quint that may read a `_prev<Var>` ghost: witness deltas
+    (requirement and per-outcome) and over-probes invariant predicates —
+    the same set spec-probes snapshots ghosts for."""
+    out = []
+    for req in area_data.get("requirements", []) or []:
+        w = req.get("witness") or {}
+        for blob in [w] + list(w.get("outcomes") or []):
+            pre = (blob.get("delta") or {}).get("pre")
+            if pre:
+                out.append((req.get("id", "?"), pre))
+    for inv in area_data.get("invariants", []) or []:
+        if (inv.get("over") or "model") == "probes" and inv.get("predicate"):
+            out.append((inv.get("id", "?"), inv["predicate"]))
+    return out
+
+
+def check_ghost_zeros(area_data, sidecar, area_name, findings):
+    """Every probe ghost needs a literal initial value, and spec-probes
+    refuses to generate the module without one. That refusal used to be the
+    first anyone heard of it — at /spec-check, after the deltas were written
+    against a `var st: State` record. Said here, at authoring time, for the
+    ghosts the area's own text asks for: a `_prev<Var>` some delta or
+    transition invariant reads, and a `_last<Param>` of an action step
+    calls (a helper action stepP does not mirror owes nothing)."""
+    if not sidecar or "__no_module__" in sidecar or not sidecar.get("ir"):
+        return
+    ir = sidecar["ir"]
+    overrides = (area_data.get("formal_model") or {}).get("ghost_zeros") or {}
+    var_types = ir.get("var_type_strs") or {}
+    readers = _prev_reader_texts(area_data)
+    for var in sorted(ir.get("vars") or []):
+        ghost = _ghost_for_var(var)
+        users = sorted({rid for rid, text in readers
+                        if re.search(rf"\b{re.escape(ghost)}\b", text)})
+        t = var_types.get(var)
+        if not users or not t or _zero_value(t, ir, overrides) is not None:
+            continue
+        add(findings, FAIL, "witness", "ghost-zero-unsynthesizable", area_name,
+            f"{', '.join(users)} read {ghost}, but `{var}: {t}` has no initial "
+            f"value the probe generator can build, so tools/spec-probes.py will "
+            f"refuse to write the probe module. Records, sums (first variant), "
+            f"maps, sets, lists and tuples are built automatically; for this "
+            f"type add formal_model.ghost_zeros {{\"{t}\": \"<Quint literal>\"}}.",
+            ref=users[0])
+    actions = [a for a in (ir.get("actions") or []) if a not in ("init", "step")]
+    mirrored = [a for a in ((ir.get("action_calls") or {}).get("step") or [])
+                if a in actions] or actions
+    seen = set()
+    for action in mirrored:
+        for pname, ptype in (ir.get("action_param_types") or {}).get(action) or []:
+            if pname in seen:
+                continue
+            seen.add(pname)
+            if _zero_value(ptype, ir, overrides) is None:
+                add(findings, FAIL, "witness", "ghost-zero-unsynthesizable", area_name,
+                    f"`{action}` (called from step) takes `{pname}: {ptype}`, and "
+                    f"the probe ghost for it needs an initial value no rule builds. "
+                    f"If `{action}` is shared logic rather than a route, make it a "
+                    f"`def`/`pure def`; otherwise add formal_model.ghost_zeros "
+                    f"{{\"{ptype}\": \"<Quint literal>\"}}.", ref=action)
+
+
+# Built-in operator names Quint will not let a module redefine (QNT101).
+# Not exhaustive; the ones a helper is most likely to be named.
+QUINT_BUILTINS = frozenset("""
+    exists forall map filter fold foldl foldr keys get set put setBy mapBy
+    contains in union intersect exclude subseteq size isFinite powerset
+    flatten allLists chooseSome oneOf setOfMaps setToMap append concat head
+    tail length nth indices replaceAt slice range select iff implies not and
+    or ite then reps expect fail assert always eventually next enabled
+    orKeep mustChange weakFair strongFair fieldNames field with label item
+    tuples variant matchVariant Set List Map Rec Tup
+""".split())
+
+_DECL_NAME_RE = re.compile(
+    r"^[ \t]*(?:pure[ \t]+)?(?:def|val|action|run|temporal|const|var)[ \t]+"
+    r"([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
+
+
+def check_builtin_names(sidecar, area_name, findings):
+    """A helper named `exists` or `size` fails the whole module with QNT101
+    (built-in name redefined). Caught here, before quint is ever run."""
+    if not sidecar or "__no_module__" in sidecar or not sidecar.get("file"):
+        return
+    try:
+        text = spec_source.strip_docs(Path(sidecar["file"]).read_text(encoding="utf-8"))
+    except OSError:
+        return
+    for name in sorted({m.group(1) for m in _DECL_NAME_RE.finditer(text)} & QUINT_BUILTINS):
+        add(findings, FAIL, "quint", "quint-builtin-redefined", area_name,
+            f"`{name}` is a Quint built-in; declaring it fails the module with "
+            f"QNT101. Rename it (e.g. `{name}In`, `has{name[:1].upper()}{name[1:]}`).",
+            ref=name)
+
+
+def check_transition_invariant_names(area_data, sidecar, info, area_name, findings):
+    """An over-probes invariant is emitted into the probe module as
+    `val <quint-name>`, and that module imports the whole model (`import
+    <area>.*`). A quint-name the model already declares — most often the very
+    def the record sits on (`@quint-name noDowngrade` on `def noDowngrade(
+    _prevSt: State)`) — is a second declaration of one name, and the probe
+    module fails to compile. Every witness and transition check then dies at
+    once, far from the cause."""
+    if not sidecar or "__no_module__" in sidecar or not sidecar.get("file"):
+        return
+    try:
+        text = spec_source.strip_docs(Path(sidecar["file"]).read_text(encoding="utf-8"))
+    except OSError:
+        return
+    declared = {m.group(1) for m in _DECL_NAME_RE.finditer(text)}
+    declared |= set(sidecar.get("named") or ()) | set(sidecar.get("actions") or ())
+    hosts = {r["id"]: (r.get("host") or {}).get("name")
+             for r in info.get("records") or [] if r.get("tag") == "inv"}
+    for inv in area_data.get("invariants", []) or []:
+        if (inv.get("over") or "model") != "probes" or not inv.get("quint_name"):
+            continue
+        iid, name = inv.get("id", "?"), inv["quint_name"]
+        if name == hosts.get(iid):
+            add(findings, FAIL, "invariant", "transition-invariant-name-clash", area_name,
+                f"{iid}: @quint-name {name} is the name of the def it sits on. The probe "
+                f"module imports that def AND declares `val {name}`, so it does not "
+                f"compile. Name the def differently — `def {name}_over(_prev…)` with "
+                f"`@quint-name {name}`.", ref=iid)
+        elif name in declared:
+            add(findings, FAIL, "invariant", "transition-invariant-name-clash", area_name,
+                f"{iid}: @quint-name {name} is already declared in the model; the probe "
+                f"module imports it and declares `val {name}` too, so it does not "
+                f"compile. Pick a name the model does not use.", ref=iid)
+
+
 def check_cross_refs(area_data, all_areas, area_name, findings):
-    """cross_refs of form '<area>.<ID>' should resolve."""
+    """cross_refs resolve. A bare ID is this area's (spec_source qualifies it
+    when deriving the view, so it normally arrives as '<area>.<ID>'); any
+    declared kind is a valid target — REQ, INV, PROP, CON, EX, DEC, ASM, Q."""
     for list_name in ("requirements", "invariants", "properties"):
         for item in area_data.get(list_name, []) or []:
             for xref in item.get("cross_refs", []) or []:
-                if "." not in xref:
-                    add(findings, WARN, "cross-refs", "bad-cross-ref-format", area_name,
-                        f"{item.get('id')}.cross_refs entry '{xref}' is not in '<area>.<ID>' form.",
-                        ref=item.get("id"))
-                    continue
-                other_area, other_id = xref.split(".", 1)
-                if other_area not in all_areas:
+                if "." in xref:
+                    other_area, other_id = xref.split(".", 1)
+                else:
+                    other_area, other_id = area_name, xref
+                if other_area == area_name:
+                    other = area_data
+                elif other_area not in all_areas:
                     add(findings, WARN, "cross-refs", "unknown-area", area_name,
                         f"{item.get('id')}.cross_refs points to area '{other_area}' which has no spec (specs/{other_area}.intent.json).",
                         ref=item.get("id"))
                     continue
-                other = all_areas[other_area]
+                else:
+                    other = all_areas[other_area]
                 if isinstance(other, dict) and "__parse_error__" not in other:
-                    other_ids = set()
-                    for src in ("requirements", "invariants", "properties", "constraints"):
-                        for o in other.get(src, []) or []:
-                            if o.get("id"):
-                                other_ids.add(o["id"])
-                    if other_id not in other_ids:
+                    if other_id not in local_ids(other):
                         add(findings, FAIL, "cross-refs", "broken-cross-ref", area_name,
                             f"{item.get('id')}.cross_refs entry '{xref}' — ID '{other_id}' does not exist in {other_area}.",
                             ref=item.get("id"))
@@ -2175,7 +2331,13 @@ def check_ui_navigation(area_data, area_name, findings):
     screen_names = {s["name"] for s in (area_data.get("screens") or []) if s.get("name")}
     referenced = set()
     for nav in area_data.get("navigation") or []:
+        if nav.get("from") == spec_source.ANY_SCREEN:
+            # A sidebar edge leaves EVERY screen: none of them is isolated,
+            # and its destination is reached from all of them.
+            referenced |= screen_names
         for end in ("from", "to"):
+            if end == "from" and nav.get(end) == spec_source.ANY_SCREEN:
+                continue
             if nav.get(end) and nav[end] not in screen_names:
                 add(findings, FAIL, "ui", "navigation-unknown-screen", area_name,
                     f"navigation entry references screen '{nav[end]}' not declared in screens[].",
@@ -2491,11 +2653,12 @@ def check_journeys(root, all_areas, findings, validator=None):
             area_data = all_areas[area]
             if not isinstance(area_data, dict) or "__parse_error__" in area_data:
                 continue
-            req_ids = {r.get("id") for r in (area_data.get("requirements") or []) if r.get("id")}
+            req_ids = {r.get("id") for key in ("requirements", "navigation")
+                       for r in (area_data.get(key) or []) if r.get("id")}
             if rid not in req_ids:
                 add(findings, FAIL, "journeys", "dangling-step-ref", jname,
-                    f"step ref '{ref}' — '{rid}' is not in {area}'s requirements[].",
-                    ref=ref)
+                    f"step ref '{ref}' — '{rid}' is not in {area}'s requirements[] "
+                    f"or navigation[].", ref=ref)
 
 
 # ── Quint-first sources ───────────────────────────────────────────────────────
@@ -2648,13 +2811,15 @@ def check_ui_hosts(root, area_data, sidecar, info, area_name, findings):
         m = spec_source.NAV_RE.match(f"{rec['id']} {rec['extra']}".strip())
         if not m:
             continue  # record-grammar already reported it
-        frm, to = m.group(1), m.group(2)
+        frm, to = m.group("from"), m.group("to")
         if not spec_source.nav_moves(host.get("body"), svar, frm, to):
+            claim = (f"set `{svar}' = {to}` (or to its destination parameter)"
+                     if frm == spec_source.ANY_SCREEN else
+                     f"read `{svar} == {frm}` and set `{svar}' = {to}`")
             add(findings, FAIL, "ui", "nav-action-mismatch", area_name,
                 f"{rec['where']['file']}:{rec['where']['line']}: @nav {frm} -> {to} sits "
-                f"on `{host['name']}`, which does not read `{svar} == {frm}` and set "
-                f"`{svar}' = {to}`. The edge the readback draws is not one the model "
-                f"takes.", ref=host["name"])
+                f"on `{host['name']}`, which does not {claim}. The edge the readback "
+                f"draws is not one the model takes.", ref=host["name"])
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
@@ -2716,6 +2881,9 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_examples(area_data, sidecar, all_areas, area_name, findings)
     check_witness_binding(area_data, sidecar, area_name, findings)
     check_witness_delta(root, area_data, sidecar, area_name, findings)
+    check_ghost_zeros(area_data, sidecar, area_name, findings)
+    check_builtin_names(sidecar, area_name, findings)
+    check_transition_invariant_names(area_data, sidecar, info, area_name, findings)
     check_paired_invariants(root, area_data, sidecar, area_name, findings)
     check_refusal_artifacts(area_data, area_name, findings)
     check_boundary(area_data, area_name, findings)
@@ -2776,9 +2944,27 @@ def colorize(text, severity, use_color):
     return f"{COLORS[severity]}{text}{RESET}"
 
 
-def print_report(findings, areas, use_color=True):
+def partial_reasons():
+    """What this run could not check, in words — [] for a complete run."""
+    out = []
+    if _jsonschema is None:
+        out.append("schema validation (python jsonschema not installed: "
+                   "pip install jsonschema)")
+    return out
+
+
+def _partial_banner(partial):
+    return ("PARTIAL RESULT \u2014 not checked: " + "; ".join(partial)
+            + ". Malformed fields (an extra key, a wrong enum) pass unnoticed "
+              "until this is fixed. tools/check-tooling.sh --install fixes it.")
+
+
+def print_report(findings, areas, use_color=True, partial=None):
     soften_stdout()
     icons = pick_icons()
+    if partial:
+        print(colorize(_partial_banner(partial), WARN, use_color))
+        print()
     by_area = defaultdict(list)
     for f in findings:
         by_area[f.area].append(f)
@@ -2800,6 +2986,8 @@ def print_report(findings, areas, use_color=True):
     total_warn = sum(1 for f in findings if f.severity == WARN)
     print()
     summary = f"Total: {total_fail} fail, {total_warn} warn"
+    if partial:
+        summary += " \u2014 PARTIAL (see top)"
     sev = FAIL if total_fail else (WARN if total_warn else PASS)
     print(colorize(summary, sev, use_color))
 
@@ -2875,10 +3063,17 @@ def main():
             "jsonschema lib not installed — schema validation SKIPPED. Other "
             "checks defer malformed-shape detection to it; install with "
             "'pip install jsonschema' for full coverage.")
+    partial = partial_reasons()
 
-    # Validate the project config itself.
+    # Validate the project config itself, and this developer's local state
+    # when there is any: a misspelled `repo_path` key reads as "no checkout"
+    # in every tool that needs the code, far from the typo.
     check_schema(project_data, build_schema_validator(root, "project.schema.json"),
                  "_project", findings)
+    local_data = load_json(root / ".spec" / "local.json")
+    if isinstance(local_data, dict) and "__parse_error__" not in local_data:
+        check_schema(local_data, build_schema_validator(root, "local.schema.json"),
+                     "_local", findings)
 
     for a in target_areas:
         lint_area(root, a, all_areas[a], sidecars[a], all_areas, catalog, findings,
@@ -2898,6 +3093,8 @@ def main():
             "summary": {
                 "ran_at": datetime.now(timezone.utc).isoformat(),
                 "areas": target_areas,
+                "partial": bool(partial),
+                "skipped": partial,
                 "fail": sum(1 for f in findings if f.severity == FAIL),
                 "warn": sum(1 for f in findings if f.severity == WARN),
             },
@@ -2905,7 +3102,7 @@ def main():
         }, indent=2))
     else:
         use_color = not args.no_color and sys.stdout.isatty()
-        print_report(findings, target_areas, use_color)
+        print_report(findings, target_areas, use_color, partial=partial)
 
     has_fail = any(f.severity == FAIL for f in findings)
     has_warn = any(f.severity == WARN for f in findings)

@@ -148,6 +148,7 @@ Every command runs inside the **active change**, and can be narrowed to one **ar
 │   ├── change.schema.json
 │   ├── journey.schema.json
 │   ├── project.schema.json
+│   ├── local.schema.json         ← .spec/local.json (per-dev: repo_paths, last_change)
 │   ├── pattern.schema.json
 │   └── protocol.schema.json
 ├── templates/
@@ -171,6 +172,7 @@ Every command runs inside the **active change**, and can be narrowed to one **ar
     ├── spec-readback.py          ← deterministic readback generator (area/change/project)
     │                                + derived phase grid (`status <slug> --json`)
     ├── spec-extract-audit.py      ← code→spec coverage: every decision site accounted for
+    ├── spec-route.py              ← which /spec beat a target enters, and why
     ├── spec-mutate.py             ← mutate the implementation; check the gates turn red
     ├── spec-separation.py         ← refuse commits that move claims and code together
     ├── spec-diff.py               ← semantic diff between two revisions of the specs
@@ -322,11 +324,14 @@ A `///` block documents the declaration below it, its **host**. One tag per line
 | `val`/`def shall_<ID>` + `@via <action>` | witnessed requirement; the **body is the witness predicate**. Parameters named like the probe ghosts (`_lastSid: SessionId`) bind it to the call and make it typecheck in the model — a predicate is now checked by `quint typecheck`, not just by the first Apalache run. |
 | `action <name>` | `quint_ref` = that action, no predicate: a prohibition (`@modality forbidden`, `@enforced-by`), a `may` (its outcomes are `@outcome-of` hosts), or not yet formalized |
 | the `module` itself | no host yet — a raw requirement, an NFR, a Tier-1 area with no model (`@predicate` carries a draft predicate as text) |
-| `val` / `temporal` / `pure val` / `run` | invariant (`quint_name`), property, constant (name and value from the declaration), example (`quint_run`) |
-| `def` with `_prev*` parameters | transition invariant, `over: "probes"`; body = predicate, emitted into the probe module as `@quint-name` |
+| `val` / `temporal` / `pure val` / `run` | invariant (`quint_name`), property, constant (name and value from the declaration), example (`quint_run`; a trailing `.expect(<cond>)` in the run body IS its expectation — `@expect` is only for an example hosted on an action) |
+| `pure def` + `@witness skipped` + `@verified-by <test>` | a **computed** requirement: a derived value (a score, a total) with no transition to witness; verified by the unit test it names (see "Refusal Artifacts") |
+| `def` with `_prev*` parameters | transition invariant, `over: "probes"`; body = predicate, emitted into the probe module as `val <@quint-name>`. The probe module imports the whole model, so the quint-name must be one the model does **not** declare — in particular not the def's own name (`def noDowngrade_over(_prevSt: State)` + `@quint-name noDowngrade`). Lint FAILs `transition-invariant-name-clash`; otherwise the probe module does not compile. |
 | Alloy `assert`/`check` | structural invariant (`proof: structural`, `alloy_command` = the name) |
 | `type <Screen>` (one `@screen` per variant, all in the type's block) | a screen: description = purpose, `@auth-required`, `@components`. Lint FAILs a variant with no record and a record naming no variant. |
 | `action <name>` (`@nav From -> To`) | a navigation edge, `navigation[].action` = the action; description = the trigger, `@guard`. Lint FAILs an edge whose action does not read `<screenVar> == From` and set `<screenVar>' = To`. Several edges may share an action. |
+
+`@refs` takes a bare ID for this area (qualified to `<area>.<ID>` when the view is derived) or `<area>.<ID>` for another, and any declared kind resolves — REQ, INV, PROP, CON, EX, DEC, ASM, Q: `/// @refs REQ-030, DEC-002, billing.REQ-004`. `@source` (elicited / extracted / reconciled) is accepted on REQ, INV, CON and EX records alike, so an extracted spec's provenance is uniform. Helpers must not reuse Quint built-in names (`exists`, `filter`, `keys`, `size`, … — QNT101); lint FAILs `quint-builtin-redefined` before quint ever runs.
 
 The delta (`@pre`) stays text: it reads `_prev*` ghosts, which exist only in the generated probe module. A module that holds only records is **not** a formal model — `spec_source.has_model` — so a Tier-1 area keeps its requirements in the `.qnt` it will grow into without anything being checked against an empty model.
 
@@ -380,7 +385,7 @@ A contract whose obligations are **relational rather than temporal** ("every Acc
 
 ### UI blocks — interactive surfaces
 
-An interactive surface is an ordinary `kind: "area"` with screens and navigation — formally it is not a different object: the model is a Quint state machine over screens, exactly as any entity state machine. The screens are the variants of one sum type, each documented by a `/// @screen <Name>` record on that type; each navigation edge is the action that moves the screen variable, documented by a `/// @nav <From> -> <To>` record on it (the line below the tag is the trigger, in the user's words; `@guard` the precondition). `screens[]` and `navigation[]` in the area view are derived from those records, so a screen or an edge cannot be added in one place only. Auth-required-style invariants are model-checked as usual. `ui_components[]` (fields, visible states) stays in the intent file. Everything UI-specific triggers on the records' presence:
+An interactive surface is an ordinary `kind: "area"` with screens and navigation — formally it is not a different object: the model is a Quint state machine over screens, exactly as any entity state machine. The screens are the variants of one sum type, each documented by a `/// @screen <Name>` record on that type; each navigation edge is the action that moves the screen variable, documented by a `/// @nav [NAV-NNN] <From> -> <To>` record on it (the line below the tag is the trigger, in the user's words; `@guard` the precondition). The optional `NAV-NNN` id makes the edge citable — an `extraction_triage` site can be MAPPED to it, a journey step or `@refs` can point at it — so a navigation decision in the code no longer needs a requirement invented to stand for it. **From `*`** is an edge from every screen: a sidebar or global header link, one record instead of one per screen. Its action only has to set the screen var — to the destination, or to its parameter for a `navigate(target: Screen)` — not read it; the destination is reached from every screen, so it is not reported isolated, and the readback draws it once. `screens[]` and `navigation[]` in the area view are derived from those records, so a screen or an edge cannot be added in one place only. Auth-required-style invariants are model-checked as usual. `ui_components[]` (fields, visible states) stays in the intent file. Everything UI-specific triggers on the records' presence:
 
 ```quint
   /// @screen Login
@@ -388,10 +393,14 @@ An interactive surface is an ordinary `kind: "area"` with screens and navigation
   /// @components Header, LoginForm
   type Screen = | Home | Login | Dashboard     // one @screen per variant
 
-  /// @nav Login -> Dashboard
+  /// @nav NAV-001 Login -> Dashboard
   /// submit valid credentials
   /// @guard auth::login succeeds
   action submit_success: bool = all { current == Login, current' = Dashboard, ... }
+
+  /// @nav NAV-002 * -> Settings
+  /// click "Settings" in the sidebar
+  action open_settings: bool = current' = Settings
 ```
 
 - `spec-lint`: every variant has a `@screen` and every `@screen` is a variant; every `@nav` sits on an action that reads and sets the screen variable as it claims; navigation endpoints reference declared screens, isolated screens flagged, screens without navigation FAIL; an action no edge, requirement or state machine names is an orphan;
@@ -648,7 +657,9 @@ A refusal artifact is the missing half:
 
 It drives the code into the blocking state, attempts the call, and asserts **both** halves: that it is refused, **and** that no observable var moved. The second half is not decoration — a rejection that throws after incrementing the counter is not a rejection.
 
-**Keyed on a deliberately skipped witness, not on `ears.unwanted`.** Much unwanted-behavior handling *does* change state — a timeout that moves the order to `PENDING` is witnessable and already covered by replay. The distinguishing property of a refusal is that there is nothing to witness. `is_rejection()` lives in `itf_tools.py` so lint, `spec-record` and the readback cannot drift apart about which requirements owe an artifact.
+**Keyed on a deliberately skipped witness, not on `ears.unwanted` alone.** Much unwanted-behavior handling *does* change state — a timeout that moves the order to `PENDING` is witnessable and already covered by replay. The distinguishing property of a refusal is that there is nothing to witness. `is_rejection()` lives in `itf_tools.py` so lint, `spec-record` and the readback cannot drift apart about which requirements owe an artifact.
+
+**Not every skip is a refusal.** A pure calculation — effort is the sum of issue effort, TCV by priority — has no transition either, but nothing is being *refused*; asking it for a refusal artifact and a list of unchanged vars is a category error. So a skipped witness counts as a rejection only on a requirement that is `forbidden` or `@unwanted`. Any other skipped requirement is **computed** (`is_computed()`): it owes `verified_by` — `/// @verified-by <test path>`, the unit test that checks the calculation — and lint WARNs `computed-without-verified-by` (FAIL from in-review) when it names none. The readback renders it as a computed requirement with its test, not as a rejection.
 
 `spec-record verify` refuses to report success while a rejection has no artifact on disk, and marks `refusal.status` from the conformance run. That is **file-granular**: a green suite means the artifact ran green along with everything else. Recorded as such rather than pretending to per-requirement resolution.
 
@@ -768,7 +779,7 @@ What they are genuinely good for:
 - **Regression pinning.** A counterexample that once shipped becomes `EX-00N` with `source: "regression-for-REQ-004"`, and stays checkable.
 - **Review.** A stakeholder who bounces off EARS will read `withdraw(40) → balance 60`.
 
-`spec-lint` holds the references: the action must exist in the sidecar, `quint_run` must exist, `refs[]` must resolve, and an example with an empty `expect` WARNs — it exercises the action while claiming nothing.
+`spec-lint` holds the references: the action must exist in the sidecar, `quint_run` must exist, `refs[]` must resolve, and an example that claims nothing WARNs — it exercises the action while asserting nothing. A run ending in `.expect(<cond>)` claims `<cond>`: that is its expectation, derived from the model, so no `@expect` copy is needed beside it.
 
 ---
 
@@ -1167,7 +1178,7 @@ Spec and code can live in the same repo (single-repo) or in separate repos (mult
 }
 ```
 
-`last_change` is the **active change** — see "Unit of Work: Changes" below. Per-developer state, which is why it lives in the gitignored `local.json` rather than `project.json`.
+Both keys are specified by `schemas/local.schema.json`, and lint validates the file when it exists — a misspelled `repo_path` would otherwise read as "no checkout" in every tool that needs the code. `last_change` is the **active change** — see "Unit of Work: Changes" below. Per-developer state, which is why it lives in the gitignored `local.json` rather than `project.json`.
 
 When `/spec-code-generate auth` runs, it resolves `repo_paths.service-api + areas[auth].code_path` → `/Users/alice/work/service-api/src/auth/` and generates code there. `/spec-code-verify auth` `cd`s into the repo and runs `test_command`.
 
@@ -1290,6 +1301,8 @@ This is where `decisions[].affects[]` earns its keep. It is the blast radius: wh
 
 ## Brownfield: Keeping the Spec True to the Code
 
+**Routing.** `/spec <area>` enters brownfield extraction when the area has code (its `code_paths`/`code_path` resolves to source files), no `extracted_from` in its ledger and no requirements yet — *whether or not* bootstrap already scaffolded its intent file. Routing on file existence, as it once did, sent every bootstrapped area to resume and made this chapter unreachable. `tools/spec-route.py <area>` is the router.
+
 Greenfield elicitation has only the user's memory to work from. Brownfield has a running implementation that answers any question you ask it — every threshold, every branch, every error path already decided and readable. Extraction should therefore produce a **stronger** spec than elicitation, and the framework should ask more of it, not less.
 
 **The point of extracting a spec from code is to have a spec that is true of the code — and stays true.** Not to prepare a rewrite. An accurate spec is what lets a team review behavior they never wrote down, reason about a change before making it, and see in a readback what the system actually does today. That value is immediate and it is the whole return; nothing has to be regenerated for it to be real.
@@ -1323,6 +1336,10 @@ Each extracted item records where it came from:
 
 `confidence: "low"` is the honest label for ambiguous code, and the readback prints it as a warning rather than letting a guess read like a reading.
 
+### 0. Look for a prior spec first
+
+A code repo can outlive its spec. One test run found REQ/INV/DEC ids in code comments, a conformance adapter (`conformance/adapter.ts`, one method per Quint action, a getter per state var) and 33 witness ITF traces — and no spec files. Those are the spec's fossils, and they are cheap to read: `tools/itf_tools.py summarize <dir>` prints, per trace, each step's action, arguments and state diff, which says what each old id meant. Before extracting anything, grep the code for spec ids, look for adapters and replay harnesses, and find `*.itf.json`. When they exist, **keep the ids the code cites**, **name the model's vars, actions and parameters after the adapter's** so the existing replay suite runs against the new model unchanged, and record any id you cannot recover as an open question rather than a guess.
+
 ### 2. Account for the code you did NOT specify
 
 
@@ -1340,6 +1357,10 @@ Each extracted item records where it came from:
 This matters more than it sounds. **The reason a regenerated implementation diverges is almost always a branch nobody wrote down** — and no spec-shaped check can look for a branch the spec does not mention. Every other gate in this framework is blind to it by construction.
 
 Sites are keyed by a fingerprint of their normalized text plus their enclosing declaration, never by line number: a ledger keyed on line numbers rots on the first reformat, and a rotted ledger is worse than none because it still looks complete. A ledger entry matching no current site is reported too — the code moved out from under a decision.
+
+**Scope the scan to the area, not the repo.** An area whose code is scattered declares `code_paths: [glob, ...]` (and optionally `exclude: [glob]`) in its `.spec/project.json` entry instead of one `code_path`; `**` spans directories, `*` does not. Test files — `__tests__/`, `*.test.*`, `*.spec.*` and the area's `tests_path` — are excluded by default (`include_tests: true` opts back in). Without this, one test run had to scan a whole `backend/src`: 1243 sites in 78 files, of which 891 were OUT-OF-SCOPE and 207 were tests, every one triaged by hand. Whole files that share a verdict are triaged in one command: `spec-extract-audit.py <area> --triage-file '<glob>' --verdict OUT-OF-SCOPE --scope-ref <item> --record` (or `--maps-to` / `--question`); it fills only unclaimed sites and checks the same anchors a hand-written row needs.
+
+**Large areas are extracted in passes.** When an area spans more than ~25 files or ~300 decision sites (`spec-route.py` and the audit both say so), specify one coherent slice first — the write API, say — and put the rest in `scope.excluded[]` with `"pass": 2` (or a reason "Deferred to pass 2 of this area: …"). The OUT-OF-SCOPE verdicts for the rest then cite a real exclusion instead of a convenient one, and the audit lists each deferred exclusion with its site count, which is where the next pass starts: drop the exclusion, delete its bulk rows, re-triage.
 
 ### 3. Harvest examples instead of inventing them
 
@@ -1573,14 +1594,14 @@ Four consequences worth knowing:
 
 ### spec-lint
 
-`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording and state-binding on `ears.state`/`response`, and a missing or stale per-requirement `meaning` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; a discharge carried at any status *other* than `skipped` → FAIL (`justification-without-skip`), reported as the missing status rather than as a missing predicate; an `over: "probes"` invariant with no `predicate` → FAIL (`invariant-over-probes-without-predicate`) — the probe generator has nothing to emit, so the val exists nowhere — and a `predicate` on an `over: "model"` invariant → WARN, since nothing reads it there; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), the EARS↔model bridge (a precondition the action never reads, a response promising a state the action never writes or never builds, a declared state no assignment can produce — see "The EARS↔Model Bridge"), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so (WARN) instead of silently skipping schema validation, and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
+`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording and state-binding on `ears.state`/`response`, and a missing or stale per-requirement `meaning` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; a discharge carried at any status *other* than `skipped` → FAIL (`justification-without-skip`), reported as the missing status rather than as a missing predicate; an `over: "probes"` invariant with no `predicate` → FAIL (`invariant-over-probes-without-predicate`) — the probe generator has nothing to emit, so the val exists nowhere — and a `predicate` on an `over: "model"` invariant → WARN, since nothing reads it there; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), the EARS↔model bridge (a precondition the action never reads, a response promising a state the action never writes or never builds, a declared state no assignment can produce — see "The EARS↔Model Bridge"), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so instead of silently skipping schema validation — a PARTIAL banner at the top of the report and on the total line, `"partial": true` in `--json` — and `tools/check-tooling.sh` offers to install it (`--install` does it unasked), and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
 
 ### spec-record
 
 `tools/spec-record.py` is the deterministic ledger for both machine-checked phases — **no verification verdict in an area's ledger is ever hand-edited**, and it writes nothing but the ledger (`spec_source.save_area` refuses a write that would change an authored field):
 
 - `check <area>` — runs `quint verify` for every invariant, property, and witness probe (and, for invariants marked `proof: "structural"`, `alloy exec` instead — verdict read from the run's `receipt.json`), parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically — with skip-if-fresh (`model_sha` match + valid trace → probe not re-run) and `--only` runs merging into the prior ledger rather than replacing it.
-  - **Before** the model checker, an advisory **simulator pre-gate**: `quint run` over the same invariants, and `--witnesses` over the probes. Seconds, not minutes — quint's own recommended workflow is simulate first, model-check the survivors. It writes `check_results.simulation` and **never** a `formal_status`: `[ok] No violation found` means "not in the executions I explored", which is not a verdict. Its two payoffs are a shallow bug reported at the top of a run instead of after it, and a witness that 0 of 10 000 random traces reach — the vacuity red flag, found cheap. `--only-simulate` runs just this (and deliberately leaves `check_results.ran_at` alone, so an advisory run cannot make an area read as checked); `--no-simulate` skips it.
+  - **Before** the model checker, an advisory **simulator pre-gate**: `quint run` over the same invariants, and `--witnesses` over the probes. Transition invariants (`over: "probes"`) are simulated where they live — the probe module, `--init=initP --step=stepP` — and recorded under `check_results.simulation.transition_invariants`; against the main module they are an unknown name. A run that does not start is `error`, and an error never counts as falsified: it once recorded a "Name not found" as a falsified INV-002 and moved it to the front of the shallow pass. Seconds, not minutes — quint's own recommended workflow is simulate first, model-check the survivors. It writes `check_results.simulation` and **never** a `formal_status`: `[ok] No violation found` means "not in the executions I explored", which is not a verdict. Its two payoffs are a shallow bug reported at the top of a run instead of after it, and a witness that 0 of 10 000 random traces reach — the vacuity red flag, found cheap. `--only-simulate` runs just this (and deliberately leaves `check_results.ran_at` alone, so an advisory run cannot make an area read as checked); `--no-simulate` skips it.
   - Bounded invariants are tried **batched first** (`quint verify --invariants=a --invariants=b …`): each `quint verify` pays a JVM start and an Apalache compile, so the green path collapses from N of those to one. A batch that is not clean falls through to the per-id loop, which produces exactly the verdicts and traces it always did — the optimisation can cost one extra run, never change an outcome. Off with `quint.batch_invariants: false`.
   - Flags that arrived in later quint releases (`run --backend`, `run --witnesses`, `verify --invariants`) are **probed** via `--help` before use, so an older quint runs the command line it always ran instead of failing on an unknown flag.
 - `verify <area>` — witness preflight (refuses replay on any undischarged obligation), runs `conformance.command` and `test_command` from the code repo root, computes drift mechanically (failing run ∧ traced files changed since the last entry's `code_sha`), appends the `verification_log` entry with `git rev-parse` shas, and flips `requirements[].status: "verified"` / `traceability[].verified` only on a green replay. Log capped at the newest 50 entries, deterministically.
@@ -1603,18 +1624,33 @@ it every time — with two silent failure modes:
   at it can never fire — and the run still looks healthy.
 
 Both are mechanical properties of the generated text, so both are checked
-rather than hoped for: every declared action gets a branch or generation
-FAILS, and nothing partial is ever written. `--check` is the CI gate for
+rather than hoped for: every action `step` calls gets a branch or generation
+FAILS, and nothing partial is ever written. Only those — a helper action
+shared by route actions (`refuse`, `commit`, an upsert taking
+`apply: State => State`) is never a step of its own, and mirroring it put a
+ghost on each of its parameters, clashing names and function types no literal
+can initialize. So: **shared logic is a `def`/`pure def`, and only route-level
+operations are `action`s.** A `@via` naming an action `step` does not call is
+refused at generation, by name, instead of surfacing later as a no-witness. `--check` is the CI gate for
 staleness; `--stdout` prints without writing.
 
 What it will not do is guess `nondet uid = oneOf(...)`. How much of the state
 space the probes explore is a scope decision — too small and a probe cannot
 fire, too large and every check pays for it — so it is declared in
 `formal_model.probe_domains`, keyed by TYPE (types are stable; parameter names
-vary per action). A missing one is a setup error that prints the exact JSON to
-add. Ghost initial values are synthesized from the declared types (str, int,
-bool, maps, sets, lists, through plain aliases); a type it cannot answer for
-is an error rather than a guess.
+vary per action). That is why the model gives **each parameter value domain
+its own alias** — `type Role = str`, `type Coll = str`, `type Id = str` — or
+every `str` parameter draws from one set; where an alias would be noise, a
+`param:<name>` key targets one parameter and wins over its type. A missing
+domain is a setup error that prints the exact JSON to add. Ghost initial
+values are synthesized from the declared types: str, int, bool, maps, sets,
+lists, tuples, **records field by field** (named or inline, aliases resolved —
+so `var st: State`, the shape a conformance adapter with `st()`/`last()`
+getters has, can be snapshotted as `_prevSt`) and sum types as their first
+variant. A type it still cannot answer for (parameterized, recursive) takes an
+explicit `formal_model.ghost_zeros: {"<Type>": "<literal>"}` — and `spec-lint`
+says so at authoring time (`ghost-zero-unsynthesizable`, as soon as a delta or
+transition invariant reads the ghost), not only when `/spec-check` runs.
 
 Adopting it on an area that already has a hand-written module regenerates that
 module, which changes `model_sha` and therefore stales every witness trace —

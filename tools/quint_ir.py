@@ -29,6 +29,8 @@ Normalized output (same shape from both engines):
     "action_param_types": {"login": [("uid", "UserId"), ...], ...},  # as written
     "var_type_strs":    {"sessions": "SessionId -> SessionStatus", ...},
     "type_aliases":     {"UserId": "str", ...},       # plain aliases only
+    "type_records":     {"State": [("users", "UserId -> User"), ...]},
+    "type_sums":        {"Status": [("Active", None), ("Locked", "int")]},
     "action_reads":     {"login": ["accountStatus", ...], ...},  # transitive
     "var_types":        {"accountStatus": ["UserId", "AccountStatus"], ...},
     "produced_variants": ["Active", "Locked", ...],  # variants an assign builds
@@ -460,6 +462,7 @@ def _normalize_ir(ir_json, qnt_path):
     out["action_param_types"] = param_types
     out["var_type_strs"] = var_type_strs
     out["type_aliases"] = _scan_type_aliases(module_text)
+    out["type_records"], out["type_sums"] = _scan_type_shapes(module_text)
     out["action_produces"] = {
         a: sorted(variants & set(names))
         for a, names in out["action_produces"].items()
@@ -812,6 +815,191 @@ def _scan_type_aliases(text):
     return out
 
 
+TYPE_HEAD_RE = re.compile(
+    r"^[ \t]*type[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*(\[[^\]\n]*\])?[ \t]*=",
+    re.MULTILINE)
+
+
+def _scan_type_bodies(text):
+    """`type X = <body>` -> {"X": "<body>"} with the WHOLE right-hand side,
+    across lines: a record spelled one field per line, or a sum type with one
+    `| Variant` per line. Brackets are balanced, so a `}` three lines down
+    closes the record rather than the first newline ending it. Parameterized
+    types (`type Option[a] = ...`) are skipped: their zero depends on the
+    argument, which a declaration alone does not say."""
+    out = {}
+    for m in TYPE_HEAD_RE.finditer(text):
+        if m.group(2):
+            continue
+        i, n, depth, buf = m.end(), len(text), 0, []
+        while i < n:
+            ch = text[i]
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+                if depth < 0:
+                    break
+            if ch == "\n" and depth == 0:
+                rest = text[i + 1:].lstrip(" \t")
+                if not rest.startswith("|") and "".join(buf).strip():
+                    break
+            buf.append(ch)
+            i += 1
+        out[m.group(1)] = " ".join("".join(buf).split())
+    return out
+
+
+def _split_top(text, sep):
+    """Split on `sep` at bracket depth 0 only."""
+    parts, depth, cur = [], 0, ""
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return [p.strip() for p in parts]
+
+
+def _record_fields(body):
+    """`{ a: int, b: Set[str] }` -> [("a", "int"), ("b", "Set[str]")], or
+    None when `body` is not a record type."""
+    body = (body or "").strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        return None
+    fields = []
+    for chunk in _split_top(body[1:-1], ","):
+        if not chunk:
+            continue
+        name, sep, type_text = chunk.partition(":")
+        if not sep or not name.strip():
+            return None
+        fields.append((name.strip(), type_text.strip()))
+    return fields
+
+
+def _sum_alternatives(body):
+    """`| A | B(int)` -> [("A", None), ("B", "int")], or None when `body` is
+    not a sum type."""
+    body = (body or "").strip()
+    alts = [a for a in _split_top(body, "|") if a]
+    if len(alts) < 2 and not body.startswith("|"):
+        return None
+    out = []
+    for alt in alts:
+        hit = re.match(r"^([A-Z][A-Za-z0-9_]*)\s*(?:\((.*)\))?$", alt, re.S)
+        if not hit:
+            return None
+        out.append((hit.group(1), (hit.group(2) or "").strip() or None))
+    return out
+
+
+def _scan_type_shapes(text):
+    """(records, sums) — the declared shape of every record and sum type,
+    from the module text. Both engines fill these the same way, for the
+    same reason the surface types are text: the probe generator writes a
+    Quint literal back out, so it wants the declaration as written."""
+    records, sums = {}, {}
+    for name, body in _scan_type_bodies(text).items():
+        fields = _record_fields(body)
+        if fields is not None:
+            records[name] = fields
+            continue
+        alts = _sum_alternatives(body)
+        if alts is not None:
+            sums[name] = alts
+    return records, sums
+
+
+def _has_top_arrow(t):
+    """True for a map type `K -> V` (the arrow at bracket depth 0), so a
+    record with a map-typed field is not mistaken for a map."""
+    depth = 0
+    for i, ch in enumerate(t):
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 0 and t.startswith("->", i):
+            return True
+    return False
+
+
+BASE_ZERO = {
+    "str": '""',
+    "int": "0",
+    "bool": "false",
+}
+
+
+def zero_value(type_str, ir, overrides=None, _seen=None):
+    """A Quint literal of this type, or None when there is no obvious one.
+
+    The probe module writes every ghost's initial value explicitly — before
+    init there is no prior state to read — so every ghost needs a literal.
+    Built structurally: base types, maps, sets, lists, tuples, records field
+    by field (named or inline, nested aliases resolved), and sum types as
+    their FIRST variant. `overrides` (formal_model.ghost_zeros, keyed by type
+    name as written) wins over all of it, for the type whose first variant
+    is the wrong zero or which has none. Cycle-guarded: a recursive type has
+    no finite zero, and the answer must be None, not a hang."""
+    ir = ir or {}
+    overrides = overrides or {}
+    aliases = ir.get("type_aliases") or {}
+    records = ir.get("type_records") or {}
+    sums = ir.get("type_sums") or {}
+    seen = set(_seen or ())
+    t = " ".join((type_str or "").split())
+    if not t:
+        return None
+    if t in overrides:
+        return overrides[t]
+    if t in BASE_ZERO:
+        return BASE_ZERO[t]
+    if t.startswith("{"):
+        fields = _record_fields(t)
+        if fields is None:
+            return None
+        parts = []
+        for fname, ftype in fields:
+            z = zero_value(ftype, ir, overrides, seen)
+            if z is None:
+                return None
+            parts.append(f"{fname}: {z}")
+        return "{ " + ", ".join(parts) + " }"
+    if t.startswith("(") and t.endswith(")"):
+        elems = _split_top(t[1:-1], ",")
+        zs = [zero_value(e, ir, overrides, seen) for e in elems if e]
+        return None if any(z is None for z in zs) else "(" + ", ".join(zs) + ")"
+    if _has_top_arrow(t):
+        return "Map()"
+    if t.startswith("Set["):
+        return "Set()"
+    if t.startswith("List["):
+        return "[]"
+    if t in seen:
+        return None
+    seen.add(t)
+    if t in records:
+        return zero_value("{ " + ", ".join(f"{f}: {ft}" for f, ft in records[t]) + " }",
+                          ir, overrides, seen)
+    if t in sums:
+        variant, payload = sums[t][0]
+        if payload is None:
+            return variant
+        z = zero_value(payload, ir, overrides, seen)
+        return None if z is None else f"{variant}({z})"
+    if t in aliases:
+        return zero_value(aliases[t], ir, overrides, seen)
+    return None
+
+
 def _scan_surface_types(text):
     """(action_param_types, var_type_strs) as the author wrote them."""
     param_types = {}
@@ -904,6 +1092,8 @@ def _parse_via_regex(qnt_path):
         "action_param_types": surface_params,
         "var_type_strs": surface_var_types,
         "type_aliases": _scan_type_aliases(text),
+        "type_records": _scan_type_shapes(text)[0],
+        "type_sums": _scan_type_shapes(text)[1],
         # PARTIAL under this engine, and callers must treat it as such: the
         # fallback scans action bodies only, so a var a guard reaches through
         # a helper (`not(isLocked(uid))`) is absent here while the CLI engine

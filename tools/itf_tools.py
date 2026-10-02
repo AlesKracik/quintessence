@@ -155,6 +155,25 @@ def witness_entries(req):
     return [(rid, w)]
 
 
+def is_computed(req):
+    """True for a requirement verified by unit tests rather than a trace: a
+    derived value or pure calculation (effort = sum of issue effort, a score
+    formula) that no state transition carries, so there is nothing to
+    witness and nothing to refuse.
+
+    Spelled as a skipped witness on a requirement that is neither
+    `@unwanted` nor `forbidden`. Those two are what make a skip a REFUSAL;
+    without either, reading the skip as a rejection asked a score formula for
+    a refusal artifact and a list of unchanged vars it cannot have. What it
+    owes instead is `verified_by` — the test that checks the calculation."""
+    if not isinstance(req, dict):
+        return False
+    w = req.get("witness") or {}
+    return (w.get("status") == "skipped"
+            and req.get("modality") != "forbidden"
+            and not (req.get("ears") or {}).get("unwanted"))
+
+
 def is_rejection(req):
     """True when a requirement forbids a behavior rather than requiring one.
 
@@ -162,8 +181,11 @@ def is_rejection(req):
     requirements owe a refusal artifact. Two forms count:
 
       - modality "forbidden" (the typed form), or
-      - a deliberately SKIPPED witness carrying a justification (the older
-        prose form, still valid).
+      - an `@unwanted` requirement whose witness is deliberately SKIPPED with
+        a discharge (the older prose form, still valid).
+
+    A skip on any other requirement is a computed requirement
+    (is_computed), not a refusal.
 
     Deliberately NOT keyed on ears.unwanted alone: much unwanted-behavior
     handling does change state (a timeout that moves the order to PENDING),
@@ -174,10 +196,11 @@ def is_rejection(req):
     if req.get("modality") == "forbidden":
         return True
     w = req.get("witness") or {}
-    return w.get("status") == "skipped" and skip_discharge(w) is not None
+    return (w.get("status") == "skipped" and not is_computed(req)
+            and skip_discharge(w) is not None)
 
 
-def skip_discharge(witness):
+def skip_discharge(witness, req=None):
     """What a `skipped` witness offers in place of a trace, or None.
 
     Two forms discharge the obligation, and they are the same claim written
@@ -198,6 +221,9 @@ def skip_discharge(witness):
     enforced = witness.get("enforced_by")
     if enforced:
         return f"enforced by {enforced}"
+    verified = (req or {}).get("verified_by") if isinstance(req, dict) else None
+    if verified:
+        return "verified by " + ", ".join(verified)
     return witness.get("justification") or None
 
 
@@ -537,21 +563,53 @@ def cmd_validate(args):
           + (f", source: {meta.get('source')}" if meta.get("source") else ""))
 
 
-def cmd_summarize(args):
-    trace, errors = load_trace(args.trace)
-    if errors:
-        for e in errors:
-            print(f"INVALID: {e}", file=sys.stderr)
-        sys.exit(1)
+def summarize_trace(trace, action_var=None):
+    """One line per state: the action, the arguments it was called with
+    (from the _last* ghosts or mbt::nondetPicks), and what changed."""
     var_names = state_vars(trace)
-    action_var = detect_action_var(trace, args.action_var)
-    prev = None
+    action_var = detect_action_var(trace, action_var)
+    lines, prev = [], None
     for i, s in enumerate(trace["states"]):
         label = step_label(s, i, action_var)
+        args = action_params(s) if i else []
+        call = f"{label}({', '.join(args)})" if args else label
         delta = changed_vars(prev, s, var_names, action_var)
         rendered = "; ".join(f"{n} = {v}" for n, v in delta) or "(no change)"
-        print(f"[{i}] {label:<24} {rendered}")
+        lines.append(f"[{i}] {call:<32} {rendered}")
         prev = s
+    return lines
+
+
+def cmd_summarize(args):
+    """A trace, or every *.itf.json under a directory.
+
+    The directory form is for recovering a LOST spec: a code repo that kept
+    its witness traces (and a conformance adapter) but not the spec files.
+    Each trace is a requirement's witness, so action + arguments + state
+    diff per step says what the old id meant — and the trace file name is
+    usually that id."""
+    target = Path(args.trace)
+    paths = (sorted(target.rglob("*.itf.json")) if target.is_dir() else [target])
+    if not paths:
+        print(f"no *.itf.json under {target}", file=sys.stderr)
+        sys.exit(1)
+    bad, multi = 0, target.is_dir()
+    for path in paths:
+        trace, errors = load_trace(str(path))
+        if multi:
+            print(f"== {path.relative_to(target)}"
+                  f"  ({len(trace['states']) if trace and not errors else '?'} states)")
+        if errors:
+            for e in errors:
+                print(f"INVALID: {e}", file=sys.stderr)
+            bad += 1
+            continue
+        for line in summarize_trace(trace, args.action_var):
+            print(("  " if multi else "") + line)
+        if multi:
+            print()
+    if bad:
+        sys.exit(1)
 
 
 def _truncate(text, limit=MAX_NOTE_LEN):
@@ -770,7 +828,7 @@ def witness_status(root, area_name, area_data):
         if status == "skipped":
             # Justified skip discharges the obligation (rejection requirement —
             # the proof is an invariant). Unjustified skip is a gate failure.
-            discharge = skip_discharge(w)
+            discharge = skip_discharge(w, req)
             if discharge:
                 status, detail = "skipped", discharge
                 discharged += 1
@@ -895,8 +953,10 @@ def main():
     pv.add_argument("trace")
     pv.set_defaults(func=cmd_validate)
 
-    ps = sub.add_parser("summarize", help="One line per state.")
-    ps.add_argument("trace")
+    ps = sub.add_parser("summarize", help="One line per state: action(args) "
+                                          "and the state diff. A directory "
+                                          "summarizes every *.itf.json in it.")
+    ps.add_argument("trace", help="An ITF trace, or a directory of them.")
     ps.add_argument("--action-var", help="State var holding the action name.")
     ps.set_defaults(func=cmd_summarize)
 

@@ -60,8 +60,10 @@ module {{MODULE_NAME}}_probes {
       // all { logout(sid),     _lastAction' = "logout",
       //       _lastUid' = _lastUid, _lastSid' = sid,
       //       _prevSessions' = sessions },
-      // ... one branch per action; every branch assigns EVERY
-      //     ghost, identity-assigning the ones it doesn't use ...
+      // ... one branch per action `step` calls (helper actions
+      //     are not mirrored — write shared logic as a def);
+      //     every branch assigns EVERY ghost, identity-assigning
+      //     the ones it doesn't use ...
     }
   }
 

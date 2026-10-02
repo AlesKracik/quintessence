@@ -119,7 +119,8 @@
             "properties": {
               "item":     { "type": "string", "description": "Referenced by matrix_triage[].scope_ref and outcome_triage[].scope_ref." },
               "reason":   { "type": "string", "description": "Why it is out: owned by another area, deferred, or genuinely not this product's job." },
-              "owner":    { "type": "string", "description": "The area or team that owns it instead, when there is one." }
+              "owner":    { "type": "string", "description": "The area or team that owns it instead, when there is one." },
+              "pass":     { "type": "integer", "minimum": 2, "description": "Brownfield: this slice of the area's code is DEFERRED to that extraction pass, not excluded for good. spec-extract-audit lists every deferred exclusion with the sites triaged OUT-OF-SCOPE against it, so the next pass starts from them. A reason starting 'Deferred to pass N' reads the same." }
             }
           }
         }
@@ -433,7 +434,8 @@
             }
           },
           "quint_ref": { "type": "string", "description": "Name of the Quint action that realizes this requirement." },
-          "cross_refs": { "type": "array", "items": { "type": "string" }, "description": "Cross-area references in <area>.<ID> form." }
+          "cross_refs": { "type": "array", "items": { "type": "string" }, "description": "References to other records: '<area>.<ID>' for another area, or a bare ID for this one (qualified to '<this-area>.<ID>' when the view is derived). Any declared ID kind resolves — REQ, INV, PROP, CON, EX, DEC, ASM, Q." },
+          "verified_by": { "type": "array", "items": { "type": "string" }, "description": "For a COMPUTED requirement — a derived value or pure calculation with no state transition (a score, a total, a formula): the test file(s) that verify it, as paths in the code repo. Written `@verified-by <path>`. A skipped witness on a requirement that is neither `@unwanted` nor `forbidden` is computed, not a refusal: it owes this instead of refusal.artifact/unchanged." }
         }
       }
     },
@@ -485,6 +487,7 @@
               "inferred_by": { "type": "string", "description": "'agent' | 'human' | 'agent+confirmed'. A confirmed inference is not the same claim as an unreviewed one." }
             }
           },
+          "source":        { "type": "string", "description": "elicited | extracted | reconciled | etc. Same vocabulary as requirements[].source, so every extracted item carries its provenance whatever kind of record it is (`@source extracted`)." },
           "cross_refs":    { "type": "array", "items": { "type": "string" } }
         }
       }
@@ -523,6 +526,7 @@
           "value":       {},
           "unit":        { "type": "string" },
           "description": { "type": "string" },
+          "source":      { "type": "string", "description": "elicited | extracted | reconciled | etc. Same vocabulary as requirements[].source (`@source extracted`)." },
           "extraction": {
             "type": "object",
             "description": "Where this item came from when it was read out of existing code. Makes the confirm pass jump-to-site instead of guess-what-I-meant, and lets the extraction audit tell a specified site from an unexamined one.",
@@ -749,7 +753,8 @@
           "type": "string",
           "description": "Sidecar path, e.g. 'auth.qnt' (relative to this JSON). The Quint module is the source of truth for the formal spec; module name and imports are read from it directly via tools/quint_ir.py — never mirrored here."
         },
-        "probe_domains": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Finite domain each action PARAMETER TYPE is drawn from in the generated stepP, as a Quint set expression: {\"UserId\": \"Set(\\\"alice\\\", \\\"bob\\\")\"}. Keyed by type rather than by parameter name because types are stable while parameter names vary per action. Required by tools/spec-probes.py and deliberately not inferred: how much of the state space the probes explore is a scope decision \u2014 too small and a probe cannot fire, too large and every check pays for it \u2014 so it is stated in the spec rather than guessed by a generator." },
+        "probe_domains": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Finite domain each action PARAMETER TYPE is drawn from in the generated stepP, as a Quint set expression: {\"UserId\": \"Set(\\\"alice\\\", \\\"bob\\\")\"}. Keyed by type rather than by parameter name because types are stable while parameter names vary per action. Required by tools/spec-probes.py and deliberately not inferred: how much of the state space the probes explore is a scope decision \u2014 too small and a probe cannot fire, too large and every check pays for it \u2014 so it is stated in the spec rather than guessed by a generator. A key of the form `param:<name>` targets one parameter by name and wins over its type's key — for a model whose parameters all share one type (every id a `str`). Prefer a type alias per value domain (`type Role = str`); use `param:` where an alias would be noise." },
+        "ghost_zeros": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Explicit initial value of a probe ghost, keyed by TYPE as written in the model: {\"Result\": \"Ok\"}. tools/spec-probes.py builds the zero of base types, maps, sets, lists, tuples, records (field by field, aliases resolved) and sum types (their first variant) on its own; this is for a type it cannot build (parameterized, recursive) or whose first variant is the wrong zero. Wins over the synthesized value." },
         "probes_file": {
           "type": "string",
           "description": "Generated probe module, e.g. 'auth.probes.qnt' (relative to this JSON). Contains the ghost-instrumented step wrapper and the path-constrained witness probes. Regenerated by /spec-check; never hand-edited."
@@ -876,7 +881,8 @@
         "required": ["from", "to", "trigger"],
         "additionalProperties": false,
         "properties": {
-          "from":    { "type": "string" },
+          "id":      { "type": "string", "pattern": "^NAV-\\d{3}$", "description": "Optional: `/// @nav NAV-001 Home -> Panel`. Gives the edge an identity, so an extraction_triage site can be MAPPED to it, a journey step or @refs can cite it, and no requirement has to be invented to stand for it." },
+          "from":    { "type": "string", "description": "A screen, or `*` for an edge from EVERY screen (a sidebar, a global header link): its action sets the screen var without reading it." },
           "to":      { "type": "string" },
           "trigger": { "type": "string", "description": "Plain-language user action: 'click \"Sign in\"', 'submit valid credentials'." },
           "guard":   { "type": "string", "description": "Optional precondition referencing a Quint val or another area's state." },
@@ -906,7 +912,9 @@
         "date":      { "type": "string", "format": "date-time" },
         "code_sha":  { "type": "string", "description": "git HEAD of the code repo when the spec was read from it." },
         "code_repo": { "type": ["string", "null"] },
-        "code_path": { "type": "string", "description": "Subtree the extraction read, relative to the code repo root. Narrows the diff to what the spec actually claims to describe." }
+        "code_path": { "type": "string", "description": "Subtree the extraction read, relative to the code repo root. Narrows the diff to what the spec actually claims to describe." },
+        "code_paths": { "type": "array", "items": { "type": "string" }, "description": "The paths/globs the extraction read, for an area whose code is scattered (the project entry's code_paths). Replaces code_path when there is more than one or any is a glob." },
+        "exclude": { "type": "array", "items": { "type": "string" }, "description": "The area's own exclude[] globs at extraction time (test files are excluded by default and not repeated here)." }
       }
     },
 
@@ -978,6 +986,17 @@
                 "result":  { "type": "string", "enum": ["ok", "violation", "timeout", "error", "not-run"], "description": "'ok' is NOT 'verified' — it is 'no violation in max_samples random executions'. Only `checks` carries verdicts." },
                 "checked": { "type": "integer", "minimum": 0 },
                 "falsified": { "type": "array", "items": { "type": "string" }, "description": "Quint names the simulator NAMED as violated. Not a verdict — attribution: these are the invariants the model checker's first pass runs FIRST, because they are guaranteed to produce a counterexample and to produce it cheaply. Recorded so that ordering can be read back and checked; absent when the simulator found nothing or did not say which." },
+                "detail":  { "type": "string" }
+              }
+            },
+            "transition_invariants": {
+              "type": "object",
+              "description": "Same shape and meaning as `invariants`, for the invariants declared over: \"probes\" — they compare each step with the one before, read the _prev* ghosts, and so are simulated against the probe module with --init=initP --step=stepP. 'error' means the run did not start (e.g. a name the module does not declare); it never contributes to `falsified`.",
+              "additionalProperties": false,
+              "properties": {
+                "result":  { "type": "string", "enum": ["ok", "violation", "timeout", "error", "not-run"] },
+                "checked": { "type": "integer", "minimum": 0 },
+                "falsified": { "type": "array", "items": { "type": "string" } },
                 "detail":  { "type": "string" }
               }
             },

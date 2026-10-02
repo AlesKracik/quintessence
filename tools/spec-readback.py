@@ -42,7 +42,7 @@ from itf_tools import (  # noqa: E402
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
     skip_discharge, brief_status, action_params, GHOST_PARAM_RE,
-    compute_spec_sha, meaning_status, is_rejection, witness_entries,
+    compute_spec_sha, meaning_status, is_rejection, is_computed, witness_entries,
     GHOST_PREFIXES,
 )
 from quint_ir import _strip_noise  # noqa: E402
@@ -66,7 +66,8 @@ LEGEND = ("*Legend: ✓ verified — witness trace replayed green against real c
           "◐ witnessed — proven possible in the model, not yet demonstrated in code · "
           "✗ no witness — claimed behavior is UNREACHABLE in the model · "
           "⏳ not checked yet · "
-          "⊘ skipped with justification (rejection-style requirement; an invariant carries the proof)*")
+          "⊘ skipped with justification (a refusal — an invariant carries the proof — "
+          "or a computed value, checked by the unit test it names)*")
 
 
 def load_json(path):
@@ -128,14 +129,14 @@ def req_is_discharged(req):
     """Witnessed, or a rejection whose skip names what carries the proof."""
     return req_is_witnessed(req) or (
         (req.get("witness") or {}).get("status") == "skipped"
-        and skip_discharge(req.get("witness")) is not None)
+        and skip_discharge(req.get("witness"), req) is not None)
 
 
 def status_mark(req):
     w = req.get("witness") or {}
     if req.get("status") == "verified":
         return "✓"
-    if w.get("status") == "skipped" and skip_discharge(w):
+    if w.get("status") == "skipped" and skip_discharge(w, req):
         return "⊘"
     # Per entry, so a `may` whose every permitted outcome is witnessed reads
     # as demonstrated rather than as untouched.
@@ -773,7 +774,16 @@ def render_requirement(root, area, req, constraints, rendered_full):
                      + (f" and that {unchanged} did not move." if unchanged else "."))
         lines.append("> _Replay cannot cover this: a rejection has no trace to replay._")
         lines.append("")
-    if w.get("status") == "skipped" and w.get("justification"):
+    if is_computed(req):
+        tests = ", ".join(f"`{t}`" for t in (req.get("verified_by") or []))
+        lines.append("> **Computed requirement:** a derived value with no state "
+                     "transition, so there is no trace to witness and nothing to "
+                     "refuse. " + (f"Verified by {tests}." if tests else
+                                   "**No test named yet** (`@verified-by`)."))
+        if w.get("justification"):
+            lines.append(f"> _{w['justification']}_")
+        lines.append("")
+    elif w.get("status") == "skipped" and w.get("justification"):
         lines.append(f"> **Witness skipped:** {w['justification']}")
         lines.append("")
     elif w.get("trace") and w.get("status") == "witnessed":
@@ -1084,7 +1094,12 @@ def ui_sections(area):
     lines = ["## Navigation", "", "```mermaid", "graph TB"]
     for nav in area.get("navigation", []) or []:
         trig = nav.get("trigger", "").replace("|", "/")
-        lines.append(f"  {nav.get('from')} --> |{trig}| {nav.get('to')}")
+        frm = nav.get("from")
+        if frm == "*":
+            # A sidebar edge: drawn once, from a node that stands for every
+            # screen, rather than as N copies of the same arrow.
+            frm = "ANY((every screen))"
+        lines.append(f"  {frm} --> |{trig}| {nav.get('to')}")
     gated = [s["name"] for s in screens if s.get("auth_required")]
     if gated:
         lines.append("  classDef auth_required fill:#fff5b1")
@@ -1093,11 +1108,14 @@ def ui_sections(area):
     lines.append("")
     navs = area.get("navigation", []) or []
     if navs:
-        lines.append("| From | To | Trigger | Guard | Action |")
-        lines.append("|---|---|---|---|---|")
+        with_ids = any(n.get("id") for n in navs)
+        lines.append(("| Id " if with_ids else "") + "| From | To | Trigger | Guard | Action |")
+        lines.append(("|---" if with_ids else "") + "|---|---|---|---|---|")
         for nav in navs:
             act = f"`{nav['action']}`" if nav.get("action") else "_no action in the model_"
-            lines.append(f"| {nav.get('from')} | {nav.get('to')} | {nav.get('trigger', '—')} | "
+            frm = "_every screen_" if nav.get("from") == "*" else nav.get("from")
+            lead = f"| {nav.get('id') or '—'} " if with_ids else ""
+            lines.append(f"{lead}| {frm} | {nav.get('to')} | {nav.get('trigger', '—')} | "
                          f"{nav.get('guard') or '—'} | {act} |")
         lines.append("")
     lines.append("## Screens")
@@ -1589,7 +1607,10 @@ def examples_section(area):
         args = when.get("args") or {}
         arglist = ", ".join(f"{k}={v}" for k, v in args.items())
         lines.append(f"- When: `{when.get('action', '?')}({arglist})`")
-        expect = ex.get("expect") or {}
+        expect = dict(ex.get("expect") or {})
+        run_cond = expect.pop(spec_source.RUN_EXPECT_KEY, None)
+        if run_cond:
+            lines.append(f"- Expect (the run's `.expect`): `{run_cond}`")
         if expect:
             lines.append("- Expect: " + ", ".join(f"`{k}` = `{v}`" for k, v in expect.items()))
         if ex.get("refs"):
