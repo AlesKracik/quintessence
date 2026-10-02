@@ -48,6 +48,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import area_json_path  # noqa: E402
+import spec_source  # noqa: E402
 
 DEFAULT_LIMIT = 25
 
@@ -323,10 +324,12 @@ def main():
     args = p.parse_args()
 
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    if not area_path.exists():
-        fail_setup(f"{area_path} not found.")
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    try:
+        area = spec_source.load_area(root, args.area)
+    except spec_source.SpecSourceError as e:
+        fail_setup(str(e))
+    if area is None:
+        fail_setup(f"{area_json_path(root, args.area)} not found.")
 
     operators = [o.strip() for o in args.operators.split(",") if o.strip()]
     unknown = [o for o in operators if o not in OPERATORS]

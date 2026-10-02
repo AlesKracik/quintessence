@@ -172,8 +172,8 @@ See [METHODOLOGY.md](METHODOLOGY.md) for the complete reference.
 
 ## Layout
 
-- \`specs/<area>.area.json\` / \`specs/<name>.contract.json\` — one file per area/contract (the suffix encodes the kind)
-- \`specs/<area>.qnt\` — the Quint formal model sidecar
+- \`specs/<area>.qnt\` — the formal model; every requirement, invariant, constant and example is a \`///\` doc comment on the declaration that realizes it
+- \`specs/<area>.intent.json\` — what the model cannot say (kind, purpose, scope, decisions, …); \`specs/<area>.records.json\` — the ledger the tools write
 - \`specs/<area>.readback.md\` — auto-generated review document
 - \`specs/changes/<slug>.change.json\` — change manifests (the unit of work)
 - \`specs/journeys/<slug>.journey.json\` — user journeys (use cases in temporal order)

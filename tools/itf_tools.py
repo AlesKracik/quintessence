@@ -42,6 +42,10 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from spec_source import (intent_path, load_area, save_area,  # noqa: E402
+                         strip_docs, SpecSourceError)
+
 ACTION_VAR_CANDIDATES = ("mbt::actionTaken", "_lastAction", "lastAction")
 MAX_NOTE_LEN = 60
 # Ghost vars that carry replay bookkeeping, not model state. Underscore
@@ -53,11 +57,12 @@ GHOST_PREFIXES = ("_last", "mbt::")
 GHOST_PARAM_RE = re.compile(r"^_last(?!Action$)")
 NONDET_PICKS_VAR = "mbt::nondetPicks"
 
-# Spec-file layout: every spec JSON carries a type suffix in its filename.
-#   specs/<name>.area.json | specs/<name>.contract.json
+# Spec-file layout (Quint-first — see tools/spec_source.py):
+#   specs/<name>.qnt             model + per-ID records as /// doc comments
+#   specs/<name>.intent.json     what the model cannot say (kind inside)
+#   specs/<name>.records.json    ledgers: verdicts, pins, logs, triage
 #   specs/changes/<slug>.change.json
 #   specs/journeys/<slug>.journey.json
-AREA_SUFFIXES = ("area", "contract")
 
 # Model plumbing, never domain events. Shared so the matrix and the
 # orphan-action lint cannot disagree about which actions are bookkeeping.
@@ -330,14 +335,12 @@ def brief_status(area_data):
 
 
 def area_json_path(root, name):
-    """Resolve specs/<name>.area.json or specs/<name>.contract.json —
-    whichever exists. Falls back to the .area.json path (for new files /
-    error messages) when neither does."""
-    for kind in AREA_SUFFIXES:
-        p = Path(root) / "specs" / f"{name}.{kind}.json"
-        if p.exists():
-            return p
-    return Path(root) / "specs" / f"{name}.area.json"
+    """The file that makes specs/<name> an area: its intent file. Every area
+    and contract has one (the kind is a field inside it); the model and the
+    ledger are found from there. Kept under its old name because a dozen
+    call sites only ever used it to ask "does this area exist?" and to name
+    it in a message."""
+    return intent_path(root, name)
 
 
 def changes_dir(root):
@@ -361,7 +364,11 @@ def compute_model_sha(root, area_name, area_data):
     sidecar = Path(root) / "specs" / quint_file
     if not sidecar.exists():
         return None
-    h.update(sidecar.read_bytes())
+    # The model WITHOUT its `///` records: a reworded meaning or EARS field
+    # changes what a reviewer reads, never what the checker explored, so it
+    # must not stale every trace. Everything else — every declaration, every
+    # witness predicate body — is hashed byte for byte.
+    h.update(strip_docs(sidecar.read_text(encoding="utf-8")).encode("utf-8"))
     probes_file = fm.get("probes_file")
     if probes_file:
         probes = Path(root) / "specs" / probes_file
@@ -590,21 +597,29 @@ def cmd_mermaid(args):
         action_var=args.action_var, show_init=args.show_init)))
 
 
+def _load_or_exit(root, name):
+    try:
+        area = load_area(root, name)
+    except SpecSourceError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
+    if area is None:
+        print(f"ERROR: {area_json_path(root, name)} not found", file=sys.stderr)
+        sys.exit(2)
+    return area
+
+
 def cmd_spec_sha(args):
     """The pin a prose brief is written against. Prints the sha, and says
     whether the current brief still matches it."""
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    if not area_path.exists():
-        print(f"ERROR: {area_path} not found", file=sys.stderr)
-        sys.exit(2)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area = _load_or_exit(root, args.area)
     sha = compute_spec_sha(area)
     print(sha)
     state, detail = brief_status(area)
     if state == "absent":
-        print("no brief recorded — paste this into brief.written_against when "
-              "you write one", file=sys.stderr)
+        print("no brief recorded — pin it with `itf_tools.py pin <area> "
+              "--brief` once you write one", file=sys.stderr)
     elif state == "stale":
         print(f"brief is STALE: {detail}", file=sys.stderr)
         sys.exit(1)
@@ -617,11 +632,7 @@ def cmd_meaning_sha(args):
     Prints one line per requirement — sha, state — so re-pinning after an
     edit is a copy, not a recomputation by hand. Exits 1 if any is stale."""
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    if not area_path.exists():
-        print(f"ERROR: {area_path} not found", file=sys.stderr)
-        sys.exit(2)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area = _load_or_exit(root, args.area)
     stale = 0
     for req in area.get("requirements", []) or []:
         if not isinstance(req, dict) or req.get("status") == "deferred":
@@ -632,8 +643,8 @@ def cmd_meaning_sha(args):
         state, detail = meaning_status(req)
         if state == "stale":
             stale += 1
-        note = {"absent": "no meaning recorded — paste this sha into "
-                          "meaning.written_against when you write one",
+        note = {"absent": "no meaning recorded — write @meaning, then "
+                          "`itf_tools.py pin <area> --req <ID>`",
                 "stale": f"STALE: {detail}",
                 "current": "current"}[state]
         print(f"{rid}\t{compute_meaning_sha(req)}\t{note}")
@@ -641,13 +652,52 @@ def cmd_meaning_sha(args):
         sys.exit(1)
 
 
+def cmd_pin(args):
+    """Write freshness pins into the ledger (specs/<area>.records.json).
+
+    A pin is a hash no human should type: the agent writes the prose (an
+    @meaning, the intent file's brief), then pins it here, and the pin
+    records that the prose was written against THIS version of what it
+    restates. Pinning is an assertion that the prose was re-read against
+    the current requirement — run it after re-reading, never to silence a
+    stale warning."""
+    root = Path(args.root)
+    area = _load_or_exit(root, args.area)
+    pinned = []
+    for req in area.get("requirements", []) or []:
+        rid = req.get("id")
+        if not (args.all_meanings or rid in (args.req or [])):
+            continue
+        meaning = req.get("meaning") or {}
+        if not (meaning.get("text") or "").strip():
+            print(f"{rid}: no @meaning to pin", file=sys.stderr)
+            continue
+        meaning["written_against"] = compute_meaning_sha(req)
+        pinned.append(rid)
+    unknown = sorted(set(args.req or []) - {r.get("id") for r in area.get("requirements") or []})
+    if unknown:
+        print(f"ERROR: no such requirement: {', '.join(unknown)}", file=sys.stderr)
+        sys.exit(2)
+    if args.brief:
+        if not (area.get("brief") or {}).get("text"):
+            print("ERROR: no brief to pin", file=sys.stderr)
+            sys.exit(2)
+        area["brief"]["written_against"] = compute_spec_sha(area)
+        pinned.append("brief")
+    if not pinned:
+        print("nothing pinned (pass --req ID, --all-meanings or --brief)", file=sys.stderr)
+        sys.exit(1)
+    try:
+        save_area(root, args.area, area)
+    except SpecSourceError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
+    print(f"pinned: {', '.join(pinned)}")
+
+
 def cmd_sha(args):
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    if not area_path.exists():
-        print(f"ERROR: {area_path} not found", file=sys.stderr)
-        sys.exit(2)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area = _load_or_exit(root, args.area)
     sha = compute_model_sha(root, args.area, area)
     if sha is None:
         fm = area.get("formal_model") or {}
@@ -819,11 +869,7 @@ def witness_status(root, area_name, area_data):
 
 def cmd_status(args):
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    if not area_path.exists():
-        print(f"ERROR: {area_path} not found", file=sys.stderr)
-        sys.exit(2)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area = _load_or_exit(root, args.area)
     rows, missing, discharged = witness_status(root, args.area, area)
 
     if not rows:
@@ -886,6 +932,17 @@ def main():
     pms.add_argument("--req", help="Only this requirement ID.")
     pms.add_argument("--root", default=".")
     pms.set_defaults(func=cmd_meaning_sha)
+
+    pp = sub.add_parser("pin",
+                        help="Write meaning/brief freshness pins into the "
+                             "area's records file.")
+    pp.add_argument("area")
+    pp.add_argument("--req", action="append", help="Pin this requirement's meaning (repeatable).")
+    pp.add_argument("--all-meanings", action="store_true",
+                    help="Pin every requirement that has a meaning.")
+    pp.add_argument("--brief", action="store_true", help="Pin the brief.")
+    pp.add_argument("--root", default=".")
+    pp.set_defaults(func=cmd_pin)
 
     args = p.parse_args()
     args.func(args)

@@ -34,7 +34,7 @@ Resolve the target set:
 Results go into the area's `verification_log[]` only — the manifest stores no phase flags ("verified" is derived from the latest log entry vs current spec/code shas). Run all targets even on early failure; report together.
 
 Read:
-- `specs/<target>.*.json`
+- the area: `tools/spec_source.py derive <target>` (from `specs/<target>.qnt` doc comments, `.intent.json`, `.records.json`)
 - `.spec/project.json` (for the area's `code_repo`, `code_path`, `tests_path`, `test_command`)
 - `.spec/local.json` (for the per-dev `repo_paths[code_repo]`)
 
@@ -145,7 +145,7 @@ Two paths:
 ### Step 7 — Commit
 
 ```bash
-git add specs/<target>.*.json
+git add specs/<target>.records.json
 git commit -m "spec(<target>): verify — <pass|fail>, <summary>"
 ```
 

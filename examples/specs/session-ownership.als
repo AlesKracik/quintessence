@@ -42,12 +42,19 @@ sig GuardedScreen extends Screen {
 // ------------------------------------------------------------
 
 // INV-CONTRACT-001
+/// @inv INV-CONTRACT-001
+/// No two sessions belong to the same account.
+/// @criticality critical
 assert noSharedSessions {
   all disj s1, s2: Session | s1.owner != s2.owner
 }
 check noSharedSessions for 4 Session, 4 Account, 4 Screen expect 0
 
 // INV-CONTRACT-002
+/// @inv INV-CONTRACT-002
+/// Every auth-required screen trusts a session that has an owning account
+/// — no guarded screen dangles.
+/// @criticality high
 assert everyGuardedScreenHasAnOwner {
   all g: GuardedScreen | some g.guard.owner
 }

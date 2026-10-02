@@ -1,0 +1,142 @@
+{
+  "$schema": "../schemas/records.schema.json",
+  "area": "auth",
+  "brief": {
+    "written_against": "976d3f776808a3ffb17a70ef6402f1fcc3b0c28150d736a9b63d28a71c2fa4a2"
+  },
+  "check_results": {
+    "matrix": {
+      "ran_at": "2026-06-12T17:44:50+00:00",
+      "cells": 13,
+      "covered": 4,
+      "triaged": 9,
+      "uncovered": 0,
+      "orphans": 0,
+      "gaps": [
+        "Q-003"
+      ]
+    }
+  },
+  "verification_log": [],
+  "traceability": [],
+  "matrix_triage": [
+    {
+      "entity": "Session",
+      "state": "Active",
+      "event": "login",
+      "verdict": "IMPOSSIBLE",
+      "reason": "login creates a NEW Session (lifecycle action); concurrent-login semantics are enforced by INV-001 atMostOneActiveSession — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
+    },
+    {
+      "entity": "Session",
+      "state": "Expired",
+      "event": "login",
+      "verdict": "IMPOSSIBLE",
+      "reason": "login creates a new Session; it never transitions an existing Expired one — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
+    },
+    {
+      "entity": "Session",
+      "state": "Expired",
+      "event": "logout",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Expired is terminal; logout's guard requires the session to be Active"
+    },
+    {
+      "entity": "Session",
+      "state": "Expired",
+      "event": "expire_session",
+      "verdict": "IMPOSSIBLE",
+      "reason": "already Expired; expire_session's guard requires Active"
+    },
+    {
+      "entity": "Session",
+      "state": "LoggedOut",
+      "event": "login",
+      "verdict": "IMPOSSIBLE",
+      "reason": "login creates a new Session; it never transitions an existing LoggedOut one — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
+    },
+    {
+      "entity": "Session",
+      "state": "LoggedOut",
+      "event": "logout",
+      "verdict": "IMPOSSIBLE",
+      "reason": "LoggedOut is terminal; logout's guard requires Active"
+    },
+    {
+      "entity": "Session",
+      "state": "LoggedOut",
+      "event": "expire_session",
+      "verdict": "IMPOSSIBLE",
+      "reason": "LoggedOut is terminal; expire_session's guard requires Active"
+    },
+    {
+      "entity": "Account",
+      "state": "Unlocked",
+      "event": "unlock_account",
+      "verdict": "IMPOSSIBLE",
+      "reason": "unlock_account's guard requires the account to be Locked"
+    },
+    {
+      "entity": "Account",
+      "state": "Locked",
+      "event": "login_failed",
+      "verdict": "GAP",
+      "reason": "REQ-003 covers Unlocked only — spec is silent on failed attempts against a Locked account",
+      "question": "Q-003"
+    }
+  ],
+  "by_id": {
+    "INV-001": {
+      "formal_status": "specified"
+    },
+    "INV-002": {
+      "formal_status": "specified"
+    },
+    "INV-003": {
+      "formal_status": "specified"
+    },
+    "INV-004": {
+      "formal_status": "specified"
+    },
+    "REQ-001": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "2fe9d5560d301b421702efef5a8c15dd00de7e51dd1dbb9343ceb3a711215fc0"
+      }
+    },
+    "REQ-002": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "8596b335386f098e630d2419c3e9b7b4c3c5e7bb7d10122471892b5c27a5f6ab"
+      }
+    },
+    "REQ-003": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "6d65a2d95b432707d3f0c1f9f086c72c0d9633a32504cfa39cbdd78e2f0e4eb8"
+      }
+    },
+    "REQ-004": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "3545075c580ee1411eff5cf4919c398d2631a009e52eb7be660d286e75f2f212"
+      }
+    },
+    "REQ-005": {
+      "refusal": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "2d50589442ca4dbf07bf075e79449389c2b73f637986cc83904abf551327e532"
+      }
+    }
+  }
+}

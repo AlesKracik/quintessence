@@ -60,6 +60,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import area_json_path  # noqa: E402
+import spec_source  # noqa: E402
 
 # Reuse spec-mutate's masker and traced-file resolution: comments and string
 # literals must not produce sites for the same reason they must not produce
@@ -304,18 +305,22 @@ def main():
     p.add_argument("--strict", action="store_true",
                    help="Exit 1 while any site is unclaimed or triaged GAP.")
     p.add_argument("--record", action="store_true",
-                   help="Write check_results.extraction into the area JSON.")
+                   help="Write check_results.extraction into the area's ledger (records.json).")
     p.add_argument("--emit", action="store_true",
                    help="Print extraction_triage stubs for the unclaimed sites.")
     p.add_argument("--json", dest="emit_json", action="store_true")
     args = p.parse_args()
 
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    if not area_path.exists():
-        print(f"ERROR: {area_path} not found.", file=sys.stderr)
+    area_path = spec_source.records_path(root, args.area)
+    try:
+        area = spec_source.load_area(root, args.area)
+    except spec_source.SpecSourceError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(2)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    if area is None:
+        print(f"ERROR: {area_json_path(root, args.area)} not found.", file=sys.stderr)
+        sys.exit(2)
 
     project_path = root / ".spec" / "project.json"
     project = json.loads(project_path.read_text(encoding="utf-8")) if project_path.exists() else {}
@@ -379,7 +384,8 @@ def main():
               "nothing OBVIOUS is unclaimed, not that the spec is complete.")
 
     if args.emit and report["unclaimed_sites"]:
-        print("\n// paste into extraction_triage[] and replace each verdict:")
+        print(f"\n// paste into extraction_triage[] in specs/{args.area}.records.json "
+              f"and replace each verdict:")
         print(json.dumps(emit_stubs(report["unclaimed_sites"]), indent=2))
 
     if args.record:
@@ -392,8 +398,11 @@ def main():
         gaps = sorted({g for g in report["gaps"] if str(g).startswith("Q-")})
         if gaps:
             cr["extraction"]["gaps"] = gaps
-        area_path.write_text(json.dumps(area, indent=2, ensure_ascii=False) + "\n",
-                             encoding="utf-8")
+        try:
+            spec_source.save_area(root, args.area, area)
+        except spec_source.SpecSourceError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(2)
         print(f"recorded check_results.extraction in {area_path}", file=sys.stderr)
 
     blocking = report["unclaimed"] or report["problems"] or report["stale"]

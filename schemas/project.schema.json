@@ -16,13 +16,13 @@
 
     "areas": {
       "type": "array",
-      "description": "Index of all spec files under specs/. Each entry names where the area JSON lives, the kind, and the code mapping (if any).",
+      "description": "Index of all spec files under specs/. Each entry names an area (specs/<name>.intent.json + its model and ledger), the kind, and the code mapping (if any).",
       "items": {
         "type": "object",
         "required": ["name", "kind"],
         "additionalProperties": false,
         "properties": {
-          "name":        { "type": "string", "description": "Area slug. File is specs/<name>.area.json (or .contract.json per kind)." },
+          "name":        { "type": "string", "description": "Area slug. Files are specs/<name>.intent.json, specs/<name>.qnt (records as /// doc comments) and specs/<name>.records.json." },
           "kind":        { "type": "string", "enum": ["area", "contract", "ui"], "description": "'ui' is a deprecated alias for area-with-screens; use 'area'." },
           "description": { "type": "string" },
           "code_repo":   { "type": ["string", "null"], "description": "Key from repos[]. null = spec-only." },
@@ -86,7 +86,7 @@
 
     "topology": {
       "type": "object",
-      "description": "Deployment topology (Layer 4). Components are <area>.<component> from area JSON files.",
+      "description": "Deployment topology (Layer 4). Components are <area>.<component> from each area's architecture.",
       "additionalProperties": false,
       "properties": {
         "environments": { "type": "array", "items": { "type": "string" } },

@@ -1,6 +1,6 @@
 # Formal Specification Methodology
 
-Transform imprecise requirements into verified formal specifications using Quint and Apalache, driven by AI agents. **One JSON file per area, one sidecar `.qnt` file per formal model, five commands total.** Git tracks changes; PRs gate approval; verification is continuous.
+Transform imprecise requirements into verified formal specifications using Quint and Apalache, driven by AI agents. **One Quint model per area that carries its own requirements as doc comments, one intent file for what a model cannot say, one ledger the tools write, five commands total.** Git tracks changes; PRs gate approval; verification is continuous.
 
 The chain from natural language to verified code is held by mechanisms, not by trust in the AI:
 
@@ -19,7 +19,7 @@ flowchart LR
 
 ### The arrows are dependencies, not a schedule
 
-Read the diagram as *what rests on what*, never as an order you march through. The phases — **elicit → vocab → structure → formalize → check → generate → verify** — are **sections of one JSON file**, not stages of a process. A section exists or it doesn't; nothing is "in" a phase, so there is no phase to be blocked in.
+Read the diagram as *what rests on what*, never as an order you march through. The phases — **elicit → vocab → structure → formalize → check → generate → verify** — are **sections of one area** (its model's doc comments and its intent file), not stages of a process. A section exists or it doesn't; nothing is "in" a phase, so there is no phase to be blocked in.
 
 **Do any part, in any order, at any time.** Formalize one requirement while nine others are still a sentence someone dictated. Run `/spec-check` on a model that covers a third of the area. Extract from code first and elicit afterwards. Jump back and sharpen a requirement you already verified — that just un-derives its witness, which the next check re-proves. `/spec` reads the state of the area and picks up wherever you actually are, which is why it is one adaptive command instead of seven phase commands.
 
@@ -44,9 +44,15 @@ Tier 1 is a complete, useful workflow on its own: a team can distill requirement
 
 ## Core Concepts
 
-A **spec area** is a JSON file at `specs/<name>.area.json` (or `specs/<name>.contract.json`) plus an optional sidecar `specs/<name>.qnt` holding the Quint formal model. The filename suffix encodes the `kind` and must match it (`spec-lint` enforces this). Two kinds share the one schema — `area` (functional, has code) and `contract` (a cross-area agreement, spec-only) — and an interactive surface is an ordinary `area`, not a third kind. What each carries, and what the tooling does differently for them, is in "The Two Kinds of Area".
+A **spec area** is three files, each the only source of what it holds — see "Where the Spec Lives: Quint-First":
 
-A **project** is `.spec/project.json` (areas index, code repo paths, architecture defaults, topology) plus per-area JSON files. Per-developer code-repo paths go in `.spec/local.json` (gitignored).
+- `specs/<name>.qnt` — the Quint formal model, **and** every requirement, invariant, property, constant and worked example, written as a `///` doc comment on the declaration that realizes it;
+- `specs/<name>.intent.json` — what a model cannot say (kind, purpose, scope, decisions, assumptions, …);
+- `specs/<name>.records.json` — the ledger the tools write (verdicts, traces, pins, logs, triage).
+
+The tools never read those files directly: `tools/spec_source.py` derives one **area view** from them, and every tool consumes that view (its shape is `schemas/area.schema.json`). Two kinds share it — `area` (functional, has code) and `contract` (a cross-area agreement, spec-only), named by `kind` in the intent file — and an interactive surface is an ordinary `area`, not a third kind. What each carries, and what the tooling does differently for them, is in "The Two Kinds of Area".
+
+A **project** is `.spec/project.json` (areas index, code repo paths, architecture defaults, topology) plus the per-area files. Per-developer code-repo paths go in `.spec/local.json` (gitignored).
 
 ---
 
@@ -63,7 +69,7 @@ cd my-project
 # (creates .spec/project.json, opens the first change, scaffolds the areas)
 ```
 
-For an **existing codebase** (brownfield): the same `/spec auth` recognizes that no `specs/auth.area.json` exists but `src/auth/` has code, and walks extraction. No special command, no separate path — but a longer beat, because the code can answer questions a user cannot, and because fidelity can be measured rather than asserted. See "Brownfield: Keeping the Spec True to the Code".
+For an **existing codebase** (brownfield): the same `/spec auth` recognizes that no `specs/auth.intent.json` exists but `src/auth/` has code, and walks extraction. No special command, no separate path — but a longer beat, because the code can answer questions a user cannot, and because fidelity can be measured rather than asserted. See "Brownfield: Keeping the Spec True to the Code".
 
 ---
 
@@ -71,8 +77,8 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 
 | Command | What it does |
 |---|---|
-| `/spec [target]` | Adaptive entry point. Detects state (greenfield, brownfield, existing, drift) and walks the relevant phase conversationally: EARS elicitation, vocabulary, structure, formalize (incl. witness predicates), extract (brownfield), reconcile (drift), edit catalogs, manage project config. Writes `specs/<target>.*.json` and its sidecar `.qnt`. |
-| `/spec-check [target]` | Runs Apalache on the area's sidecar `.qnt` (invariants), discharges witness obligations (per-REQ path-constrained witness traces via a generated `*.probes.qnt` module), then the state×event and external×outcome matrix passes (red-team only with `--reality`). Writes `check_results` and `witness` blocks back into the area JSON; saves ITF traces under `specs/<area>/traces/`. Cascades: on an area target, also checks every contract whose `spans` includes it. |
+| `/spec [target]` | Adaptive entry point. Detects state (greenfield, brownfield, existing, drift) and walks the relevant phase conversationally: EARS elicitation, vocabulary, structure, formalize (incl. witness predicates), extract (brownfield), reconcile (drift), edit catalogs, manage project config. Writes `specs/<target>.qnt` (model + records as doc comments) and `specs/<target>.intent.json`. |
+| `/spec-check [target]` | Runs Apalache on the area's sidecar `.qnt` (invariants), discharges witness obligations (per-REQ path-constrained witness traces via a generated `*.probes.qnt` module), then the state×event and external×outcome matrix passes (red-team only with `--reality`). Writes `check_results` and witness verdicts into the area's ledger (`records.json`); saves ITF traces under `specs/<area>/traces/`. Cascades: on an area target, also checks every contract whose `spans` includes it. |
 | `/spec-code-verify [target]` | Replays the witness traces against real code through the conformance adapter (a REQ is *verified* only when its trace replays green), runs the area's `test_command`, validates the `traceability[]` table maps to real code/test locations, detects drift (spec-traced files changed outside `/spec-code-generate`). Appends to `verification_log[]`. |
 | `/spec-code-generate [target]` | Generates code from the architecture + formal model into the configured paths, plus the conformance adapter and trace-replay harness. Per-component when Layer 1 is declared. Writes `traceability[]` and `conformance`. Refuses on contract targets. |
 | `/spec-readback [target]` | Runs `tools/spec-readback.py` — the readback is **generated by a tool, not authored by the agent**, so it cannot diverge from what the checker verified and identical input yields byte-identical output (`git diff` of the readback IS the review). Requirements render as journey slices (`specs/journeys/` — flows in temporal order) with EARS sentences (constraint values resolved inline), witness one-liners, and collapsed verbatim Quint + predicate + trace diagram with `file:line` and model-sha pins. Writes `specs/<target>.readback.md` per area, `specs/changes/<slug>.readback.md` per change, `.spec/readback.md` for the project. |
@@ -96,17 +102,18 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   └── protocols/                ← optional Layer 5 catalog (JSON files)
 │       └── api-envelope.json
 ├── specs/
-│   ├── auth.area.json            ← one file per area (suffix = kind)
-│   ├── auth.qnt                  ←   sidecar: the Quint formal model
+│   ├── auth.qnt                  ← the Quint model + every record as /// doc comments
+│   ├── auth.intent.json          ←   what the model cannot say (kind, purpose, scope, …)
+│   ├── auth.records.json         ←   the ledger the tools write
 │   ├── auth.probes.qnt           ←   generated witness/coverage probes (/spec-check)
-│   ├── session-ownership.contract.json ← contract using the OPTIONAL structural backend
-│   ├── session-ownership.als     ←   Alloy sidecar: relational checks, scope-bounded
-│   ├── auth-ui.area.json         ← interactive surface: an area with screens[] + navigation[]
-│   ├── auth-ui.qnt
-│   ├── billing.area.json
+│   ├── session-ownership.intent.json ← contract (kind inside) using the OPTIONAL structural backend
+│   ├── session-ownership.als     ←   Alloy model: relational checks + their records
+│   ├── auth-ui.qnt               ← interactive surface: an area with screens[] + navigation[]
+│   ├── auth-ui.intent.json
 │   ├── billing.qnt
-│   ├── user-permission.contract.json ← contract: kind=contract, spans=[auth, billing]
-│   ├── user-permission.qnt       ←   imports auth.qnt and billing.qnt
+│   ├── billing.intent.json
+│   ├── user-permission.qnt       ← contract model: imports auth.qnt and billing.qnt
+│   ├── user-permission.intent.json ←   kind=contract, spans=[auth, billing]
 │   ├── auth.readback.md          ← /spec-readback generates this — Markdown + Mermaid
 │   ├── auth-ui.readback.md
 │   ├── billing.readback.md
@@ -120,9 +127,9 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   │   │   └── REQ-003.itf.json
 │   │   ├── gen/                  ←   regenerable artifacts (GITIGNORED):
 │   │   │   ├── matrix.csv        ←     state×event matrix VIEW (decisions live in
-│   │   │   │                            the area JSON's committed matrix_triage[])
+│   │   │   │                            the committed matrix_triage[] ledger)
 │   │   │   ├── outcomes.csv     ←     external×outcome view (decisions live in
-│   │   │   │                          the area JSON's committed outcome_triage[])
+│   │   │   │                          the committed outcome_triage[] ledger)
 │   │   │   ├── matrix-orphans.txt
 │   │   │   └── redteam-backlog.md
 │   │   └── components/           ←   per-component JSON if Layer 1 split into files
@@ -130,7 +137,9 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   │       └── worker.json
 │   └── ...
 ├── schemas/
-│   ├── area.schema.json
+│   ├── area.schema.json          ← the derived area VIEW every tool reads
+│   ├── intent.schema.json        ← GENERATED from it: specs/<area>.intent.json
+│   ├── records.schema.json       ← GENERATED from it: specs/<area>.records.json
 │   ├── change.schema.json
 │   ├── journey.schema.json
 │   ├── project.schema.json
@@ -147,7 +156,7 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 └── tools/
     ├── spec-lint.py              ← consistency checker (incl. EARS + witness obligations)
     ├── spec-probes.py            ← generates the witness probe module from the area
-    │                                JSON + sidecar IR; --check gates staleness
+    │                                view + the model's IR; --check gates staleness
     ├── spec-record.py            ← deterministic check+verify runner: quint run pre-gate,
     │                                quint verify (batched, then per-id), --temporal for
     │                                liveness, probes, conformance replay, drift; writes
@@ -164,110 +173,174 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
     ├── spec-matrix.py            ← state×event coverage matrix, and external×outcome
     │                                with --outcomes (--strict = CI gate; --record stamps
     │                                stats into check_results.matrix / .outcomes)
+    ├── spec_source.py            ← THE reader: derives the area view from the model's
+    │                                doc comments + intent + ledger; save_area writes the
+    │                                ledger only; migrate converts a JSON-first area
     ├── quint_ir.py               ← typed view of .qnt files (Quint IR, regex fallback)
     ├── itf_tools.py              ← ITF trace validate / summarize / Mermaid / status / sha
     └── bootstrap.sh              ← self-removes after first run
 ```
 
-**All spec concerns collapse into one JSON per area** (plus the Quint sidecar). No per-concern files, no per-change folders (a change is one manifest file), no submodules. Change manifests and journeys are single overlay files under `specs/changes/` and `specs/journeys/` — references only, never spec content.
+**All spec concerns collapse into one area** — its model (records included), its intent file, its ledger. No per-concern files, no per-change folders (a change is one manifest file), no submodules. Change manifests and journeys are single overlay files under `specs/changes/` and `specs/journeys/` — references only, never spec content.
 
 ---
 
 ## Anatomy of a Spec Area
 
-Required fields: `kind`, `area`, `version`. Everything else is optional and grows conversationally. A complete area looks like:
+Required fields: `kind`, `area`, `version` (in the intent file). Everything else is optional and grows conversationally. A complete area is three files.
 
-```json
-{
-  "$schema": "../schemas/area.schema.json",
-  "kind": "area",
-  "area": "auth",
-  "version": "1.0.0",
-  "status": "approved",
-  "last_modified": "2026-05-14T10:00:00Z",
-
-  "purpose": "Authenticates users; manages sessions; locks accounts after failed attempts.",
-
-  "concepts": {
-    "entities": [{ "name": "Session", "states": ["Active", "Expired", "LoggedOut"] }],
-    "actors":   ["User", "System"],
-    "verbs":    ["login", "logout", "expireSession", "lockAccount"]
-  },
-
-  "requirements": [
-    {
-      "id": "REQ-001",
-      "description": "When a registered user submits valid credentials, the system shall create an Active session.",
-      "status": "verified",
-      "quint_ref": "login",
-      "ears": { "trigger": "a registered user submits valid credentials", "response": "create an Active session" },
-      "witness": { "predicate": "sessions.keys().exists(s => sessions.get(s) == Active)", "trace": "auth/traces/REQ-001.itf.json", "status": "witnessed", "checked_at": "2026-05-14T10:00:00Z" }
-    }
-  ],
-  "invariants": [
-    { "id": "INV-001", "description": "At most one Active session per user.", "quint_name": "singleSession", "formal_status": "verified", "criticality": "critical" }
-  ],
-  "constraints": [
-    { "id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 5 }
-  ],
-  "decisions": [
-    { "id": "DEC-001", "kind": "architecture", "title": "JWT over session cookies", "decision": "Use RS256-signed JWTs for session tokens.", "rationale": "...", "alternatives_considered": [...], "status": "accepted" }
-  ],
-
-  "architecture": {
-    "inherits_project": true,
-    "stack":  { "language": "TypeScript", "framework": "Express", "test_framework": "Vitest" },
-    "persistence": { "kind": "sql", "engine": "postgres", "client": "Prisma" },
-    "patterns":  ["repository-pattern"],
-    "protocols": ["api-envelope"],
-    "components": [
-      { "name": "api",    "role": "transport", "implements": ["login", "logout"] },
-      { "name": "worker", "role": "async",     "implements": ["expireSession"] }
-    ],
-    "module_layout": {
-      "service": "src/auth/authService.ts",
-      "store":   "src/auth/authStore.ts",
-      "tests":   "tests/auth/"
-    }
-  },
-
-  "formal_model": {
-    "quint_file":  "auth.qnt",
-    "probes_file": "auth.probes.qnt"
-  },
-
-  "traceability": [
-    { "id": "REQ-001", "quint": "action login",      "component": "api",    "code": "authService.ts:login",         "tests": ["authService.test.ts:loginSuccess"], "verified": true },
-    { "id": "INV-001", "quint": "val singleSession", "component": "api",    "code": "authService.ts:login (guard)", "tests": ["invariants.test.ts:singleSession"], "verified": true }
-  ],
-
-  "open_questions": [
-    { "id": "Q-001", "question": "Service accounts?", "status": "resolved", "resolution": "Out of scope." }
-  ],
-
-  "verification_log": [
-    { "date": "2026-05-14T10:00:00Z", "spec_sha": "abc1234", "code_sha": "def5678", "status": "pass", "drift_detected": false, "summary": "4 scenarios, 0 failures" }
-  ]
-}
-```
-
-Sidecar `specs/auth.qnt` holds the actual Quint:
+**`specs/auth.qnt`** — the model, with each record on the declaration that realizes it:
 
 ```quint
 module auth {
   type AccountStatus = Unlocked | Locked
   type SessionStatus = Active | Expired | LoggedOut
 
-  var sessions: SessionId -> (UserId, SessionStatus)
+  var sessions: SessionId -> SessionStatus
   var accounts: UserId -> AccountStatus
 
-  action login(u: UserId, s: SessionId) = all { ... }
-  val singleSession: bool = ...
-  val noLockedSession: bool = ...
+  /// @con CON-001
+  /// Failed-login threshold before locking.
+  /// @pairs INV-004
+  pure val MAX_FAILED_ATTEMPTS: int = 5
 
+  action login(uid: UserId, sid: SessionId): bool = all { ... }
+
+  /// @inv INV-001
+  /// At most one Active session per user.
+  /// @criticality critical
+  val singleSession: bool = ...
+
+  /// @req REQ-001
+  /// @status specified
+  /// @when a registered user submits valid credentials
+  /// @shall create an Active session owned by that user
+  /// @meaning Signing in with correct credentials gives the user a live session of their own.
+  /// @via login
+  /// @pre not(_prevSessions.keys().contains(_lastSid))
+  def shall_REQ_001(_lastSid: SessionId, _lastUid: UserId): bool =
+    statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)
+
+  /// @example EX-001
+  /// Sign in, then out
+  /// @refs REQ-001, REQ-002
   run happyPath = init.then(login("alice", "s1")).then(logout("alice", "s1"))
 }
 ```
+
+**`specs/auth.intent.json`** — what the model cannot say:
+
+```json
+{
+  "$schema": "../schemas/intent.schema.json",
+  "kind": "area", "area": "auth", "version": "1.0.0", "status": "approved",
+  "last_modified": "2026-05-14T10:00:00Z",
+  "purpose": "Authenticates users; manages sessions; locks accounts after failed attempts.",
+  "concepts": {
+    "entities": [{ "name": "Session", "states": ["Active", "Expired", "LoggedOut"] }],
+    "actors":   ["User", "System"],
+    "verbs":    ["login", "logout", "expireSession", "lockAccount"]
+  },
+  "decisions": [
+    { "id": "DEC-001", "kind": "architecture", "title": "JWT over session cookies", "decision": "Use RS256-signed JWTs for session tokens.", "rationale": "...", "status": "accepted" }
+  ],
+  "architecture": {
+    "inherits_project": true,
+    "stack":  { "language": "TypeScript", "framework": "Express", "test_framework": "Vitest" },
+    "components": [
+      { "name": "api",    "role": "transport", "implements": ["login", "logout"] },
+      { "name": "worker", "role": "async",     "implements": ["expireSession"] }
+    ]
+  },
+  "formal_model": { "quint_file": "auth.qnt", "probes_file": "auth.probes.qnt" },
+  "open_questions": [
+    { "id": "Q-001", "question": "Service accounts?", "status": "resolved", "resolution": "Out of scope." }
+  ]
+}
+```
+
+**`specs/auth.records.json`** — the ledger, written by the tools:
+
+```json
+{
+  "$schema": "../schemas/records.schema.json",
+  "area": "auth",
+  "traceability": [
+    { "id": "REQ-001", "quint": "action login", "component": "api", "code": "authService.ts:login", "tests": ["authService.test.ts:loginSuccess"], "verified": true }
+  ],
+  "verification_log": [
+    { "date": "2026-05-14T10:00:00Z", "spec_sha": "abc1234", "code_sha": "def5678", "status": "pass", "drift_detected": false, "summary": "4 scenarios, 0 failures" }
+  ],
+  "by_id": {
+    "REQ-001": { "witness": { "status": "witnessed", "trace": "auth/traces/REQ-001.itf.json", "checked_at": "2026-05-15T12:00:00Z", "model_sha": "ce84c1a2…" },
+                 "meaning": { "written_against": "5b59afac…" } },
+    "INV-001": { "formal_status": "verified" }
+  }
+}
+```
+
+What the tools read is the **area view** `tools/spec_source.py derive auth` prints: those three merged into the one shape `schemas/area.schema.json` describes — `requirements[]` with `ears`, `witness.predicate` (the host's body), `quint_ref` (`@via`), `witness.status` (from the ledger), and so on. Field names in the rest of this document (`ears.response`, `witness.delta.pre`, `constraints[].paired_invariant`, …) name fields of that view; "Where the Spec Lives" maps each one to the tag or file that carries it.
+
+---
+
+## Where the Spec Lives: Quint-First
+
+**The model is the referent, so the record sits on it.** A requirement is a claim about an action and a postcondition; an invariant *is* a `val`; a constant's value *is* a literal in the model; a worked example *is* a `run`. Kept in a JSON file beside the model, each of those needed a pointer back (`quint_ref`, `quint_name`, `quint_run`) or a copy (`witness.predicate`, `constraints[].value`), and each pointer and copy needed a lint rule to keep it honest. In Quint-first they are positions, not copies: the record is a `///` doc comment on the declaration, the predicate is that declaration's body, the value is its literal. There is nothing left to drift.
+
+The JSON that remains holds only what a model cannot say, and what no human should type.
+
+### Three files, one owner each
+
+| File | Holds | Why there |
+|---|---|---|
+| `<area>.qnt` doc comments | requirements (EARS fields, meaning, modality, determinism, type, fit criterion, `@error` outcomes, refusal artifact and blocking state, delta, discharge, extraction evidence), invariants, properties, constants, examples | every one is checkable against a declaration; on that declaration, the reviewer reads the claim and the formula as one diff |
+| `<area>.intent.json` | kind, spans, version, status, purpose, brief, scope, boundary, concepts (entities, closed worlds), externals, assumptions, decisions, open questions, state machines, architecture, UI blocks, `formal_model` and `conformance` config | none of it is about one declaration; some of it (a closed entity's state list, a state machine) is a claim *about* the model that must stay independent of the model's text, or it could not catch the model drifting |
+| `<area>.records.json` | `check_results`, witness/outcome/refusal verdicts and traces, `formal_status`, freshness pins (`meaning.written_against`, `brief.written_against`), `verification_log`, `traceability`, `generated_from` / `extracted_from`, and the three triage ledgers | machine-written or ledger-shaped, high-churn, keyed by id or by code fingerprint; in the model, every check run would rewrite the file the check just hashed |
+
+The table is code, not prose: `MODEL_KEYS`, `RECORD_KEYS` and `MACHINE_PATHS` in `tools/spec_source.py`, from which derive, save, migrate and the two generated schemas are all read.
+
+Choices worth stating:
+
+- **Error outcomes are `@error` tags on the requirement** (`@error BillingProvider.TIMEOUT idempotent: NO_CHANGE — retry`): an error outcome is part of what the requirement promises, and the external×outcome matrix covers a cell only through a requirement, so it travels with it.
+- **Refusal artifacts are tags on the prohibition** (`@refusal`, `@blocking`, `@unchanged`) — the claim "this test drives the code into that state and asserts nothing moved". Whether it passed is `refusal.status` in the ledger.
+- **The extraction triage ledger is in `records.json`**, with `matrix_triage` and `outcome_triage`. Its rows are keyed by code fingerprint and point into another repository; a doc comment documents a model declaration, and a site is not one. Agent-written verdicts, but ledger-shaped — the one part of `records.json` written by hand.
+- **Freshness pins are in `records.json`**, never in the `.qnt`: a pin is a hash of the requirement's semantic fields (`tools/itf_tools.py pin <area> --req <ID>` writes it), and storing it in the file it hashes would make every re-pin an edit to the claim.
+- **Check results, witness status and traces are in `records.json`.** `model_sha` hashes the model **without** its `///` records (`spec_source.strip_docs`), so rewording a meaning never stales a trace, while any change to a declaration — a witness host's body included — does.
+
+### The grammar
+
+A `///` block documents the declaration below it, its **host**. One tag per line; a record starts at a record tag (`@req`, `@inv`, `@prop`, `@con`, `@example`, `@outcome-of REQ-ID <name>`) and runs to the next, so one block can carry several records. Untagged lines right after the record tag are its description; untagged lines after an attribute tag continue that tag. The full tag table is the docstring of `tools/spec_source.py`. Hosting decides the rest:
+
+| Record on | Means |
+|---|---|
+| `val`/`def shall_<ID>` + `@via <action>` | witnessed requirement; the **body is the witness predicate**. Parameters named like the probe ghosts (`_lastSid: SessionId`) bind it to the call and make it typecheck in the model — a predicate is now checked by `quint typecheck`, not just by the first Apalache run. |
+| `action <name>` | `quint_ref` = that action, no predicate: a prohibition (`@modality forbidden`, `@enforced-by`), a `may` (its outcomes are `@outcome-of` hosts), or not yet formalized |
+| the `module` itself | no host yet — a raw requirement, an NFR, a Tier-1 area with no model (`@predicate` carries a draft predicate as text) |
+| `val` / `temporal` / `pure val` / `run` | invariant (`quint_name`), property, constant (name and value from the declaration), example (`quint_run`) |
+| `def` with `_prev*` parameters | transition invariant, `over: "probes"`; body = predicate, emitted into the probe module as `@quint-name` |
+| Alloy `assert`/`check` | structural invariant (`proof: structural`, `alloy_command` = the name) |
+
+The delta (`@pre`) stays text: it reads `_prev*` ghosts, which exist only in the generated probe module. A module that holds only records is **not** a formal model — `spec_source.has_model` — so a Tier-1 area keeps its requirements in the `.qnt` it will grow into without anything being checked against an empty model.
+
+### One reader, one writer
+
+`spec_source.load_area(root, area)` derives the view; `spec_source.save_area(root, area, view)` writes **only** the ledger, and refuses — naming the fields — when anything authored differs from what the files say. A tool that loosened a predicate, widened a constant or edited the scope through the ledger would be writing a claim; claims are edited in the model and the intent file, where a reviewer sees them. `spec-diff` and `spec-separation` derive the same view at any git revision (`git_getter`), so "what changed" is computed over what the spec says, wherever it is written.
+
+The reader is pure Python (Tier 1 needs no Quint CLI). `quint parse` keeps each `///` block on its declaration in the IR (`declarations[].doc`, and the module's own `doc`), and a test holds the two readers to the same record→declaration map on every example. One IR quirk is why the Python reader is canonical: a `type` declaration's doc lands on one of its generated constructors.
+
+### Why derive a view, rather than rewrite the tools
+
+Two routes were open. **Native**: every tool reads doc comments itself, and the probe generator emits `not(shall_REQ_001(_lastUid) and _lastAction == "login" and …)`, calling the host instead of inlining it. **Adapter**: one reader derives the view the tools already consumed. The adapter won on three counts: the tools' logic (and the ~500 tests that pin it) did not have to move, so "behavior unchanged" is checkable — lint findings, matrix output and readbacks were diffed before and after migrating every example and are identical but for the new source pins; the view is still a schema-checked contract (`area.schema.json`), so the next tool has one shape to read; and inlining keeps the predicate text in the probe, where `witness-unbound`, the delta-kept check and the readback read it. What native would add — the probe naming the host — is cosmetic once the host typechecks in the model, because the inlined text is byte-for-byte the body that typechecked.
+
+### What lint checks now
+
+New, from the sources (`check_sources`, `check_witness_hosts`): `record-grammar` (unknown tag, duplicate id, an `@outcome-of` naming no requirement, malformed `@error`/`@fit`/`@when`), `record-without-host`, `legacy-spec-file`, `witness-host-param-type` (a ghost parameter typed differently from the `@via` action's parameter — the model typechecks, the probe would not bind), `witness-host-without-via`, `constant-value-twice`; and schema validation of the intent file and the ledger against their generated schemas, on top of the view's.
+
+Every cross-check that still applies is unchanged, because lint reads the same view as before: EARS structure and precision, meaning/brief freshness, `quint_ref` resolution (`@via` can still name an action that does not exist), the predicate naming state, binding to the call's ghosts, delta present and kept by the probe, paired invariants, refusal artifacts, modality, scope, externals, assumptions, closed worlds, the EARS↔model bridge, orphan actions, examples, cross-references, journeys and manifests. Three became true by construction and stay as cheap guards: an invariant's `quint_name` resolves (it is the host's name), a constraint's value matches the model (it *is* the model's literal), an example's `quint_run` exists (it is the host).
+
+### Migrating a JSON-first area
+
+`tools/spec_source.py roundtrip <area>` migrates in memory, derives back and diffs against the JSON — it must print `lossless`. `tools/spec_source.py migrate <area> --write` then writes the records into the model (witness hosts appended under a REQUIREMENTS banner, prohibitions above their actions, the rest above their declarations), splits the intent and the ledger, and deletes the JSON. A field with no tag aborts the migration rather than being dropped. The model sha changes once (the witness hosts are new declarations), so budget one `/spec-check`.
 
 ---
 
@@ -405,7 +478,7 @@ Each requirement carries a `witness` block:
 | Every INV holds | Apalache invariant check | counterexample — behavior violates a rule |
 | Every REQ witnessed *via its own action* | path-constrained probe → counterexample = trace | `no-witness` — behavior unreachable as specified (vacuity) |
 | Every witness fresh | `model_sha` stamp matches current model | stale trace — model changed since it was found |
-| Every action fires somewhere | free: witnessed REQs prove their `quint_ref` fires; `spec-lint` flags **unreachable** actions (`orphan-action`) — reachability from `init`/`step` and the JSON's own references, so a wrapper the model dispatches to is live even though no requirement names it | dead action — missing requirement or dead spec text |
+| Every action fires somewhere | free: witnessed REQs prove their `quint_ref` fires; `spec-lint` flags **unreachable** actions (`orphan-action`) — reachability from `init`/`step` and the area's own references, so a wrapper the model dispatches to is live even though no requirement names it | dead action — missing requirement or dead spec text |
 | Every matrix cell triaged | `spec-matrix --strict` | silent state×event gap |
 | Every witness bound to its call | `spec-lint` (param ghosts vs `action_params`) | the postcondition may hold of state another call produced |
 | Every witness carries a delta | `spec-lint` + the probe's third conjunct | the step may have changed nothing |
@@ -484,7 +557,7 @@ So a witness declares the pre-state it must start from:
 "delta": { "pre": "not(_prevSessions.keys().contains(_lastSid))" }
 ```
 
-The probe module snapshots pre-state into `_prev*` ghosts and conjoins it. `spec-lint` checks two things: that the delta exists, and that the **generated probe actually kept it** — a recorded delta the probe dropped is worse than none, because the JSON then claims a check the model does not make.
+The probe module snapshots pre-state into `_prev*` ghosts and conjoins it. `spec-lint` checks two things: that the delta exists, and that the **generated probe actually kept it** — a recorded delta the probe dropped is worse than none, because the record then claims a check the model does not make.
 
 A `may` requirement declares its delta **per permitted outcome**, in `witness.outcomes[].delta`, alongside that outcome's predicate — each outcome is proven by its own probe, so each names its own pre-state. There is no delta on the witness itself.
 
@@ -518,7 +591,7 @@ One bounds the threshold from above (it fires), the other from below (it does no
 
 Wire `conformance.command` into the **code repo's own CI** as well — the harness is an ordinary test file, so code changes that break model conformance fail on the code PR with no spec tooling installed.
 
-Config lives in the area JSON:
+Config lives in the intent file:
 
 ```json
 "conformance": {
@@ -681,7 +754,7 @@ What they are genuinely good for:
 
 ## State Machines and Completeness Validation
 
-Stateful entities can have their state machine declared explicitly in `state_machines[]`. The Quint sidecar still encodes the behavioral semantics (Apalache verifies them), but the JSON gives `spec-lint` a structural picture it can validate in milliseconds — without needing to invoke the model checker.
+Stateful entities can have their state machine declared explicitly in `state_machines[]`. The Quint sidecar still encodes the behavioral semantics (Apalache verifies them), but the intent file gives `spec-lint` a structural picture it can validate in milliseconds — without needing to invoke the model checker.
 
 ```json
 "state_machines": [
@@ -731,7 +804,7 @@ These run in `tools/spec-lint.py` against every area; structural errors get flag
 
 ### Apalache complements, doesn't replace
 
-`spec-lint` catches **structural** issues (unreachable states, dangling states, JSON ↔ sidecar drift). `/spec-check` (Apalache) catches **behavioral** issues (invariant violations, liveness failures, counterexamples in reachable states). The two checks compose:
+`spec-lint` catches **structural** issues (unreachable states, dangling states, records ↔ model drift). `/spec-check` (Apalache) catches **behavioral** issues (invariant violations, liveness failures, counterexamples in reachable states). The two checks compose:
 
 - `spec-lint` first — fast feedback during authoring; catches "you declared `Pending` but no transition produces it."
 - `/spec-check` second — proves the invariants hold across all reachable states; finds the missing payment guard.
@@ -806,19 +879,16 @@ So the Alloy backend strengthens the *invariant* half of a contract only. That i
 
 ### How it is wired
 
-An invariant opts in with `proof: "structural"` and names the Alloy `check` that carries it:
+An invariant opts in by living on the Alloy assertion that carries it — the record is a `///` doc comment in the `.als`, and hosting it there means `proof: "structural"`, `alloy_command: <name>` in the area view:
 
-```json
-{
-  "id": "INV-CONTRACT-001",
-  "description": "No two sessions belong to the same account.",
-  "proof": "structural",
-  "alloy_command": "noSharedSessions",
-  "criticality": "critical"
-}
+```alloy
+/// @inv INV-CONTRACT-001
+/// No two sessions belong to the same account.
+/// @criticality critical
+assert noSharedSessions {
 ```
 
-with the area pointing at its structural sidecar (alongside the Quint one, or instead of it for a purely relational contract):
+with the intent file pointing at its structural model (alongside the Quint one, or instead of it for a purely relational contract):
 
 ```json
 "formal_model": { "alloy_file": "session-ownership.als" }
@@ -1034,17 +1104,17 @@ Architecture is **separate from behavior**. The spec says what the system does; 
 
 | Layer | Captures | Where it lives | Required? |
 |---|---|---|---|
-| 0. Stack | Language, framework, persistence, patterns, layout | `architecture` section of area JSON; defaults in `.spec/project.json` | Recommended for any area with code |
-| 1. Components | Per-area decomposition (api / worker / projection) | `architecture.components[]` in area JSON; optional `specs/<area>/components/<name>.json` for fuller per-component specs | When an area is internally complex |
+| 0. Stack | Language, framework, persistence, patterns, layout | `architecture` section of the intent file; defaults in `.spec/project.json` | Recommended for any area with code |
+| 1. Components | Per-area decomposition (api / worker / projection) | `architecture.components[]` in the intent file; optional `specs/<area>/components/<name>.json` for fuller per-component specs | When an area is internally complex |
 | 2. Patterns | Reusable architectural patterns (Outbox, CQRS, Saga) | `.spec/patterns/<name>.json`; referenced from `architecture.patterns[]` | When a pattern recurs across areas |
-| 3. ADRs | Architectural decisions with rationale and alternatives | `decisions[]` in area JSON with `kind: "architecture"` | Whenever a non-obvious choice is made |
+| 3. ADRs | Architectural decisions with rationale and alternatives | `decisions[]` in the intent file with `kind: "architecture"` | Whenever a non-obvious choice is made |
 | 4. Topology | Deployment units, components-to-units, network boundaries | `topology` in `.spec/project.json` | When there are 2+ deployment units |
 | 5. Protocols | Named cross-boundary I/O conventions (envelopes, cursors, idempotency) | `.spec/protocols/<name>.json`; referenced from `architecture.protocols[]` | When conventions recur |
 | 6. Readbacks | Human-readable Markdown review documents with embedded Mermaid (components, state-machine, navigation, topology, C4 context) — generated by `/spec-readback` | `specs/<area>.readback.md` per area; `.spec/readback.md` project-wide | For PR review and stakeholder review |
 
 Resolution: for each architecture field, **per-component wins, then per-area, then project defaults**. `inherits_project: false` on an area makes that area standalone (rare — used for genuinely independent stacks).
 
-Architecture changes are normal spec changes — edit the JSON, commit through your usual PR flow. The model checker (`/spec-check`) is unaffected by architecture changes because Quint doesn't care how the code is built.
+Architecture changes are normal spec changes — edit the intent file, commit through your usual PR flow. The model checker (`/spec-check`) is unaffected by architecture changes because Quint doesn't care how the code is built.
 
 ---
 
@@ -1081,7 +1151,7 @@ Spec and code can live in the same repo (single-repo) or in separate repos (mult
 
 When `/spec-code-generate auth` runs, it resolves `repo_paths.service-api + areas[auth].code_path` → `/Users/alice/work/service-api/src/auth/` and generates code there. `/spec-code-verify auth` `cd`s into the repo and runs `test_command`.
 
-Audit trail (which code SHA was verified against which spec): recorded in `verification_log[]` of the area JSON, not in git plumbing. Reproducible enough for most teams; teams that need git-level SHA pinning can opt into submodules separately, but they're not built into the methodology.
+Audit trail (which code SHA was verified against which spec): recorded in `verification_log[]` in the area's ledger, not in git plumbing. Reproducible enough for most teams; teams that need git-level SHA pinning can opt into submodules separately, but they're not built into the methodology.
 
 A **spec-only** project has no `repos` block. `/spec-code-generate` and `/spec-code-verify` aren't used; the spec is the deliverable (useful for protocols, formal-methods exercises, cross-team contracts).
 
@@ -1105,7 +1175,7 @@ A **spec-only** project has no `repos` block. `/spec-code-generate` and `/spec-c
 }
 ```
 
-The manifest is an **overlay, not a container**: it holds membership only — which targets, which IDs. The spec content stays in the area JSONs, which remain the single source of truth. Per-target phase status (checked / applied / verified) is **never stored** — it is derived from the area JSONs each time it's displayed, so it cannot go stale: *checked* = `check_results.ran_at` ≥ `last_modified` and every witness `model_sha` matches the current model; *applied* = the target's REQ/INV ids have `traceability[]` entries; *verified* = the latest `verification_log[]` entry passes and post-dates the spec. Delete every manifest and the specs are still complete — there is no drift surface, including the flags.
+The manifest is an **overlay, not a container**: it holds membership only — which targets, which IDs. The spec content stays in the areas' own files, which remain the single source of truth. Per-target phase status (checked / applied / verified) is **never stored** — it is derived from the areas each time it's displayed, so it cannot go stale: *checked* = `check_results.ran_at` ≥ `last_modified` and every witness `model_sha` matches the current model; *applied* = the target's REQ/INV ids have `traceability[]` entries; *verified* = the latest `verification_log[]` entry passes and post-dates the spec. Delete every manifest and the specs are still complete — there is no drift surface, including the flags.
 
 How it drives the commands:
 
@@ -1141,7 +1211,7 @@ elicit       — "what does this need to do?" — captured as EARS patterns (tri
 vocabulary   — "what entities, actors, verbs?"
 structure    — assign IDs (REQ-NNN, INV-NNN, ...), categorize, detect conflicts
 formalize    — design the Quint module, write the sidecar, draft witness predicates
-readback     — review document derived from the JSON + witness traces, presented for human review
+readback     — review document derived from the area + witness traces, presented for human review
 check        — /spec-check runs Apalache + witness probes; counterexamples and no-witness
                results become Q-NNN open questions; traces saved to specs/<area>/traces/
 verify       — /spec-code-verify replays witness traces against code (conformance) + runs tests,
@@ -1157,7 +1227,7 @@ You never have to remember which phase you're in. `/spec auth` always works — 
 
 ## Semantic Diff: What Actually Changed
 
-A text diff says a line changed. It does not say that an operation's domain just widened, that three requirements lost their proof, or that the decision being reversed has fourteen obligations hanging off it. Those are the reviewer's real questions, and they are all derivable from the spec JSONs — so `tools/spec-diff.py` derives them.
+A text diff says a line changed. It does not say that an operation's domain just widened, that three requirements lost their proof, or that the decision being reversed has fourteen obligations hanging off it. Those are the reviewer's real questions, and they are all derivable from the specs — so `tools/spec-diff.py` derives them, over the same area view every tool reads (derived at each revision, so a claim moved from a doc comment and one moved in the intent file diff alike).
 
 ```
 tools/spec-diff.py HEAD~1                 # that revision vs the working tree
@@ -1432,17 +1502,19 @@ quint does not emit that. Making the pre-state an ordinary variable is the
 route that works, and the `_prev*` ghosts are exactly that.
 
 **Where the Quint text lives.** The probe module is generated and never
-hand-edited, and the ghosts are not in scope in the sidecar — so a transition
-invariant has nowhere to be declared by hand. It is authored in the area JSON
-instead, as `invariants[].predicate`, and `tools/spec-probes.py` emits
-`val <quint_name>: bool = <predicate>` from it, positively (a probe is negated
+hand-edited, and the ghosts exist only there — so a transition invariant is
+authored in the model as a `def` whose parameters ARE the ghosts it reads.
+The parameters make it typecheck in the model; `tools/spec-probes.py` emits
+its body as `val <quint_name>: bool = <body>`, positively (a probe is negated
 so its counterexample is a witness; a counterexample to one of these is a
 violation). Regenerate the module after adding one:
 
-```json
-{ "id": "INV-004", "description": "a group's policy never changes",
-  "over": "probes", "quint_name": "policyStable",
-  "predicate": "groups.keys().forall(g => groups.get(g).policy == _prevGroups.get(g).policy)" }
+```quint
+  /// @inv INV-004
+  /// A group's policy never changes.
+  /// @quint-name policyStable
+  def policyStable_over(_prevGroups: GroupId -> Group): bool =
+    groups.keys().forall(g => groups.get(g).policy == _prevGroups.get(g).policy)
 ```
 
 The generator declares, initializes and snapshots every `_prev*` ghost the
@@ -1485,7 +1557,7 @@ Four consequences worth knowing:
 
 ### spec-record
 
-`tools/spec-record.py` is the deterministic ledger for both machine-checked phases — **no verification verdict in the area JSON is ever hand-edited**:
+`tools/spec-record.py` is the deterministic ledger for both machine-checked phases — **no verification verdict in an area's ledger is ever hand-edited**, and it writes nothing but the ledger (`spec_source.save_area` refuses a write that would change an authored field):
 
 - `check <area>` — runs `quint verify` for every invariant, property, and witness probe (and, for invariants marked `proof: "structural"`, `alloy exec` instead — verdict read from the run's `receipt.json`), parses outcomes, saves ITF traces, and writes `check_results`, `formal_status`, and the `witness` blocks mechanically — with skip-if-fresh (`model_sha` match + valid trace → probe not re-run) and `--only` runs merging into the prior ledger rather than replacing it.
   - **Before** the model checker, an advisory **simulator pre-gate**: `quint run` over the same invariants, and `--witnesses` over the probes. Seconds, not minutes — quint's own recommended workflow is simulate first, model-check the survivors. It writes `check_results.simulation` and **never** a `formal_status`: `[ok] No violation found` means "not in the executions I explored", which is not a verdict. Its two payoffs are a shallow bug reported at the top of a run instead of after it, and a witness that 0 of 10 000 random traces reach — the vacuity red flag, found cheap. `--only-simulate` runs just this (and deliberately leaves `check_results.ran_at` alone, so an advisory run cannot make an area read as checked); `--no-simulate` skips it.
@@ -1500,7 +1572,8 @@ The agent's role in both phases is judgment only: predicates, probe-module gener
 ### spec-probes
 
 `tools/spec-probes.py <area>` generates the witness probe module from the area
-JSON and the sidecar's typed IR. Before it, there was a template and an
+view (each witness host's body is inlined as its probe's predicate) and the
+model's typed IR. Before it, there was a template and an
 instruction to "generate/refresh the probe module", which meant hand-rolling
 it every time — with two silent failure modes:
 
@@ -1570,7 +1643,7 @@ Lint grades these the way every other precision lint is graded: WARN while autho
 
 Everything in a readback is derived, which is what makes its git diff the review — and it is also why the document opens with a one-line purpose and then drops straight into Quint excerpts and witness predicates. Derived sections can state what is true; they cannot orient a reader who does not yet know the shape of the area.
 
-So the area JSON carries a **`brief`**: a few paragraphs, plus three optional facets — *how it fits together*, *why it is this way*, *what to watch out for*. It is the one long-form thing an agent writes into the readback. Determinism survives because the brief is an **input**, rendered verbatim, never composed at render time: identical input still yields byte-identical output.
+So the intent file carries a **`brief`**: a few paragraphs, plus three optional facets — *how it fits together*, *why it is this way*, *what to watch out for*. It is the one long-form thing an agent writes into the readback. Determinism survives because the brief is an **input**, rendered verbatim, never composed at render time: identical input still yields byte-identical output.
 
 Prose cannot be checked the way a witness can, so it gets the same treatment a witness trace gets — **a freshness pin**. `brief.written_against` records `tools/itf_tools.py spec-sha <area>`, a hash of the semantic content the brief describes: EARS fields, modality, invariants, constraint values, entity states, scope, externals. Bookkeeping is deliberately excluded, so re-running the checker never invalidates prose it cannot have affected.
 
@@ -1588,14 +1661,14 @@ Sidecar parsing goes through `tools/quint_ir.py`: the Quint compiler's typed JSO
 
 ---
 
-## Quint Sidecar Convention
+## Quint Model Convention
 
-Each area's formal model lives in `specs/<area>.qnt`. Why a sidecar instead of inline string in JSON?
+Each area's formal model lives in `specs/<area>.qnt`, and its records with it (see "Where the Spec Lives: Quint-First"). Why a `.qnt` file and not a string in JSON, and why the records went to it rather than the other way round:
 
-- Editor support: any Quint-aware editor works on a `.qnt` file directly. JSON-embedded multi-line strings are painful to edit.
-- Tool compatibility: `quint`, `apalache`, and IDE extensions all read `.qnt` files natively.
-- Diffs: PR reviewers see actual Quint syntax highlighting, not escaped string changes.
+- Editor support: any Quint-aware editor works on a `.qnt` file directly, and a `///` record is an ordinary doc comment to it (the Quint language server shows it on hover).
+- Tool compatibility: `quint`, `apalache`, and IDE extensions all read `.qnt` files natively; `quint typecheck` now checks the witness predicates too, because they are declarations.
+- Diffs: PR reviewers see a requirement and the Quint that realizes it in one hunk, with syntax highlighting, not escaped string changes in a second file.
 
-`tools/quint_ir.py` is the single parser for sidecars: the Quint compiler's typed JSON IR when the CLI is installed, a regex fallback otherwise. Used by `/spec-check` (validate before Apalache), `spec-lint` (JSON ↔ sidecar consistency), and `spec-matrix` (action discovery).
+`tools/quint_ir.py` is the single parser for the model's *semantics*: the Quint compiler's typed JSON IR when the CLI is installed, a regex fallback otherwise. Used by `/spec-check` (validate before Apalache), `spec-lint` (records ↔ model consistency), and `spec-matrix` (action discovery). The model's *records* are read by `tools/spec_source.py`, pure Python, with the IR's `doc` fields held to the same answer by a test.
 
-The area JSON references the sidecar via `formal_model.quint_file` (typically just `<area>.qnt`). The two files travel together; renaming or moving requires updating both. The pointer is aimed before the file exists — `/spec` scaffolds it at bootstrap, `/spec-check` writes the sidecar — so lint grades the gap the same way it grades the precision lints: **WARN while the area is being authored, FAIL from `in-review` on**, where an aimed pointer with no module means the area is up for review claiming a formal model it does not have.
+The intent file names the model via `formal_model.quint_file` (default `<area>.qnt`). The pointer is aimed before there is a model — `/spec` scaffolds it at bootstrap with an empty module whose doc comment holds the first raw requirements, and writes the model when it formalizes — so lint grades the gap the same way it grades the precision lints: **WARN while the area is being authored, FAIL from `in-review` on**, where a pointer at a missing or records-only module means the area is up for review claiming a formal model it does not have.

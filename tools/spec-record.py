@@ -3,8 +3,10 @@
 spec-record.py — Deterministic check runner and results ledger.
 
 Runs `quint verify` for an area's invariants, properties, and witness
-probes, parses the outcomes, and writes them back into specs/<area>.area.json
-(or .contract.json — check_results, formal_status, witness blocks) MECHANICALLY.
+probes, parses the outcomes, and writes them into the area's ledger,
+specs/<area>.records.json (check_results, formal_status, witness verdicts)
+MECHANICALLY — through spec_source.save_area, which refuses to touch anything
+authored.
 
 Why this exists: the methodology's chain is "held by mechanisms, not by
 trust in the AI". That must include the bookkeeping itself — an agent
@@ -187,6 +189,8 @@ from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
                        load_trace, witness_status, is_hollow,
                        area_json_path, is_rejection, skip_discharge,
                        probe_name, outcome_probe_name)
+from spec_source import (load_area, save_area as save_records,  # noqa: E402
+                         records_path, SpecSourceError)
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 
@@ -209,10 +213,25 @@ def load_json(path):
         fail_setup(f"{path} unreadable: {e}")
 
 
-def save_area(path, data):
-    Path(path).write_text(
-        json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+def load_area_or_fail(root, name, hint=""):
+    """The derived area view (spec_source), or a setup failure."""
+    try:
+        area = load_area(root, name)
+    except SpecSourceError as e:
+        fail_setup(str(e))
+    if area is None:
+        fail_setup(f"{area_json_path(root, name)} not found.{hint}")
+    return area
+
+
+def save_area(root, name, data):
+    """Write what this run recorded to specs/<name>.records.json — the
+    ledger. Everything authored stays where it is; spec_source refuses a
+    save that would change any of it."""
+    try:
+        save_records(root, name, data)
+    except SpecSourceError as e:
+        fail_setup(str(e))
 
 
 def find_alloy(project):
@@ -437,7 +456,9 @@ def quint_supports(quint, subcommand, flag, timeout=60):
         try:
             proc = subprocess.run([quint, subcommand, "--help"],
                                   capture_output=True, text=True, timeout=timeout)
-            _QUINT_CAPS[key] = flag in ((proc.stdout or "") + (proc.stderr or ""))
+            # Whole-flag match: "--server" must not match "--server-endpoint".
+            _QUINT_CAPS[key] = re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])",
+                                         (proc.stdout or "") + (proc.stderr or "")) is not None
         except (OSError, subprocess.SubprocessError):
             _QUINT_CAPS[key] = False
     return _QUINT_CAPS[key]
@@ -812,10 +833,8 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
 
 def cmd_check(args):
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    area = load_json(area_path)
-    if area is None:
-        fail_setup(f"{area_path} not found. Run /spec {args.area} first.")
+    area_path = records_path(root, args.area)
+    area = load_area_or_fail(root, args.area, f" Run /spec {args.area} first.")
     fm = area.get("formal_model") or {}
     qnt_file = root / "specs" / (fm.get("quint_file") or f"{args.area}.qnt")
     als_rel = fm.get("alloy_file")
@@ -997,7 +1016,7 @@ def cmd_check(args):
             print("nothing to simulate (no Quint invariants or probes selected)")
         else:
             cr["simulation"] = simulation
-            save_area(area_path, area)
+            save_area(root, args.area, area)
             print(f"\nrecorded check_results.simulation in {area_path} "
                   f"(no verdicts written — simulation is advisory)")
         sys.exit(0)
@@ -1023,7 +1042,7 @@ def cmd_check(args):
         cr["max_steps"] = max_steps
         if simulation is not None:
             cr["simulation"] = simulation  # advisory; carries no formal_status
-        save_area(area_path, area)
+        save_area(root, args.area, area)
 
     # Apalache server congestion. A run-level budget is not enough on its
     # own: killing a timed-out `quint verify` leaves its query running inside
@@ -1624,7 +1643,7 @@ def cmd_check(args):
     flush()
     cr = area["check_results"]
     cr["ran_at"] = now_iso()
-    save_area(area_path, area)
+    save_area(root, args.area, area)
     print(f"\nrecorded check_results + witness blocks in {area_path}")
 
     if args.emit_json:
@@ -1646,10 +1665,8 @@ def cmd_equiv(args):
     pass. Brownfield is the one case where it can be MEASURED, because the
     original answers any question you ask it \u2014 and until now nothing asked."""
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    area = load_json(area_path)
-    if area is None:
-        fail_setup(f"{area_path} not found.")
+    area_path = records_path(root, args.area)
+    area = load_area_or_fail(root, args.area)
     if area.get("kind") == "contract":
         fail_setup(f"'{args.area}' is a contract \u2014 it has no implementation to compare.")
 
@@ -1714,7 +1731,7 @@ def cmd_equiv(args):
         entry_out["detail"] = "\n".join(tail.strip().splitlines()[-8:])
 
     area.setdefault("check_results", {})["differential"] = entry_out
-    save_area(area_path, area)
+    save_area(root, args.area, area)
 
     if result == "equivalent-in-sequences":
         print(f"DIFFERENTIAL: no sequence distinguished the two implementations "
@@ -1802,10 +1819,8 @@ def resolve_code_root(root, area_name, project, override=None):
 
 def cmd_verify(args):
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    area = load_json(area_path)
-    if area is None:
-        fail_setup(f"{area_path} not found.")
+    area_path = records_path(root, args.area)
+    area = load_area_or_fail(root, args.area)
     if area.get("kind") == "contract":
         fail_setup(f"'{args.area}' is a contract — its verification is "
                    f"/spec-check (spec-record check).")
@@ -1982,7 +1997,7 @@ def cmd_verify(args):
     }
     log.append(entry_out)
     area["verification_log"] = log[-50:]  # deterministic cap, newest kept
-    save_area(area_path, area)
+    save_area(root, args.area, area)
     print(f"\nrecorded verification_log entry ({status}) in {area_path}")
 
     if args.emit_json:
@@ -2009,10 +2024,8 @@ def cmd_stamp(args):
     answer "what has moved since".
     """
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    area = load_json(area_path)
-    if area is None:
-        fail_setup(f"{area_path} not found.")
+    area_path = records_path(root, args.area)
+    area = load_area_or_fail(root, args.area)
     project = load_json(root / ".spec" / "project.json") or {}
     repo_root, entry = resolve_code_root(root, args.area, project, args.code_root)
 
@@ -2045,7 +2058,7 @@ def cmd_stamp(args):
         area["extracted_from"] = block
         label = "extracted_from"
 
-    save_area(area_path, area)
+    save_area(root, args.area, area)
     print(f"{label}: code @ {code_sha[:7]}"
           + (f", spec @ {block['spec_sha'][:7]}" if block.get("spec_sha") else "")
           + (f", claims @ {block['spec_content_sha'][:7]}"
@@ -2075,10 +2088,8 @@ def cmd_changed(args):
     named in the output rather than applied silently.
     """
     root = Path(args.root)
-    area_path = area_json_path(root, args.area)
-    area = load_json(area_path)
-    if area is None:
-        fail_setup(f"{area_path} not found.")
+    area_path = records_path(root, args.area)
+    area = load_area_or_fail(root, args.area)
     project = load_json(root / ".spec" / "project.json") or {}
     repo_root, entry = resolve_code_root(root, args.area, project, args.code_root)
 

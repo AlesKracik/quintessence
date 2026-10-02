@@ -10,7 +10,7 @@ The workflow runs on **five Claude Code commands**:
 
 | Command | What it does |
 |---|---|
-| `/spec [area]` | Adaptive entry point for all spec authoring — elicit, structure, formalize, extract from existing code, reconcile drift. Writes the area JSON and its Quint sidecar. |
+| `/spec [area]` | Adaptive entry point for all spec authoring — elicit, structure, formalize, extract from existing code, reconcile drift. Writes the area's Quint model — every requirement, invariant and example a `///` doc comment on the declaration that realizes it — and its intent file. |
 | `/spec-check [area]` | Checks the spec against itself: Apalache on the model, a machine-found witness trace per requirement, state×event and external×outcome coverage. Touches no code. |
 | `/spec-code-generate [area]` | Generates code from the spec, plus the conformance adapter and trace-replay harness. |
 | `/spec-code-verify [area]` | Checks code against the spec: replays the model's own witness traces through the implementation, runs the tests, detects drift. |
@@ -64,7 +64,7 @@ Spec: No .spec/project.json — let me set up the project.
   Areas? > orders, inventory, notifications
   ...
 ✓ Wrote .spec/project.json
-✓ Scaffolded specs/{orders,inventory,notifications}.area.json (status: raw)
+✓ Scaffolded specs/{orders,inventory,notifications}.{intent.json,qnt} (status: raw)
 
   Name the first change? [initial-spec] > ⏎
 ✓ Opened change initial-spec (targets: orders, inventory, notifications)
@@ -80,13 +80,13 @@ Spec: orders has no requirements yet. Walking elicitation.
   Happy path? > [walks; captures REQ-001..REQ-004]
   Invariants? > [INV-001 "no confirmed order has unreserved inventory", critical]
   ...
-✓ Updated specs/orders.area.json (status: structured)
+✓ Wrote REQ-001..REQ-004, INV-001 as records in specs/orders.qnt (status: structured)
 
 Ready to formalize. Draft a Quint module?
 > yes
 
-✓ Wrote specs/orders.qnt
-✓ Updated specs/orders.area.json (status: formalized)
+✓ Wrote the model in specs/orders.qnt — each record moved onto its action,
+  invariant or witness host (status: formalized)
 
 Next: /spec-check orders
 ```
@@ -111,7 +111,7 @@ Witness obligations:
 > /spec-code-verify orders     # 12 tests pass; spec ↔ code linked
 ```
 
-End-state for one area: `specs/orders.area.json` + `specs/orders.qnt` + `specs/orders.readback.md` + actual code in `src/orders/` and `tests/orders/`. PR carries all of it together.
+End-state for one area: `specs/orders.qnt` (model + records) + `specs/orders.intent.json` + `specs/orders.records.json` (the ledger the tools wrote) + `specs/orders.readback.md` + actual code in `src/orders/` and `tests/orders/`. PR carries all of it together.
 
 ### 2. Brownfield — adding spec to existing code
 
@@ -213,7 +213,7 @@ module authUi {
   ✓ guardedDashboard  VERIFIED (inductive) — proven across ALL reachable states.
 ```
 
-This invariant is marked `proof: inductive` in the area JSON, so `spec-check` runs `quint verify --inductive-invariant=guardedDashboard` (base case + one-step preservation) — an unbounded proof, not a depth-N bounded check. Machine-checked: no sequence of user actions reaches Dashboard without `authenticated == true`. (Left at the default `proof: bounded`, the same invariant would render `✓ (≤10 steps)` — true only to the step limit, honest about it.) Not unit tests, not a code-review checklist — a formal property.
+This invariant is tagged `@proof inductive` on its `val`, so `spec-check` runs `quint verify --inductive-invariant=guardedDashboard` (base case + one-step preservation) — an unbounded proof, not a depth-N bounded check. Machine-checked: no sequence of user actions reaches Dashboard without `authenticated == true`. (Left at the default `proof: bounded`, the same invariant would render `✓ (≤10 steps)` — true only to the step limit, honest about it.) Not unit tests, not a code-review checklist — a formal property.
 
 ```
 > /spec-readback auth-ui   # writes specs/auth-ui.readback.md with navigation diagram inline
@@ -251,7 +251,7 @@ spec-template/
 ├── README.md                  ← this file (bootstrap replaces it with a project stub)
 ├── METHODOLOGY.md             ← the methodology — stays in every project
 ├── .claude/commands/          ← the 5 /spec-* commands
-├── schemas/                   ← 6 JSON schemas (area, change, journey, project, pattern, protocol)
+├── schemas/                   ← JSON schemas: the area view, intent + records (generated from it), change, journey, project, pattern, protocol
 ├── templates/                 ← spec.qnt.template, probes.qnt.template, contract.als.template
 ├── .github/workflows/         ← spec-ci.yml (lint → matrix → typecheck → quint test; skips pre-bootstrap)
 ├── tools/                     ← spec-lint, spec-record, spec-readback, spec-matrix, quint_ir, itf_tools, migrate-quint-config, bootstrap.sh (self-removes)
@@ -267,11 +267,11 @@ After `tools/bootstrap.sh` runs, `examples/` and this README are gone, and `tool
 Before bootstrapping (or by browsing this repo on GitHub), look at:
 
 - `examples/.spec/project.json` — a real project config with two areas.
-- `examples/specs/auth.area.json` + `examples/specs/auth.qnt` — login/lockout area, with invariants Apalache verifies.
-- `examples/specs/auth-ui.area.json` + `examples/specs/auth-ui.qnt` — UI area with navigation modeled as a Quint state machine ("Dashboard is unreachable without auth" is a model-checked invariant).
-- `examples/specs/session-ownership.contract.json` + `examples/specs/session-ownership.als` — a contract using the optional Alloy backend: relational invariants checked over a declared finite scope, rendered honestly as `✓ (scope: …)`.
-- `examples/specs/cart.area.json` + `examples/code/legacy-cart/cart.js` — a **brownfield** extraction: real code with a threshold nobody documented, a rejection nobody tested and one dead line, plus the boundary it must preserve and an extraction ledger accounting for all 18 decision sites (9 mapped, 4 gaps, 1 dead, 1 out of scope).
-- `examples/specs/subscription.area.json` + `examples/specs/subscription.qnt` — the methodology's acceptance case ("cancel an active subscription… if the billing provider times out, it must remain active"). Five sentences of prose carrying a declared scope, a provider with four outcomes, two assumptions, a closed state set, a forbidden requirement, a permitted-not-required one, and three worked examples.
+- `examples/specs/auth.qnt` + `auth.intent.json` + `auth.records.json` — login/lockout area, with invariants Apalache verifies.
+- `examples/specs/auth-ui.qnt` + `auth-ui.intent.json` — UI area with navigation modeled as a Quint state machine ("Dashboard is unreachable without auth" is a model-checked invariant).
+- `examples/specs/session-ownership.als` + `session-ownership.intent.json` — a contract whose records sit on its Alloy assertions, using the optional Alloy backend: relational invariants checked over a declared finite scope, rendered honestly as `✓ (scope: …)`.
+- `examples/specs/cart.qnt` (records only — no model yet) + `cart.intent.json` + `cart.records.json` (the extraction ledger) + `examples/code/legacy-cart/cart.js` — a **brownfield** extraction: real code with a threshold nobody documented, a rejection nobody tested and one dead line, plus the boundary it must preserve and an extraction ledger accounting for all 18 decision sites (9 mapped, 4 gaps, 1 dead, 1 out of scope).
+- `examples/specs/subscription.qnt` + `subscription.intent.json` — the methodology's acceptance case ("cancel an active subscription… if the billing provider times out, it must remain active"). Five sentences of prose carrying a declared scope, a provider with four outcomes, two assumptions, a closed state set, a forbidden requirement, a permitted-not-required one, and three worked examples.
 
 Reference material, not starter content. The bootstrap removes it.
 

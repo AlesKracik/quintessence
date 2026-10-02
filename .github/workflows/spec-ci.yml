@@ -155,7 +155,7 @@ jobs:
           # still hand-writing its probe module is not failed for it. For the
           # ones that have, a stale module means every witness was checked
           # against something that no longer matches the model.
-          areas=$(python -c "import json,pathlib; print(' '.join(p.name.split('.')[0] for p in sorted(pathlib.Path('specs').glob('*.area.json')) if (json.loads(p.read_text(encoding='utf-8')).get('formal_model') or {}).get('probe_domains')))")
+          areas=$(python -c "import json,pathlib; print(' '.join(p.name[:-len('.intent.json')] for p in sorted(pathlib.Path('specs').glob('*.intent.json')) if (json.loads(p.read_text(encoding='utf-8')).get('formal_model') or {}).get('probe_domains')))")
           for area in $areas; do
             echo "── probes: $area"
             python tools/spec-probes.py "$area" --check
@@ -186,6 +186,11 @@ jobs:
           fi
           for f in specs/*.qnt; do
             case "$f" in *.probes.qnt) continue;; esac
-            echo "── test: $f"
-            quint test $backend "$f" || exit 1
+            # quint test only runs `run`s whose name matches --match, and its
+            # default is /Test$/ — none of a spec's scenarios are named that
+            # way, so without an explicit match this gate ran nothing.
+            runs=$(python tools/quint_ir.py "$f" --json | python -c "import json,sys; print('|'.join(json.load(sys.stdin).get('runs') or []))")
+            if [ -z "$runs" ]; then echo "── test: $f (no runs)"; continue; fi
+            echo "── test: $f ($runs)"
+            quint test $backend --match "^($runs)\$" "$f" || exit 1
           done

@@ -112,6 +112,12 @@ module authUi {
 
   // INV-001: Dashboard reachable only when authenticated.
   // Apalache will verify this holds across all reachable states.
+  /// @inv INV-001
+  /// Dashboard is reachable only when authenticated == true. ('Shall always'
+  /// statements are invariants, not requirements — Apalache proves them
+  /// across all reachable states.)
+  /// @criticality critical
+  /// @proof inductive
   val guardedDashboard: bool =
     (current == Dashboard) implies authenticated
 
@@ -128,4 +134,53 @@ module authUi {
     .then(submit_locked)
     .expect(current == LockedNotice)
 
+  // ----------------------------------------------------------
+  // REQUIREMENTS — witness predicates, constants and transition
+  // properties whose records live on them (spec_source.py)
+  // ----------------------------------------------------------
+
+  /// @req UI-001
+  /// While on Home, when the user clicks 'Sign in', the system shall
+  /// navigate to Login.
+  /// @status specified
+  /// @while the user is on Home
+  /// @when the user clicks 'Sign in'
+  /// @shall navigate to Login
+  /// @meaning From the home page, the Sign in button takes the user to the
+  ///   login page. Nothing else happens yet — no credentials have been
+  ///   entered.
+  /// @meaning-author agent
+  /// @via click_sign_in
+  val shall_UI_001: bool =
+    current == Login
+
+  /// @req UI-002
+  /// While on Login, when the user submits valid credentials, the system
+  /// shall navigate to Dashboard.
+  /// @status specified
+  /// @while the user is on Login
+  /// @when the user submits valid credentials
+  /// @shall navigate to Dashboard
+  /// @meaning A user who enters credentials that check out is taken straight
+  ///   to the dashboard; the login page does not stay in the way.
+  /// @meaning-author agent
+  /// @via submit_success
+  val shall_UI_002: bool =
+    current == Dashboard
+
+  /// @req UI-003
+  /// If the user submits credentials for a Locked account, then the system
+  /// shall navigate to LockedNotice.
+  /// @status specified
+  /// @while the user is on Login
+  /// @when the user submits credentials for a Locked account
+  /// @unwanted
+  /// @shall navigate to LockedNotice
+  /// @meaning If the credentials belong to an account that has been locked,
+  ///   the user is sent to a page that tells them so, rather than to the
+  ///   dashboard or back to a login form that will never work.
+  /// @meaning-author agent
+  /// @via submit_locked
+  val shall_UI_003: bool =
+    current == LockedNotice
 }

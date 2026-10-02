@@ -41,6 +41,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import spec_source  # noqa: E402
+
 # Everything a tool writes on its own. Changes confined to these are
 # bookkeeping, never claims.
 MECHANICAL_TOP = {"check_results", "verification_log", "last_modified"}
@@ -75,18 +78,30 @@ def blob(rev, path, root):
     return proc.stdout if proc.returncode == 0 else None
 
 
+def derive_at(rev, area, root):
+    """The derived area at a revision (None = the index), or None."""
+    try:
+        data, _ = spec_source.derive_from_texts(area, spec_source.git_getter(root, rev))
+    except spec_source.SpecSourceError:
+        return {"__unparseable__": True}
+    return data
+
+
 # ── The claim projection ────────────────────────────────────────────────────
 
-def claims(spec_text):
-    """Reduce a spec JSON to the claims it makes, dropping everything the
-    tools write. Two specs with the same projection make the same promises,
-    however differently they are formatted."""
-    if spec_text is None:
+def claims(data):
+    """Reduce a derived area view (spec_source) to the claims it makes,
+    dropping everything the tools write. Two specs with the same projection
+    make the same promises, however differently they are formatted — or
+    wherever they are written: a requirement edited in a .qnt doc comment
+    and one edited in the old JSON project to the same claim."""
+    if data is None:
         return None
-    try:
-        data = json.loads(spec_text)
-    except ValueError:
-        return {"__unparseable__": True}
+    if isinstance(data, str):              # a serialized area view
+        try:
+            data = json.loads(data)
+        except ValueError:
+            return {"__unparseable__": True}
     if not isinstance(data, dict):
         return {"__unparseable__": True}
 
@@ -174,13 +189,12 @@ def traced_paths(root):
     for a file and edits that file in the same breath is the case this rule
     exists to catch, and reading the old revision would miss it."""
     paths = set()
-    specs = root / "specs"
-    if not specs.exists():
-        return paths
-    for spec_file in specs.glob("*.json"):
+    for name in spec_source.list_areas(root):
         try:
-            data = json.loads(spec_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            data = spec_source.load_area(root, name)
+        except spec_source.SpecSourceError:
+            continue
+        if not data:
             continue
         for row in data.get("traceability", []) or []:
             code = (row.get("code") or "").split(":")[0].strip()
@@ -226,18 +240,21 @@ def main():
         sys.exit(0)
 
     traced = traced_paths(root)
-    spec_files = [f for f in files if f.startswith("specs/") and f.endswith(".json")]
+    spec_areas = sorted({spec_source.area_of_file(f) for f in files
+                         if f.startswith("specs/") and spec_source.area_of_file(f)})
     impl_files = [f for f in files
                   if not f.startswith("specs/") and not f.startswith(".spec/")
                   and touches_implementation(f, traced)]
 
     claim_changes = {}
-    for path in spec_files:
-        before = claims(blob(before_rev, path, root))
-        after = claims(blob(after_rev, path, root))
+    for area in spec_areas:
+        before = claims(derive_at(before_rev, area, root))
+        after = claims(derive_at(after_rev, area, root))
+        if before is None and after is None:
+            continue  # not an area (a stray file under specs/)
         diff = claim_diff(before, after)
         if diff:
-            claim_changes[path] = diff
+            claim_changes[f"specs/{area}"] = diff
 
     report = {"claim_changes": claim_changes, "implementation_changes": impl_files}
 

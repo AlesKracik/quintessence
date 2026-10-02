@@ -40,6 +40,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import spec_source  # noqa: E402
+
 WORKTREE = "<worktree>"
 
 
@@ -69,43 +72,26 @@ def repo_prefix(root):
 
 
 def spec_paths(ref, root, prefix=""):
-    """Spec JSON paths (repo-relative) at a revision or in the working tree."""
+    """Area names at a revision or in the working tree (one per intent file)."""
     if ref == WORKTREE:
-        base = Path(root) / "specs"
-        if not base.exists():
-            return []
-        return sorted(prefix + "specs/" + f.name for f in base.glob("*.json")
-                      if f.name.endswith((".area.json", ".contract.json")))
-    out = git(["ls-tree", "-r", "--name-only", ref, "--", prefix + "specs/"], root)
-    return sorted(ln for ln in out.splitlines()
-                  if ln.endswith((".area.json", ".contract.json")))
+        return spec_source.list_areas(root)
+    return spec_source.areas_at(root, ref, prefix)
 
 
-def load_at(ref, path, root, prefix=""):
-    if ref == WORKTREE:
-        rel = path[len(prefix):] if prefix and path.startswith(prefix) else path
-        f = Path(root) / rel
-        if not f.exists():
-            return None
-        text = f.read_text(encoding="utf-8")
-    else:
-        proc = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=str(root),
-                              capture_output=True, text=True, timeout=60)
-        if proc.returncode != 0:
-            return None
-        text = proc.stdout
+def load_at(ref, area, root, prefix=""):
+    """The derived area view at a revision — the same derivation every tool
+    reads, so the diff compares what the specs SAY, wherever it is written."""
+    get = (spec_source._fs_getter(root) if ref == WORKTREE
+           else spec_source.git_getter(root, ref, prefix))
     try:
-        return json.loads(text)
-    except ValueError:
+        data, _info = spec_source.derive_from_texts(area, get)
+    except spec_source.SpecSourceError:
         return None
+    return data
 
 
 def area_of(path):
-    name = Path(path).name
-    for suffix in (".area.json", ".contract.json"):
-        if name.endswith(suffix):
-            return name[: -len(suffix)]
-    return name
+    return path
 
 
 def by_id(items):

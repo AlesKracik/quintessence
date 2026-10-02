@@ -1,0 +1,184 @@
+{
+  "$schema": "../schemas/intent.schema.json",
+  "kind": "area",
+  "area": "subscription",
+  "version": "0.1.0",
+  "status": "formalized",
+  "last_modified": "2026-05-15T12:00:00Z",
+  "purpose": "Subscription cancellation: stop future billing, preserve access to the end of the paid period, survive a flaky billing provider. This is the methodology's acceptance case — five sentences of prose turned into the decisions the prose leaves open.",
+  "scope": {
+    "included": [
+      "cancellation",
+      "billing suppression",
+      "access until period end"
+    ],
+    "excluded": [
+      {
+        "item": "refunds",
+        "reason": "Product policy: no refunds for the unused period (DEC-001). Nothing here may issue one."
+      },
+      {
+        "item": "proration",
+        "reason": "No mid-period price adjustment exists in this product."
+      },
+      {
+        "item": "reactivation",
+        "reason": "Resubscribing creates a new subscription; owned by the signup area.",
+        "owner": "signup"
+      },
+      {
+        "item": "dunning",
+        "reason": "Retry-and-chase on failed renewal payments is the billing area's job."
+      }
+    ]
+  },
+  "concepts": {
+    "entities": [
+      {
+        "name": "Subscription",
+        "id_field": "customerId",
+        "states": [
+          "Active",
+          "Cancelled",
+          "Expired"
+        ],
+        "closed": true,
+        "description": "CLOSED: exactly these three states exist. 'Paused', 'PendingCancellation' and friends are the states an implementation invents when nobody wrote the list down — the marker is what stops that."
+      }
+    ],
+    "actors": [
+      "Customer",
+      "System",
+      "BillingProvider"
+    ],
+    "verbs": [
+      "cancel_subscription",
+      "cancel_again",
+      "cancel_times_out",
+      "expire_period"
+    ]
+  },
+  "externals": [
+    {
+      "name": "BillingProvider",
+      "kind": "service",
+      "description": "Third-party recurring-billing API. Cancellation is only real once it accepts the request.",
+      "outcomes": [
+        {
+          "name": "SUCCESS",
+          "description": "Future charges stopped.",
+          "terminal": true
+        },
+        {
+          "name": "DECLINED",
+          "description": "Provider refuses the change (e.g. account in arrears).",
+          "terminal": true
+        },
+        {
+          "name": "TIMEOUT",
+          "description": "No answer within the deadline. The request may or may not have been applied."
+        },
+        {
+          "name": "NETWORK_ERROR",
+          "description": "The call never reached the provider."
+        }
+      ]
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "ASM-001",
+      "statement": "BillingProvider eventually responds to a cancellation request, within at most three retry windows.",
+      "kind": "external",
+      "external": "BillingProvider",
+      "affects": [
+        "INV-003",
+        "REQ-004"
+      ],
+      "status": "accepted",
+      "discharged_by": "Synthetic cancellation probe every 5 minutes; pages if a request is unanswered for 15."
+    },
+    {
+      "id": "ASM-002",
+      "statement": "The paid period end is known locally and does not depend on the provider being reachable.",
+      "kind": "environment",
+      "affects": [
+        "REQ-002",
+        "REQ-005"
+      ],
+      "status": "accepted"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "DEC-001",
+      "kind": "scope",
+      "title": "No refunds on cancellation",
+      "decision": "Cancellation stops future billing and preserves access to the end of the paid period. No money is returned.",
+      "rationale": "Product policy; the paid period has already been delivered as access.",
+      "alternatives_considered": [
+        {
+          "option": "Prorated refund of the unused days",
+          "reason_rejected": "Support and accounting cost outweighs the churn benefit at this price point."
+        }
+      ],
+      "affects": [
+        "REQ-006",
+        "INV-002",
+        "REQ-002"
+      ],
+      "status": "accepted",
+      "decided_at": "2026-05-15T12:00:00Z"
+    }
+  ],
+  "state_machines": [
+    {
+      "entity": "Subscription",
+      "quint_var": "status",
+      "quint_type": "SubStatus",
+      "initial_state": "Active",
+      "states": [
+        {
+          "name": "Active",
+          "description": "Billing runs; access granted."
+        },
+        {
+          "name": "Cancelled",
+          "description": "Billing stopped; access survives to the end of the paid period."
+        },
+        {
+          "name": "Expired",
+          "terminal": true,
+          "description": "Paid period over; access withdrawn."
+        }
+      ],
+      "transitions": [
+        {
+          "from": "Active",
+          "to": "Cancelled",
+          "trigger": "cancel_subscription",
+          "actor": "Customer",
+          "quint_action": "cancel_subscription"
+        },
+        {
+          "from": "Cancelled",
+          "to": "Expired",
+          "trigger": "expire_period",
+          "actor": "System",
+          "quint_action": "expire_period"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "Q-001",
+      "question": "After MAX_CANCEL_RETRIES exhausted TIMEOUTs, does the subscription stay Active forever, or does an operator get paged? ASM-001 assumes the provider answers eventually; nothing here says what happens if it does not.",
+      "status": "open",
+      "source": "elicitation"
+    }
+  ],
+  "formal_model": {
+    "quint_file": "subscription.qnt"
+  }
+}

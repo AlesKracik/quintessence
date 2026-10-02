@@ -1,0 +1,266 @@
+{
+  "$schema": "../schemas/records.schema.json",
+  "area": "cart",
+  "check_results": {
+    "extraction": {
+      "ran_at": "2026-09-07T19:43:01+00:00",
+      "sites": 18,
+      "mapped": 9,
+      "triaged": 9,
+      "unclaimed": 0,
+      "gaps": [
+        "Q-001",
+        "Q-003",
+        "Q-004"
+      ]
+    }
+  },
+  "traceability": [
+    {
+      "id": "REQ-001",
+      "code": "code/legacy-cart/cart.js:addItem",
+      "tests": [],
+      "verified": false
+    },
+    {
+      "id": "REQ-002",
+      "code": "code/legacy-cart/cart.js:addItem",
+      "tests": [],
+      "verified": false
+    },
+    {
+      "id": "REQ-003",
+      "code": "code/legacy-cart/cart.js:addItem",
+      "tests": [],
+      "verified": false
+    },
+    {
+      "id": "REQ-004",
+      "code": "code/legacy-cart/cart.js:checkout",
+      "tests": [],
+      "verified": false
+    }
+  ],
+  "extraction_triage": [
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "7a79ddd2",
+      "line": 22,
+      "kind": "branch",
+      "snippet": "if (cart.status === \"checked_out\") {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-003",
+        "INV-001"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "979e2ec6",
+      "line": 23,
+      "kind": "early-exit",
+      "snippet": "throw new Error(\"cart is closed\");",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-003"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "feb2962c",
+      "line": 26,
+      "kind": "branch",
+      "snippet": "if (cart.items.length >= MAX_ITEMS) {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-002",
+        "CON-001"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "680cf81a",
+      "line": 27,
+      "kind": "early-exit",
+      "snippet": "throw new Error(\"cart is full\");",
+      "verdict": "GAP",
+      "reason": "The cart-full rejection is real behavior with no requirement: REQ-002 says what happens BELOW the limit and nothing says what happens at it. Exactly the kind of branch a regenerated implementation would omit.",
+      "question": "Q-001"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "f7c321c7",
+      "line": 31,
+      "kind": "branch",
+      "snippet": "if (existing) {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-001",
+        "REQ-002"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "4498986c",
+      "line": 39,
+      "kind": "early-exit",
+      "snippet": "return cart;",
+      "verdict": "NOT-BEHAVIOR",
+      "reason": "Returns the updated cart the caller already holds; the observable change is the stored cart, covered by REQ-001/REQ-002."
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "7c1c06be",
+      "line": 45,
+      "kind": "branch",
+      "snippet": "if (cart.items.length === 0) {",
+      "verdict": "GAP",
+      "reason": "Checkout of an empty cart throws. No requirement mentions it, and the empty-cart case is not in any journey.",
+      "question": "Q-003"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "5958b57b",
+      "line": 45,
+      "kind": "guard-literal",
+      "snippet": "0 in if (cart.items.length === 0) {",
+      "verdict": "GAP",
+      "reason": "Same site: the threshold itself is unspecified. Is an empty checkout an error, or a no-op returning ok:true?",
+      "question": "Q-003"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "8ebb77b4",
+      "line": 46,
+      "kind": "early-exit",
+      "snippet": "throw new Error(\"cart is empty\");",
+      "verdict": "GAP",
+      "reason": "The empty-cart rejection, unspecified. Note it THROWS while the other two failure paths RETURN ok:false — an inconsistency the extraction surfaced.",
+      "question": "Q-003"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "1b0fcb6c",
+      "line": 51,
+      "kind": "branch",
+      "snippet": "if (result.status === \"declined\") {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "9be7e534",
+      "line": 52,
+      "kind": "early-exit",
+      "snippet": "return { ok: false, reason: \"declined\" };",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "a442fd3a",
+      "line": 56,
+      "kind": "early-exit",
+      "snippet": "return { ok: true };",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "29c8191a",
+      "line": 57,
+      "kind": "error-handler",
+      "snippet": "} catch (err) {",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "bb8ba768",
+      "line": 61,
+      "kind": "early-exit",
+      "snippet": "return { ok: false, reason: \"unavailable\" };",
+      "verdict": "MAPPED",
+      "maps_to": [
+        "REQ-004"
+      ]
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "9cd8004a",
+      "line": 67,
+      "kind": "branch",
+      "snippet": "if (!cart) {",
+      "verdict": "DEFENSIVE",
+      "reason": "store.get always returns a cart today; the guard is a belt against a store contract that has never been violated."
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "dc6f1e95",
+      "line": 68,
+      "kind": "early-exit",
+      "snippet": "return null;",
+      "verdict": "DEAD",
+      "reason": "Unreachable given the store's current contract. A finding about the CODE: either delete it, or make the store contract explicit enough that the branch is justified."
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "b732cb0a",
+      "line": 72,
+      "kind": "early-exit",
+      "snippet": "return cart;",
+      "verdict": "GAP",
+      "reason": "clear() has no requirement at all — the whole operation was extracted as code with no spec behind it.",
+      "question": "Q-004"
+    },
+    {
+      "file": "code/legacy-cart/cart.js",
+      "fingerprint": "837e0a83",
+      "line": 77,
+      "kind": "early-exit",
+      "snippet": "return cart.items.reduce((sum, i) => sum + i.qty, 0);",
+      "verdict": "OUT-OF-SCOPE",
+      "scope_ref": "pricing",
+      "reason": "total() sums quantities as a stand-in for an amount; anything money-shaped belongs to billing."
+    }
+  ],
+  "by_id": {
+    "INV-001": {
+      "formal_status": "specified"
+    },
+    "INV-002": {
+      "formal_status": "specified"
+    },
+    "REQ-001": {
+      "meaning": {
+        "written_against": "2c3572a6509004f5737beaadd40c882efdeb2c7679467f597b1c25e805732ed6"
+      }
+    },
+    "REQ-002": {
+      "meaning": {
+        "written_against": "3ccc4fc8c099081e8c22f32be362a94ac85054f595106744237839b17d07668f"
+      }
+    },
+    "REQ-003": {
+      "refusal": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "8d40197da1f4d0b01ac56fcbafc2717486d23ee9a97e0c34c81802061de68632"
+      }
+    },
+    "REQ-004": {
+      "meaning": {
+        "written_against": "1e7b8eba045517d68ddf7f6e0ad9b3d75bba91312733bc1b5db00da6d44c1c1a"
+      }
+    }
+  }
+}

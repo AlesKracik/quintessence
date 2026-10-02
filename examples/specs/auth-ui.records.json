@@ -1,0 +1,35 @@
+{
+  "$schema": "../schemas/records.schema.json",
+  "area": "auth-ui",
+  "verification_log": [],
+  "traceability": [],
+  "by_id": {
+    "INV-001": {
+      "formal_status": "specified"
+    },
+    "UI-001": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "26c658535b8ccd67b742f8e36e79885d8c9c6588526cdfeda41bcf3e94bec94f"
+      }
+    },
+    "UI-002": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "25f39dab9ee24a77530041e636cfde49c9aa64e2076db67bdebf2ace4986df4e"
+      }
+    },
+    "UI-003": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "43f5bb1b50eff0cfef5bdb2a1770ddef236384427da527e7be5550dab1849c45"
+      }
+    }
+  }
+}

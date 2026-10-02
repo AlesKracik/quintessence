@@ -1,6 +1,6 @@
 # /spec-readback — Generate Human-Readable Review Document
 
-The readback is the review surface humans trust, so it is **rendered by a tool, not by you**: `tools/spec-readback.py` derives every section, sentence, table, diagram, and status mark from the area JSONs, sidecars, journeys, and change manifests. Identical input → byte-identical output; `git diff specs/<area>.readback.md` on a PR **is** the change review. Your job is orchestration and follow-up, never content.
+The readback is the review surface humans trust, so it is **rendered by a tool, not by you**: `tools/spec-readback.py` derives every section, sentence, table, diagram, and status mark from each area's model doc comments, intent and records files (through `tools/spec_source.py`), journeys, and change manifests. Identical input → byte-identical output; `git diff specs/<area>.readback.md` on a PR **is** the change review. Your job is orchestration and follow-up, never content.
 
 ## Usage
 ```
@@ -42,11 +42,11 @@ git commit -m "spec(<target>): readback — <summary>"
 
 ## What `/spec-readback` does NOT do
 
-- **Two authored fields are the exception, and neither is an exception to determinism.** Both live in the *area JSON* and are rendered verbatim; you never type prose into the `.md`.
-  - **`brief`** — lead paragraphs plus optional `how_it_fits`, `why_this_way`, `watch_out_for`. After writing or revising it, re-pin: `tools/itf_tools.py spec-sha <area>` → `brief.written_against`.
-  - **`requirements[].meaning`** — the plain-words sentence the readback leads with, per requirement. This is the one place a model's understanding is allowed to replace the mechanical rendering: the EARS fields say the behavior in the system's own vocabulary, identifiers and exception names included, and the meaning says what that amounts to for a reviewer who has never seen the code. Written once, re-pinned per requirement: `tools/itf_tools.py meaning-sha <area> --req <ID>` → `meaning.written_against`. A **stale** meaning is not rendered at all — the headline falls back to the EARS sentence and the page says why — because a distillation of an older version of the requirement reads like it was reviewed when it wasn't.
+- **Two authored fields are the exception, and neither is an exception to determinism.** Both are authored where they belong — the brief in `specs/<area>.intent.json`, each meaning as `@meaning` on its requirement's doc comment — and rendered verbatim; you never type prose into the `.md`.
+  - **`brief`** — lead paragraphs plus optional `how_it_fits`, `why_this_way`, `watch_out_for`. After writing or revising it, re-pin: `tools/itf_tools.py pin <area> --brief` (writes `brief.written_against` into the ledger).
+  - **`requirements[].meaning`** — the plain-words sentence the readback leads with, per requirement. This is the one place a model's understanding is allowed to replace the mechanical rendering: the EARS fields say the behavior in the system's own vocabulary, identifiers and exception names included, and the meaning says what that amounts to for a reviewer who has never seen the code. Written once, re-pinned per requirement: `tools/itf_tools.py pin <area> --req <ID>` (`meaning-sha` shows which are stale). A **stale** meaning is not rendered at all — the headline falls back to the EARS sentence and the page says why — because a distillation of an older version of the requirement reads like it was reviewed when it wasn't.
   - Leaving either unpinned or stale is a lint finding, and FAILs once the area is `in-review`.
 - **Don't rewrite a `brief` or a `meaning` whose `author` is `human`** without asking — offer an edit instead.
-- **Never writes readback content yourself** — not a sentence, not a table row. If something is missing from the output, the fix is in the source JSON (or in `tools/spec-readback.py`), never prose patched into the generated file.
-- **Does not modify area JSONs or sidecars** — generator and command are read-only over them.
+- **Never writes readback content yourself** — not a sentence, not a table row. If something is missing from the output, the fix is in the spec's source files (or in `tools/spec-readback.py`), never prose patched into the generated file.
+- **Does not modify any spec file** — generator and command are read-only over them.
 - **Does not render images** — Mermaid is text; viewers render it.

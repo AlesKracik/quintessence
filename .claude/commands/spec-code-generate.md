@@ -1,6 +1,6 @@
 # /spec-code-generate — Generate Code From Spec
 
-Generate or update implementation code from the area's spec (Quint sidecar + architecture). Per-component when components are declared. Writes `traceability[]` back into the area JSON. Refuses on contract targets.
+Generate or update implementation code from the area's spec (Quint sidecar + architecture). Per-component when components are declared. Writes `traceability[]` into the area's ledger (`specs/<target>.records.json`) and `conformance` into its intent file. Refuses on contract targets.
 
 ## Usage
 ```
@@ -29,7 +29,7 @@ Resolve the target set:
 The manifest stores no phase flags — "applied" is derived (every one of the target's manifest `ids[]` that is a REQ/INV has a `traceability[]` entry).
 
 Read:
-- `specs/<target>.*.json`
+- the area: `tools/spec_source.py derive <target>` (from `specs/<target>.qnt` doc comments, `.intent.json`, `.records.json`)
 - `specs/<target>.qnt`
 - `.spec/project.json`
 - `.spec/local.json`
@@ -49,7 +49,7 @@ is /spec-check. To regenerate code for an area that participates in a contract, 
 Compute the **resolved architecture** at each level:
 
 - Project (`.spec/project.json` `architecture`) → defaults
-- Area (`specs/<target>.*.json` `architecture`) → overrides
+- Area (`specs/<target>.intent.json` `architecture`) → overrides
 - Component (per component, if declared) → finer overrides
 
 For each field: per-component > per-area > project > undefined. Pattern and protocol references **union** across scopes.
@@ -151,7 +151,7 @@ Generate the parallel implementation **from the spec alone**. Consulting the ori
 
 3. **Harness self-test** — proof the harness *can* fail, on **every** observable var. One corrupted trace only proves the harness catches divergence on the *one* var it flipped — a getter that echoes expectations on a different var would still pass. So generate one tampered trace **per Quint var** in the model: `_selftest.tampered.<var>.itf.json`, each a copy of a real witness trace with that var's final-state value deliberately corrupted (flip a variant like `Locked` → `Unlocked`, perturb an int, drop a map key). The harness must include a test asserting each one **fails** to replay (rationale: METHODOLOGY.md → "Conformance"). This catches a getter that's faithful on a single-tamper test's flipped var but broken on another. The `_selftest.` prefix keeps them out of the regular replay loop.
 
-Write the config into the area JSON:
+Write the config into the intent file (`specs/<target>.intent.json`):
 
 ```json
 "conformance": {
@@ -192,7 +192,7 @@ Every divergence is one of two things, and the distinction is the user's call, n
 
 ### Step 5 — Update traceability
 
-Write `traceability[]` in `specs/<target>.*.json`:
+Write `traceability[]` in `specs/<target>.records.json`:
 
 ```json
 [
@@ -231,7 +231,7 @@ Coverage:
   Quint runs → scenario tests: 2/2
   Conformance: adapter covers 5/5 actions, 5/5 vars
 
-specs/auth.area.json — traceability[] + conformance updated
+specs/auth.records.json — traceability[] · specs/auth.intent.json — conformance
 
 Next: /spec-code-verify auth — confirm it all matches.
 ```
@@ -239,7 +239,7 @@ Next: /spec-code-verify auth — confirm it all matches.
 ### Step 7 — Commit
 
 ```bash
-git add specs/<target>.*.json <code-root>/...
+git add specs/<target>.intent.json specs/<target>.records.json <code-root>/...
 git commit -m "spec(<target>): apply — <summary>"
 ```
 
@@ -257,4 +257,4 @@ This writes `generated_from`: the spec's git sha, the **content hash of its clai
 
 Why it is worth a step of its own: `verification_log` records that a spec and a code commit were once *checked together*, which is a different fact from what the code was *built to*. With `generated_from` in place, `spec-lint` can tell the user "this code predates the current requirements" (`generated-from-stale`) the moment someone edits a requirement — and it stays quiet through witness traces and check results, because the hash covers claims, not the file. Skip the stamp and that question has no answer; nothing else in the chain records it.
 
-Then commit the stamped spec — it is a one-line change to the area JSON.
+Then commit the stamped spec — it is a one-line change to the area's ledger.

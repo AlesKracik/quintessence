@@ -35,7 +35,7 @@
         "required": ["name"],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string", "description": "Area slug — specs/<name>.area.json (or .contract.json) must exist." },
+          "name": { "type": "string", "description": "Area slug — specs/<name>.intent.json must exist." },
           "kind": { "enum": ["area", "contract"] },
           "auto": {
             "type": "boolean",

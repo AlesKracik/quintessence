@@ -60,6 +60,51 @@ itf = _load("itf_tools_mod", "itf_tools.py")
 mutate = _load("spec_mutate", "spec-mutate.py")
 sep = _load("spec_separation", "spec-separation.py")
 audit = _load("spec_extract_audit", "spec-extract-audit.py")
+sys.path.insert(0, str(TOOLS))
+import spec_source  # noqa: E402
+
+
+def _area_name(path):
+    name = Path(path).name
+    for suffix in (".intent.json", ".area.json", ".contract.json"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+_PRISTINE = {}   # model path -> (text the test wrote, text put_area wrote)
+
+
+def put_area(path, area):
+    """Write a test area the way it lives on disk: records as doc comments in
+    the model (through the same migration a JSON-first project would run),
+    intent and ledger beside it. Write the model FIRST — the records are
+    placed on its declarations."""
+    specs = Path(path).parent
+    specs.mkdir(parents=True, exist_ok=True)
+    name = area.get("area") or _area_name(path)
+    fm = area.get("formal_model") or {}
+    qpath = specs / (fm.get("quint_file") or f"{name}.qnt")
+    qtext = qpath.read_text(encoding="utf-8") if qpath.exists() else None
+    if qpath in _PRISTINE and qtext == _PRISTINE[qpath][1]:
+        qtext = _PRISTINE[qpath][0]      # re-put: start from the test's own model
+    apath = specs / fm["alloy_file"] if fm.get("alloy_file") else None
+    atext = apath.read_text(encoding="utf-8") if apath and apath.exists() else None
+    ir = quint_ir.parse_qnt(qpath, engine="regex") if qtext is not None else {}
+    qnt, als, intent, records = spec_source.migrate_area(dict(area, area=name), qtext, atext, ir or {})
+    if qnt is not None:
+        qpath.write_text(qnt, encoding="utf-8")
+        _PRISTINE[qpath] = (qtext, qnt)
+    if als is not None and apath:
+        apath.write_text(als, encoding="utf-8")
+    spec_source.write_intent(specs.parent, name, intent)
+    spec_source.write_records(specs.parent, name, records)
+    return spec_source.intent_path(specs.parent, name)
+
+
+def get_area(path):
+    """The derived area view the tools read."""
+    return spec_source.load_area(Path(path).parent.parent, _area_name(path))
 
 
 # ── Finding 1: honest bounded/inductive invariant rendering ──────────────────
@@ -736,13 +781,13 @@ def _structural_project(tmp_path, invariants, solution=None):
     specs.mkdir()
     (specs / "session-ownership.als").write_text(
         "module so\nsig Account {}\ncheck noSharedSessions for 4 Account\n", encoding="utf-8")
-    area_path = specs / "session-ownership.contract.json"
-    area_path.write_text(json.dumps({
+    area_path = specs / "session-ownership.intent.json"
+    put_area(area_path, {
         "kind": "contract", "area": "session-ownership", "version": "1.0.0",
         "status": "formalized", "spans": ["auth", "billing"],
         "invariants": invariants,
         "formal_model": {"alloy_file": "session-ownership.als"},
-    }), encoding="utf-8")
+    })
     return area_path
 
 
@@ -771,7 +816,7 @@ def test_cmd_check_records_structural_verdict(tmp_path, monkeypatch):
         record.cmd_check(_Args(tmp_path, "session-ownership"))
     assert exc.value.code == 0
 
-    written = json.loads(area_path.read_text(encoding="utf-8"))
+    written = get_area(area_path)
     assert written["invariants"][0]["formal_status"] == "verified-in-scope"
     entry = written["check_results"]["checks"][0]
     assert entry["id"] == "INV-CONTRACT-001"
@@ -791,7 +836,7 @@ def test_cmd_check_records_structural_counterexample(tmp_path, monkeypatch):
         record.cmd_check(_Args(tmp_path, "session-ownership"))
     assert exc.value.code == 1          # a counterexample is a failing run
 
-    written = json.loads(area_path.read_text(encoding="utf-8"))
+    written = get_area(area_path)
     assert written["invariants"][0]["formal_status"] == "counterexample-found"
     entry = written["check_results"]["checks"][0]
     # The instance lives under the gitignored gen/ tree — regenerable, never
@@ -1396,15 +1441,13 @@ def test_diff_over_real_git_history(tmp_path):
     run("git", "config", "user.name", "t")
     specs = tmp_path / "specs"
     specs.mkdir()
-    area = specs / "auth.area.json"
-    area.write_text(json.dumps(_area(
-        constraints=[{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 5}])),
-        encoding="utf-8")
+    area = specs / "auth.intent.json"
+    put_area(area, _area(
+        constraints=[{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 5}]))
     run("git", "add", "-A")
     run("git", "commit", "-qm", "v1")
-    area.write_text(json.dumps(_area(
-        constraints=[{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 7}])),
-        encoding="utf-8")
+    put_area(area, _area(
+        constraints=[{"id": "CON-001", "name": "MAX_FAILED_ATTEMPTS", "value": 7}]))
 
     reports = diff.build_reports("HEAD", diff.WORKTREE, tmp_path)
     assert "auth" in reports
@@ -1819,18 +1862,18 @@ def test_separation_end_to_end_over_git(tmp_path):
     run("git", "config", "user.name", "t")
     (tmp_path / "specs").mkdir()
     (tmp_path / "src").mkdir()
-    spec = tmp_path / "specs" / "auth.area.json"
+    spec = tmp_path / "specs" / "auth.intent.json"
     code = tmp_path / "src" / "authService.ts"
     payload = json.loads(_spec())
     payload["traceability"] = [{"id": "REQ-001", "code": "src/authService.ts:login"}]
-    spec.write_text(json.dumps(payload), encoding="utf-8")
+    put_area(spec, payload)
     code.write_text("export const login = () => 1;\n", encoding="utf-8")
     run("git", "add", "-A")
     run("git", "commit", "-qm", "v1")
 
     # Bookkeeping-only spec edit plus a code edit: not a mixed commit.
     payload["check_results"] = {"ran_at": "later"}
-    spec.write_text(json.dumps(payload), encoding="utf-8")
+    put_area(spec, payload)
     code.write_text("export const login = () => 2;\n", encoding="utf-8")
     run("git", "add", "-A")
     files, before, after = sep.changed_files(
@@ -1838,18 +1881,19 @@ def test_separation_end_to_end_over_git(tmp_path):
     traced = sep.traced_paths(tmp_path)
     impl = [f for f in files if not f.startswith("specs/")
             and sep.touches_implementation(f, traced)]
-    claim_changed = [f for f in files if f.startswith("specs/")
-                     and sep.claim_diff(sep.claims(sep.blob(before, f, tmp_path)),
-                                        sep.claims(sep.blob(after, f, tmp_path)))]
+    # Claims are compared per AREA, over the derived view: the spec of one
+    # area is now three files (model doc comments, intent, ledger).
+    assert {spec_source.area_of_file(f) for f in files if f.startswith("specs/")} == {"auth"}
+    claim_changed = sep.claim_diff(sep.claims(sep.derive_at(before, "auth", tmp_path)),
+                                   sep.claims(sep.derive_at(after, "auth", tmp_path)))
     assert impl and not claim_changed
 
     # Now weaken a claim in the same commit as the code change: mixed.
     payload["requirements"][0]["witness"]["predicate"] = "true"
-    spec.write_text(json.dumps(payload), encoding="utf-8")
+    put_area(spec, payload)
     run("git", "add", "-A")
-    claim_changed = [f for f in files if f.startswith("specs/")
-                     and sep.claim_diff(sep.claims(sep.blob(before, f, tmp_path)),
-                                        sep.claims(sep.blob(None, f, tmp_path)))]
+    claim_changed = sep.claim_diff(sep.claims(sep.derive_at(before, "auth", tmp_path)),
+                                   sep.claims(sep.derive_at(None, "auth", tmp_path)))
     assert claim_changed and impl
 
 
@@ -2234,8 +2278,7 @@ def test_cart_example_ledger_covers_every_site():
     """The example is the regression test for the whole loop: if a site is
     added to cart.js without a verdict, this fails."""
     repo = Path(__file__).resolve().parent.parent
-    area = json.loads((repo / "examples" / "specs" / "cart.area.json")
-                      .read_text(encoding="utf-8"))
+    area = spec_source.load_area(repo / "examples", "cart")
     examples_root = repo / "examples"
     sites = []
     for path in mutate.traced_files(area, examples_root):
@@ -2492,7 +2535,7 @@ def test_aimed_pointer_without_sidecar_only_warns_while_authoring(status):
     hits = _sidecar_findings(status)
     assert len(hits) == 1
     assert hits[0].severity == lint.WARN
-    assert "/spec-check" in hits[0].description
+    assert "Formalize it with /spec" in hits[0].description
 
 
 @pytest.mark.parametrize("status", ["in-review", "approved"])
@@ -2760,7 +2803,7 @@ def test_the_shipped_example_has_no_orphans(tmp_path):
     """examples/specs/auth.qnt uses the hoisted-nondet shape — the idiom the
     templates show — and must stay clean under the new rule."""
     root = TOOLS.parent / "examples"
-    area = json.loads((root / "specs" / "auth.area.json").read_text(encoding="utf-8"))
+    area = spec_source.load_area(root, "auth")
     with _forced_regex_engine():
         sidecar = lint.parse_sidecar(root / "specs" / "auth.qnt")
     assert "__no_module__" not in sidecar, "sidecar failed to parse"
@@ -3304,7 +3347,8 @@ def test_core_concepts_keeps_what_only_it_says():
     """Dedup must not drop the definitions that live nowhere else."""
     core = _section((REPO_ROOT / "METHODOLOGY.md").read_text(encoding="utf-8"),
                     "## Core Concepts", "## Quick Start")
-    for needle in ("specs/<name>.area.json", "suffix encodes the `kind`",
+    for needle in ("specs/<name>.qnt", "specs/<name>.intent.json",
+                   "specs/<name>.records.json", "tools/spec_source.py",
                    ".spec/project.json", ".spec/local.json"):
         assert needle in core, needle
 
@@ -3447,8 +3491,7 @@ def test_a_typed_prohibition_renders_as_discharged_not_pending():
 
 
 def test_the_shipped_example_carries_a_current_brief():
-    area = json.loads((TOOLS.parent / "examples" / "specs" / "auth.area.json")
-                      .read_text(encoding="utf-8"))
+    area = spec_source.load_area(TOOLS.parent / "examples", "auth")
     assert itf.brief_status(area)[0] == "current", "example brief pin is stale"
 
 
@@ -3566,8 +3609,7 @@ def test_missing_meanings_roll_up_in_needs_your_attention(tmp_path):
 
 def test_the_shipped_examples_carry_current_meanings():
     for name in ("auth", "cart", "subscription", "auth-ui"):
-        area = json.loads((TOOLS.parent / "examples" / "specs" / f"{name}.area.json")
-                          .read_text(encoding="utf-8"))
+        area = spec_source.load_area(TOOLS.parent / "examples", name)
         for req in area["requirements"]:
             if req.get("status") in ("raw", "deferred"):
                 continue
@@ -3695,12 +3737,12 @@ def _quint_project(tmp_path, area="auth", invariants=(), properties=(),
     specs = tmp_path / "specs"
     specs.mkdir(exist_ok=True)
     (specs / (area + ".qnt")).write_text("module auth {\n}\n", encoding="utf-8")
-    area_path = specs / (area + ".area.json")
-    area_path.write_text(json.dumps({
+    area_path = specs / (area + ".intent.json")
+    put_area(area_path, {
         "area": area, "version": "1.0.0", "status": "formalized",
         "invariants": list(invariants), "properties": list(properties),
         "formal_model": {"quint_file": area + ".qnt"},
-    }), encoding="utf-8")
+    })
     return area_path
 
 
@@ -3719,7 +3761,7 @@ def test_a_clean_batch_records_the_same_verdicts_for_one_apalache_start(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(_Args(tmp_path, "auth"))
     assert exc.value.code == 0
-    written = json.loads(area_path.read_text(encoding="utf-8"))
+    written = get_area(area_path)
     assert [i["formal_status"] for i in written["invariants"]] == ["verified", "verified"]
     # Recorded as batched: a batched check and a per-id one should not read alike.
     assert all(c["batched"] for c in written["check_results"]["checks"])
@@ -3753,7 +3795,7 @@ def test_a_dirty_batch_falls_back_to_exactly_the_old_per_id_path(
         record.cmd_check(_Args(tmp_path, "auth"))
     assert exc.value.code == 1
     assert calls == ["invA", "invB", "invA"]
-    written = json.loads(area_path.read_text(encoding="utf-8"))
+    written = get_area(area_path)
     assert [i["formal_status"] for i in written["invariants"]] == [
         "verified", "counterexample-found"]
     assert not any(c.get("batched") for c in written["check_results"]["checks"])
@@ -3786,7 +3828,7 @@ def test_only_simulate_writes_no_verdict_and_does_not_stamp_ran_at(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(args)
     assert exc.value.code == 0
-    written = json.loads(area_path.read_text(encoding="utf-8"))
+    written = get_area(area_path)
     cr = written["check_results"]
     assert cr["simulation"]["invariants"]["result"] == "violation"
     # Attribution is recorded, so the ordering it drives can be read back —
@@ -3852,7 +3894,7 @@ def test_a_temporal_counterexample_records_no_trace_it_does_not_have(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(_Args(tmp_path, "auth"))
     assert exc.value.code == 1
-    written = json.loads(area_path.read_text(encoding="utf-8"))
+    written = get_area(area_path)
     assert written["properties"][0]["formal_status"] == "counterexample-found"
     entry = written["check_results"]["checks"][0]
     assert entry["backend"] == "tlc"
@@ -4022,10 +4064,8 @@ def test_the_shipped_examples_trip_no_bridge_check():
     """These checks ship enabled. An example that fails them would teach the
     wrong thing on the first run."""
     specs = TOOLS.parent / "examples" / "specs"
-    for area_file in sorted(specs.glob("*.area.json")) + sorted(
-            specs.glob("*.contract.json")):
-        area = json.loads(area_file.read_text(encoding="utf-8"))
-        name = area_file.name.split(".")[0]
+    for name in spec_source.list_areas(specs.parent):
+        area = spec_source.load_area(specs.parent, name)
         qnt = specs / f"{name}.qnt"
         if not qnt.exists():
             continue
@@ -4080,14 +4120,14 @@ def _prov_project(tmp_path):
          "areas": [{"name": "auth", "kind": "area", "code_path": "src/auth"}]}),
         encoding="utf-8")
     (tmp_path / "specs").mkdir(exist_ok=True)
-    area_path = tmp_path / "specs" / "auth.area.json"
-    area_path.write_text(json.dumps({
+    area_path = tmp_path / "specs" / "auth.intent.json"
+    put_area(area_path, {
         "kind": "area", "area": "auth", "version": "1.0.0",
         "status": "formalized",
         "requirements": [{"id": "REQ-001", "description": "lock after 5",
                           "ears": {"response": "lock the account"}}],
         "traceability": [{"id": "REQ-001", "code": "src/auth/login.js:2"}],
-    }), encoding="utf-8")
+    })
     return area_path
 
 
@@ -4101,7 +4141,7 @@ def test_stamp_reads_the_shas_itself_rather_than_being_told_them(tmp_path):
         record.cmd_stamp(_StampArgs(tmp_path, "auth", extracted=True,
                                     code_path="src/auth"))
     assert exc.value.code == 0
-    block = json.loads(area_path.read_text(encoding="utf-8"))["extracted_from"]
+    block = get_area(area_path)["extracted_from"]
     assert block["code_sha"] == sha
     assert block["code_path"] == "src/auth"
     assert block["date"]
@@ -4115,7 +4155,7 @@ def test_stamp_generated_pins_the_claims_not_just_the_commit(tmp_path):
     area_path = _prov_project(tmp_path)
     with pytest.raises(SystemExit):
         record.cmd_stamp(_StampArgs(tmp_path, "auth", generated=True))
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area = get_area(area_path)
     block = area["generated_from"]
     assert block["spec_content_sha"] == itf.compute_spec_sha(area)
     assert block["code_sha"]
@@ -4164,7 +4204,7 @@ def test_changed_says_what_moved_and_narrows_to_what_the_spec_claims(tmp_path):
     traced_section = out.split("Touching a traced file")[1]
     assert "src/auth/login.js" in traced_section
     assert "src/other.js" not in traced_section
-    assert json.loads(area_path.read_text(encoding="utf-8"))["extracted_from"]
+    assert get_area(area_path)["extracted_from"]
 
 
 def test_changed_names_which_baseline_it_fell_back_to(tmp_path):
@@ -4177,10 +4217,10 @@ def test_changed_names_which_baseline_it_fell_back_to(tmp_path):
     subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), capture_output=True)
     subprocess.run(["git", "commit", "-qm", "second"], cwd=str(tmp_path),
                    capture_output=True)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area = get_area(area_path)
     area["verification_log"] = [{"date": "2026-01-01T00:00:00+00:00",
                                  "status": "pass", "code_sha": first}]
-    area_path.write_text(json.dumps(area), encoding="utf-8")
+    put_area(area_path, area)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         with pytest.raises(SystemExit):
@@ -4194,9 +4234,9 @@ def test_changed_refuses_a_baseline_git_cannot_resolve(tmp_path):
     catastrophic drift — so this is a setup error, not a result."""
     _git_repo(tmp_path, {"src/auth/login.js": "// x\n"})
     area_path = _prov_project(tmp_path)
-    area = json.loads(area_path.read_text(encoding="utf-8"))
+    area = get_area(area_path)
     area["extracted_from"] = {"code_sha": "0" * 40}
-    area_path.write_text(json.dumps(area), encoding="utf-8")
+    put_area(area_path, area)
     with pytest.raises(SystemExit) as exc:
         record.cmd_changed(_StampArgs(tmp_path, "auth"))
     assert exc.value.code == 2
@@ -4256,8 +4296,7 @@ def test_an_unstamped_area_is_not_reported_as_fresh():
 
 
 def test_the_readback_shows_provenance_and_flags_moved_claims():
-    area = json.loads((TOOLS.parent / "examples" / "specs" / "auth.area.json")
-                      .read_text(encoding="utf-8"))
+    area = spec_source.load_area(TOOLS.parent / "examples", "auth")
     area["extracted_from"] = {"date": "2026-09-01T10:00:00+00:00",
                               "code_sha": "a" * 40, "code_path": "src/auth"}
     area["generated_from"] = {"date": "2026-09-02T10:00:00+00:00",
@@ -4426,14 +4465,14 @@ def test_the_recorder_refuses_to_mint_a_hollow_witness(tmp_path, monkeypatch):
     (tmp_path / "specs" / "a.probes.qnt").write_text(
         "module a_probes {\n  val witness_REQ_008: bool = true\n}\n",
         encoding="utf-8")
-    area_path = tmp_path / "specs" / "a.area.json"
-    area_path.write_text(json.dumps({
+    area_path = tmp_path / "specs" / "a.intent.json"
+    put_area(area_path, {
         "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
         "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
         "requirements": [{"id": "REQ-008", "status": "specified",
                           "quint_ref": "f",
                           "witness": {"predicate": "x > 0"}}],
-    }), encoding="utf-8")
+    })
 
     def fake_verify(quint, target, name, *a, **k):
         # What Apalache writes when the predicate holds at init.
@@ -4450,7 +4489,7 @@ def test_the_recorder_refuses_to_mint_a_hollow_witness(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(args)
     assert exc.value.code == 1, "a hollow witness must fail the run"
-    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    w = get_area(area_path)["requirements"][0]["witness"]
     assert w["status"] == "hollow"
     assert "model_sha" not in w, "a hollow witness must not be stamped fresh"
 
@@ -4491,8 +4530,7 @@ def _probe_area(tmp_path, reqs=None, domains=None, invariants=None):
                  "witness": {"predicate": "accounts.get(_lastUid) == Active",
                              "delta": {"pre": "not(_prevAccounts.keys()"
                                               ".contains(_lastUid))"}}}]}
-    (tmp_path / "specs" / "a.area.json").write_text(json.dumps(area),
-                                                    encoding="utf-8")
+    put_area((tmp_path / "specs" / "a.intent.json"), area)
     return area
 
 
@@ -4605,8 +4643,7 @@ def test_a_probe_module_invariant_runs_against_the_probe_module(tmp_path,
     (tmp_path / ".spec").mkdir(exist_ok=True)
     (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
                                                      encoding="utf-8")
-    (tmp_path / "specs" / "a.area.json").write_text(json.dumps(area),
-                                                    encoding="utf-8")
+    put_area((tmp_path / "specs" / "a.intent.json"), area)
     seen = []
 
     def fake_verify(quint, target, name, *a, **k):
@@ -4623,8 +4660,7 @@ def test_a_probe_module_invariant_runs_against_the_probe_module(tmp_path,
 
     assert ("alwaysP", "a.qnt", None, None) in seen
     assert ("policyStable", "a.probes.qnt", "initP", "stepP") in seen
-    written = json.loads(
-        (tmp_path / "specs" / "a.area.json").read_text(encoding="utf-8"))
+    written = get_area((tmp_path / "specs" / "a.intent.json"))
     entry = {c["id"]: c for c in written["check_results"]["checks"]}
     assert entry["INV-003"]["over"] == "probes"
     assert "over" not in entry["INV-001"]
@@ -4639,8 +4675,7 @@ def test_over_probes_without_a_probe_module_is_an_error_not_a_pass(tmp_path,
     (tmp_path / ".spec").mkdir(exist_ok=True)
     (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
                                                      encoding="utf-8")
-    (tmp_path / "specs" / "a.area.json").write_text(json.dumps(area),
-                                                    encoding="utf-8")
+    put_area((tmp_path / "specs" / "a.intent.json"), area)
     monkeypatch.setattr(record, "find_quint", lambda: "quint")
     monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
     monkeypatch.setattr(record, "run_verify",
@@ -4648,8 +4683,7 @@ def test_over_probes_without_a_probe_module_is_an_error_not_a_pass(tmp_path,
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(_Args(tmp_path, "a"))
     assert exc.value.code == 1
-    written = json.loads(
-        (tmp_path / "specs" / "a.area.json").read_text(encoding="utf-8"))
+    written = get_area((tmp_path / "specs" / "a.intent.json"))
     assert written["check_results"]["checks"][0]["result"] == "error"
 
 
@@ -5286,7 +5320,7 @@ def test_a_counterexample_found_shallow_is_final_and_never_deepened(
         record.cmd_check(_Args(tmp_path, "auth"))
     assert exc.value.code == 1
     assert calls == [("invA", 3)]
-    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    entry = get_area(area_path)["check_results"]["checks"][0]
     assert entry["result"] == "counterexample"
     assert entry["steps"] == 3
 
@@ -5302,7 +5336,7 @@ def test_a_check_clean_at_the_shallow_bound_is_re_run_at_the_ceiling(
         record.cmd_check(_Args(tmp_path, "auth"))
     assert exc.value.code == 0
     assert calls == [("invA", 3), ("invA", 10)]
-    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    entry = get_area(area_path)["check_results"]["checks"][0]
     assert entry["steps"] == 10
 
 
@@ -5318,7 +5352,7 @@ def test_shallow_equal_to_the_ceiling_collapses_to_one_pass(tmp_path, monkeypatc
     with pytest.raises(SystemExit):
         record.cmd_check(_Args(tmp_path, "auth"))
     assert calls == [("invA", 3)]
-    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    entry = get_area(area_path)["check_results"]["checks"][0]
     assert entry["steps"] == 3
 
 
@@ -5345,7 +5379,7 @@ def test_the_run_budget_stops_the_deep_pass_and_says_which_bound_stands(
         record.cmd_check(args)
     # Both got their shallow verdict; neither was deepened.
     assert calls == [("invA", 3), ("invB", 3)]
-    cr = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]
+    cr = get_area(area_path)["check_results"]
     by_id = {c["id"]: c for c in cr["checks"]}
     assert all(c["steps"] == 3 and c["result"] == "verified" for c in cr["checks"])
     assert "budget" in by_id["INV-001"]["note"]
@@ -5371,7 +5405,7 @@ def test_the_shallow_pass_runs_even_when_the_budget_is_already_spent(
         record.cmd_check(args)
     assert exc.value.code == 1
     assert calls == [("invA", 3)]
-    entry = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]["checks"][0]
+    entry = get_area(area_path)["check_results"]["checks"][0]
     assert entry["result"] == "counterexample"
 
 
@@ -5390,7 +5424,7 @@ def test_a_deep_pass_that_does_not_answer_keeps_the_shallow_verdict(
     _steps_recorder(monkeypatch, answer)
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(_Args(tmp_path, "auth"))
-    written = json.loads(area_path.read_text(encoding="utf-8"))
+    written = get_area(area_path)
     entry = written["check_results"]["checks"][0]
     assert entry["result"] == "verified"
     assert entry["steps"] == 3
@@ -5440,7 +5474,7 @@ def test_an_interrupted_run_keeps_what_it_proved_without_claiming_a_check(
     _steps_recorder(monkeypatch, answer)
     with pytest.raises(KeyboardInterrupt):
         record.cmd_check(_Args(tmp_path, "auth"))
-    cr = json.loads(area_path.read_text(encoding="utf-8"))["check_results"]
+    cr = get_area(area_path)["check_results"]
     assert [c["id"] for c in cr["checks"]] == ["INV-001"]
     assert cr["checks"][0]["steps"] == 3
     assert "ran_at" not in cr, "an interrupted run has not checked the area"
@@ -5506,14 +5540,14 @@ def _probe_ladder_area(tmp_path):
     (tmp_path / "specs" / "a.probes.qnt").write_text(
         "module a_probes {\n  val witness_REQ_008: bool = true\n}\n",
         encoding="utf-8")
-    area_path = tmp_path / "specs" / "a.area.json"
-    area_path.write_text(json.dumps({
+    area_path = tmp_path / "specs" / "a.intent.json"
+    put_area(area_path, {
         "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
         "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
         "requirements": [{"id": "REQ-008", "status": "specified",
                           "quint_ref": "f",
                           "witness": {"predicate": "x > 0"}}],
-    }), encoding="utf-8")
+    })
     return area_path
 
 
@@ -5539,7 +5573,7 @@ def test_a_witness_the_shallow_pass_misses_is_found_by_the_deep_one(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(args)
     assert exc.value.code == 0, "a witness found at depth is still a witness"
-    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    w = get_area(area_path)["requirements"][0]["witness"]
     assert w["status"] == "witnessed"
     assert w["steps"] == 10
 
@@ -5565,7 +5599,7 @@ def test_a_budget_stopped_probe_keeps_the_bound_it_was_actually_run_to(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(args)
     assert exc.value.code == 1
-    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    w = get_area(area_path)["requirements"][0]["witness"]
     assert w["status"] == "no-witness"
     assert w["steps"] == 3, "the deep pass never ran; its bound must not be claimed"
 
@@ -5685,8 +5719,8 @@ def test_a_permitted_outcome_is_deepened_and_the_roll_up_is_derived_again(
         "  val witness_REQ_007_email: bool = true\n"
         "  val witness_REQ_007_in_app: bool = true\n"
         "}\n", encoding="utf-8")
-    area_path = tmp_path / "specs" / "a.area.json"
-    area_path.write_text(json.dumps({
+    area_path = tmp_path / "specs" / "a.intent.json"
+    put_area(area_path, {
         "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
         "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
         "requirements": [{"id": "REQ-007", "status": "specified",
@@ -5694,7 +5728,7 @@ def test_a_permitted_outcome_is_deepened_and_the_roll_up_is_derived_again(
                           "witness": {"outcomes": [
                               {"name": "email", "predicate": "sent"},
                               {"name": "in-app", "predicate": "shown"}]}}],
-    }), encoding="utf-8")
+    })
 
     def fake_verify(quint, target, name, steps, *a, **k):
         # email witnesses shallow; in-app only at the ceiling.
@@ -5713,7 +5747,7 @@ def test_a_permitted_outcome_is_deepened_and_the_roll_up_is_derived_again(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(args)
     assert exc.value.code == 0
-    w = json.loads(area_path.read_text(encoding="utf-8"))["requirements"][0]["witness"]
+    w = get_area(area_path)["requirements"][0]["witness"]
     by_name = {oc["name"]: oc for oc in w["outcomes"]}
     assert by_name["email"]["status"] == "witnessed"
     assert by_name["email"]["steps"] == 3
@@ -5721,3 +5755,347 @@ def test_a_permitted_outcome_is_deepened_and_the_roll_up_is_derived_again(
     assert by_name["in-app"]["steps"] == 10
     # The roll-up the shallow pass wrote said no-witness. It must not survive.
     assert w["status"] == "witnessed"
+
+
+# ── Quint-first: records live in the model's doc comments ───────────────────
+# spec_source is the one reader of an area's three files. These pin its
+# grammar, the lossless migration from the JSON-first layout, and the ledger
+# discipline (tools write records, never claims).
+
+_FULL_QNT = """module a {
+  type UserId = str
+  type St = Open | Shut
+  var st: UserId -> St
+  pure val MAX: int = 3
+  action open(uid: UserId): bool = all { st' = st.put(uid, Open) }
+  action shut(uid: UserId): bool = all { st' = st.put(uid, Shut) }
+  val neverBoth: bool = true
+  temporal eventuallyShut = always(true)
+  action init = st' = Map()
+  action step = nondet u = Set("u").oneOf() open(u)
+  run openThenShut = init.then(open("u")).then(shut("u"))
+}
+"""
+
+
+def _full_area():
+    """Every field the doc-comment grammar carries, at least once."""
+    return {
+        "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
+        "purpose": "p", "scope": {"included": ["x"], "excluded": []},
+        "brief": {"text": "b", "written_against": "f" * 64},
+        "formal_model": {"quint_file": "a.qnt", "probe_domains": {"UserId": 'Set("u")'}},
+        "requirements": [
+            {"id": "REQ-001", "description": "When opened, the system shall open it.",
+             "status": "specified", "modality": "must", "determinism": "deterministic",
+             "type": "functional", "source": "elicited", "quint_ref": "open",
+             "ears": {"trigger": "opened", "response": "open it"},
+             "meaning": {"text": "Opening opens.", "author": "agent",
+                         "written_against": "e" * 64},
+             "error_outcomes": [{"external": "Db", "outcome": "DOWN",
+                                 "effect": "NO_CHANGE: retry", "idempotent": True,
+                                 "note": "a note"}],
+             "witness": {"predicate": "st.get(_lastUid) == Open",
+                         "delta": {"pre": "_prevSt.get(_lastUid) != Open", "note": "moved"},
+                         "status": "witnessed", "trace": "a/traces/REQ-001.itf.json",
+                         "checked_at": "2026-01-01T00:00:00+00:00", "steps": 3,
+                         "model_sha": "d" * 64},
+             "cross_refs": ["INV-001"],
+             "extraction": {"evidence": "a.js:1", "confidence": "high",
+                            "inferred_by": "agent", "fingerprint": "c0ffee00"}},
+            {"id": "REQ-002", "description": "If shut, then the system shall refuse.",
+             "status": "specified", "modality": "forbidden", "quint_ref": "shut",
+             "ears": {"state": "it is Shut", "trigger": "shut again", "unwanted": True,
+                      "response": "refuse"},
+             "witness": {"status": "skipped", "enforced_by": "INV-001",
+                         "justification": "a prohibition"},
+             "refusal": {"artifact": "t/refuse.test.ts", "blocking_state": "st == Shut",
+                         "unchanged": ["st"], "status": "passing",
+                         "checked_at": "2026-01-01T00:00:00+00:00"}},
+            {"id": "REQ-003", "description": "Either way is fine.", "status": "specified",
+             "modality": "may", "determinism": "nondeterministic", "quint_ref": "open",
+             "ears": {"trigger": "x", "response": "y or z"},
+             "witness": {"outcomes": [
+                 {"name": "first", "predicate": "st.get(_lastUid) == Open",
+                  "delta": {"pre": "true"}, "status": "witnessed", "steps": 3},
+                 {"name": "second", "predicate": "st.keys().size() > 0"}]}},
+            {"id": "REQ-004", "description": "Fast.", "type": "non-functional",
+             "status": "raw", "fit_criterion": {"metric": "p99", "target": "< 1s",
+                                               "measurement": "load test"}},
+            {"id": "REQ-005", "description": "Unwritten.", "status": "verified",
+             "ears": {"feature": "a flag is on", "response": "do it"},
+             "witness": {"justification": "nothing yet"}},
+        ],
+        "invariants": [
+            {"id": "INV-001", "description": "Never both.", "quint_name": "neverBoth",
+             "criticality": "critical", "proof": "inductive", "formal_status": "verified",
+             "cross_refs": ["REQ-002"]},
+            {"id": "INV-002", "description": "Stable.", "over": "probes",
+             "quint_name": "stable", "predicate": "st == _prevSt"},
+            {"id": "INV-003", "description": "Arithmetic.", "proof": "smt",
+             "smt_file": "a.smt2"},
+        ],
+        "properties": [{"id": "PROP-001", "description": "Eventually shut.",
+                        "quint_name": "eventuallyShut", "formal_status": "not-run"}],
+        "constraints": [
+            {"id": "CON-001", "name": "MAX", "value": 3, "unit": "items",
+             "paired_invariant": "INV-001", "description": "Cap."},
+            {"id": "CON-002", "name": "RATE", "value": 0.5, "description": "Not an int."},
+        ],
+        "examples": [
+            {"id": "EX-001", "title": "Open then shut", "quint_run": "openThenShut",
+             "when": {"action": "shut"}, "expect": {}, "refs": ["REQ-001"],
+             "source": "elicited"},
+            {"id": "EX-002", "title": "Harvested", "given": {"st": "Open"},
+             "when": {"action": "shut", "args": {"uid": "u"}}, "expect": {"st": "Shut"},
+             "source": "extracted-from-production", "trace": "a/traces/ex2.itf.json"},
+        ],
+        "check_results": {"ran_at": "2026-01-01T00:00:00+00:00"},
+        "matrix_triage": [{"entity": "E", "state": "Open", "event": "shut",
+                           "verdict": "NO-OP", "reason": "REQ-002"}],
+        "traceability": [{"id": "REQ-001", "code": "a.js:1", "verified": True}],
+    }
+
+
+def _put_full(tmp_path, area=None):
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "a.qnt").write_text(_FULL_QNT, encoding="utf-8")
+    return put_area(tmp_path / "specs" / "a.intent.json", area or _full_area())
+
+
+def _quint_ir_of(text, tmp_path):
+    q = tmp_path / "ir.qnt"
+    q.write_text(text, encoding="utf-8")
+    return quint_ir.parse_qnt(q, engine="regex")
+
+
+def test_migration_is_lossless_over_every_field(tmp_path):
+    area = _full_area()
+    assert spec_source.roundtrip(area, _FULL_QNT, None, _quint_ir_of(_FULL_QNT, tmp_path)) == []
+
+
+def test_every_example_derives_without_grammar_problems():
+    root = TOOLS.parent / "examples"
+    names = spec_source.list_areas(root)
+    assert set(names) >= {"auth", "auth-ui", "cart", "subscription", "session-ownership"}
+    for name in names:
+        area, info = spec_source.load_area(root, name, with_info=True)
+        assert area and not info["problems"], (name, info["problems"])
+        assert not spec_source.legacy_path(root, name), f"{name}: JSON-first file left behind"
+
+
+def test_a_witness_hosts_body_is_its_predicate_and_typechecks_with_ghost_params(tmp_path):
+    qnt, _als, _intent, _rec = spec_source.migrate_area(
+        _full_area(), _FULL_QNT, None, _quint_ir_of(_FULL_QNT, tmp_path))
+    # Ghost params are typed from the action parameter they stand for.
+    assert "def shall_REQ_001(_lastUid: UserId, _prevSt: UserId -> St): bool" not in qnt
+    assert "def shall_REQ_001(_lastUid: UserId): bool =" in qnt
+    assert "    st.get(_lastUid) == Open" in qnt
+    # The record sits right above it, @via naming the action.
+    block = qnt[qnt.index("/// @req REQ-001"):qnt.index("def shall_REQ_001")]
+    assert "/// @via open" in block and "/// @pre _prevSt.get(_lastUid) != Open" in block
+    # A prohibition is hosted on the action it refuses.
+    shut = qnt.index("action shut(")
+    assert qnt.rfind("/// @req REQ-002", 0, shut) > qnt.rfind("action open(", 0, shut)
+    # Constants keep their value in the model only; non-ints ride as @value.
+    assert "@value 3" not in qnt and "@value 0.5" in qnt
+
+
+def test_derived_description_is_the_rendered_ears_sentence():
+    qnt = ("module a {\n  var x: int\n  action go: bool = x' = 1\n"
+           "  /// @req REQ-001\n  /// @when asked\n  /// @shall go\n  /// @via go\n"
+           "  val shall_REQ_001: bool = x == 1\n}\n")
+    area, problems = spec_source.derive_records(qnt, "a.qnt")
+    req = area["requirements"][0]
+    assert req["description"] == "When asked, the system shall go."
+    assert req["witness"]["predicate"] == "x == 1" and req["quint_ref"] == "go"
+
+
+def test_each_record_points_at_its_own_tag_line():
+    # Several records in one block (a records-only module doc) must not all
+    # report the block's first line; a blank line inside the block must not
+    # shift the count.
+    qnt = ("/// @req REQ-001\n/// @shall a\n///\n/// @req REQ-002\n/// @shall b\n"
+           "\n/// @con CON-001\n/// @name N\n/// @value 1\nmodule a { }\n")
+    _area, info = spec_source.derive_records(qnt, "a.qnt")
+    assert info["origin"] == {"REQ-001": "a.qnt:1", "REQ-002": "a.qnt:4",
+                              "CON-001": "a.qnt:7"}
+
+
+def test_grammar_problems_are_reported_not_swallowed():
+    qnt = ("module a {\n  /// @req REQ-001\n  /// @shal typo\n  action go: bool = true\n"
+           "  /// @req REQ-001\n  action again: bool = true\n"
+           "  /// @outcome-of REQ-009 x\n  val o: bool = true\n}\n")
+    problems = []
+    spec_source.derive_records(qnt, "a.qnt", problems=problems)
+    text = "\n".join(problems)
+    assert "unknown tag @shal" in text
+    assert "duplicate id REQ-001" in text
+    assert "@outcome-of REQ-009: no such requirement" in text
+
+
+def test_lint_fails_a_record_the_reader_could_not_place(tmp_path):
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    (specs / "a.qnt").write_text("module a {\n  /// @req REQ-001\n  /// @bogus x\n"
+                                 "  action go: bool = true\n}\n/// @inv INV-001\n",
+                                 encoding="utf-8")
+    spec_source.write_intent(tmp_path, "a", {"kind": "area", "area": "a", "version": "1"})
+    _area, info = spec_source.load_area(tmp_path, "a", with_info=True)
+    findings = []
+    lint.check_sources(tmp_path, "a", info, findings)
+    checks = {f.check for f in findings if f.severity == lint.FAIL}
+    assert checks == {"record-grammar", "record-without-host"}
+
+
+def test_a_leftover_json_first_file_is_a_fail(tmp_path):
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "a.area.json").write_text("{}", encoding="utf-8")
+    findings = []
+    lint.check_sources(tmp_path, "a", {}, findings)
+    assert [f.check for f in findings] == ["legacy-spec-file"]
+
+
+def test_save_writes_the_ledger_and_nothing_authored(tmp_path):
+    path = _put_full(tmp_path)
+    before = {p.name: p.read_bytes() for p in (tmp_path / "specs").iterdir() if p.is_file()}
+    area = spec_source.load_area(tmp_path, "a")
+    area["requirements"][0]["witness"]["status"] = "no-witness"
+    area["invariants"][0]["formal_status"] = "counterexample-found"
+    area["check_results"]["ran_at"] = "later"
+    spec_source.save_area(tmp_path, "a", area)
+    after = {p.name: p.read_bytes() for p in (tmp_path / "specs").iterdir() if p.is_file()}
+    assert {n for n in after if after[n] != before.get(n)} == {"a.records.json"}
+    again = get_area(path)
+    assert again["requirements"][0]["witness"]["status"] == "no-witness"
+    assert again["invariants"][0]["formal_status"] == "counterexample-found"
+
+
+def test_save_refuses_a_tool_that_rewrites_a_claim(tmp_path):
+    _put_full(tmp_path)
+    area = spec_source.load_area(tmp_path, "a")
+    area["requirements"][0]["witness"]["predicate"] = "true"
+    with pytest.raises(spec_source.SpecSourceError, match="REQ-001"):
+        spec_source.save_area(tmp_path, "a", area)
+    area = spec_source.load_area(tmp_path, "a")
+    area["scope"]["included"].append("everything")
+    with pytest.raises(spec_source.SpecSourceError, match="scope"):
+        spec_source.save_area(tmp_path, "a", area)
+
+
+def test_an_authored_skip_survives_a_stale_ledger(tmp_path):
+    _put_full(tmp_path)
+    records = json.loads((tmp_path / "specs" / "a.records.json").read_text(encoding="utf-8"))
+    records.setdefault("by_id", {}).setdefault("REQ-002", {})["witness"] = {"status": "not-run"}
+    (tmp_path / "specs" / "a.records.json").write_text(json.dumps(records), encoding="utf-8")
+    req = {r["id"]: r for r in spec_source.load_area(tmp_path, "a")["requirements"]}["REQ-002"]
+    assert req["witness"]["status"] == "skipped"
+
+
+def test_model_sha_ignores_doc_comments_but_not_predicates(tmp_path):
+    _put_full(tmp_path)
+    qnt = tmp_path / "specs" / "a.qnt"
+    area = spec_source.load_area(tmp_path, "a")
+    sha = itf.compute_model_sha(tmp_path, "a", area)
+    qnt.write_text(qnt.read_text(encoding="utf-8").replace(
+        "/// @meaning Opening opens.", "/// @meaning Opening opens, reworded."),
+        encoding="utf-8")
+    assert itf.compute_model_sha(tmp_path, "a", area) == sha
+    qnt.write_text(qnt.read_text(encoding="utf-8").replace(
+        "st.get(_lastUid) == Open\n", "st.get(_lastUid) != Shut\n", 1), encoding="utf-8")
+    assert itf.compute_model_sha(tmp_path, "a", area) != sha
+
+
+def test_a_records_only_module_is_not_a_formal_model(tmp_path):
+    qnt, _als, intent, records = spec_source.migrate_area(
+        {"kind": "area", "area": "a", "version": "1",
+         "requirements": [{"id": "REQ-001", "description": "x", "quint_ref": "go",
+                           "witness": {"predicate": "y == 1"}}],
+         "constraints": [{"id": "CON-001", "name": "MAX", "value": 3}]}, None)
+    assert "def " not in qnt and "pure val" not in qnt
+    assert not spec_source.has_model(qnt)
+    files = {"a.qnt": qnt, "a.intent.json": json.dumps(intent)}
+    area, info = spec_source.derive_from_texts("a", files.get)
+    assert not info["model_present"] and "formal_model" not in area
+    req = area["requirements"][0]
+    assert req["witness"]["predicate"] == "y == 1" and req["quint_ref"] == "go"
+    assert area["constraints"][0]["value"] == 3
+
+
+def test_witness_host_ghost_type_must_match_the_action(tmp_path):
+    qnt = ("module a {\n  var x: int -> bool\n"
+           "  action go(uid: int): bool = x' = x.put(uid, true)\n"
+           "  /// @req REQ-001\n  /// @via go\n"
+           "  def shall_REQ_001(_lastUid: str): bool = x.get(0)\n}\n")
+    q = tmp_path / "a.qnt"
+    q.write_text(qnt, encoding="utf-8")
+    model, info = spec_source.derive_records(qnt, "a.qnt")
+    area = {"requirements": model["requirements"]}
+    sidecar = {"action_param_types": {"go": [("uid", "int")]}}
+    findings = []
+    lint.check_witness_hosts(area, sidecar, info, "a", findings)
+    assert [f.check for f in findings] == ["witness-host-param-type"]
+
+
+def test_pin_writes_meaning_and_brief_pins_into_the_ledger(tmp_path, monkeypatch):
+    area = _full_area()
+    area["requirements"][0]["meaning"].pop("written_against")
+    area["brief"].pop("written_against")
+    _put_full(tmp_path, area)
+    qnt_before = (tmp_path / "specs" / "a.qnt").read_bytes()
+    monkeypatch.setattr(sys, "argv", ["itf_tools.py", "pin", "a", "--req", "REQ-001",
+                                      "--brief", "--root", str(tmp_path)])
+    itf.main()
+    derived = spec_source.load_area(tmp_path, "a")
+    assert itf.meaning_status(derived["requirements"][0])[0] == "current"
+    assert itf.brief_status(derived)[0] == "current"
+    assert (tmp_path / "specs" / "a.qnt").read_bytes() == qnt_before
+
+
+def test_the_source_schemas_are_generated_from_the_area_schema():
+    assert spec_source.main(["schemas"]) == 0, \
+        "intent/records schemas are stale: run tools/spec_source.py schemas --write"
+
+
+def test_the_quint_ir_documents_the_same_declarations_as_the_python_reader():
+    """`quint parse` keeps each `///` block on its declaration. Where the CLI
+    is installed it must agree with the pure-Python reader about which
+    declaration carries which record — otherwise Tier 1 and Tier 2 would
+    read different specs from the same file."""
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("quint"):
+        pytest.skip("quint CLI not installed")
+    for qnt in sorted((TOOLS.parent / "examples" / "specs").glob("*.qnt")):
+        if qnt.name.endswith(".probes.qnt"):
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "ir.json"
+            proc = subprocess.run(["quint", "parse", str(qnt), "--out", str(out)],
+                                  capture_output=True, text=True)
+            assert proc.returncode == 0, proc.stdout + proc.stderr
+            ir = json.loads(out.read_text(encoding="utf-8"))
+        mod = ir["modules"][0]
+        from_ir = {}
+        for decl in [mod] + mod["declarations"]:
+            for rid in re.findall(r"@(?:req|inv|prop|con|example)\s+(\S+)", decl.get("doc") or ""):
+                from_ir[rid] = decl["name"]
+        from_py = {r["id"]: (r["host"] or {}).get("name")
+                   for r in spec_source.read_records(qnt.read_text(encoding="utf-8"))
+                   if r["tag"] != "outcome-of"}
+        assert from_ir == from_py, qnt.name
+
+
+def test_flag_probe_matches_whole_flags_only(monkeypatch):
+    """quint 0.32 has --server-endpoint and no --server. A substring probe
+    said --server existed, and the timeout path then passed a flag quint
+    rejects."""
+    import subprocess
+    help_text = "  --server-endpoint  Apalache server endpoint\n  --invariants  ...\n"
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: type(
+        "P", (), {"stdout": help_text, "stderr": ""})())
+    monkeypatch.setattr(record, "_QUINT_CAPS", {})
+    assert record.quint_supports("quint", "verify", "--server") is False
+    assert record.quint_supports("quint", "verify", "--server-endpoint") is True
+    assert record.quint_supports("quint", "verify", "--invariants") is True

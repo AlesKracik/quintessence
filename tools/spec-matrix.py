@@ -40,7 +40,7 @@ Usage:
   tools/spec-matrix.py <area> --stdout       # write to stdout, no file
   tools/spec-matrix.py <area> --strict       # exit 1 while any '?' cell remains
   tools/spec-matrix.py <area> --record       # also write coverage stats into
-                                             #   specs/<area>.area.json check_results.matrix
+                                             #   specs/<area>.records.json check_results.matrix
                                              #   (the reviewable summary; the CSV is gitignored)
   tools/spec-matrix.py <area> --root <path>  # project root (default: cwd)
 
@@ -64,13 +64,26 @@ from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 # sets, and a second copy is how they drift.
 from itf_tools import (area_json_path, TRIAGE_VALUES,  # noqa: E402
                        PLUMBING_ACTIONS, soften_stdout)
+import spec_source  # noqa: E402
 
 
 def load_area(root: Path, area: str) -> dict:
-    path = area_json_path(root, area)
-    if not path.exists():
-        sys.exit(f"ERROR: {path} does not exist")
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = spec_source.load_area(root, area)
+    except spec_source.SpecSourceError as e:
+        sys.exit(f"ERROR: {e}")
+    if data is None:
+        sys.exit(f"ERROR: {area_json_path(root, area)} does not exist")
+    return data
+
+
+def record_stats(root: Path, area: str, area_full: dict) -> Path:
+    """Stamp check_results.* into the ledger (records file) only."""
+    try:
+        spec_source.save_area(root, area, area_full)
+    except spec_source.SpecSourceError as e:
+        sys.exit(f"ERROR: {e}")
+    return spec_source.records_path(root, area)
 
 
 def discover_qnt_actions(root: Path, area_data: dict, area: str) -> list:
@@ -341,8 +354,7 @@ def run_outcomes(args, root, area_data) -> int:
     )
 
     if args.record:
-        area_path = area_json_path(root, args.area)
-        area_full = json.loads(area_path.read_text(encoding="utf-8"))
+        area_full = load_area(root, args.area)
         cr = area_full.setdefault("check_results", {})
         cr["outcomes"] = {
             "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -357,10 +369,7 @@ def run_outcomes(args, root, area_data) -> int:
         })
         if gaps:
             cr["outcomes"]["gaps"] = gaps
-        area_path.write_text(
-            json.dumps(area_full, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        area_path = record_stats(root, args.area, area_full)
         print(f"recorded check_results.outcomes in {area_path}", file=sys.stderr)
 
     if args.strict and stats["uncovered"] > 0:
@@ -375,7 +384,7 @@ def run_outcomes(args, root, area_data) -> int:
 
 def main():
     p = argparse.ArgumentParser(description="Generate state × event coverage matrix.")
-    p.add_argument("area", help="Area name; reads specs/<area>.area.json (or .contract.json)")
+    p.add_argument("area", help="Area name; reads the area derived from specs/<area>.{qnt,intent.json,records.json}")
     p.add_argument("--root", default=".", help="Project root (default: cwd)")
     p.add_argument("--stdout", action="store_true", help="Write to stdout instead of specs/<area>/gen/matrix.csv")
     p.add_argument("--strict", action="store_true",
@@ -466,8 +475,7 @@ def main():
     )
 
     if args.record:
-        area_path = area_json_path(root, args.area)
-        area_full = json.loads(area_path.read_text(encoding="utf-8"))
+        area_full = load_area(root, args.area)
         cr = area_full.setdefault("check_results", {})
         cr["matrix"] = {
             "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -485,10 +493,7 @@ def main():
         })
         if gaps:
             cr["matrix"]["gaps"] = gaps
-        area_path.write_text(
-            json.dumps(area_full, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        area_path = record_stats(root, args.area, area_full)
         print(f"recorded check_results.matrix in {area_path}", file=sys.stderr)
 
     if args.strict and stats["uncovered"] > 0:

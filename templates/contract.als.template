@@ -1,6 +1,6 @@
 // ============================================================
 // Alloy structural sidecar: {{AREA}}
-// Companion JSON: specs/{{AREA}}.contract.json (v{{VERSION}})
+// Intent: specs/{{AREA}}.intent.json (kind: contract, v{{VERSION}})
 // Last modified: {{DATE}}
 //
 // OPTIONAL — the structural backend. Only areas that declare
@@ -19,10 +19,11 @@
 // spec has no single source of truth). If the question mentions
 // "after", "then", or "eventually", it belongs in the .qnt.
 //
-// Each INV-* routed here sets, in the area JSON:
-//     "proof": "structural", "alloy_command": "<check name>"
-// spec-record runs `alloy exec -c <check name>` and records the
-// verdict; spec-lint FAILs if the named check is not below.
+// Each INV-* routed here is a `///` record on its assertion
+// (`/// @inv INV-NNN` + its statement + `@criticality`): hosting
+// it on `assert <name>` implies proof: structural and
+// alloy_command: <name>. spec-record runs `alloy exec -c <name>`
+// and records the verdict; spec-lint FAILs if no check names it.
 // ============================================================
 
 module {{MODULE_NAME}}
@@ -30,7 +31,7 @@ module {{MODULE_NAME}}
 // ------------------------------------------------------------
 // SIGNATURES
 // One sig per entity in concepts.entities[]. Keep the names
-// identical to the JSON — reviewers read them side by side.
+// identical to the intent file — reviewers read them side by side.
 // ------------------------------------------------------------
 
 // {{SIGNATURES}}
@@ -45,7 +46,7 @@ module {{MODULE_NAME}}
 // FACTS
 // Assumptions about every legal structure. A fact silently
 // removes counterexamples, so anything that is really an
-// environment assumption belongs in the area JSON too, where a
+// environment assumption belongs in the intent file too, where a
 // reviewer can see it.
 // ------------------------------------------------------------
 

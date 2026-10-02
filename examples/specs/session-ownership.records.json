@@ -1,0 +1,39 @@
+{
+  "$schema": "../schemas/records.schema.json",
+  "area": "session-ownership",
+  "check_results": {
+    "ran_at": "2026-05-15T12:00:00Z",
+    "checks": [
+      {
+        "id": "INV-CONTRACT-001",
+        "kind": "invariant",
+        "backend": "alloy",
+        "proof": "structural",
+        "alloy_command": "noSharedSessions",
+        "scope": "4 Session, 4 Account, 4 Screen",
+        "solver": "sat4j",
+        "result": "verified",
+        "duration_s": 0.4
+      },
+      {
+        "id": "INV-CONTRACT-002",
+        "kind": "invariant",
+        "backend": "alloy",
+        "proof": "structural",
+        "alloy_command": "everyGuardedScreenHasAnOwner",
+        "scope": "4 Session, 4 Account, 4 Screen",
+        "solver": "sat4j",
+        "result": "verified",
+        "duration_s": 0.3
+      }
+    ]
+  },
+  "by_id": {
+    "INV-CONTRACT-001": {
+      "formal_status": "verified-in-scope"
+    },
+    "INV-CONTRACT-002": {
+      "formal_status": "verified-in-scope"
+    }
+  }
+}

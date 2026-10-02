@@ -2,10 +2,11 @@
 """
 spec-lint.py — Consistency checker for the spec project.
 
-Reads .spec/project.json + each specs/<area>.area.json (or .contract.json —
-the filename suffix encodes the kind) and the .qnt sidecar, and
+Reads .spec/project.json + each area — derived by tools/spec_source.py from
+specs/<area>.qnt (records as `///` doc comments), specs/<area>.intent.json and
+specs/<area>.records.json — and
 checks cross-file consistency: ID format, broken references, drift between the
-area JSON and its sidecar, missing patterns/protocols, topology orphans,
+the records and the model they sit on, missing patterns/protocols, topology orphans,
 unverified critical invariants, unresolved questions, EARS requirement
 structure, witness-trace obligations (every requirement must be
 demonstrably reachable in the model — see METHODOLOGY.md), change
@@ -17,7 +18,7 @@ the new methodology has fewer files: one JSON per area, one sidecar, one project
 config, two catalogs.
 
 Usage:
-  tools/spec-lint.py                       # lint every area in .spec/project.json (specs/*.area.json / *.contract.json)
+  tools/spec-lint.py                       # lint every area in .spec/project.json
   tools/spec-lint.py <area>                # lint one area
   tools/spec-lint.py --json                # JSON output
   tools/spec-lint.py --strict              # exit 1 on warnings too
@@ -33,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import area_json_path, changes_dir, journeys_dir  # noqa: E402
+import spec_source  # noqa: E402
 
 # Severity constants.
 PASS = "pass"
@@ -166,6 +168,7 @@ def parse_sidecar(path):
         "actions":          set(ir["actions"]),
         "runs":             set(ir.get("runs") or []),
         "action_params":    ir.get("action_params") or {},
+        "action_param_types": ir.get("action_param_types") or {},
         "type_variants":    ir.get("type_variants") or {},
         "vars":             set(ir["vars"]),
         "action_mutations": ir["action_mutations"],
@@ -1020,8 +1023,9 @@ def check_formal_model_consistency(area_data, sidecar, area_name, findings):
         gating = at_review(area_data)
         add(findings, FAIL if gating else WARN, "quint",
             "sidecar-missing-or-empty", area_name,
-            "formal_model.quint_file is set but the sidecar file does not exist."
-            + ("" if gating else " Write it with /spec-check."))
+            "formal_model.quint_file is set but there is no model yet — the file "
+            "is missing, or holds only `///` records."
+            + ("" if gating else " Formalize it with /spec."))
 
 
 ALS_COMMAND_RE = re.compile(
@@ -1077,7 +1081,7 @@ def check_alloy_backend(root, area_data, area_name, findings):
                 f"formal_model.alloy_file '{als_rel}' does not exist.")
         else:
             try:
-                als_text = als_path.read_text(encoding="utf-8")
+                als_text = spec_source.strip_docs(als_path.read_text(encoding="utf-8"))
             except OSError as exc:
                 add(findings, FAIL, "alloy", "alloy-file-unreadable", area_name,
                     f"formal_model.alloy_file '{als_rel}' could not be read: {exc}")
@@ -1658,7 +1662,9 @@ def check_paired_invariants(root, area_data, sidecar, area_name, findings):
     qnt_rel = fm.get("quint_file") or f"{area_name}.qnt"
     qnt_path = Path(root) / "specs" / qnt_rel
     try:
-        text = qnt_path.read_text(encoding="utf-8")
+        # Without the `///` records: a constant named in a requirement's
+        # prose is not a constant the model reads.
+        text = spec_source.strip_docs(qnt_path.read_text(encoding="utf-8"))
     except OSError:
         return
     inv_ids = {i.get("id") for i in (area_data.get("invariants") or []) if i.get("id")}
@@ -2056,7 +2062,7 @@ def check_cross_refs(area_data, all_areas, area_name, findings):
                 other_area, other_id = xref.split(".", 1)
                 if other_area not in all_areas:
                     add(findings, WARN, "cross-refs", "unknown-area", area_name,
-                        f"{item.get('id')}.cross_refs points to area '{other_area}' which has no spec file (specs/{other_area}.area.json or .contract.json).",
+                        f"{item.get('id')}.cross_refs points to area '{other_area}' which has no spec (specs/{other_area}.intent.json).",
                         ref=item.get("id"))
                     continue
                 other = all_areas[other_area]
@@ -2079,7 +2085,7 @@ def check_contract_spans(area_data, all_areas, area_name, findings):
     for s in area_data.get("spans", []) or []:
         if s not in all_areas:
             add(findings, FAIL, "contract", "missing-span", area_name,
-                f"spans[] references area '{s}' which has no spec file (specs/{s}.area.json or .contract.json).", ref=s)
+                f"spans[] references area '{s}' which has no spec (specs/{s}.intent.json).", ref=s)
 
 
 def check_open_questions(area_data, area_name, findings):
@@ -2374,7 +2380,7 @@ def check_topology(project_data, all_areas, findings):
 def check_changes(root, all_areas, findings, validator=None):
     """Change manifests (specs/changes/*.change.json): schema validity, slug
     matches filename, targets resolve to real areas, ids resolve in the target's
-    spec, no stored phase flags (status is derived from area JSONs, never stored).
+    spec, no stored phase flags (status is derived from the areas, never stored).
     Landed/abandoned manifests are history — parse + schema + slug only (their
     ids may legitimately have been removed by later changes; that's not drift)."""
     cdir = changes_dir(root)
@@ -2406,7 +2412,7 @@ def check_changes(root, all_areas, findings, validator=None):
             if tname not in all_areas:
                 add(findings, FAIL, "changes", "unknown-target", name,
                     f"targets[] references '{tname}' which has no spec file "
-                    f"(specs/{tname}.area.json or .contract.json).",
+                    f"(specs/{tname}.intent.json).",
                     ref=tname)
                 continue
             area_data = all_areas[tname]
@@ -2421,7 +2427,7 @@ def check_changes(root, all_areas, findings, validator=None):
             if stored_flags:
                 add(findings, FAIL, "changes", "stored-phase-flags", name,
                     f"targets[{tname}] stores phase flags ({', '.join(stored_flags)}) "
-                    f"— phase status is DERIVED from the area JSONs (witness "
+                    f"— phase status is DERIVED from the areas (witness "
                     f"freshness, check_results, traceability, verification_log), "
                     f"never stored. Remove them; the manifest holds membership only.",
                     ref=tname)
@@ -2479,8 +2485,7 @@ def check_journeys(root, all_areas, findings, validator=None):
             area, rid = ref.split(".", 1)
             if area not in all_areas:
                 add(findings, FAIL, "journeys", "unknown-area", jname,
-                    f"step ref '{ref}' — no spec file (specs/{area}.area.json "
-                    f"or .contract.json).", ref=ref)
+                    f"step ref '{ref}' — no spec (specs/{area}.intent.json).", ref=ref)
                 continue
             area_data = all_areas[area]
             if not isinstance(area_data, dict) or "__parse_error__" in area_data:
@@ -2492,13 +2497,89 @@ def check_journeys(root, all_areas, findings, validator=None):
                     ref=ref)
 
 
+# ── Quint-first sources ───────────────────────────────────────────────────────
+
+def check_sources(root, area_name, info, findings):
+    """The files an area is derived from, checked as files.
+
+    Grammar problems (an unknown tag, a duplicate id, an @outcome-of naming
+    no requirement, a malformed @error) come out of the derivation itself.
+    They are FAILs at every status: a record the reader could not place is a
+    claim nobody is checking, and that is never a draft-stage nicety."""
+    for problem in info.get("problems") or []:
+        add(findings, FAIL, "source", "record-grammar", area_name, problem)
+    for suffix in spec_source.LEGACY_SUFFIXES:
+        legacy = Path(root) / "specs" / f"{area_name}{suffix}"
+        if legacy.exists():
+            add(findings, FAIL, "source", "legacy-spec-file", area_name,
+                f"specs/{legacy.name} is a JSON-first spec. Records now live in "
+                f"the model's doc comments: run `tools/spec_source.py migrate "
+                f"{area_name} --write`, review the diff, and commit the result.")
+    for rec in info.get("records") or []:
+        if rec.get("host") is None and rec["tag"] != "outcome-of":
+            add(findings, FAIL, "source", "record-without-host", area_name,
+                f"{rec['where']['file']}:{rec['where']['line']}: @{rec['tag']} "
+                f"{rec['id']} documents no declaration — a doc comment at the end "
+                f"of a file belongs to nothing. Move it above its host.",
+                ref=rec["id"])
+
+
+def check_witness_hosts(area_data, sidecar, info, area_name, findings):
+    """A witness host's ghost parameters, against the action it witnesses.
+
+    `def shall_REQ_003(_lastUid: UserId)` typechecks in the model on its own
+    terms; the probe generator then binds `_lastUid` to the ghost of the
+    @via action's `uid`. If that action has no `uid`, or types it
+    differently, the model is happy and the probe is wrong — so it is
+    checked here, where both are visible."""
+    if not sidecar or sidecar.get("__no_module__"):
+        return
+    params_by_action = sidecar.get("action_param_types") or {}
+    for rec in info.get("records") or []:
+        host = rec.get("host") or {}
+        if rec["tag"] not in ("req", "outcome-of") or host.get("kind") not in ("val", "def"):
+            continue
+        via = next((v for t, v in rec["tags"] if t == "via"), None)
+        if rec["tag"] == "outcome-of":
+            req = next((r for r in area_data.get("requirements") or []
+                        if r.get("id") == rec["id"]), {})
+            via = req.get("quint_ref")
+        if not via:
+            if (host.get("name") or "").startswith("shall_"):
+                add(findings, WARN, "source", "witness-host-without-via", area_name,
+                    f"{rec['id']}: `{host['name']}` is named like a witness host "
+                    f"but its record has no @via, so its body is not read as the "
+                    f"witness predicate. Add `@via <action>`.", ref=rec["id"])
+            continue
+        declared = {ghost_for(n): t for n, t in (params_by_action.get(via) or [])}
+        for pname, ptype in host.get("params") or []:
+            if not pname.startswith("_last") or pname == "_lastAction":
+                continue
+            if pname not in declared:
+                continue  # binding to another action's ghost: witness-unbound's call
+            if ptype and declared[pname] and ptype.replace(" ", "") != declared[pname].replace(" ", ""):
+                add(findings, FAIL, "source", "witness-host-param-type", area_name,
+                    f"{rec['id']}: `{host['name']}` types {pname} as {ptype}, but "
+                    f"`{via}` declares it {declared[pname]} — the probe would bind "
+                    f"a value of the wrong type.", ref=rec["id"])
+    for rec in info.get("records") or []:
+        if rec["tag"] == "con" and any(t == "value" for t, _ in rec["tags"]) \
+                and (rec.get("host") or {}).get("body") is not None \
+                and spec_source._literal((rec.get("host") or {}).get("body")) is not None:
+            add(findings, FAIL, "source", "constant-value-twice", area_name,
+                f"{rec['id']}: @value restates the value of `{rec['host']['name']}`. "
+                f"The model's literal is the value; drop the tag.", ref=rec["id"])
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
-              schema_validator=None, sidecars=None):
+              schema_validator=None, sidecars=None, info=None):
+    info = info or {}
+    check_sources(root, area_name, info, findings)
     if area_data is None:
         add(findings, FAIL, "meta", "file-missing", area_name,
-            f"specs/{area_name}.area.json (or .contract.json) not found.")
+            f"specs/{area_name}.intent.json not found.")
         return
     if isinstance(area_data, dict) and "__parse_error__" in area_data:
         add(findings, FAIL, "meta", "parse-error", area_name,
@@ -2506,6 +2587,13 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
         return
 
     check_schema(area_data, schema_validator, area_name, findings)
+    if info.get("intent") is not None:
+        check_schema(info["intent"], build_schema_validator(root, "intent.schema.json"),
+                     area_name, findings)
+    if info.get("records_file"):
+        check_schema(info["records_file"], build_schema_validator(root, "records.schema.json"),
+                     area_name, findings)
+    check_witness_hosts(area_data, sidecar, info, area_name, findings)
     check_area_meta(area_data, area_name, findings)
     check_ids(area_data, area_name, findings)
     check_ears(area_data, area_name, findings)
@@ -2661,27 +2749,22 @@ def main():
     else:
         target_areas = all_area_names
 
-    # Load all areas (needed for cross-ref resolution). The filename suffix
-    # (.area.json / .contract.json) must match the JSON's kind field.
+    # Load all areas (needed for cross-ref resolution), each derived by
+    # spec_source from its model's doc comments + intent + ledger.
     all_areas = {}
     sidecars = {}
+    infos = {}
     findings = []
     for a in all_area_names:
-        path = area_json_path(root, a)
-        all_areas[a] = load_json(path) if path.exists() else None
-        sidecars[a] = parse_sidecar(root / "specs" / f"{a}.qnt")
-        both = [k for k in ("area", "contract")
-                if (root / "specs" / f"{a}.{k}.json").exists()]
-        if len(both) > 1:
-            add(findings, FAIL, "meta", "duplicate-spec-file", a,
-                f"Both specs/{a}.area.json and specs/{a}.contract.json exist — "
-                f"delete one; the suffix encodes the kind.")
-        elif both and isinstance(all_areas[a], dict) \
-                and all_areas[a].get("kind") in ("area", "contract") \
-                and all_areas[a]["kind"] != both[0]:
-            add(findings, FAIL, "meta", "kind-suffix-mismatch", a,
-                f"specs/{a}.{both[0]}.json has kind '{all_areas[a]['kind']}' — "
-                f"rename the file to specs/{a}.{all_areas[a]['kind']}.json.")
+        try:
+            all_areas[a], infos[a] = spec_source.load_area(root, a, with_info=True)
+        except spec_source.SpecSourceError as e:
+            all_areas[a], infos[a] = {"__parse_error__": str(e)}, {}
+        qrel = ((all_areas[a] or {}).get("formal_model") or {}).get("quint_file") \
+            if isinstance(all_areas[a], dict) else None
+        # A records-only module (Tier 1, no model written yet) is no sidecar.
+        sidecars[a] = (parse_sidecar(root / "specs" / (qrel or f"{a}.qnt"))
+                       if (infos.get(a) or {}).get("model_present") else None)
 
     catalog = {
         "patterns":  load_catalog(root, "patterns"),
@@ -2712,7 +2795,7 @@ def main():
 
     for a in target_areas:
         lint_area(root, a, all_areas[a], sidecars[a], all_areas, catalog, findings,
-                  schema_validator, sidecars=sidecars)
+                  schema_validator, sidecars=sidecars, info=infos.get(a))
 
     # Topology, change-manifest, and journey checks run once per project, on
     # EVERY invocation (they're cheap) — a single-area run must not report

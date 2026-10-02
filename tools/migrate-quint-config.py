@@ -4,7 +4,7 @@ migrate-quint-config.py — one-shot migration for the quint-surface and
 spec↔code-provenance changes.
 
 The schema changes it accompanies are ADDITIVE: .spec/project.json gains an
-optional `quint` block, and area JSONs gain check_results.simulation, two
+optional `quint` block, and area ledgers gain check_results.simulation, two
 optional fields on checks[], and the generated_from / extracted_from
 provenance blocks. Every existing file therefore still validates, and a
 project that never runs this script keeps working on the defaults.
@@ -18,7 +18,7 @@ sense. It does three things worth doing anyway:
      the simulator uses, and which backend liveness is checked on — are worth
      having in front of a reviewer.
 
-  2. Reports (never rewrites) area JSONs holding a PROPERTY that was recorded
+  2. Reports (never rewrites) areas holding a PROPERTY that was recorded
      before the temporal fix. Those entries were produced by passing a
      temporal formula to --invariant, which is not a check of that formula at
      all, so their formal_status is not evidence of anything. The script
@@ -95,14 +95,24 @@ def migrate_project(root, apply_changes):
     print(f"OK added `quint` block to {path}")
 
 
+def _areas(root):
+    """(intent path, derived area view) for every Quint-first area."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import spec_source  # noqa: WPS433
+    for name in spec_source.list_areas(root):
+        try:
+            area = spec_source.load_area(root, name)
+        except spec_source.SpecSourceError as e:
+            sys.exit(f"ERROR: {name}: {e}")
+        yield spec_source.intent_path(root, name), area
+
+
 def audit_areas(root):
     """Property verdicts recorded before the temporal fix are not evidence:
     they came from checking a temporal formula as if it were a state
     predicate. Report them; let a human re-check."""
     stale = []
-    specs = root / "specs"
-    for path in sorted(specs.glob("*.area.json")) + sorted(specs.glob("*.contract.json")):
-        area = load(path)
+    for path, area in _areas(root):
         if not isinstance(area, dict):
             continue
         backends = {c.get("id"): c.get("backend")
@@ -136,9 +146,7 @@ def audit_provenance(root):
     Report only. See the module docstring: a backfilled sha would be a guess
     wearing the costume of a record."""
     unstamped = []
-    specs = root / "specs"
-    for path in sorted(specs.glob("*.area.json")) + sorted(specs.glob("*.contract.json")):
-        area = load(path)
+    for path, area in _areas(root):
         if not isinstance(area, dict) or area.get("kind") == "contract":
             continue
         if area.get("generated_from") or area.get("extracted_from"):

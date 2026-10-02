@@ -1,0 +1,16 @@
+{
+  "$schema": "../schemas/intent.schema.json",
+  "kind": "contract",
+  "area": "session-ownership",
+  "version": "1.0.0",
+  "status": "formalized",
+  "last_modified": "2026-05-15T12:00:00Z",
+  "spans": [
+    "auth",
+    "auth-ui"
+  ],
+  "purpose": "Joint structural agreement between auth and auth-ui: how sessions, accounts and guarded screens may be wired together, independent of any sequence of events. Demonstrates the OPTIONAL Alloy backend — invariants marked proof: 'structural' are checked over a finite scope by Alloy instead of over traces by Apalache.",
+  "formal_model": {
+    "alloy_file": "session-ownership.als"
+  }
+}

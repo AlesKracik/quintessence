@@ -1,0 +1,167 @@
+{
+  "$schema": "../schemas/records.schema.json",
+  "area": "subscription",
+  "check_results": {
+    "outcomes": {
+      "ran_at": "2026-09-07T16:19:39+00:00",
+      "cells": 4,
+      "covered": 4,
+      "triaged": 0,
+      "uncovered": 0
+    },
+    "matrix": {
+      "ran_at": "2026-09-07T16:20:49+00:00",
+      "cells": 12,
+      "covered": 2,
+      "triaged": 10,
+      "uncovered": 0,
+      "orphans": 0
+    }
+  },
+  "matrix_triage": [
+    {
+      "entity": "Subscription",
+      "state": "Active",
+      "event": "cancel_again",
+      "verdict": "IMPOSSIBLE",
+      "reason": "cancel_again's guard requires the Subscription to be Cancelled."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Active",
+      "event": "cancel_times_out",
+      "verdict": "NO-OP",
+      "reason": "REQ-004: the provider timing out deliberately changes nothing — the subscription stays Active and billable. INV-003 is the proof."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Active",
+      "event": "expire_period",
+      "verdict": "IMPOSSIBLE",
+      "reason": "expire_period's guard requires the Subscription to be Cancelled; an Active subscription renews rather than expiring."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_subscription",
+      "verdict": "IMPOSSIBLE",
+      "reason": "cancel_subscription's guard requires Active; the repeat path is cancel_again."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_again",
+      "verdict": "NO-OP",
+      "reason": "REQ-003: cancelling twice is harmless and changes nothing."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_times_out",
+      "verdict": "IMPOSSIBLE",
+      "reason": "The provider is only called from the Active state; there is no second call to time out."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_subscription",
+      "verdict": "OUT-OF-SCOPE",
+      "scope_ref": "reactivation",
+      "reason": "Acting on an Expired subscription is a resubscribe, which belongs to the signup area."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_again",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Expired is terminal; cancel_again's guard requires Cancelled."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_times_out",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Expired is terminal and the provider is not called from it."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "expire_period",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Already Expired; expire_period's guard requires Cancelled."
+    }
+  ],
+  "outcome_triage": [],
+  "by_id": {
+    "INV-001": {
+      "formal_status": "specified"
+    },
+    "INV-002": {
+      "formal_status": "specified"
+    },
+    "INV-003": {
+      "formal_status": "specified"
+    },
+    "REQ-001": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "ceb17865e326eb542c59e7c1f795861611734954669a5d020b2434c45573b378"
+      }
+    },
+    "REQ-002": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "0535cb90348ccfaf0b94f3a4fb86bfda7d1abfdebdc0468a7a05e48cd9d69307"
+      }
+    },
+    "REQ-003": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "82ac1867981caaa9f2f6ee69c5b57beab83beb41a400854ef86c09d22b852099"
+      }
+    },
+    "REQ-004": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "5b59afac3d809d4ea63136c82cf10edb65d011165c29b46db2a7d1e38cd6c6b0"
+      }
+    },
+    "REQ-005": {
+      "witness": {
+        "status": "not-run"
+      },
+      "meaning": {
+        "written_against": "38ffc060b5f6d9bb6494a70047753d02e4eff074f49ca353bbb319fefb18d327"
+      }
+    },
+    "REQ-006": {
+      "meaning": {
+        "written_against": "2cdfc6ed63a90ef659f17c0dd56d360d1af42a181f831c5bcc69d75a6f035946"
+      }
+    },
+    "REQ-007": {
+      "witness": {
+        "status": "not-run",
+        "outcomes": {
+          "email": {
+            "status": "not-run"
+          },
+          "in-app": {
+            "status": "not-run"
+          }
+        }
+      },
+      "meaning": {
+        "written_against": "5ba0e166d741526609996ad0804c7ea1bd928e7ca358e5a3ff77333632ceea9f"
+      }
+    }
+  }
+}

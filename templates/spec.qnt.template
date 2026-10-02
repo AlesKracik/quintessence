@@ -1,12 +1,18 @@
 // ============================================================
 // Quint Specification: {{AREA}}
-// Companion JSON: specs/{{AREA}}.json (v{{VERSION}})
+// Intent: specs/{{AREA}}.intent.json · ledger: specs/{{AREA}}.records.json
 // Last modified: {{DATE}}
 //
-// Structure convention used by /spec when drafting a sidecar.
-// Coverage: REQ-* → actions, INV-* → invariants, PROP-* →
-// temporal, CON-* → consts. Witness probes live in the separate
-// generated specs/{{AREA}}.probes.qnt.
+// Structure convention used by /spec when drafting a model.
+// QUINT-FIRST: every record lives HERE, as a `///` doc comment on
+// the declaration that realizes it (grammar: tools/spec_source.py):
+//   @req  on a `shall_<ID>` witness host (its body IS the witness
+//         predicate), or on the action a prohibition refuses
+//   @inv  on its val      @prop on its temporal
+//   @con  on its pure val (the literal IS the value)
+//   @example on its run
+// Witness probes live in the separate generated
+// specs/{{AREA}}.probes.qnt.
 // ============================================================
 
 module {{MODULE_NAME}} {
@@ -38,13 +44,18 @@ module {{MODULE_NAME}} {
   // ----------------------------------------------------------
   // CONSTANTS / PARAMETERS
   // Bounds and configuration used in model checking. Use
-  // `pure val NAME: type = literal` — spec-lint cross-checks the
-  // literal against constraints[].value in the area JSON.
+  // `pure val NAME: type = literal` — the literal IS the
+  // constraint's value; its record carries only what the model
+  // cannot say.
   // ----------------------------------------------------------
 
   // {{CONSTANTS}}
   // Example:
-  //   pure val MAX_SESSIONS: int = 5      // CON-003
+  //   /// @con CON-003
+  //   /// Most concurrent sessions per user.
+  //   /// @unit sessions
+  //   /// @pairs INV-002
+  //   pure val MAX_SESSIONS: int = 5
 
 
   // ----------------------------------------------------------
@@ -88,7 +99,17 @@ module {{MODULE_NAME}} {
   // {{ACTION_DEFINITIONS}}
   // Template for each action:
   //
-  // /// REQ-NNN: <requirement description>
+  // A prohibition's record sits on the action it refuses:
+  //
+  // /// @req REQ-NNN
+  // /// @modality forbidden
+  // /// @while <state>
+  // /// @when <trigger>
+  // /// @unwanted
+  // /// @shall <response>
+  // /// @meaning <the plain-words sentence a reviewer reads>
+  // /// @enforced-by INV-NNN
+  // /// @refusal tests/<area>/refusal/<case>.test.ts
   // action {{ACTION_NAME}}({{PARAMS}}): bool = all {
   //   {{PRECONDITION}},          // CON-NNN guard, a plain boolean
   //   {{STATE_UPDATES}}
@@ -138,8 +159,19 @@ module {{MODULE_NAME}} {
   // {{INVARIANT_DEFINITIONS}}
   // Template:
   //
-  // /// INV-NNN: <requirement description>
-  // invariant {{INV_NAME}} = {{FORMULA}}
+  // /// @inv INV-NNN
+  // /// <the invariant, in words>
+  // /// @criticality critical
+  // val {{INV_NAME}}: bool = {{FORMULA}}
+  //
+  // A TRANSITION property (needs the pre-state) is a def whose
+  // parameters are the probe module's _prev* ghosts; the probe
+  // generator emits its body there as `val <quint-name>`:
+  //
+  // /// @inv INV-NNN
+  // /// <X never changes>
+  // /// @quint-name {{INV_NAME}}
+  // def {{INV_NAME}}_over(_prevX: <type of x>): bool = x == _prevX
 
 
   // ----------------------------------------------------------
@@ -151,8 +183,33 @@ module {{MODULE_NAME}} {
   // {{TEMPORAL_DEFINITIONS}}
   // Template:
   //
-  // /// PROP-NNN: <requirement description>
+  // /// @prop PROP-NNN
+  // /// <what eventually happens>
   // temporal {{PROP_NAME}} = {{TEMPORAL_FORMULA}}
+
+
+  // ----------------------------------------------------------
+  // WITNESS HOSTS (REQ-*) — one per witnessed requirement
+  // The record AND the predicate the witness probe is built from.
+  // Name parameters after the probe ghosts (uid -> _lastUid) so
+  // the predicate is bound to THIS call and typechecks here.
+  // @pre (the delta) stays text: _prev* exists only in the probe
+  // module. A `may` requirement: its record on the action, one
+  // `shall_<ID>_<outcome>` host per permitted outcome, tagged
+  // `/// @outcome-of REQ-NNN <outcome>`.
+  // ----------------------------------------------------------
+
+  // Template:
+  //
+  // /// @req REQ-NNN
+  // /// @status specified
+  // /// @when <trigger>
+  // /// @shall <response>
+  // /// @meaning <plain words>
+  // /// @via {{ACTION_NAME}}
+  // /// @pre not(_prevX.keys().contains(_lastK))
+  // def shall_REQ_NNN(_lastK: <param type>): bool =
+  //   <postcondition over state, of the thing this call touched>
 
 
   // ----------------------------------------------------------
@@ -161,8 +218,12 @@ module {{MODULE_NAME}} {
   // ----------------------------------------------------------
 
   // {{TEST_DEFINITIONS}}
-  // Template:
+  // Template (a worked example IS its run):
   //
+  // /// @example EX-NNN
+  // /// <title>
+  // /// @refs REQ-NNN
+  // /// @source elicited
   // run {{TEST_NAME}} = {
   //   init.then({{ACTION_SEQUENCE}})
   // }

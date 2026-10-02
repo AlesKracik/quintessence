@@ -1,6 +1,6 @@
 # /spec — Adaptive Spec Authoring
 
-The single entry point for spec work. Detects the current state of the project and the named target, then walks the relevant conversational beat: project setup, area elicitation, vocabulary, structuring, formalization, brownfield extraction, drift codification, catalog editing. Writes `specs/<target>.*.json` and its `.qnt` sidecar.
+The single entry point for spec work. Detects the current state of the project and the named target, then walks the relevant conversational beat: project setup, area elicitation, vocabulary, structuring, formalization, brownfield extraction, drift codification, catalog editing. Writes the area's three files: `specs/<target>.qnt` (the model, with every record as a `///` doc comment), `specs/<target>.intent.json` and — through the tools only — `specs/<target>.records.json`.
 
 There are no other authoring subcommands — this command subsumes every authoring phase (init, elicit, structure, formalize, reconcile, approve, …); don't invent `/spec-<phase>` names. The only other commands are the four action commands: `/spec-check`, `/spec-code-verify`, `/spec-code-generate`, `/spec-readback`.
 
@@ -13,7 +13,43 @@ There are no other authoring subcommands — this command subsumes every authori
 /spec _overview                # project overview: areas, open changes, status
 ```
 
-**File naming:** every spec JSON carries its type in the filename — `specs/<name>.area.json`, `specs/<name>.contract.json`, `specs/changes/<slug>.change.json`, `specs/journeys/<slug>.journey.json`. `specs/<target>.*.json` below means the target's `.area.json` or `.contract.json` file (the suffix must match the JSON's `kind`; `spec-lint` enforces it).
+**Where the spec lives (Quint-first).** An area is three files, each the only source of what it holds (full grammar: the docstring of `tools/spec_source.py`; rationale: METHODOLOGY.md "Where the Spec Lives"):
+
+| File | Holds | Who writes it |
+|---|---|---|
+| `specs/<target>.qnt` | the formal model **and** every per-ID record checkable against it — requirements, invariants, properties, constants, examples — as `///` doc comments on the declaration that realizes each one | you, in this command |
+| `specs/<target>.intent.json` | what a model cannot say: `kind`, purpose, brief, scope, boundary, concepts, externals, assumptions, decisions, open questions, state machines, architecture, `formal_model` config (schema: `schemas/intent.schema.json`) | you, in this command |
+| `specs/<target>.records.json` | ledgers: check results, witness/refusal verdicts, freshness pins, verification log, traceability, provenance — and the three triage ledgers (`extraction_triage`, `matrix_triage`, `outcome_triage`), which you DO write | the tools; you only for triage verdicts |
+
+`specs/<target>.intent.json` is the file that makes an area exist; "the area" below always means what `tools/spec_source.py derive <target>` prints — the view every tool reads. A contract is `"kind": "contract"` in its intent file; a purely relational contract keeps its records on the `.als` assertions instead of a `.qnt`. There is no `*.area.json` any more: lint FAILs one (`legacy-spec-file`) and `tools/spec_source.py migrate <target> --write` converts it losslessly.
+
+**Writing a record.** One tag per line; untagged lines right after the record tag are the description; a tag's value continues onto following untagged lines.
+
+```quint
+  /// @req REQ-003
+  /// @status specified
+  /// @while the account is Unlocked
+  /// @when a login attempt fails
+  /// @unwanted
+  /// @shall increment failedAttempts and lock the account when it reaches
+  ///   MAX_FAILED_ATTEMPTS
+  /// @meaning Every failed sign-in counts against the account, and the attempt
+  ///   that reaches MAX_FAILED_ATTEMPTS locks it.
+  /// @via login_failed
+  /// @pre not(_prevAccountStatus.keys().contains(_lastUid) and
+  ///   _prevAccountStatus.get(_lastUid) == Locked)
+  def shall_REQ_003(_lastUid: UserId): bool =
+    accountStatus.keys().contains(_lastUid) and accountStatus.get(_lastUid) == Locked
+```
+
+- **Witnessed requirement** → a `val`/`def shall_<ID>` whose BODY is the witness predicate, with `@via <action>`. Name the parameters after the probe ghosts (`_lastUid: UserId` for the action's `uid`) so the predicate is bound to this call AND typechecks in the model. `@pre` (the delta) stays text: the `_prev*` ghosts exist only in the probe module.
+- **Prohibition / `may` / not yet formalized** → on the `action` it refuses or concerns (`@via` implied); a `may`'s outcomes are separate `shall_<ID>_<outcome>` hosts tagged `@outcome-of <ID> <name>`.
+- **No model yet** (raw requirement, NFR, Tier-1 area) → in the `module`'s own doc comment; `@predicate` carries a draft predicate as text until there is a model to host it.
+- **Invariant** → on its `val`; **property** → on its `temporal`; **constant** → on its `pure val` (the model's literal IS the value — never restate it with `@value`); **example** → on its `run`.
+- After writing or re-reading a `@meaning`, pin it: `tools/itf_tools.py pin <target> --req <ID>` (the brief: `--brief`). Never type a sha.
+- Never edit `records.json` verdicts, pins, logs or provenance by hand; the tools refuse to overwrite authored text and you must not overwrite theirs.
+
+Change manifests (`specs/changes/<slug>.change.json`) and journeys (`specs/journeys/<slug>.journey.json`) are unchanged overlays: references only.
 
 **The change is the unit of work; the area is the unit of meaning.** Every spec edit happens inside a *change* — a manifest at `specs/changes/<slug>.change.json` (schema: `schemas/change.schema.json`) that references the areas/contracts it touches. Areas remain the logical spec boundary and the single source of truth; the manifest holds membership and IDs only — never spec content, never phase flags (status is derived; see the dashboard beat).
 
@@ -21,7 +57,7 @@ The **active change** is per-dev sticky state: `last_change` in `.spec/local.jso
 
 ## Instructions
 
-You are the **Adaptive Specifier**. Your job is to figure out what beat the user needs and walk them through it — not to ask a fixed sequence of questions. The user should never need to remember "am I in elicit or structure phase?" — you read the area JSON and infer.
+You are the **Adaptive Specifier**. Your job is to figure out what beat the user needs and walk them through it — not to ask a fixed sequence of questions. The user should never need to remember "am I in elicit or structure phase?" — you read the area (`tools/spec_source.py derive <target>`) and infer.
 
 ### Step 1 — Resolve change and target, read state
 
@@ -39,7 +75,7 @@ Then determine what exists:
 
 1. `.spec/project.json` — does the project exist? (If not, the **bootstrap** beat runs regardless of target resolution.)
 2. For the resolved target:
-   - `specs/<target>.*.json` — does the area exist?
+   - `specs/<target>.intent.json` — does the area exist?
    - `specs/<target>.qnt` — does the formal model exist?
    - For areas with `code_repo` set: does the code path on disk exist? (Resolve via `.spec/local.json`.)
 
@@ -50,12 +86,12 @@ This determines the entry beat:
 | No `.spec/project.json` | **bootstrap**: walk project setup |
 | `<target>` is `_project` | **project edit**: architecture defaults, repos, topology |
 | `<target>` is `_patterns/<name>`, `_protocols/<name>`, or `_journeys/<name>` | **catalog edit**: add/edit a catalog file |
-| `specs/<target>.*.json` missing, code exists at the area's `code_path` | **brownfield extract** |
-| `specs/<target>.*.json` missing, no code | **greenfield elicit** |
-| `specs/<target>.*.json` exists, code at `code_path` changed since the last extraction | **re-extract**: reconcile the spec against the code as it is now |
-| `specs/<target>.*.json` exists, sections incomplete | **resume**: pick up the next phase |
-| `specs/<target>.*.json` exists, `verification_log` shows drift | **drift codify**: walk the drift items |
-| `specs/<target>.*.json` exists, all phases complete | **review/idle**: present the readback, offer next action |
+| `specs/<target>.intent.json` missing, code exists at the area's `code_path` | **brownfield extract** |
+| `specs/<target>.intent.json` missing, no code | **greenfield elicit** |
+| `specs/<target>.intent.json` exists, code at `code_path` changed since the last extraction | **re-extract**: reconcile the spec against the code as it is now |
+| `specs/<target>.intent.json` exists, sections incomplete | **resume**: pick up the next phase |
+| `specs/<target>.intent.json` exists, `verification_log` shows drift | **drift codify**: walk the drift items |
+| `specs/<target>.intent.json` exists, all phases complete | **review/idle**: present the readback, offer next action |
 
 ### Step 2 — Run the beat
 
@@ -65,7 +101,7 @@ Each beat is a focused conversational flow. The beats:
 
 (Runs on bare `/spec` with an active change, and after `/spec change <slug>`.)
 
-Read the manifest and every referenced area JSON. Print the per-target phase grid, then suggest — don't auto-jump; visibility beats automation when targets interleave:
+Read the manifest and every referenced area. Print the per-target phase grid, then suggest — don't auto-jump; visibility beats automation when targets interleave:
 
 ```
 ## Change: billing-sso — "Billing accounts authenticate via SSO sessions"   [in-progress]
@@ -104,7 +140,7 @@ Ask only what's needed to start eliciting:
 
 **Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-code-generate` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units. Apalache settings need no moment at all: the defaults carry a two-pass step ladder (`shallow_steps` 3, `max_steps` 10) and a run budget (`budget_seconds` 900), so a check's cost is declared up front rather than discovered by waiting for it. Don't raise it here — the point is that the default is safe, not that it wants configuring. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 
-Write `.spec/project.json`. Scaffold each declared area's `specs/<name>.<kind>.json` as a minimal skeleton with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and `formal_model: {"quint_file": "<name>.qnt"}` — the pointer names where `/spec-check` will write the sidecar, so it is aimed before the file exists. Lint WARNs about the missing sidecar while the area is `raw`/`draft` and only FAILs from `in-review` on, so a freshly bootstrapped project lints clean.
+Write `.spec/project.json`. Scaffold each declared area as `specs/<name>.intent.json` with just `kind`, `area`, `version: "0.1.0"`, `status: "raw"`, and `formal_model: {"quint_file": "<name>.qnt"}`, plus `specs/<name>.qnt` holding an empty `module <name> { }` — the module whose doc comment will carry the first raw requirements until there is a model to hang them on. A module with no declarations is not a formal model (spec_source reads it as "none yet"), so lint grades the missing model as it always has: WARN while `raw`/`draft`, FAIL from `in-review` on, and a freshly bootstrapped project lints clean.
 
 5. **Open the first change** — the change is the unit of work, so bootstrap ends inside one, not before one. Ask: `Name the first change? [initial-spec]` (Enter = default; intent defaults to "Initial specification of <area list>"). Create `specs/changes/<slug>.change.json` per `schemas/change.schema.json` with every declared area as a target (`status: "open"`, empty `ids[]`), write `last_change` to `.spec/local.json`, and suggest branch `change/<slug>`.
 
@@ -124,13 +160,13 @@ Show current project config; ask which section to edit. Sections: repos, areas i
 
 For journeys (`schemas/journey.schema.json`, files at `specs/journeys/<name>.journey.json`): a journey is THE use-case mechanism — a named user-visible flow, steps as qualified `<area>.<ID>` refs in temporal order; most live inside one area, some cross boundaries, same shape either way. Journeys are born where the flow is: in elicitation, one story told is one journey; in brownfield, one reachable entry point is one journey, deduced from the call graph and updated on re-extraction. This beat is for stitching or editing them directly. Creating one: ask for the actor and the story end to end, then map each step to an existing REQ (offer candidates from the areas' requirements); a step with no matching REQ is a gap — capture it in the owning area first (`/spec <area>`), then finish the journey.
 
-If the file doesn't exist: walk creation per `schemas/pattern.schema.json` or `schemas/protocol.schema.json`. If it exists: show contents, ask which fields to update. Write back. Don't modify any area JSON references (the user opts those in separately).
+If the file doesn't exist: walk creation per `schemas/pattern.schema.json` or `schemas/protocol.schema.json`. If it exists: show contents, ask which fields to update. Write back. Don't modify any area's references to it (the user opts those in separately).
 
 If the user types `/spec _patterns`, `/spec _protocols`, or `/spec _journeys` (no name): list cataloged entries with one-line descriptions and ask which to edit (or "new").
 
 #### brownfield extract
 
-(Runs when `specs/<target>.*.json` is missing AND code exists at the area's `code_path`.)
+(Runs when `specs/<target>.intent.json` is missing AND code exists at the area's `code_path`.)
 
 Tell the user: "No spec for `<target>` yet, but code exists at `<resolved-code-path>`. I'll extract a draft spec."
 
@@ -161,21 +197,23 @@ Apply the four capture-time checks **against the code rather than the user** —
 3. **Boundary semantics.** The code *knows* whether it is `>=` or `>`. Do not ask; read it, and record it in the response ("locks on the 5th failure").
 4. **Quantifier scope.** The data structure answers it: `Map<UserId, int>` is per-user, a bare `int` is global.
 
-Mark every extracted item `source: "extracted"`, `status: "needs-validation"`, and fill `extraction`:
+Mark every extracted item `@source extracted`, `@status needs-validation`, and record where it came from:
 
-```json
-"extraction": { "evidence": "authService.ts:78-91", "confidence": "high", "inferred_by": "agent" }
+```quint
+  /// @evidence authService.ts:78-91
+  /// @confidence high
+  /// @inferred-by agent
 ```
 
 `confidence: "low"` is the honest label when the code was ambiguous and you guessed — the readback surfaces it and lint flags it at review. Guessing silently is what makes an extracted spec untrustworthy.
 
 ##### 2. Account for the code you did NOT specify
 
-Run `tools/spec-extract-audit.py <target> --emit --record`. **`--record` is not optional.** Without it the audit prints to the terminal and nothing is written down: `check_results.extraction` stays absent, and the readback, the ship verdict and lint all read absent as "nothing to say". That is how an area reaches full witnesses, full invariants, zero untriaged matrix cells and zero lint failures with most of its code unaccounted for. The number has to land in the JSON or it does not exist.
+Run `tools/spec-extract-audit.py <target> --emit --record`. **`--record` is not optional.** Without it the audit prints to the terminal and nothing is written down: `check_results.extraction` stays absent, and the readback, the ship verdict and lint all read absent as "nothing to say". That is how an area reaches full witnesses, full invariants, zero untriaged matrix cells and zero lint failures with most of its code unaccounted for. The number has to land in the ledger (`records.json`) or it does not exist.
 
 It enumerates the decision sites — branches, guard literals, error handlers, early exits — and prints triage stubs for every one no spec element claims.
 
-This is the only check in the framework that runs **code → spec**, and it is the one that matters here: the reason a regenerated implementation diverges is almost always a branch nobody wrote down, and nothing spec-shaped can look for a branch the spec does not mention. Give every site a verdict in `extraction_triage[]`:
+This is the only check in the framework that runs **code → spec**, and it is the one that matters here: the reason a regenerated implementation diverges is almost always a branch nobody wrote down, and nothing spec-shaped can look for a branch the spec does not mention. Give every site a verdict in `extraction_triage[]` — in `specs/<target>.records.json`, the one ledger you write by hand:
 
 - `MAPPED` (+ `maps_to`) — realizes these spec ids.
 - `NOT-BEHAVIOR` — logging, metrics, tracing.
@@ -208,13 +246,13 @@ Ask for real call sequences — from logs, from existing tests, from a recording
 tools/spec-record.py stamp <target> --extracted --code-path <subtree>
 ```
 
-That records `extracted_from` — the code repo's git sha and the subtree you read. One line in the area JSON, and the thing that makes re-extraction able to say *what changed and since when* instead of only *which fingerprints are new*. Do it now: the sha you need is the one you just read, and it is unrecoverable later. If the code repo is not a git repo, the tool refuses and says so — carry on without it rather than inventing a value.
+That records `extracted_from` — the code repo's git sha and the subtree you read. One entry in the ledger, and the thing that makes re-extraction able to say *what changed and since when* instead of only *which fingerprints are new*. Do it now: the sha you need is the one you just read, and it is unrecoverable later. If the code repo is not a git repo, the tool refuses and says so — carry on without it rather than inventing a value.
 
 Then tell the user how to keep the spec current, because an extracted spec that is never revisited becomes a confident description of a system that no longer exists. `/spec <target>` on an area whose code has changed since extraction routes to **re-extract** — no `/spec-code-verify`, adapter or test command needed first. Re-stamp at the end of each reconciliation, so the next one has a fresh baseline.
 
 ##### 6. Then formalize — and offer fidelity measurement only if it fits
 
-Write `specs/<target>.*.json` and the Quint sidecar. Present extracted items in batches for confirm/edit/discard — with `extraction.evidence`, the user can jump to the code instead of reconstructing your reasoning.
+Write the model with its records (`specs/<target>.qnt`) and the intent file. Present extracted items in batches for confirm/edit/discard — with `extraction.evidence`, the user can jump to the code instead of reconstructing your reasoning.
 
 End with the ladder:
 
@@ -255,7 +293,7 @@ Before extracting behavior, ask what "the same" would mean. Fill `boundary`:
 
 #### greenfield elicit
 
-(Runs when `specs/<target>.*.json` is missing AND no code exists.)
+(Runs when `specs/<target>.intent.json` is missing AND no code exists.)
 
 Standard elicitation, organized as conversational clusters (not a rigid order — pick what's needed first):
 
@@ -288,17 +326,17 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 - **Decisions**: architectural choices being made, with alternatives.
 - **Open questions**: anything the user can't answer yet; mark `Q-NNN` `status: open`.
 
-**Early matrix pass**: as soon as `state_machines[]` and a first batch of REQs exist, run `tools/spec-matrix.py <target>` and triage the `?` cells in this conversation — classify into the GAP / IMPOSSIBLE / OUT-OF-SCOPE buckets defined in `/spec-check` Step 4a, recording each verdict in the area JSON's `matrix_triage[]` (committed — decisions in the gitignored CSV don't survive a clone). A gap found now, while the user is describing the domain, becomes a REQ in one exchange; the same gap found later by `/spec-check` becomes a stale entry in the Q-NNN queue. Same tool, earlier moment.
+**Early matrix pass**: as soon as `state_machines[]` and a first batch of REQs exist, run `tools/spec-matrix.py <target>` and triage the `?` cells in this conversation — classify into the GAP / IMPOSSIBLE / OUT-OF-SCOPE buckets defined in `/spec-check` Step 4a, recording each verdict in `matrix_triage[]` in `specs/<target>.records.json` (committed — decisions in the gitignored CSV don't survive a clone). A gap found now, while the user is describing the domain, becomes a REQ in one exchange; the same gap found later by `/spec-check` becomes a stale entry in the Q-NNN queue. Same tool, earlier moment.
 
 **Closing gap sweep**: when the clusters are exhausted (before formalizing), run one short red-team moment while the user is still in the conversation. From `/spec-check` Step 4b's category list, keep only the categories this domain plausibly touches; ask at most ~8 questions whose answer would add or change a requirement, each citing the REQ/INV/entity it touches (or "absent"). Answers become REQs/INVs/CONs in the same exchange; what the user can't answer becomes a Q-NNN. Same logic as the early matrix: a gap found now is a requirement in one exchange. The full `--reality` pass at check time is for depth — it shouldn't be the first time these questions are asked.
 
-Write to `specs/<target>.*.json` as you go. After enough is captured, draft a Quint module in `specs/<target>.qnt` (structure convention: `templates/spec.qnt.template`) — the EARS fields map mechanically: `trigger` → action, `state` → `require` guard, `response` → effect. While formalizing, also draft each requirement's `witness.predicate` (the Quint boolean over state that's true exactly when the behavior has happened — `/spec-check` uses it to produce the witness trace). Show the module for confirmation; offer `/spec-check` next.
+Write as you go: requirements as doc comments in `specs/<target>.qnt` (on the module while there is no model), everything else in `specs/<target>.intent.json`. After enough is captured, draft the model in the same file (structure convention: `templates/spec.qnt.template`) — the EARS fields map mechanically: `trigger` → action, `state` → `require` guard, `response` → effect — and move each requirement's record onto the declaration that realizes it. While formalizing, write each witnessed requirement's `shall_<ID>` host: its body is the witness predicate (the Quint boolean over state that's true exactly when the behavior has happened — `/spec-check` turns it into the witness probe), and because it is model code, `quint typecheck` now checks it. Show the module for confirmation; offer `/spec-check` next.
 
 #### resume — pick up the next phase
 
-(Runs when `specs/<target>.*.json` exists but some sections are incomplete.)
+(Runs when `specs/<target>.intent.json` exists but some sections are incomplete.)
 
-Inspect the JSON for gaps:
+Inspect the derived area for gaps:
 
 | Gap | Suggested beat |
 |---|---|
@@ -330,7 +368,7 @@ Spec: <Entity> has states <list>. Let me capture the state machine.
   Any actions that *create* or *destroy* instances (mutate the underlying var but aren't transitions)? > <e.g. login>
   → lifecycle_actions[]
 
-Writing state_machines[<Entity>] in specs/<target>.*.json.
+Writing state_machines[<Entity>] in specs/<target>.intent.json.
 ```
 
 After writing, suggest running `spec-lint` (or `/spec-check`) — the state-machine lints fire immediately if the declared structure conflicts with the Quint sidecar.
@@ -339,7 +377,7 @@ Tell the user what you noticed and what you propose to work on next; let them co
 
 #### re-extract
 
-(Runs when `specs/<target>.*.json` exists, the area has a `code_path`, and the code there has changed since the spec was extracted or last reconciled — compare `extraction_triage[]` fingerprints and `extraction.evidence` against the current sources. Offer it, do not force it: say what looks stale and ask.)
+(Runs when `specs/<target>.intent.json` exists, the area has a `code_path`, and the code there has changed since the spec was extracted or last reconciled — compare `extraction_triage[]` fingerprints and `extraction.evidence` against the current sources. Offer it, do not force it: say what looks stale and ask.)
 
 An extracted spec is true of the code on the day it is written and decays from there. This beat exists so keeping it true is a routine, not a project. It is deliberately reachable **without** `/spec-code-verify`, `traceability[]`, a conformance adapter or a test command — those check code against a spec, which is a different job, and requiring them first is what would stop anyone from doing this at all.
 
@@ -384,7 +422,7 @@ Options:
 Your call?
 ```
 
-For "code is right", update the relevant section of the area JSON (modify invariant, change a constraint, add new requirement). Update the corresponding Quint construct in the sidecar. Add a `DEC-NNN` ADR with `kind: "architecture"` explaining the codification rationale. Update `version` and `last_modified`.
+For "code is right", update the model and its records together (modify the invariant's `val` and its `@inv` text, change the constant's literal, add a requirement on the declaration that realizes it). Add a `DEC-NNN` ADR with `kind: "architecture"` explaining the codification rationale. Update `version` and `last_modified`.
 
 After walking all drift items, suggest: `/spec-check <target>` (the new spec still needs Apalache), then `/spec-code-verify <target>` (should pass now).
 
@@ -405,11 +443,11 @@ Print a digest:
 
 Don't accumulate state in memory. After each meaningful turn:
 
-- Update `specs/<target>.*.json` (or `.spec/project.json`, catalog file, etc.)
+- Update `specs/<target>.qnt` records / `specs/<target>.intent.json` (or `.spec/project.json`, catalog file, etc.)
 - Update `last_modified`
 - Bump `version` only when the user signals a meaningful change (added requirement, modified invariant, etc.) — minor for additions, patch for refinements, major for breaking changes
-- **Update the change manifest**: any ID added or modified in `specs/<target>.*.json` goes into the manifest target's `ids[]`. (No phase flags to maintain — staleness is automatic: editing the spec bumps `last_modified`/changes the model sha, which un-derives "checked"/"verified".) When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
-- Commit hint: at sensible checkpoints, suggest `git add specs/<target>.*.json specs/<target>.qnt specs/changes/<change>.change.json && git commit -m "spec(<change>): <what>"`
+- **Update the change manifest**: any ID added or modified in the area goes into the manifest target's `ids[]`. (No phase flags to maintain — staleness is automatic: editing the spec bumps `last_modified`/changes the model sha, which un-derives "checked"/"verified".) When a touched area is spanned by a contract, add that contract to `targets[]` with `auto: true` if not already present. Status `open` → `in-progress` on first spec edit.
+- Commit hint: at sensible checkpoints, suggest `git add specs/<target>.qnt specs/<target>.intent.json specs/<target>.records.json specs/changes/<change>.change.json && git commit -m "spec(<change>): <what>"`
 
 ### Step 4 — Suggest next action
 

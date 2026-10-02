@@ -65,7 +65,9 @@ if command -v quint >/dev/null 2>&1; then
     *--temporal*) echo "  ✓ verify --temporal   (properties[] / liveness are checkable)" ;;
     *)            echo "  ✗ verify --temporal   absent — properties[] cannot be checked by this quint" ;;
   esac
-  case "$qver_help" in
+  # Whole-flag match: --server-endpoint alone does not mean --server exists.
+  qver_server=$(printf '%s\n' "$qver_help" | grep -E -- '--server([^-[:alnum:]]|$)' || true)
+  case "$qver_server" in
     *--server*) echo "  ✓ verify --server      (a timed-out check can be run one-shot, off the shared Apalache server)" ;;
     *)          echo "  · verify --server      absent — after a timeout, later checks share a server still working on it" ;;
   esac
