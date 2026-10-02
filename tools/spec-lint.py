@@ -948,12 +948,10 @@ def check_orphan_actions(area_data, sidecar, area_name, findings):
     quint_ref, a state-machine transition, or lifecycle_actions. An
     unreferenced action is either a missing requirement or dead spec text.
     (Coverage of *referenced* actions is proven by their path-constrained
-    witness traces — no model-checker run needed here.) Skipped for
-    contracts and for areas with navigation[]: contract vals and UI
-    navigation triggers don't map 1:1 to actions."""
+    witness traces — no model-checker run needed here.) A navigation edge's
+    action (`/// @nav` on it) is referenced too. Skipped for contracts:
+    contract vals don't map 1:1 to actions."""
     if area_data.get("kind") == "contract":
-        return
-    if area_data.get("navigation"):
         return
     if not sidecar or "__no_module__" in sidecar:
         return
@@ -961,6 +959,9 @@ def check_orphan_actions(area_data, sidecar, area_name, findings):
     for req in area_data.get("requirements", []) or []:
         if req.get("quint_ref"):
             referenced.add(req["quint_ref"])
+    for nav in area_data.get("navigation", []) or []:
+        if nav.get("action"):
+            referenced.add(nav["action"])
     for sm in area_data.get("state_machines", []) or []:
         for t in sm.get("transitions", []) or []:
             if t.get("quint_action"):
@@ -2571,6 +2572,91 @@ def check_witness_hosts(area_data, sidecar, info, area_name, findings):
                 f"The model's literal is the value; drop the tag.", ref=rec["id"])
 
 
+def check_ui_hosts(root, area_data, sidecar, info, area_name, findings):
+    """@screen and @nav records, against the declarations they sit on.
+
+    A screen is a variant of the model's screen type and an edge is the
+    action that moves the screen variable between two of them. The records
+    say so; this checks the model agrees, in both directions — a variant
+    with no @screen is a screen nobody specified, and an @nav whose action
+    does not read and set the screen var as claimed is an edge the checker
+    never explores."""
+    recs = [r for r in info.get("records") or [] if r["tag"] in ("screen", "nav")]
+    if not recs:
+        return
+    model = bool(info.get("model_present")) and sidecar and not sidecar.get("__no_module__")
+    variants = (sidecar or {}).get("type_variants") or {}
+    stypes = {}
+    for rec in recs:
+        host = rec.get("host") or {}
+        where = f"{rec['where']['file']}:{rec['where']['line']}"
+        want = "type" if rec["tag"] == "screen" else "action"
+        if host.get("kind") not in (want, "module", None):
+            add(findings, FAIL, "ui", f"{rec['tag']}-record-host", area_name,
+                f"{where}: @{rec['tag']} sits on `{host.get('kind')} {host.get('name')}`; "
+                f"it belongs on the {'screen sum type' if want == 'type' else 'action that takes the edge'}.",
+                ref=rec["id"])
+        elif host.get("kind") == "module" and model:
+            add(findings, WARN, "ui", f"{rec['tag']}-without-host", area_name,
+                f"{where}: @{rec['tag']} {(rec['id'] + ' ' + rec['extra']).strip()} is in the "
+                f"module doc, but the area has a model. Move it onto the "
+                f"{'screen type' if want == 'type' else 'action that takes this edge'}.",
+                ref=rec["id"])
+        if rec["tag"] == "screen" and host.get("kind") == "type":
+            stypes.setdefault(host["name"], []).append(rec)
+
+    if len(stypes) > 1:
+        add(findings, FAIL, "ui", "screens-split", area_name,
+            f"@screen records sit on {len(stypes)} types ({', '.join(sorted(stypes))}); "
+            f"the screens of an area are the variants of ONE type.")
+    model_text = None
+    if model and stypes:
+        qpath = Path(root) / "specs" / (info.get("model_file") or f"{area_name}.qnt")
+        try:
+            model_text = qpath.read_text(encoding="utf-8")
+        except OSError:
+            model_text = None
+    svar = None
+    for tname, trecs in sorted(stypes.items()):
+        vs = variants.get(tname) or spec_source.type_variants(
+            (trecs[0].get("host") or {}).get("body"))
+        named = {r["id"] for r in trecs}
+        for r in trecs:
+            if r["id"] not in vs:
+                add(findings, FAIL, "ui", "screen-not-variant", area_name,
+                    f"{r['where']['file']}:{r['where']['line']}: @screen {r['id']} is "
+                    f"not a variant of `type {tname}` ({', '.join(vs) or 'no variants'}).",
+                    ref=r["id"])
+        for v in vs:
+            if v not in named:
+                add(findings, FAIL, "ui", "screen-variant-without-record", area_name,
+                    f"`{tname}` has a variant {v} with no @screen record — a screen "
+                    f"the model reaches and the spec never describes.", ref=v)
+        if model_text is not None:
+            svar = svar or spec_source.screen_var(model_text, tname)
+            if not svar:
+                add(findings, WARN, "ui", "screen-type-without-var", area_name,
+                    f"no `var` is typed `{tname}`, so no action can move between "
+                    f"screens and the @nav records cannot be checked.")
+
+    if not svar:
+        return
+    for rec in recs:
+        host = rec.get("host") or {}
+        if rec["tag"] != "nav" or host.get("kind") != "action":
+            continue
+        m = spec_source.NAV_RE.match(f"{rec['id']} {rec['extra']}".strip())
+        if not m:
+            continue  # record-grammar already reported it
+        frm, to = m.group(1), m.group(2)
+        if not spec_source.nav_moves(host.get("body"), svar, frm, to):
+            add(findings, FAIL, "ui", "nav-action-mismatch", area_name,
+                f"{rec['where']['file']}:{rec['where']['line']}: @nav {frm} -> {to} sits "
+                f"on `{host['name']}`, which does not read `{svar} == {frm}` and set "
+                f"`{svar}' = {to}`. The edge the readback draws is not one the model "
+                f"takes.", ref=host["name"])
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
@@ -2594,6 +2680,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
         check_schema(info["records_file"], build_schema_validator(root, "records.schema.json"),
                      area_name, findings)
     check_witness_hosts(area_data, sidecar, info, area_name, findings)
+    check_ui_hosts(root, area_data, sidecar, info, area_name, findings)
     check_area_meta(area_data, area_name, findings)
     check_ids(area_data, area_name, findings)
     check_ears(area_data, area_name, findings)

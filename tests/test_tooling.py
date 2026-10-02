@@ -6077,13 +6077,20 @@ def test_the_quint_ir_documents_the_same_declarations_as_the_python_reader():
             assert proc.returncode == 0, proc.stdout + proc.stderr
             ir = json.loads(out.read_text(encoding="utf-8"))
         mod = ir["modules"][0]
+        recs = [r for r in spec_source.read_records(qnt.read_text(encoding="utf-8"))
+                if r["tag"] != "outcome-of"]
+        # The IR hangs a type's doc on one of its constructors; credit the type.
+        ctor_type = {v: (r["host"] or {})["name"] for r in recs
+                     if (r["host"] or {}).get("kind") == "type"
+                     for v in spec_source.type_variants(r["host"].get("body"))}
         from_ir = {}
         for decl in [mod] + mod["declarations"]:
-            for rid in re.findall(r"@(?:req|inv|prop|con|example)\s+(\S+)", decl.get("doc") or ""):
-                from_ir[rid] = decl["name"]
-        from_py = {r["id"]: (r["host"] or {}).get("name")
-                   for r in spec_source.read_records(qnt.read_text(encoding="utf-8"))
-                   if r["tag"] != "outcome-of"}
+            for tag, label in re.findall(r"@(req|inv|prop|con|example|screen|nav)\s+([^\n]+)",
+                                         decl.get("doc") or ""):
+                label = " ".join(label.split()) if tag == "nav" else label.split()[0]
+                from_ir[(tag, label)] = ctor_type.get(decl["name"], decl["name"])
+        from_py = {(r["tag"], f"{r['id']} {r['extra']}".strip() if r["tag"] == "nav" else r["id"]):
+                   (r["host"] or {}).get("name") for r in recs}
         assert from_ir == from_py, qnt.name
 
 
@@ -6099,3 +6106,138 @@ def test_flag_probe_matches_whole_flags_only(monkeypatch):
     assert record.quint_supports("quint", "verify", "--server") is False
     assert record.quint_supports("quint", "verify", "--server-endpoint") is True
     assert record.quint_supports("quint", "verify", "--invariants") is True
+
+
+# ── Screens and navigation live on the model ────────────────────────────────
+
+_UI_QNT = """module ui {
+  /// @screen Home
+  /// Public landing.
+  /// @components Header
+  ///
+  /// @screen Panel
+  /// Signed-in view.
+  /// @auth-required
+  type Screen =
+    | Home
+    | Panel
+
+  var current: Screen
+
+  action init = current' = Home
+
+  /// @nav Home -> Panel
+  /// click 'Open'
+  /// @guard signed in
+  action open_panel: bool = all { current == Home, current' = Panel }
+
+  /// @nav Panel -> Home
+  /// click 'Close'
+  action close_panel: bool = all { current == Panel, current' = Home }
+
+  action step = any { open_panel, close_panel }
+}
+"""
+
+
+def _ui_area(tmp_path, qnt=_UI_QNT):
+    (tmp_path / "specs").mkdir(exist_ok=True)
+    (tmp_path / "specs" / "ui.qnt").write_text(qnt, encoding="utf-8")
+    spec_source.write_intent(tmp_path, "ui", {"kind": "area", "area": "ui", "version": "1"})
+    return spec_source.load_area(tmp_path, "ui", with_info=True)
+
+
+def _ui_lint(tmp_path, qnt=_UI_QNT):
+    area, info = _ui_area(tmp_path, qnt)
+    sidecar = lint.parse_sidecar(tmp_path / "specs" / "ui.qnt")
+    findings = []
+    lint.check_sources(tmp_path, "ui", info, findings)
+    lint.check_ui_hosts(tmp_path, area, sidecar, info, "ui", findings)
+    lint.check_ui_navigation(area, "ui", findings)
+    lint.check_orphan_actions(area, sidecar, "ui", findings)
+    return findings
+
+
+def test_screens_and_navigation_are_derived_from_their_records(tmp_path):
+    area, info = _ui_area(tmp_path)
+    assert info["problems"] == []
+    assert area["screens"] == [
+        {"name": "Home", "auth_required": False, "purpose": "Public landing.",
+         "components": ["Header"]},
+        {"name": "Panel", "auth_required": True, "purpose": "Signed-in view."}]
+    assert area["navigation"] == [
+        {"from": "Home", "to": "Panel", "trigger": "click 'Open'",
+         "guard": "signed in", "action": "open_panel"},
+        {"from": "Panel", "to": "Home", "trigger": "click 'Close'",
+         "action": "close_panel"}]
+
+
+def test_a_consistent_ui_model_lints_clean(tmp_path):
+    assert [f for f in _ui_lint(tmp_path) if f.severity in (lint.FAIL, lint.WARN)] == []
+
+
+def test_a_screen_variant_without_a_record_is_a_fail(tmp_path):
+    qnt = _UI_QNT.replace("    | Panel\n", "    | Panel\n    | Settings\n")
+    checks = {f.check for f in _ui_lint(tmp_path, qnt) if f.severity == lint.FAIL}
+    assert "screen-variant-without-record" in checks
+
+
+def test_a_screen_that_is_not_a_variant_is_a_fail(tmp_path):
+    qnt = _UI_QNT.replace("/// @screen Panel", "/// @screen Pannel")
+    checks = {f.check for f in _ui_lint(tmp_path, qnt) if f.severity == lint.FAIL}
+    assert {"screen-not-variant", "screen-variant-without-record"} <= checks
+
+
+def test_an_edge_its_action_does_not_take_is_a_fail(tmp_path):
+    qnt = _UI_QNT.replace("/// @nav Panel -> Home", "/// @nav Home -> Home")
+    fails = [f for f in _ui_lint(tmp_path, qnt) if f.severity == lint.FAIL]
+    assert [f.check for f in fails] == ["nav-action-mismatch"]
+    assert "close_panel" in fails[0].description
+
+
+def test_ui_records_on_the_wrong_declaration_are_a_fail(tmp_path):
+    qnt = _UI_QNT.replace("  /// @nav Home -> Panel\n  /// click 'Open'\n  /// @guard signed in\n", "") \
+                 .replace("  var current: Screen\n",
+                          "  /// @nav Home -> Panel\n  /// click 'Open'\n  var current: Screen\n")
+    checks = {f.check for f in _ui_lint(tmp_path, qnt) if f.severity == lint.FAIL}
+    assert "nav-record-host" in checks
+
+
+def test_an_action_no_edge_or_requirement_names_is_an_orphan_in_a_ui(tmp_path):
+    qnt = _UI_QNT.replace("  action step", "  action dead: bool = current' = current\n\n  action step")
+    assert [f.ref for f in _ui_lint(tmp_path, qnt) if f.check == "orphan-action"] == ["dead"]
+
+
+def test_ui_record_grammar_problems_are_reported(tmp_path):
+    qnt = _UI_QNT.replace("/// @nav Panel -> Home\n  /// click 'Close'", "/// @nav Panel to Home") \
+                 .replace("/// @components Header", "/// @component Header") \
+                 .replace("/// @screen Panel", "/// @screen Home")
+    _area, info = _ui_area(tmp_path, qnt)
+    text = "\n".join(info["problems"])
+    assert "@nav takes '<From> -> <To>'" in text
+    assert "unknown tag @component on a @screen record" in text
+    assert "duplicate screen Home" in text
+
+
+def test_screens_and_navigation_migrate_onto_the_type_and_actions():
+    legacy = {"area": "ui", "kind": "area", "version": "1",
+              "formal_model": {"quint_file": "ui.qnt"},
+              "screens": [{"name": "Home", "auth_required": False, "purpose": "Public landing.",
+                           "components": ["Header"]},
+                          {"name": "Panel", "auth_required": True}],
+              "navigation": [{"from": "Panel", "to": "Home", "trigger": "click 'Close'"},
+                             {"from": "Home", "to": "Panel", "trigger": "click 'Open'",
+                              "guard": "signed in"},
+                             {"from": "Panel", "to": "Panel", "trigger": "refresh"}]}
+    bare = spec_source.strip_docs(_UI_QNT)
+    qnt, _als, intent, _rec = spec_source.migrate_area(legacy, bare)
+    assert "screens" not in intent and "navigation" not in intent
+    recs = {(r["tag"], f"{r['id']} {r['extra']}".strip()): (r["host"] or {}).get("kind", "") +
+            " " + ((r["host"] or {}).get("name") or "")
+            for r in spec_source.read_records(qnt, "quint", "ui.qnt")}
+    assert recs[("screen", "Home")] == recs[("screen", "Panel")] == "type Screen"
+    assert recs[("nav", "Home -> Panel")] == "action open_panel"
+    assert recs[("nav", "Panel -> Home")] == "action close_panel"
+    # No action takes Panel -> Panel: the edge waits in the module doc.
+    assert recs[("nav", "Panel -> Panel")] == "module ui"
+    assert spec_source.roundtrip(legacy, bare) == []

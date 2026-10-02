@@ -840,7 +840,7 @@
 
     "screens": {
       "type": "array",
-      "description": "Optional on any area. Each screen is a top-level navigable view. Declaring screens[] + navigation[] makes the area an interactive surface: navigation lint, navigation-graph readback, and component codegen activate.",
+      "description": "Optional on any area. Each screen is a top-level navigable view, derived from a `/// @screen <Name>` record on the model's screen sum type (one record per variant). Declaring screens[] + navigation[] makes the area an interactive surface: navigation lint, navigation-graph readback, and component codegen activate.",
       "items": {
         "type": "object",
         "required": ["name"],
@@ -870,7 +870,7 @@
     },
     "navigation": {
       "type": "array",
-      "description": "Allowed transitions between screens (areas with screens). Required when screens[] is declared.",
+      "description": "Allowed transitions between screens (areas with screens). Required when screens[] is declared. Derived from `/// @nav <From> -> <To>` records on the model's actions (spec_source.py).",
       "items": {
         "type": "object",
         "required": ["from", "to", "trigger"],
@@ -879,7 +879,8 @@
           "from":    { "type": "string" },
           "to":      { "type": "string" },
           "trigger": { "type": "string", "description": "Plain-language user action: 'click \"Sign in\"', 'submit valid credentials'." },
-          "guard":   { "type": "string", "description": "Optional precondition referencing a Quint val or another area's state." }
+          "guard":   { "type": "string", "description": "Optional precondition referencing a Quint val or another area's state." },
+          "action":  { "type": "string", "description": "The Quint action that realizes this edge: the declaration its `/// @nav` record sits on. Derived, never written by hand; absent while the edge has no host in the model." }
         }
       }
     },

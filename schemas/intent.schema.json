@@ -854,36 +854,6 @@
         }
       }
     },
-    "screens": {
-      "type": "array",
-      "description": "Optional on any area. Each screen is a top-level navigable view. Declaring screens[] + navigation[] makes the area an interactive surface: navigation lint, navigation-graph readback, and component codegen activate.",
-      "items": {
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "auth_required": {
-            "type": "boolean",
-            "default": false
-          },
-          "purpose": {
-            "type": "string"
-          },
-          "components": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Names from ui_components[] that appear on this screen."
-          }
-        }
-      }
-    },
     "ui_components": {
       "type": "array",
       "description": "Reusable interactive components (areas with screens).",
@@ -914,35 +884,6 @@
           "visible_when": {
             "type": "string",
             "description": "Plain-language condition or Quint predicate name."
-          }
-        }
-      }
-    },
-    "navigation": {
-      "type": "array",
-      "description": "Allowed transitions between screens (areas with screens). Required when screens[] is declared.",
-      "items": {
-        "type": "object",
-        "required": [
-          "from",
-          "to",
-          "trigger"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "from": {
-            "type": "string"
-          },
-          "to": {
-            "type": "string"
-          },
-          "trigger": {
-            "type": "string",
-            "description": "Plain-language user action: 'click \"Sign in\"', 'submit valid credentials'."
-          },
-          "guard": {
-            "type": "string",
-            "description": "Optional precondition referencing a Quint val or another area's state."
           }
         }
       }

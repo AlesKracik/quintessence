@@ -1,8 +1,13 @@
-// Quint sidecar for specs/auth-ui.json
+// The auth-ui area: its model, and every record checkable against it.
 //
-// Models the navigation as a state machine over screens, with guards drawn from
-// imports of the auth area. The invariant `guardedDashboard` proves Dashboard
-// is unreachable without authenticated == true.
+// Navigation is a state machine over screens. Each screen is a variant of
+// `Screen`, documented by a `/// @screen` record on the type; each edge is the
+// action that moves `current` between two screens, documented by a
+// `/// @nav From -> To` record on that action. spec_source.py derives
+// screens[] and navigation[] from them; lint checks every variant has a
+// record and every edge's action reads and sets `current` as it claims. The
+// invariant `guardedDashboard` proves Dashboard is unreachable without
+// authenticated == true.
 
 module authUi {
 
@@ -15,6 +20,22 @@ module authUi {
 
   // -- Screen state machine -----------------------------------------
 
+  /// @screen Home
+  /// Public landing; shows 'Sign in' for unauthenticated users.
+  /// @components Header
+  ///
+  /// @screen Login
+  /// Email/password form.
+  /// @components Header, LoginForm
+  ///
+  /// @screen Dashboard
+  /// Logged-in landing.
+  /// @auth-required
+  /// @components Header
+  ///
+  /// @screen LockedNotice
+  /// Shown when login fails because the account is locked.
+  /// @components Header
   type Screen =
     | Home
     | Login
@@ -43,7 +64,8 @@ module authUi {
 
   // -- Navigation actions -------------------------------------------
 
-  // UI-001: Click 'Sign in' on Home → go to Login.
+  /// @nav Home -> Login
+  /// click 'Sign in'
   action click_sign_in: bool = all {
     current == Home,
     current'       = Login,
@@ -51,8 +73,10 @@ module authUi {
     authenticated' = authenticated,
   }
 
-  // UI-002: Submit valid credentials on Login → Dashboard.
   // Guard: not locked, credentials are valid. Modeled as a precondition.
+  /// @nav Login -> Dashboard
+  /// submit valid credentials
+  /// @guard auth::login succeeds
   action submit_success: bool = all {
     current == Login,
     not(authenticated),                       // not already logged in
@@ -62,7 +86,9 @@ module authUi {
     authenticated' = true,
   }
 
-  // UI-003: Submit when account is Locked → LockedNotice.
+  /// @nav Login -> LockedNotice
+  /// submit when account locked
+  /// @guard auth::isLocked(user)
   action submit_locked: bool = all {
     current == Login,
     not(authenticated),
@@ -71,7 +97,8 @@ module authUi {
     authenticated' = authenticated,
   }
 
-  // Submit invalid credentials → stay on Login, show error.
+  /// @nav Login -> Login
+  /// submit invalid credentials (stays, shows error)
   action submit_invalid: bool = all {
     current == Login,
     not(authenticated),
@@ -80,7 +107,9 @@ module authUi {
     authenticated' = authenticated,
   }
 
-  // Click logout on Dashboard → Home.
+  /// @nav Dashboard -> Home
+  /// click logout
+  /// @guard auth::logout succeeds
   action click_logout: bool = all {
     current == Dashboard,
     authenticated,
@@ -89,7 +118,8 @@ module authUi {
     authenticated' = false,
   }
 
-  // After lockout expires, the user refreshes; LockedNotice → Home.
+  /// @nav LockedNotice -> Home
+  /// after lockout expires (page refresh)
   action go_home: bool = all {
     current == LockedNotice,
     current'       = Home,

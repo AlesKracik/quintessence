@@ -175,7 +175,7 @@ You want to add the login UI and *prove* Dashboard can never be reached without 
 
 ```
 > /spec auth-ui
-  Kind? > area — declaring screens + navigation makes it an interactive surface
+  Kind? > area — screens + navigation make it an interactive surface
   Spans which areas? > auth
 
   Screens? > Home, Login, Dashboard (auth-required), LockedNotice
@@ -194,19 +194,29 @@ Drafting Quint — screens as a variant type, navigation as actions, auth as a g
 
 ```quint
 module authUi {
-  import auth.* from "./auth"
+  /// @screen Dashboard
+  /// Logged-in landing.
+  /// @auth-required
+  // … one @screen record per variant, all in this block
   type Screen = Home | Login | Dashboard | LockedNotice
   var current: Screen
   var authenticated: bool
 
+  /// @nav Login -> Dashboard
+  /// submit valid credentials
   action submit_success = all {
     current == Login, not(authenticated),
     current' = Dashboard, authenticated' = true,
   }
 
+  /// @inv INV-001
+  /// Dashboard is reachable only when authenticated.
+  /// @proof inductive
   val guardedDashboard: bool = (current == Dashboard) implies authenticated
 }
 ```
+
+The screens and edges are records on the declarations that realize them — the readback's navigation graph is derived from them, and lint fails a variant with no `@screen` or an `@nav` whose action doesn't make that move.
 
 ```
 > /spec-check auth-ui

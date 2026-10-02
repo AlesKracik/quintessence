@@ -108,7 +108,7 @@ For an **existing codebase** (brownfield): the same `/spec auth` recognizes that
 │   ├── auth.probes.qnt           ←   generated witness/coverage probes (/spec-check)
 │   ├── session-ownership.intent.json ← contract (kind inside) using the OPTIONAL structural backend
 │   ├── session-ownership.als     ←   Alloy model: relational checks + their records
-│   ├── auth-ui.qnt               ← interactive surface: an area with screens[] + navigation[]
+│   ├── auth-ui.qnt               ← interactive surface: @screen records on the Screen type, @nav on actions
 │   ├── auth-ui.intent.json
 │   ├── billing.qnt
 │   ├── billing.intent.json
@@ -293,11 +293,11 @@ The JSON that remains holds only what a model cannot say, and what no human shou
 
 | File | Holds | Why there |
 |---|---|---|
-| `<area>.qnt` doc comments | requirements (EARS fields, meaning, modality, determinism, type, fit criterion, `@error` outcomes, refusal artifact and blocking state, delta, discharge, extraction evidence), invariants, properties, constants, examples | every one is checkable against a declaration; on that declaration, the reviewer reads the claim and the formula as one diff |
-| `<area>.intent.json` | kind, spans, version, status, purpose, brief, scope, boundary, concepts (entities, closed worlds), externals, assumptions, decisions, open questions, state machines, architecture, UI blocks, `formal_model` and `conformance` config | none of it is about one declaration; some of it (a closed entity's state list, a state machine) is a claim *about* the model that must stay independent of the model's text, or it could not catch the model drifting |
+| `<area>.qnt` doc comments | requirements (EARS fields, meaning, modality, determinism, type, fit criterion, `@error` outcomes, refusal artifact and blocking state, delta, discharge, extraction evidence), invariants, properties, constants, examples, and an interactive surface's screens and navigation edges | every one is checkable against a declaration; on that declaration, the reviewer reads the claim and the formula as one diff |
+| `<area>.intent.json` | kind, spans, version, status, purpose, brief, scope, boundary, concepts (entities, closed worlds), externals, assumptions, decisions, open questions, state machines, architecture, `ui_components`, `formal_model` and `conformance` config | none of it is about one declaration; some of it (a closed entity's state list, a state machine) is a claim *about* the model that must stay independent of the model's text, or it could not catch the model drifting |
 | `<area>.records.json` | `check_results`, witness/outcome/refusal verdicts and traces, `formal_status`, freshness pins (`meaning.written_against`, `brief.written_against`), `verification_log`, `traceability`, `generated_from` / `extracted_from`, and the three triage ledgers | machine-written or ledger-shaped, high-churn, keyed by id or by code fingerprint; in the model, every check run would rewrite the file the check just hashed |
 
-The table is code, not prose: `MODEL_KEYS`, `RECORD_KEYS` and `MACHINE_PATHS` in `tools/spec_source.py`, from which derive, save, migrate and the two generated schemas are all read.
+The table is code, not prose: `MODEL_KEYS`, `UI_KEYS`, `RECORD_KEYS` and `MACHINE_PATHS` in `tools/spec_source.py`, from which derive, save, migrate and the two generated schemas are all read.
 
 Choices worth stating:
 
@@ -305,11 +305,12 @@ Choices worth stating:
 - **Refusal artifacts are tags on the prohibition** (`@refusal`, `@blocking`, `@unchanged`) — the claim "this test drives the code into that state and asserts nothing moved". Whether it passed is `refusal.status` in the ledger.
 - **The extraction triage ledger is in `records.json`**, with `matrix_triage` and `outcome_triage`. Its rows are keyed by code fingerprint and point into another repository; a doc comment documents a model declaration, and a site is not one. Agent-written verdicts, but ledger-shaped — the one part of `records.json` written by hand.
 - **Freshness pins are in `records.json`**, never in the `.qnt`: a pin is a hash of the requirement's semantic fields (`tools/itf_tools.py pin <area> --req <ID>` writes it), and storing it in the file it hashes would make every re-pin an edit to the claim.
+- **Screens and navigation edges are records on the model**, `ui_components` is not. A screen *is* a variant of the screen type and an edge *is* the action that moves the screen variable, so a `screens[]` / `navigation[]` copy in JSON could gain or lose an entry with every check green — nothing tied an edge to the action that takes it. A component's fields and visible states have no declaration in the model; they stay in the intent file.
 - **Check results, witness status and traces are in `records.json`.** `model_sha` hashes the model **without** its `///` records (`spec_source.strip_docs`), so rewording a meaning never stales a trace, while any change to a declaration — a witness host's body included — does.
 
 ### The grammar
 
-A `///` block documents the declaration below it, its **host**. One tag per line; a record starts at a record tag (`@req`, `@inv`, `@prop`, `@con`, `@example`, `@outcome-of REQ-ID <name>`) and runs to the next, so one block can carry several records. Untagged lines right after the record tag are its description; untagged lines after an attribute tag continue that tag. The full tag table is the docstring of `tools/spec_source.py`. Hosting decides the rest:
+A `///` block documents the declaration below it, its **host**. One tag per line; a record starts at a record tag (`@req`, `@inv`, `@prop`, `@con`, `@example`, `@outcome-of REQ-ID <name>`, `@screen <Name>`, `@nav <From> -> <To>`) and runs to the next, so one block can carry several records. Untagged lines right after the record tag are its description; untagged lines after an attribute tag continue that tag. The full tag table is the docstring of `tools/spec_source.py`. Hosting decides the rest:
 
 | Record on | Means |
 |---|---|
@@ -319,6 +320,8 @@ A `///` block documents the declaration below it, its **host**. One tag per line
 | `val` / `temporal` / `pure val` / `run` | invariant (`quint_name`), property, constant (name and value from the declaration), example (`quint_run`) |
 | `def` with `_prev*` parameters | transition invariant, `over: "probes"`; body = predicate, emitted into the probe module as `@quint-name` |
 | Alloy `assert`/`check` | structural invariant (`proof: structural`, `alloy_command` = the name) |
+| `type <Screen>` (one `@screen` per variant, all in the type's block) | a screen: description = purpose, `@auth-required`, `@components`. Lint FAILs a variant with no record and a record naming no variant. |
+| `action <name>` (`@nav From -> To`) | a navigation edge, `navigation[].action` = the action; description = the trigger, `@guard`. Lint FAILs an edge whose action does not read `<screenVar> == From` and set `<screenVar>' = To`. Several edges may share an action. |
 
 The delta (`@pre`) stays text: it reads `_prev*` ghosts, which exist only in the generated probe module. A module that holds only records is **not** a formal model — `spec_source.has_model` — so a Tier-1 area keeps its requirements in the `.qnt` it will grow into without anything being checked against an empty model.
 
@@ -372,10 +375,22 @@ A contract whose obligations are **relational rather than temporal** ("every Acc
 
 ### UI blocks — interactive surfaces
 
-An interactive surface is an ordinary `kind: "area"` that declares `screens[]`, `ui_components[]`, `navigation[]` — formally it is not a different object: the sidecar models navigation as a Quint state machine (`screens` become a variant type, `navigation` entries become actions, auth-required-style invariants are model-checked), exactly as any entity state machine. Everything UI-specific triggers on block presence:
+An interactive surface is an ordinary `kind: "area"` with screens and navigation — formally it is not a different object: the model is a Quint state machine over screens, exactly as any entity state machine. The screens are the variants of one sum type, each documented by a `/// @screen <Name>` record on that type; each navigation edge is the action that moves the screen variable, documented by a `/// @nav <From> -> <To>` record on it (the line below the tag is the trigger, in the user's words; `@guard` the precondition). `screens[]` and `navigation[]` in the area view are derived from those records, so a screen or an edge cannot be added in one place only. Auth-required-style invariants are model-checked as usual. `ui_components[]` (fields, visible states) stays in the intent file. Everything UI-specific triggers on the records' presence:
 
-- `spec-lint`: navigation endpoints reference declared screens, isolated screens flagged, screens without navigation FAIL;
-- `/spec-readback`: Navigation graph + Screens table replace the State Machines section;
+```quint
+  /// @screen Login
+  /// Email/password form.
+  /// @components Header, LoginForm
+  type Screen = | Home | Login | Dashboard     // one @screen per variant
+
+  /// @nav Login -> Dashboard
+  /// submit valid credentials
+  /// @guard auth::login succeeds
+  action submit_success: bool = all { current == Login, current' = Dashboard, ... }
+```
+
+- `spec-lint`: every variant has a `@screen` and every `@screen` is a variant; every `@nav` sits on an action that reads and sets the screen variable as it claims; navigation endpoints reference declared screens, isolated screens flagged, screens without navigation FAIL; an action no edge, requirement or state machine names is an orphan;
+- `/spec-readback`: Navigation graph, edge table (with each edge's action) and Screens table replace the State Machines section;
 - `/spec-code-generate`: generates UI components (the `module_layout` is configured for component files).
 
 Such areas typically have `spans: ["auth"]` when they depend on another area's state (e.g., authentication status); requirement IDs may use `UI-NNN`.
@@ -811,7 +826,7 @@ These run in `tools/spec-lint.py` against every area; structural errors get flag
 
 ### UI areas: same idea, different fields
 
-For areas with UI blocks, the navigation graph (`screens[]` + `navigation[]`) plays the same role. `spec-lint` enforces the parallel rules: every navigation endpoint references a declared screen, unreachable screens are flagged as isolated, auth-required screens are highlighted in the readback. The Quint sidecar still models the underlying state machine and Apalache verifies invariants like "Dashboard reachable only when authenticated."
+For areas with UI blocks, the navigation graph (`@screen` + `@nav` records, derived into `screens[]` + `navigation[]`) plays the same role. `spec-lint` enforces the parallel rules: every navigation endpoint references a declared screen, unreachable screens are flagged as isolated, auth-required screens are highlighted in the readback. The Quint sidecar still models the underlying state machine and Apalache verifies invariants like "Dashboard reachable only when authenticated."
 
 ### Closed worlds: states nobody may invent
 

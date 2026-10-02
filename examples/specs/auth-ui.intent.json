@@ -20,41 +20,6 @@
       "go_home"
     ]
   },
-  "screens": [
-    {
-      "name": "Home",
-      "auth_required": false,
-      "purpose": "Public landing; shows 'Sign in' for unauthenticated users.",
-      "components": [
-        "Header"
-      ]
-    },
-    {
-      "name": "Login",
-      "auth_required": false,
-      "purpose": "Email/password form.",
-      "components": [
-        "Header",
-        "LoginForm"
-      ]
-    },
-    {
-      "name": "Dashboard",
-      "auth_required": true,
-      "purpose": "Logged-in landing.",
-      "components": [
-        "Header"
-      ]
-    },
-    {
-      "name": "LockedNotice",
-      "auth_required": false,
-      "purpose": "Shown when login fails because the account is locked.",
-      "components": [
-        "Header"
-      ]
-    }
-  ],
   "ui_components": [
     {
       "name": "LoginForm",
@@ -71,41 +36,6 @@
     {
       "name": "Header",
       "visible_when": "always"
-    }
-  ],
-  "navigation": [
-    {
-      "from": "Home",
-      "to": "Login",
-      "trigger": "click 'Sign in'"
-    },
-    {
-      "from": "Login",
-      "to": "Dashboard",
-      "trigger": "submit valid credentials",
-      "guard": "auth::login succeeds"
-    },
-    {
-      "from": "Login",
-      "to": "LockedNotice",
-      "trigger": "submit when account locked",
-      "guard": "auth::isLocked(user)"
-    },
-    {
-      "from": "Login",
-      "to": "Login",
-      "trigger": "submit invalid credentials (stays, shows error)"
-    },
-    {
-      "from": "Dashboard",
-      "to": "Home",
-      "trigger": "click logout",
-      "guard": "auth::logout succeeds"
-    },
-    {
-      "from": "LockedNotice",
-      "to": "Home",
-      "trigger": "after lockout expires (page refresh)"
     }
   ],
   "decisions": [

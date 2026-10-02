@@ -1091,6 +1091,15 @@ def ui_sections(area):
         lines.append(f"  class {','.join(gated)} auth_required")
     lines.append("```")
     lines.append("")
+    navs = area.get("navigation", []) or []
+    if navs:
+        lines.append("| From | To | Trigger | Guard | Action |")
+        lines.append("|---|---|---|---|---|")
+        for nav in navs:
+            act = f"`{nav['action']}`" if nav.get("action") else "_no action in the model_"
+            lines.append(f"| {nav.get('from')} | {nav.get('to')} | {nav.get('trigger', '—')} | "
+                         f"{nav.get('guard') or '—'} | {act} |")
+        lines.append("")
     lines.append("## Screens")
     lines.append("")
     lines.append("| Screen | Auth required | Purpose | Components |")

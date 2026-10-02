@@ -32,6 +32,15 @@ graph TB
   class Dashboard auth_required
 ```
 
+| From | To | Trigger | Guard | Action |
+|---|---|---|---|---|
+| Home | Login | click 'Sign in' | — | `click_sign_in` |
+| Login | Dashboard | submit valid credentials | auth::login succeeds | `submit_success` |
+| Login | LockedNotice | submit when account locked | auth::isLocked(user) | `submit_locked` |
+| Login | Login | submit invalid credentials (stays, shows error) | — | `submit_invalid` |
+| Dashboard | Home | click logout | auth::logout succeeds | `click_logout` |
+| LockedNotice | Home | after lockout expires (page refresh) | — | `go_home` |
+
 ## Screens
 
 | Screen | Auth required | Purpose | Components |
@@ -72,7 +81,7 @@ graph TB
 
 **As specified (EARS):** While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
 
-`specs/auth-ui.qnt:L47-L52` · model `6b60e74ee686`
+`specs/auth-ui.qnt:L69-L74` · model `e725263304be`
 
 ```quint
   action click_sign_in: bool = all {
@@ -85,7 +94,7 @@ graph TB
 
 **Witness predicate:** `current == Login` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth-ui.qnt:142` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:172` — the doc comment this requirement is read from.
 
 </details>
 
@@ -101,7 +110,7 @@ graph TB
 
 **As specified (EARS):** While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 
-`specs/auth-ui.qnt:L56-L63` · model `6b60e74ee686`
+`specs/auth-ui.qnt:L80-L87` · model `e725263304be`
 
 ```quint
   action submit_success: bool = all {
@@ -116,7 +125,7 @@ graph TB
 
 **Witness predicate:** `current == Dashboard` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth-ui.qnt:157` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:187` — the doc comment this requirement is read from.
 
 </details>
 
@@ -136,7 +145,7 @@ graph TB
 
 **As specified (EARS):** While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 
-`specs/auth-ui.qnt:L66-L72` · model `6b60e74ee686`
+`specs/auth-ui.qnt:L92-L98` · model `e725263304be`
 
 ```quint
   action submit_locked: bool = all {
@@ -150,7 +159,7 @@ graph TB
 
 **Witness predicate:** `current == LockedNotice` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth-ui.qnt:171` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:201` — the doc comment this requirement is read from.
 
 </details>
 

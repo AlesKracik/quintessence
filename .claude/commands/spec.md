@@ -17,8 +17,8 @@ There are no other authoring subcommands — this command subsumes every authori
 
 | File | Holds | Who writes it |
 |---|---|---|
-| `specs/<target>.qnt` | the formal model **and** every per-ID record checkable against it — requirements, invariants, properties, constants, examples — as `///` doc comments on the declaration that realizes each one | you, in this command |
-| `specs/<target>.intent.json` | what a model cannot say: `kind`, purpose, brief, scope, boundary, concepts, externals, assumptions, decisions, open questions, state machines, architecture, `formal_model` config (schema: `schemas/intent.schema.json`) | you, in this command |
+| `specs/<target>.qnt` | the formal model **and** every record checkable against it — requirements, invariants, properties, constants, examples, screens, navigation edges — as `///` doc comments on the declaration that realizes each one | you, in this command |
+| `specs/<target>.intent.json` | what a model cannot say: `kind`, purpose, brief, scope, boundary, concepts, externals, assumptions, decisions, open questions, state machines, `ui_components`, architecture, `formal_model` config (schema: `schemas/intent.schema.json`) | you, in this command |
 | `specs/<target>.records.json` | ledgers: check results, witness/refusal verdicts, freshness pins, verification log, traceability, provenance — and the three triage ledgers (`extraction_triage`, `matrix_triage`, `outcome_triage`), which you DO write | the tools; you only for triage verdicts |
 
 `specs/<target>.intent.json` is the file that makes an area exist; "the area" below always means what `tools/spec_source.py derive <target>` prints — the view every tool reads. A contract is `"kind": "contract"` in its intent file; a purely relational contract keeps its records on the `.als` assertions instead of a `.qnt`. There is no `*.area.json` any more: lint FAILs one (`legacy-spec-file`) and `tools/spec_source.py migrate <target> --write` converts it losslessly.
@@ -46,6 +46,7 @@ There are no other authoring subcommands — this command subsumes every authori
 - **Prohibition / `may` / not yet formalized** → on the `action` it refuses or concerns (`@via` implied); a `may`'s outcomes are separate `shall_<ID>_<outcome>` hosts tagged `@outcome-of <ID> <name>`.
 - **No model yet** (raw requirement, NFR, Tier-1 area) → in the `module`'s own doc comment; `@predicate` carries a draft predicate as text until there is a model to host it.
 - **Invariant** → on its `val`; **property** → on its `temporal`; **constant** → on its `pure val` (the model's literal IS the value — never restate it with `@value`); **example** → on its `run`.
+- **Screen** → `/// @screen <Name>` on the screen sum type, one per variant, all in the type's block (description = purpose; `@auth-required`, `@components A, B`). **Navigation edge** → `/// @nav <From> -> <To>` on the action that takes it; the line below is the trigger in the user's words, `@guard` the precondition. Lint checks every variant has a screen record and every edge's action reads and sets the screen var as claimed.
 - After writing or re-reading a `@meaning`, pin it: `tools/itf_tools.py pin <target> --req <ID>` (the brief: `--brief`). Never type a sha.
 - Never edit `records.json` verdicts, pins, logs or provenance by hand; the tools refuse to overwrite authored text and you must not overwrite theirs.
 
@@ -136,7 +137,7 @@ Ask only what's needed to start eliciting:
 1. Project name (slug).
 2. Greenfield or existing code?
 3. Repo layout: single-repo (code lives here), multi-repo (code in separate repos), or spec-only. If multi-repo: for each code repo, logical name + URL + default branch → `.spec/project.json` `repos`; prompt user to add per-dev paths to `.spec/local.json` (or do it for them).
-4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area that declares `screens[]` + `navigation[]`), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
+4. Functional areas to specify (comma-separated names). For each: kind (area / contract — an interactive surface is just an area whose model carries `@screen` + `@nav` records), one-line description, and — if it has code — code repo, `code_path`, `tests_path`, `test_command`. Write each to the `areas[]` index.
 
 **Don't ask about architecture defaults, topology, or Apalache settings here.** Each has a working default and a natural later moment: architecture is collected when `/spec-code-generate` first needs it (it asks for missing fields and writes them back) or anytime via `/spec _project`; topology when there are 2+ deployment units. Apalache settings need no moment at all: the defaults carry a two-pass step ladder (`shallow_steps` 3, `max_steps` 10) and a run budget (`budget_seconds` 900), so a check's cost is declared up front rather than discovered by waiting for it. Don't raise it here — the point is that the default is safe, not that it wants configuring. Front-loading them spends the user's attention before a single requirement is captured — requirements are where that attention pays.
 

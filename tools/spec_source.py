@@ -46,6 +46,8 @@ comment and are ignored.
   Record tags        @req ID · @inv ID · @prop ID · @con ID · @example ID
                      @outcome-of REQ-ID <name>   (one permitted outcome of a
                                                  `may` requirement)
+                     @screen <Name>              (one screen of a UI)
+                     @nav <From> -> <To>         (one navigation edge)
 
 Untagged lines right after the record tag are the record's DESCRIPTION
 (invariant statement, constant description, example title, a requirement's
@@ -78,6 +80,8 @@ A blank `///` line ends a continuation.
   CON   @unit @pairs INV-ID @value <json>  + extraction tags
   EX    @given <json> @when <action> [<json args>] @expect <json>
         @refs @source @trace
+  SCREEN  description = purpose  @auth-required  @components A, B
+  NAV     description = the trigger, in the user's words  @guard <text>
 
 Hosting — what the declaration under the block means for the record:
 
@@ -104,6 +108,14 @@ Hosting — what the declaration under the block means for the record:
   EX on `run <name>`               quint_run = name; when.action = the
                                    @when action, else the run's last call.
   EX on `action <name>`            when.action = name (no run yet).
+  SCREEN on `type <T>`             the screen is the variant <Name> of T;
+                                   one record per variant, all in T's block,
+                                   and every variant has one (lint).
+  NAV on `action <name>`           navigation[].action = name; the action
+                                   must read the screen var at <From> and
+                                   set it to <To> (lint). Several edges may
+                                   share an action.
+  SCREEN / NAV on the `module`     a UI with no model yet (Tier 1).
 
 Usage:
   tools/spec_source.py derive <area> [--root .]        # print the derived view
@@ -134,6 +146,11 @@ LEGACY_SUFFIXES = (".area.json", ".contract.json")
 
 MODEL_KEYS = ("requirements", "invariants", "properties", "constraints",
               "examples")
+# An interactive surface's screens and navigation edges are model-owned too:
+# a screen is a variant of the model's screen type, an edge is the action
+# that moves between two of them. They are keyed by name / position, not by
+# id, so they ride beside MODEL_KEYS rather than in it.
+UI_KEYS = ("screens", "navigation")
 RECORD_KEYS = ("check_results", "verification_log", "traceability",
                "generated_from", "extracted_from", "extraction_triage",
                "matrix_triage", "outcome_triage")
@@ -155,7 +172,7 @@ MACHINE_PATHS = {
 
 ID_KIND = {"req": "requirements", "inv": "invariants", "prop": "properties",
            "con": "constraints", "example": "examples"}
-RECORD_TAGS = tuple(ID_KIND) + ("outcome-of",)
+RECORD_TAGS = tuple(ID_KIND) + ("outcome-of", "screen", "nav")
 
 # tag -> (dotted path, value kind). Kinds: text, flag, list, json.
 EXTRACTION_TAGS = {
@@ -225,6 +242,13 @@ TAGS = {
         "pre": ("delta.pre", "text"),
         "pre-note": ("delta.note", "text"),
     },
+    "screens": {
+        "auth-required": ("auth_required", "flag"),
+        "components": ("components", "list"),
+    },
+    "navigation": {
+        "guard": ("guard", "text"),
+    },
 }
 SPECIAL_TAGS = {"requirements": ("fit", "error", "error-note", "witness"),
                 "examples": ("when",)}
@@ -245,6 +269,8 @@ EMIT_ORDER = {
                     "inferred-by", "fingerprint"),
     "examples": ("given", "when", "expect", "refs", "source", "trace"),
     "outcome": ("pre", "pre-note"),
+    "screens": ("auth-required", "components"),
+    "navigation": ("guard",),
 }
 
 
@@ -636,8 +662,8 @@ def _apply_tags(rec, kind, item, problems):
                     if args is not _BAD:
                         item["when"]["args"] = args
         else:
-            problems.append(f"{_where(rec)}: {rec['id']}: unknown tag @{name} on a "
-                            f"{kind[:-1]} record")
+            problems.append(f"{_where(rec)}: {rec['id']}: unknown tag @{name} on "
+                            f"{'an' if rec['tag'][0] in 'aeiou' else 'a'} @{rec['tag']} record")
 
 
 def _run_last_action(body, actions):
@@ -652,6 +678,50 @@ def _natural(rid):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", rid or "")]
 
 
+NAV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)$")
+IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _derive_ui(rec, out, seen, problems):
+    """One @screen or @nav record -> a screens[] / navigation[] entry, in
+    source order. Whether the host agrees (the screen is a variant of the
+    type it sits on, the action moves between the two screens) is lint's
+    call: it needs the model's declarations, not just the record."""
+    host = rec["host"] or {}
+    desc = " ".join(rec["desc"]).strip()
+    if rec["tag"] == "screen":
+        name = rec["id"]
+        if not IDENT_RE.match(name or "") or rec["extra"]:
+            problems.append(f"{_where(rec)}: @screen takes one screen name, got "
+                            f"{(name + ' ' + rec['extra']).strip()!r}")
+            return
+        if name in seen:
+            problems.append(f"{_where(rec)}: duplicate screen {name} (first at {seen[name]})")
+            return
+        seen[name] = _where(rec)
+        item = {"name": name, "auth_required": False}
+        if desc:
+            item["purpose"] = desc
+        _apply_tags(rec, "screens", item, problems)
+        out["screens"].append(item)
+        return
+    edge = f"{rec['id']} {rec['extra']}".strip()
+    m = NAV_RE.match(edge)
+    if not m:
+        problems.append(f"{_where(rec)}: @nav takes '<From> -> <To>', got {edge!r}")
+        return
+    item = {"from": m.group(1), "to": m.group(2)}
+    if desc:
+        item["trigger"] = desc
+    else:
+        problems.append(f"{_where(rec)}: @nav {edge}: no trigger — say what the user "
+                        f"does on the line below the tag")
+    _apply_tags(rec, "navigation", item, problems)
+    if host.get("kind") == "action":
+        item["action"] = host["name"]
+    out["navigation"].append(item)
+
+
 def derive_records(model_text, model_name, als_text=None, als_name=None,
                    problems=None):
     """The model-owned part of the area view: requirements, invariants,
@@ -664,11 +734,14 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
     for m in re.finditer(r"^\s*action\s+([A-Za-z_][A-Za-z0-9_]*)", model_text or "", re.M):
         actions.add(m.group(1))
 
-    out = {k: [] for k in MODEL_KEYS}
-    by_id, origin, outcomes = {}, {}, []
+    out = {k: [] for k in MODEL_KEYS + UI_KEYS}
+    by_id, origin, outcomes, screens_seen = {}, {}, [], {}
     for rec in recs:
         if rec["tag"] == "outcome-of":
             outcomes.append(rec)
+            continue
+        if rec["tag"] in ("screen", "nav"):
+            _derive_ui(rec, out, screens_seen, problems)
             continue
         kind = ID_KIND[rec["tag"]]
         rid = rec["id"]
@@ -793,7 +866,7 @@ def compose_area(intent, model_part, records):
         if k == "$schema":
             continue
         area[k] = copy.deepcopy(v)
-    for k in MODEL_KEYS:
+    for k in MODEL_KEYS + UI_KEYS:
         if model_part.get(k):
             area[k] = copy.deepcopy(model_part[k])
     for k in RECORD_KEYS:
@@ -1186,6 +1259,56 @@ def _open_module(lines):
     return text.splitlines()
 
 
+def type_variants(body):
+    """Constructor names of a sum type's body (`| A | B(int)`), or [] for a
+    body that is not a sum type."""
+    if not body or "|" not in body:
+        return []
+    out = []
+    for part in _split_top(body, "|"):
+        m = re.match(r"\s*([A-Z][A-Za-z0-9_]*)", part)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def screen_var(model_text, type_name):
+    """The state variable typed by the screen type, or None."""
+    m = re.search(rf"^\s*var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*{re.escape(type_name)}\b",
+                  strip_docs(model_text or ""), re.M)
+    return m.group(1) if m else None
+
+
+def nav_moves(body, var, frm, to):
+    """True when an action body reads `var == frm` and sets `var' = to` — the
+    shape a navigation edge has in the model."""
+    if not body or not var:
+        return False
+    v = re.escape(var)
+    return bool(re.search(rf"\b{v}\s*==\s*{re.escape(frm)}\b", body)
+                and re.search(rf"\b{v}'\s*=\s*{re.escape(to)}\b", body))
+
+
+SCREEN_FIELDS = {"name", "auth_required", "purpose", "components"}
+NAV_FIELDS = {"from", "to", "trigger", "guard", "action"}
+
+
+def emit_ui(tag, item, indent):
+    if tag == "screen":
+        lines = [f"{indent}/// @screen {item['name']}"]
+        lines += _wrap_desc(item.get("purpose"), indent)
+        if item.get("auth_required"):
+            lines.append(f"{indent}/// @auth-required")
+        if item.get("components"):
+            lines += _wrap("@components", ", ".join(item["components"]), indent)
+        return lines
+    lines = [f"{indent}/// @nav {item['from']} -> {item['to']}"]
+    lines += _wrap_desc(item.get("trigger"), indent)
+    if item.get("guard"):
+        lines += _wrap("@guard", item["guard"], indent)
+    return lines
+
+
 def migrate_area(legacy, model_text, als_text=None, ir=None):
     """Legacy area JSON + its model text(s) -> (qnt text, als text, intent,
     records). Lossless: a field it cannot place raises SpecSourceError."""
@@ -1193,7 +1316,7 @@ def migrate_area(legacy, model_text, als_text=None, ir=None):
     ir = ir or {}
     intent = {"$schema": "../schemas/intent.schema.json"}
     for k, v in legacy.items():
-        if k in MODEL_KEYS or k in RECORD_KEYS or k == "$schema":
+        if k in MODEL_KEYS or k in UI_KEYS or k in RECORD_KEYS or k == "$schema":
             continue
         intent[k] = copy.deepcopy(v)
     if isinstance(intent.get("brief"), dict):
@@ -1337,6 +1460,57 @@ def migrate_area(legacy, model_text, als_text=None, ir=None):
         else:
             module_doc.append(emit_doc("example", ex["id"], ex, "examples", ""))
 
+    # Screens on the sum type that lists them; each edge on the one action
+    # that moves the screen var between its two ends.
+    screens = legacy.get("screens") or []
+    navs = legacy.get("navigation") or []
+    for sc in screens:
+        if set(sc) - SCREEN_FIELDS:
+            raise SpecSourceError(f"{name}: screen {sc.get('name')}: field(s) "
+                                  f"{sorted(set(sc) - SCREEN_FIELDS)} have no doc-comment tag")
+    for nv in navs:
+        if set(nv) - NAV_FIELDS:
+            raise SpecSourceError(f"{name}: navigation {nv.get('from')} -> {nv.get('to')}: "
+                                  f"field(s) {sorted(set(nv) - NAV_FIELDS)} have no doc-comment tag")
+    types, actions = {}, {}
+    for i, l in enumerate(lines):
+        m = re.match(r"^\s*(type|action)\s+([A-Za-z_][A-Za-z0-9_]*)", l)
+        if m:
+            body = (_parse_host(lines, i, "quint") or {}).get("body") or ""
+            if m.group(1) == "type":
+                types[m.group(2)] = (i, type_variants(body))
+            else:
+                actions[m.group(2)] = (i, body)
+    names = {sc["name"] for sc in screens}
+    stype = next((t for t, (_i, v) in types.items() if names and names <= set(v)), None)
+    if stype:
+        i = types[stype][0]
+        doc = []
+        for sc in screens:
+            if doc:
+                doc.append(f"{indent_of(i)}///")
+            doc += emit_ui("screen", sc, indent_of(i))
+        put(i, doc)
+    else:
+        module_doc.extend(emit_ui("screen", sc, "") for sc in screens)
+    svar = screen_var(model_text, stype) if stype else None
+    for nv in navs:
+        target = nv.get("action")
+        if target is not None and target not in actions:
+            raise SpecSourceError(f"{name}: navigation {nv['from']} -> {nv['to']}: "
+                                  f"no action `{target}` in the model")
+        if target is None:
+            cands = [a for a, (_i, b) in actions.items()
+                     if nav_moves(b, svar, nv["from"], nv["to"])]
+            target = cands[0] if len(cands) == 1 else None
+        if target is None:
+            module_doc.append(emit_ui("nav", nv, ""))
+            continue
+        i = actions[target][0]
+        if i in inserts:
+            inserts[i].append(f"{indent_of(i)}///")
+        put(i, emit_ui("nav", nv, indent_of(i)))
+
     # Module doc: records with no host in the model yet.
     if module_doc:
         flat = []
@@ -1411,6 +1585,11 @@ def _normalize_for_compare(area):
             a.pop(k)
     for ex in a.get("examples") or []:
         ex.setdefault("expect", {})
+    for sc in a.get("screens") or []:
+        sc.setdefault("auth_required", False)
+    if a.get("navigation"):
+        a["navigation"] = sorted(a["navigation"], key=lambda n: (
+            n.get("from") or "", n.get("to") or "", n.get("trigger") or ""))
     return a
 
 
@@ -1444,7 +1623,7 @@ def source_schemas(area_schema):
         "properties": {},
     }
     for k, v in props.items():
-        if k in MODEL_KEYS or k in RECORD_KEYS:
+        if k in MODEL_KEYS or k in UI_KEYS or k in RECORD_KEYS:
             continue
         v = copy.deepcopy(v)
         if k == "brief":
@@ -1601,6 +1780,9 @@ def roundtrip(legacy, qtext, atext=None, ir=None):
         derived.get("formal_model", {}).pop("quint_file", None)
         if derived.get("formal_model") == {}:
             derived.pop("formal_model")
+    if not any("action" in n for n in legacy.get("navigation") or []):
+        for n in derived.get("navigation") or []:
+            n.pop("action", None)  # found by migration: added, not lost
     a, b = _normalize_for_compare(legacy), _normalize_for_compare(derived)
     return problems + _diff_paths(a, b)
 
