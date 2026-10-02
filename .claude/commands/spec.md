@@ -54,7 +54,7 @@ Change manifests (`specs/changes/<slug>.change.json`) and journeys (`specs/journ
 
 **The change is the unit of work; the area is the unit of meaning.** Every spec edit happens inside a *change* — a manifest at `specs/changes/<slug>.change.json` (schema: `schemas/change.schema.json`) that references the areas/contracts it touches. Areas remain the logical spec boundary and the single source of truth; the manifest holds membership and IDs only — never spec content, never phase flags (status is derived; see the dashboard beat).
 
-The **active change** is per-dev sticky state: `last_change` in `.spec/local.json` (gitignored). All five spec commands resolve against it — run bare to continue the change, pass an explicit target for a one-off. If an area edit starts with no active change, auto-open one: ask "No active change. Name this work? [<area>-updates]" — Enter accepts the default. One question, then every spec diff is traceable to a manifest.
+The **active change** is per-dev sticky state: `last_change` in `.spec/local.json` (gitignored). All five spec commands resolve against it — run bare to continue the change, pass an explicit target for a one-off. If an area edit starts with no active change, auto-open one: ask "No active change. Name this work? [<area>-updates]" — Enter accepts the default. One question, then every spec diff is traceable to a manifest. Creating any new change first runs the **open-changes gate** (Step 1): if other changes are still open, the user decides whether to close them before the new one starts.
 
 ## Instructions
 
@@ -64,13 +64,27 @@ You are the **Adaptive Specifier**. Your job is to figure out what beat the user
 
 Resolve the change, then the target:
 
-1. `/spec change <slug>` → open `specs/changes/<slug>.change.json` (create per `schemas/change.schema.json` if new, with `intent` from the `--` hint or one question; suggest branch `change/<slug>`). Write `last_change: "<slug>"` to `.spec/local.json` (create the file if missing; preserve other fields). Then show the change dashboard (beat below).
+1. `/spec change <slug>` → open `specs/changes/<slug>.change.json` (if new: run the **open-changes gate** below, then create it per `schemas/change.schema.json`, with `intent` from the `--` hint or one question; suggest branch `change/<slug>`. Switching to an existing change skips the gate). Write `last_change: "<slug>"` to `.spec/local.json` (create the file if missing; preserve other fields). Then show the change dashboard (beat below).
 2. Bare `/spec`, active change valid (`last_change` set, manifest exists, status not `landed`/`abandoned`) → **change dashboard** beat.
 3. Explicit `<target>` (area, not `_project`/`_patterns/*`/`_protocols/*`/`_journeys/*`/`_overview`):
    - active change exists → work on that area within it; register the target in the manifest's `targets[]` if absent.
-   - no active change → auto-open one first: `No active change. Name this work? [<target>-updates]` (Enter = default). Create the manifest, set `last_change`, then proceed.
+   - no active change → auto-open one first: `No active change. Name this work? [<target>-updates]` (Enter = default). Run the **open-changes gate**, create the manifest, set `last_change`, then proceed.
 4. Bare `/spec`, no valid active change: exactly one area → treat as `/spec <that-area>` (rule 3 auto-opens a change); otherwise show the project overview and ask.
 5. `_overview` → project overview: areas with status, open changes (slug, intent, target count, phase summary), open questions, last verification. Catalog targets (`_project`, `_patterns/*`, `_protocols/*`, `_journeys/*`) run their beats without touching any change.
+
+**Open-changes gate — before creating any new change manifest.** List `specs/changes/*.change.json` whose `status` is `open` or `in-progress`. None → create the new change. Otherwise, before writing anything, show them with their derived phases (`tools/spec-readback.py status <slug> --json` per change) and ask in ONE question:
+
+```
+2 changes are still open:
+  billing-sso   [in-progress]  "Billing accounts authenticate via SSO sessions"  2 targets — checked ✓  verified ✗
+  auth-lockout  [open]         "Lock accounts after 5 failed sign-ins"           1 target  — spec draft
+Close any before starting `<new-slug>`?  For each: landed (PR merged) / abandoned / keep open  [keep open]
+```
+
+- **Never close a change on your own judgment.** No answer or Enter keeps every change open: parallel changes are legitimate, and the gate exists so leftovers are a decision, not an accident.
+- **`landed` only when the user confirms the PR merged.** If its phase grid is not all green, say so on the same line before accepting (`billing-sso: verified ✗ — mark landed anyway?`).
+- **`abandoned` touches only the manifest.** Spec edits already committed under it stay in the areas; say so, and treat reverting them as a separate decision, not part of the gate.
+- Write each chosen status into its manifest (nothing else in it changes), then create the new change; `last_change` moves to the new change either way. Commit the status changes with the new manifest: `spec(<new-slug>): open — close <slugs>`.
 
 Then determine what exists:
 

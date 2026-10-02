@@ -1201,7 +1201,7 @@ How it drives the commands:
 - Bare `/spec-readback` regenerates the touched targets' readbacks plus a **change readback** (`specs/changes/<slug>.readback.md`) — intent, target table, the change's IDs rendered as EARS sentences. That one document is the PR review surface for a spanning change.
 - Explicit targets always work as a one-off escape hatch and never alter the active change.
 
-Lifecycle is git-shaped, no extra ceremony: slug ↔ suggested branch `change/<slug>`, commits scoped `spec(<slug>): …`, the manifest travels with the PR, and `status: "landed"` on merge turns it into a changelog entry. `landed`/`abandoned` clears the active change.
+Lifecycle is git-shaped, no extra ceremony: slug ↔ suggested branch `change/<slug>`, commits scoped `spec(<slug>): …`, the manifest travels with the PR, and `status: "landed"` on merge turns it into a changelog entry. `landed`/`abandoned` clears the active change. Opening a new change while others are still `open` or `in-progress` asks first, in one question, whether to mark each one `landed`, `abandoned`, or keep it open (the default). Nothing is closed without that answer, `landed` needs the user to confirm the merge, and `abandoned` changes only the manifest — never the spec edits made under it.
 
 `spec-lint` validates manifests on every run (full or single-area): schema, slug↔filename, targets resolve to real specs, no dangling IDs, no stored phase flags (FAIL — status is derived, never stored). Landed/abandoned manifests are history and only need to parse — later changes may legitimately remove IDs they reference.
 
