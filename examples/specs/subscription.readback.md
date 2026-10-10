@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 8 of 8 requirement(s) not verified against code; 4 of 4 invariant(s) not holding; 1 open question(s).
 
-**Status:** formalized  |  **Requirements:** 0/8 verified, 0/8 witnessed  |  **Invariants:** 0 proven + 0 bounded / 4  |  **Coverage:** 18 cells, 2 covered, 16 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Open questions:** 1  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/8 verified, 0/8 witnessed  |  **Invariants:** 0 proven + 0 bounded / 4  |  **Coverage:** 18 cells, 2 covered, 16 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Mutation:** 62% pinned by examples, 8 question(s) open  |  **Open questions:** 1  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
@@ -46,6 +46,123 @@ flowchart LR
 - **Unchecked requirement** — REQ-007: When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice. _(REQ-007/email)_
 - **Unchecked requirement** — REQ-008: While the Subscription is Active, if the billing provider declines the cancellation, then the system shall leave the Subscription Active and billing enabled.
 - **Open question** — Q-001: After MAX_CANCEL_RETRIES exhausted TIMEOUTs, does the subscription stay Active forever, or does an operator get paged? ASM-001 assumes the provider answers eventually; nothing here says what happens if it does not. _(source: elicitation)_
+- **The examples leave 8 behavior(s) open** — the model decides them and no example does. Answer the [questions](#questions-the-examples-leave-open): yes adds an example, no finds a model bug.
+
+## Questions the Examples Leave Open
+
+_Small changes to the model that every example and invariant still pass: 9 of 38 tried (`tools/spec-questions.py`, 4eb1600). Each is a behavior the model chose and nobody approved. **Yes** pins it: add the run as an example. **No** means the model is wrong here._
+
+### 1d0a35d2 · [REQ-001](#req-001), [REQ-002](#req-002), [REQ-007](#req-007)
+
+**Given** cancel_subscription(alice, InApp) **When** cancel_subscription(alice, Email)
+
+> After cancel_subscription(alice, InApp), should cancel_subscription(alice, Email) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of REQ-001, REQ-002, REQ-007:
+
+```quint
+run q_1d0a35d2 = init.then(cancel_subscription("alice", InApp)).then(cancel_subscription("alice", Email).fail())
+```
+
+<sub>Raised by the variant: cancel_subscription: drop the guard `status.get(c) == Active`.</sub>
+
+### c2966184 · [REQ-001](#req-001), [REQ-002](#req-002), [REQ-007](#req-007)
+
+**Given** cancel_unanswered(alice, true) **When** cancel_subscription(alice, InApp)
+
+> After cancel_unanswered(alice, true), when cancel_subscription(alice, InApp): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example of REQ-001, REQ-002, REQ-007:
+
+```quint
+run q_c2966184 = init.then(cancel_unanswered("alice", true)).then(cancel_subscription("alice", InApp)).expect(unansweredTries.get("alice") == 0)
+```
+
+<sub>Raised by the variant: cancel_subscription: drop the effect on `unansweredTries` (keep it as it was).</sub>
+
+### a05aa295 · [REQ-008](#req-008)
+
+**Given** cancel_unanswered(alice, false) **When** cancel_declined(alice)
+
+> After cancel_unanswered(alice, false), when cancel_declined(alice): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example of REQ-008:
+
+```quint
+run q_a05aa295 = init.then(cancel_unanswered("alice", false)).then(cancel_declined("alice")).expect(unansweredTries.get("alice") == 0)
+```
+
+<sub>Raised by the variant: cancel_declined: drop the effect on `unansweredTries` (keep it as it was).</sub>
+
+### 68ef8975 · [REQ-004](#req-004)
+
+**Given** the initial state **When** cancel_unanswered(bob, false)
+
+> From the start, when cancel_unanswered(bob, false): should lastBillingResult[bob] = NetworkError hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example of REQ-004:
+
+```quint
+run q_68ef8975 = init.then(cancel_unanswered("bob", false)).expect(lastBillingResult.get("bob") == NetworkError)
+```
+
+<sub>Raised by the variant: cancel_unanswered: drop the effect on `lastBillingResult` (keep it as it was).</sub>
+
+### 404d46eb · [REQ-004](#req-004)
+
+**Given** the initial state **When** cancel_unanswered(bob, true)
+
+> From the start, when cancel_unanswered(bob, true): should lastBillingResult[bob] = Timeout hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example of REQ-004:
+
+```quint
+run q_404d46eb = init.then(cancel_unanswered("bob", true)).expect(lastBillingResult.get("bob") == Timeout)
+```
+
+<sub>Raised by the variant: cancel_unanswered: `lastBillingResult` gets `NetworkError` where the model writes `Timeout`.</sub>
+
+### 909c2265 · [REQ-003](#req-003)
+
+**Given** the initial state **When** cancel_again(alice)
+
+> From the start, should cancel_again(alice) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of REQ-003:
+
+```quint
+run q_909c2265 = init.then(cancel_again("alice").fail())
+```
+
+<sub>Raised by the variant: cancel_again: drop the guard `status.get(c) == Cancelled`.</sub>
+
+### ead78f89
+
+**At the start**
+
+> Initially, should lastBillingResult[alice] = Success and lastBillingResult[bob] = Success hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_ead78f89 = init.expect(lastBillingResult.get("alice") == Success and lastBillingResult.get("bob") == Success)
+```
+
+<sub>Raised by the variant: init: `lastBillingResult` gets `Declined` where the model writes `Success`.</sub>
+
+### ce72947e
+
+**At the start**
+
+> Initially, should notice[alice] = NoNotice and notice[bob] = NoNotice hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob") == NoNotice)
+```
+
+<sub>Raised by the variant: init: `notice` gets `Email` where the model writes `NoNotice`.</sub>
 
 ## At a Glance
 
@@ -86,6 +203,8 @@ flowchart LR
 
 > **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ⏳ · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ⏳
 
+> **Left open** · [68ef8975](#68ef8975) cancel_unanswered(bob, false) · [404d46eb](#404d46eb) cancel_unanswered(bob, true) — the model decides, no example does
+
 <details><summary>Quint action `cancel_unanswered`, witness predicate + trace</summary>
 
 `specs/subscription.qnt:L115-L124` · model `4eb1600672b8`
@@ -122,6 +241,8 @@ flowchart LR
 | EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice, Email) | `status.get("alice") == Cancelled and not(billingEnabled.get("alice")) and accessUntilPeriodEnd.get("alice") and notice.get("alice") == Email` |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ⏳ · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ⏳
+
+> **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) · [c2966184](#c2966184) cancel_subscription(alice, InApp) — the model decides, no example does
 
 <details><summary>Quint action `cancel_subscription`, witness predicate + trace</summary>
 
@@ -160,6 +281,8 @@ flowchart LR
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ⏳ · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ⏳
 
+> **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) · [c2966184](#c2966184) cancel_subscription(alice, InApp) — the model decides, no example does
+
 <details><summary>Quint action `cancel_subscription`, witness predicate + trace</summary>
 
 `specs/subscription.qnt:L86-L95` · model `4eb1600672b8`
@@ -192,6 +315,8 @@ flowchart LR
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-002 — Cancelling twice is harmless | cancel_subscription(alice, Email) | cancel_again(alice) | `status.get("alice") == Cancelled and accessUntilPeriodEnd.get("alice")` |
+
+> **Left open** · [909c2265](#909c2265) cancel_again(alice) — the model decides, no example does
 
 <details><summary>Quint action `cancel_again`, witness predicate + trace</summary>
 
@@ -302,6 +427,8 @@ flowchart LR
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ⏳ · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ⏳
 
+> **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) · [c2966184](#c2966184) cancel_subscription(alice, InApp) — the model decides, no example does
+
 <details><summary>Quint action `cancel_subscription`</summary>
 
 `specs/subscription.qnt:L86-L95` · model `4eb1600672b8`
@@ -334,6 +461,8 @@ flowchart LR
 | EX-004 — Provider declines: the subscription stays Active | the initial state | cancel_declined(alice) | `status.get("alice") == Active and lastBillingResult.get("alice") == Declined` |
 
 > **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ⏳ · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ⏳
+
+> **Left open** · [a05aa295](#a05aa295) cancel_declined(alice) — the model decides, no example does
 
 <details><summary>Quint action `cancel_declined`, witness predicate + trace</summary>
 
@@ -431,6 +560,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | ✓ | 1/1 rejection(s) shown by an example |
 | Examples | ✓ | 7 worked example(s) |
+| Behavior the examples pin | ! | 62% pinned by examples, 8 question(s) open |
 | Invariants | ! | 0/4 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
 

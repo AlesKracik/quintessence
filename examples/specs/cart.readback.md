@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 4 of 4 requirement(s) not verified against code; 2 of 2 invariant(s) not holding; 5 open question(s).
 
-**Status:** structured  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 2  |  **Coverage:** 4 cells, 1 covered, 3 triaged, 0 untriaged  |  **Extraction:** 18/18 sites accounted  |  **Open questions:** 5  |  **Last verified:** never
+**Status:** structured  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 2  |  **Coverage:** 4 cells, 1 covered, 3 triaged, 0 untriaged  |  **Extraction:** 18/18 sites accounted  |  **Mutation:** not run  |  **Open questions:** 5  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
@@ -252,6 +252,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | ✓ | 1/1 rejection(s) shown by an example |
 | Examples | ✓ | 2 worked example(s) |
+| Behavior the examples pin | — | never measured — `tools/spec-questions.py <area> --record` |
 | Invariants | ! | 0/2 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
 

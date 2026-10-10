@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 5 of 5 requirement(s) not verified against code; 5 of 5 invariant(s) not holding; 3 open question(s).
 
-**Status:** formalized  |  **Requirements:** 0/5 verified, 0/5 witnessed  |  **Invariants:** 0 proven + 0 bounded / 5  |  **Coverage:** 18 cells, 5 covered, 13 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Open questions:** 3  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/5 verified, 0/5 witnessed  |  **Invariants:** 0 proven + 0 bounded / 5  |  **Coverage:** 18 cells, 5 covered, 13 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Mutation:** 64% pinned by examples, 6 question(s) open  |  **Open questions:** 3  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
@@ -55,6 +55,95 @@ flowchart LR
 - **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
 - **Open question** — Q-003: State×event gap: when Account=Locked and login_failed fires, the spec is silent (REQ-003 covers Unlocked only). Should attempts against a locked account be counted toward anything, ignored, or raise an alert? _(source: matrix)_
+- **The examples leave 6 behavior(s) open** — the model decides them and no example does. Answer the [questions](#questions-the-examples-leave-open): yes adds an example, no finds a model bug.
+
+## Questions the Examples Leave Open
+
+_Small changes to the model that every example and invariant still pass: 6 of 40 tried (`tools/spec-questions.py`, ca0993f). Each is a behavior the model chose and nobody approved. **Yes** pins it: add the run as an example. **No** means the model is wrong here._
+
+### 3b71c867 · [REQ-001](#req-001), [REQ-005](#req-005)
+
+**Given** the initial state **When** login(charlie, s3)
+
+> From the start, when login(charlie, s3): should failedAttempts[charlie] = 0 hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example of REQ-001, REQ-005:
+
+```quint
+run q_3b71c867 = init.then(login("charlie", "s3")).expect(failedAttempts.get("charlie") == 0)
+```
+
+<sub>Raised by the variant: login: drop the effect on `failedAttempts` (keep it as it was).</sub>
+
+### 249ef86b · [REQ-002](#req-002)
+
+**Given** login(charlie, s3); then logout(s3) **When** logout(s3)
+
+> After login(charlie, s3); then logout(s3), should logout(s3) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of REQ-002:
+
+```quint
+run q_249ef86b = init.then(login("charlie", "s3")).then(logout("s3")).then(logout("s3").fail())
+```
+
+<sub>Raised by the variant: logout: drop the guard `isActive(sid)`.</sub>
+
+### 0faf1af0 · [REQ-003](#req-003)
+
+**Given** login_failed(bob) × 5 **When** login_failed(bob)
+
+> After login_failed(bob) × 5, should login_failed(bob) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of REQ-003:
+
+```quint
+run q_0faf1af0 = init.then(login_failed("bob")).then(login_failed("bob")).then(login_failed("bob")).then(login_failed("bob")).then(login_failed("bob")).then(login_failed("bob").fail())
+```
+
+<sub>Raised by the variant: login_failed: drop the guard `not(isLocked(uid))`.</sub>
+
+### 07a48908 · [REQ-004](#req-004)
+
+**Given** login(charlie, s1); then tick × 4; then expire_session(s1) **When** expire_session(s1)
+
+> After login(charlie, s1); then tick × 4; then expire_session(s1), should expire_session(s1) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of REQ-004:
+
+```quint
+run q_07a48908 = init.then(login("charlie", "s1")).then(tick).then(tick).then(tick).then(tick).then(expire_session("s1")).then(expire_session("s1").fail())
+```
+
+<sub>Raised by the variant: expire_session: drop the guard `isActive(sid)`.</sub>
+
+### d7e85e1c
+
+**Given** the initial state **When** unlock_account(charlie)
+
+> From the start, should unlock_account(charlie) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_d7e85e1c = init.then(unlock_account("charlie").fail())
+```
+
+<sub>Raised by the variant: unlock_account: drop the guard `isLocked(uid)`.</sub>
+
+### 6b84d96d
+
+**Given** the initial state **When** tick
+
+> From the start, should tick be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_6b84d96d = init.then(tick.fail())
+```
+
+<sub>Raised by the variant: tick: drop the guard `sessions.keys().exists(sid => isActive(sid))`.</sub>
 
 ## At a Glance
 
@@ -88,6 +177,8 @@ flowchart LR
 | EX-001 — Sign in | the initial state | login(alice, s1) | `isActive("s1") and activeSessionsOf("alice") == Set("s1")` |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-004](#what-must-always-be-true) `noEarlyLockout` ⏳ · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ⏳
+
+> **Left open** · [3b71c867](#3b71c867) login(charlie, s3) — the model decides, no example does
 
 <details><summary>Quint action `login`, witness predicate + trace</summary>
 
@@ -132,6 +223,8 @@ flowchart LR
 | EX-004 — Four failures do not lock it | login_failed(bob) × 3 | login_failed(bob) | `not(isLocked("bob"))` |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-004](#what-must-always-be-true) `noEarlyLockout` ⏳ · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ⏳
+
+> **Left open** · [0faf1af0](#0faf1af0) login_failed(bob) — the model decides, no example does
 
 <details><summary>Quint action `login_failed`, witness predicate + trace</summary>
 
@@ -182,6 +275,8 @@ flowchart LR
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ⏳
 
+> **Left open** · [249ef86b](#249ef86b) logout(s3) — the model decides, no example does
+
 <details><summary>Quint action `logout`, witness predicate + trace</summary>
 
 `specs/auth.qnt:L118-L133` · model `ca0993f4795f`
@@ -221,6 +316,8 @@ flowchart LR
 | EX-007 — Three idle ticks are not enough to expire | login(alice, s1); then tick × 3, so `isActive("s1") and idleOf("s1") == 3` | expire_session(s1) — refused | refused — nothing changes |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ⏳
+
+> **Left open** · [07a48908](#07a48908) expire_session(s1) — the model decides, no example does
 
 <details><summary>Quint action `expire_session`, witness predicate + trace</summary>
 
@@ -263,6 +360,8 @@ flowchart LR
 | EX-006 — A locked account cannot sign in | login_failed(bob) × 5, so `isLocked("bob") and attemptsOf("bob") == 5` | login(bob, s2) — refused | refused — nothing changes |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-004](#what-must-always-be-true) `noEarlyLockout` ⏳ · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ⏳
+
+> **Left open** · [3b71c867](#3b71c867) login(charlie, s3) — the model decides, no example does
 
 > **Witness skipped:** A prohibition has no reachable state to witness — there is no step in which 'the login did not happen' becomes visible. INV-002 (noSessionWhileLocked) carries the model-side proof.
 
@@ -364,6 +463,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | ✓ | 1/1 rejection(s) shown by an example |
 | Examples | ✓ | 7 worked example(s) |
+| Behavior the examples pin | ! | 64% pinned by examples, 6 question(s) open |
 | Invariants | ! | 0/5 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
 

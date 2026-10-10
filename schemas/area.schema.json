@@ -1035,6 +1035,67 @@
             "orphans":   { "type": "integer", "minimum": 0 }
           }
         },
+
+        "mutation": {
+          "type": "object",
+          "description": "Model mutation (tools/spec-questions.py --record): how much of the model's behavior the examples pin, and the questions for what they leave open. Each mutant is one small change to the model's behavior (a comparison, a guard, an effect, a variant, a constant); a mutant a run or invariant turns red on is killed, one nothing notices is a behavior nobody approved. Bounded and random — `no_difference` is not `equivalent` — and never a verdict.",
+          "additionalProperties": false,
+          "properties": {
+            "ran_at":             { "type": "string", "format": "date-time" },
+            "model_sha":          { "type": "string", "description": "Model the run measured. A different current model_sha means the questions may no longer apply: rerun." },
+            "seed":               { "type": "integer" },
+            "max_steps":          { "type": "integer", "minimum": 1 },
+            "traces":             { "type": "integer", "minimum": 0 },
+            "mutants":            { "type": "integer", "minimum": 0 },
+            "stillborn":          { "type": "integer", "minimum": 0, "description": "Mutants that did not compile. Not counted." },
+            "killed_by_examples": { "type": "integer", "minimum": 0, "description": "Killed by an @example run or a journey's run — behavior a person approved." },
+            "killed_otherwise":   { "type": "integer", "minimum": 0, "description": "Killed only by an invariant or a run that is no example. Pinned, but not by anything a person approved row by row." },
+            "survived":           { "type": "integer", "minimum": 0, "description": "Passed everything, and a replay found a step where it differs from the model. Each has a question." },
+            "no_difference":      { "type": "integer", "minimum": 0, "description": "Passed everything and no replay told it apart from the model within the bounds. Not counted." },
+            "score":              { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "killed_by_examples / (killed_by_examples + killed_otherwise + survived): the share of behavior-changing mutants the approved examples kill." },
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "kind", "question", "example"],
+                "properties": {
+                  "key":      { "type": "string", "description": "The first mutant that raised it; stable while the model text around it is." },
+                  "kind":     { "type": "string", "enum": ["outcome", "allowed", "refused", "initial"], "description": "outcome: the model and a variant end a step differently; allowed: the model allows a step a variant refuses; refused: the model refuses a step a variant allows; initial: they start differently." },
+                  "given":    { "type": "string" },
+                  "when":     { "type": "string" },
+                  "model":    { "type": ["string", "null"], "description": "What the model says, for an outcome or initial question." },
+                  "question": { "type": "string" },
+                  "example":  { "type": "string", "description": "The Quint run that answers it as the model does: add it as an @example (refs the requirement named in refs) when the answer is yes." },
+                  "refs":     { "type": "array", "items": { "type": "string" }, "description": "Requirements whose action the question's step calls." },
+                  "change":   { "type": "string", "description": "The mutant, in words." },
+                  "mutants":  { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            },
+            "results": {
+              "type": "array",
+              "description": "One row per mutant, what happened to it.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id":         { "type": "string" },
+                  "key":        { "type": "string" },
+                  "op":         { "type": "string", "enum": ["cmp", "guard", "effect", "variant", "const"] },
+                  "decl":       { "type": "string" },
+                  "line":       { "type": "integer" },
+                  "label":      { "type": "string" },
+                  "outcome":    { "type": "string", "enum": ["stillborn", "killed", "survived", "no-difference"] },
+                  "killed_by":  { "type": "array", "items": { "type": "string" } },
+                  "by_example": { "type": "boolean" },
+                  "question":   { "type": "string" },
+                  "detail":     { "type": "string" }
+                }
+              }
+            }
+          }
+        },
         "checks": {
           "type": "array",
           "items": {

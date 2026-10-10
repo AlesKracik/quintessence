@@ -500,11 +500,79 @@ def attention_items(root, area_name, area):
         if q.get("status", "open") in ("open", "deferred"):
             src = f" _(source: {q['source']})_" if q.get("source") else ""
             items.append(f"**Open question** — {q.get('id')}: {q.get('question')}{src}")
+    mutation = cr.get("mutation") or {}
+    if mutation.get("questions"):
+        n = len(mutation["questions"])
+        items.append(f"**The examples leave {n} behavior(s) open** — the model decides "
+                     f"{'it' if n == 1 else 'them'} and no example does. Answer the "
+                     f"[questions](#questions-the-examples-leave-open): yes adds an "
+                     f"example, no finds a model bug.")
+    if mutation and mutation_stale(root, area_name, area):
+        items.append("**Mutation results are for an older model** — rerun "
+                     "`tools/spec-questions.py <area> --record` before answering.")
     log = area.get("verification_log") or []
     if log and log[-1].get("drift_detected"):
         items.append("**Drift** — spec-traced code changed outside /spec-code-generate and "
                      "verification fails. Revert the code or codify via /spec.")
     return items
+
+
+def mutation_stale(root, area_name, area):
+    """True when the recorded mutation run measured a different model."""
+    sha = ((area.get("check_results") or {}).get("mutation") or {}).get("model_sha")
+    if not sha:
+        return False
+    try:
+        return compute_model_sha(root, area_name, area) != sha
+    except Exception:  # noqa: BLE001 — a missing file reads as "cannot tell"
+        return False
+
+
+def mutation_cell(area):
+    m = (area.get("check_results") or {}).get("mutation") or {}
+    if not m:
+        return "not run"
+    score = m.get("score")
+    pinned = "n/a" if score is None else f"{score:.0%} pinned by examples"
+    q = len(m.get("questions") or [])
+    return pinned + (f", {q} question(s) open" if q else "")
+
+
+def questions_section(root, area_name, area):
+    """What the examples leave open, as questions — each a scenario the model
+    decides and no example does, with the example that pins it."""
+    m = (area.get("check_results") or {}).get("mutation") or {}
+    qs = m.get("questions") or []
+    if not qs:
+        return []
+    lines = ["## Questions the Examples Leave Open", "",
+             f"_Small changes to the model that every example and invariant still pass: "
+             f"{m.get('survived', len(qs))} of {m.get('mutants', '?')} tried "
+             f"(`tools/spec-questions.py`, {short_sha(m.get('model_sha'))}). Each is a "
+             f"behavior the model chose and nobody approved. **Yes** pins it: add the run "
+             f"as an example. **No** means the model is wrong here._", ""]
+    if mutation_stale(root, area_name, area):
+        lines += ["> ⚠ These were raised against an older model — rerun before "
+                  "answering.", ""]
+    for q in qs:
+        refs = ", ".join(f"[{r}](#{r.lower()})" for r in q.get("refs") or [])
+        lines.append(f"### {q['key']}" + (f" · {refs}" if refs else ""))
+        lines.append("")
+        if q.get("kind") == "initial":
+            lines.append("**At the start**")
+        else:
+            lines.append(f"**Given** {q.get('given')} **When** {q.get('when')}")
+        lines.append("")
+        lines.append(f"> {q['question']}")
+        lines.append("")
+        lines.append("Yes → add as an example" + (f" of {', '.join(q['refs'])}"
+                                                    if q.get("refs") else "") + ":")
+        lines.append("")
+        lines += ["```quint", q["example"], "```", ""]
+        if q.get("change"):
+            lines.append(f"<sub>Raised by the variant: {q['change']}.</sub>")
+            lines.append("")
+    return lines
 
 
 # ── Section renderers (area) ─────────────────────────────────────────────────
@@ -660,6 +728,7 @@ def header_bar(area, area_name):
             f"**Invariants:** {inv_cell}  |  "
             f"**Coverage:** {cov}  |  "
             f"**Extraction:** {extraction_state(area)[1]}  |  "
+            f"**Mutation:** {mutation_cell(area)}  |  "
             f"**Open questions:** {n_q}  |  "
             f"**Last verified:** {last_ver}")
 
@@ -820,6 +889,13 @@ def render_requirement(root, area, req, constraints, rendered_full,
                  + f" {invariant_mark(g, bound, scopes.get(g['id']), steps.get(g['id']))}"
                  for g in guards]
         lines.append("> **Guarded by** · " + " · ".join(parts))
+        lines.append("")
+    open_qs = [q for q in ((area.get("check_results") or {}).get("mutation") or {})
+               .get("questions") or [] if req.get("id") in (q.get("refs") or [])]
+    if open_qs:
+        lines.append("> **Left open** · " + " · ".join(
+            f"[{q['key']}](#{q['key']}) {q.get('when') or ''}".strip() for q in open_qs)
+            + " — the model decides, no example does")
         lines.append("")
     if is_computed(req):
         tests = ", ".join(f"`{t}`" for t in (req.get("verified_by") or []))
@@ -1817,6 +1893,12 @@ def dimensions_section(area):
             if rejections else "no rejection requirements"),
         row("Examples", bool(examples) or None,
             f"{len(examples)} worked example(s)" if examples else "none written"),
+        # The examples measured against the model: of the mutants that change
+        # behavior, how many an example kills. Open questions are outstanding.
+        row("Behavior the examples pin",
+            (not (cr.get("mutation") or {}).get("questions")) if cr.get("mutation") else None,
+            mutation_cell(area) if cr.get("mutation")
+            else "never measured \u2014 `tools/spec-questions.py <area> --record`"),
         row("Invariants", (n_inv_ok == len(invs)) if invs else None,
             f"{n_inv_ok}/{len(invs)} holding" if invs else "none declared"),
         # Never run and run-clean are different states; only the second is ✓.
@@ -1869,6 +1951,7 @@ def emit_area(root, area_name):
     else:
         lines.append("**Nothing needs attention.**")
     lines.append("")
+    lines += questions_section(root, area_name, area)
     lines += ui_sections(area)
     lines += at_a_glance(area)
     lines += what_the_system_does(root, area_name, area, journeys)
@@ -2133,18 +2216,19 @@ def emit_project(root):
     lines.append("")
     lines.append("## Areas")
     lines.append("")
-    lines.append("| Area | Kind | Version | Status | Last verified |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| Area | Kind | Version | Status | Examples pin | Last verified |")
+    lines.append("|---|---|---|---|---|---|")
     for a in areas:
         d = loaded.get(a)
         if d is None:
-            lines.append(f"| {a} | ? | ? | MISSING | — |")
+            lines.append(f"| {a} | ? | ? | MISSING | — | — |")
             continue
         log = d.get("verification_log") or []
         last = (log[-1]["date"][:10] + (" ✓" if log[-1].get("status") == "pass" else " ✗")) \
             if log else "never"
+        pin = mutation_cell(d) if (d.get("check_results") or {}).get("mutation") else "—"
         lines.append(f"| [{a}](./specs/{a}.readback.md) | {d.get('kind')} | "
-                     f"{d.get('version')} | {d.get('status')} | {last} |")
+                     f"{d.get('version')} | {d.get('status')} | {pin} | {last} |")
     lines.append("")
     if journeys:
         lines.append("## Journeys")

@@ -1,6 +1,689 @@
 {
   "$schema": "../schemas/records.schema.json",
   "area": "auth-ui",
+  "check_results": {
+    "mutation": {
+      "ran_at": "2026-10-10T16:33:27+00:00",
+      "model_sha": "4340c15161085731bf366ea6a5e1a123f4e84fd09b5db1bb1a53cf09c2c3e394",
+      "seed": 7,
+      "max_steps": 10,
+      "traces": 20,
+      "mutants": 40,
+      "stillborn": 0,
+      "killed_by_examples": 21,
+      "killed_otherwise": 0,
+      "survived": 13,
+      "no_difference": 6,
+      "score": 0.618,
+      "questions": [
+        {
+          "kind": "refused",
+          "given": "click_sign_in",
+          "when": "click_sign_in",
+          "model": null,
+          "question": "After click_sign_in, should click_sign_in be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_b79923fe = init.then(click_sign_in).then(click_sign_in.fail())",
+          "refs": [
+            "UI-001"
+          ],
+          "mutants": [
+            "b79923fe"
+          ],
+          "change": "click_sign_in: drop the guard `current == Home`",
+          "key": "b79923fe"
+        },
+        {
+          "kind": "refused",
+          "given": "the initial state",
+          "when": "submit_success(alice, s1)",
+          "model": null,
+          "question": "From the start, should submit_success(alice, s1) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_d5442974 = init.then(submit_success(\"alice\", \"s1\").fail())",
+          "refs": [
+            "UI-002"
+          ],
+          "mutants": [
+            "d5442974"
+          ],
+          "change": "submit_success: drop the guard `current == Login`",
+          "key": "d5442974"
+        },
+        {
+          "kind": "outcome",
+          "given": "click_sign_in",
+          "when": "submit_success(bob, s1)",
+          "model": "form = Idle",
+          "question": "After click_sign_in, when submit_success(bob, s1): should form = Idle hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_f8263eaa = init.then(click_sign_in).then(submit_success(\"bob\", \"s1\")).expect(form == Idle)",
+          "refs": [
+            "UI-002"
+          ],
+          "mutants": [
+            "f8263eaa"
+          ],
+          "change": "submit_success: `form` gets `Submitting` where the model writes `Idle`",
+          "key": "f8263eaa"
+        },
+        {
+          "kind": "outcome",
+          "given": "click_sign_in; then submit_invalid(alice)",
+          "when": "submit_success(bob, s2)",
+          "model": "form = Idle",
+          "question": "After click_sign_in; then submit_invalid(alice), when submit_success(bob, s2): should form = Idle hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_e20334a7 = init.then(click_sign_in).then(submit_invalid(\"alice\")).then(submit_success(\"bob\", \"s2\")).expect(form == Idle)",
+          "refs": [
+            "UI-002"
+          ],
+          "mutants": [
+            "e20334a7"
+          ],
+          "change": "submit_success: drop the effect on `form` (keep it as it was)",
+          "key": "e20334a7"
+        },
+        {
+          "kind": "refused",
+          "given": "click_sign_in",
+          "when": "submit_locked(bob)",
+          "model": null,
+          "question": "After click_sign_in, should submit_locked(bob) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_aaa2ce5e = init.then(click_sign_in).then(submit_locked(\"bob\").fail())",
+          "refs": [
+            "UI-003"
+          ],
+          "mutants": [
+            "aaa2ce5e"
+          ],
+          "change": "submit_locked: drop the guard `accountLocked(u)`",
+          "key": "aaa2ce5e"
+        },
+        {
+          "kind": "refused",
+          "given": "the initial state",
+          "when": "submit_invalid(alice)",
+          "model": null,
+          "question": "From the start, should submit_invalid(alice) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_20ee0d29 = init.then(submit_invalid(\"alice\").fail())",
+          "refs": [],
+          "mutants": [
+            "20ee0d29"
+          ],
+          "change": "submit_invalid: drop the guard `current == Login`",
+          "key": "20ee0d29"
+        },
+        {
+          "kind": "outcome",
+          "given": "click_sign_in",
+          "when": "submit_invalid(bob)",
+          "model": "form = ErrorBadCreds",
+          "question": "After click_sign_in, when submit_invalid(bob): should form = ErrorBadCreds hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_8e18e124 = init.then(click_sign_in).then(submit_invalid(\"bob\")).expect(form == ErrorBadCreds)",
+          "refs": [],
+          "mutants": [
+            "8e18e124",
+            "1fbc4d97"
+          ],
+          "change": "submit_invalid: `form` gets `ErrorLocked` where the model writes `ErrorBadCreds`",
+          "key": "8e18e124"
+        },
+        {
+          "kind": "outcome",
+          "given": "click_sign_in; then submit_success(alice, s1)",
+          "when": "click_logout",
+          "model": "form = Idle",
+          "question": "After click_sign_in; then submit_success(alice, s1), when click_logout: should form = Idle hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_9c56ae3d = init.then(click_sign_in).then(submit_success(\"alice\", \"s1\")).then(click_logout).expect(form == Idle)",
+          "refs": [],
+          "mutants": [
+            "9c56ae3d"
+          ],
+          "change": "click_logout: `form` gets `Submitting` where the model writes `Idle`",
+          "key": "9c56ae3d"
+        },
+        {
+          "kind": "outcome",
+          "given": "click_sign_in; then submit_success(alice, s1)",
+          "when": "click_logout",
+          "model": "mySession = \"\"",
+          "question": "After click_sign_in; then submit_success(alice, s1), when click_logout: should mySession = \"\" hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_b222972a = init.then(click_sign_in).then(submit_success(\"alice\", \"s1\")).then(click_logout).expect(mySession == \"\")",
+          "refs": [],
+          "mutants": [
+            "b222972a"
+          ],
+          "change": "click_logout: drop the effect on `mySession` (keep it as it was)",
+          "key": "b222972a"
+        },
+        {
+          "kind": "refused",
+          "given": "the initial state",
+          "when": "go_home",
+          "model": null,
+          "question": "From the start, should go_home be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_efa51944 = init.then(go_home.fail())",
+          "refs": [],
+          "mutants": [
+            "efa51944",
+            "1ec80a31"
+          ],
+          "change": "go_home: drop the guard `current == LockedNotice`",
+          "key": "efa51944"
+        },
+        {
+          "kind": "initial",
+          "given": "the initial state",
+          "when": "—",
+          "model": "form = Idle",
+          "question": "Initially, should form = Idle hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_7ef96d74 = init.expect(form == Idle)",
+          "refs": [],
+          "mutants": [
+            "7ef96d74"
+          ],
+          "change": "init: `form` gets `Submitting` where the model writes `Idle`",
+          "key": "7ef96d74"
+        }
+      ],
+      "results": [
+        {
+          "id": "M01",
+          "key": "1c7952d6",
+          "op": "variant",
+          "decl": "init",
+          "line": 80,
+          "label": "`current` gets `Login` where the model writes `Home`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "EX-003",
+            "EX-001",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M02",
+          "key": "7ef96d74",
+          "op": "variant",
+          "decl": "init",
+          "line": 81,
+          "label": "`form` gets `Submitting` where the model writes `Idle`",
+          "outcome": "survived",
+          "question": "7ef96d74"
+        },
+        {
+          "id": "M03",
+          "key": "b79923fe",
+          "op": "guard",
+          "decl": "click_sign_in",
+          "line": 102,
+          "label": "drop the guard `current == Home`",
+          "outcome": "survived",
+          "question": "b79923fe"
+        },
+        {
+          "id": "M04",
+          "key": "6949a44c",
+          "op": "cmp",
+          "decl": "click_sign_in",
+          "line": 102,
+          "label": "`current == Home`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "EX-003",
+            "EX-001",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M05",
+          "key": "dae30315",
+          "op": "variant",
+          "decl": "click_sign_in",
+          "line": 103,
+          "label": "`current` gets `Dashboard` where the model writes `Login`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "EX-003",
+            "EX-001",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M06",
+          "key": "4ed27180",
+          "op": "effect",
+          "decl": "click_sign_in",
+          "line": 103,
+          "label": "drop the effect on `current` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "EX-003",
+            "EX-001",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M07",
+          "key": "72c6691e",
+          "op": "variant",
+          "decl": "click_sign_in",
+          "line": 104,
+          "label": "`form` gets `Submitting` where the model writes `Idle`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M08",
+          "key": "7335f047",
+          "op": "effect",
+          "decl": "click_sign_in",
+          "line": 104,
+          "label": "drop the effect on `form` (keep it as it was)",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M09",
+          "key": "d5442974",
+          "op": "guard",
+          "decl": "submit_success",
+          "line": 116,
+          "label": "drop the guard `current == Login`",
+          "outcome": "survived",
+          "question": "d5442974"
+        },
+        {
+          "id": "M10",
+          "key": "30f2f522",
+          "op": "cmp",
+          "decl": "submit_success",
+          "line": 116,
+          "label": "`current == Login`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M11",
+          "key": "0c17c9b5",
+          "op": "variant",
+          "decl": "submit_success",
+          "line": 118,
+          "label": "`current` gets `LockedNotice` where the model writes `Dashboard`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M12",
+          "key": "fcf7e7b8",
+          "op": "effect",
+          "decl": "submit_success",
+          "line": 118,
+          "label": "drop the effect on `current` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M13",
+          "key": "f8263eaa",
+          "op": "variant",
+          "decl": "submit_success",
+          "line": 119,
+          "label": "`form` gets `Submitting` where the model writes `Idle`",
+          "outcome": "survived",
+          "question": "f8263eaa"
+        },
+        {
+          "id": "M14",
+          "key": "e20334a7",
+          "op": "effect",
+          "decl": "submit_success",
+          "line": 119,
+          "label": "drop the effect on `form` (keep it as it was)",
+          "outcome": "survived",
+          "question": "e20334a7"
+        },
+        {
+          "id": "M15",
+          "key": "1ae4df63",
+          "op": "effect",
+          "decl": "submit_success",
+          "line": 120,
+          "label": "drop the effect on `mySession` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "run happyPathFlow",
+            "journey: Sign in",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M16",
+          "key": "20ee0d29",
+          "op": "guard",
+          "decl": "submit_invalid",
+          "line": 128,
+          "label": "drop the guard `current == Login`",
+          "outcome": "survived",
+          "question": "20ee0d29"
+        },
+        {
+          "id": "M17",
+          "key": "ef05126c",
+          "op": "cmp",
+          "decl": "submit_invalid",
+          "line": 128,
+          "label": "`current == Login`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-003",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M18",
+          "key": "e147c569",
+          "op": "variant",
+          "decl": "submit_invalid",
+          "line": 130,
+          "label": "`current` gets `Dashboard` where the model writes `Login`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-003",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M19",
+          "key": "f4da01fd",
+          "op": "effect",
+          "decl": "submit_invalid",
+          "line": 130,
+          "label": "drop the effect on `current` (keep it as it was)",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M20",
+          "key": "8e18e124",
+          "op": "variant",
+          "decl": "submit_invalid",
+          "line": 131,
+          "label": "`form` gets `ErrorLocked` where the model writes `ErrorBadCreds`",
+          "outcome": "survived",
+          "question": "8e18e124"
+        },
+        {
+          "id": "M21",
+          "key": "1fbc4d97",
+          "op": "effect",
+          "decl": "submit_invalid",
+          "line": 131,
+          "label": "drop the effect on `form` (keep it as it was)",
+          "outcome": "survived",
+          "question": "8e18e124"
+        },
+        {
+          "id": "M22",
+          "key": "2e640e2a",
+          "op": "guard",
+          "decl": "submit_locked",
+          "line": 141,
+          "label": "drop the guard `current == Login`",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M23",
+          "key": "0238c0fe",
+          "op": "cmp",
+          "decl": "submit_locked",
+          "line": 141,
+          "label": "`current == Login`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-003",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M24",
+          "key": "aaa2ce5e",
+          "op": "guard",
+          "decl": "submit_locked",
+          "line": 142,
+          "label": "drop the guard `accountLocked(u)`",
+          "outcome": "survived",
+          "question": "aaa2ce5e"
+        },
+        {
+          "id": "M25",
+          "key": "29268173",
+          "op": "variant",
+          "decl": "submit_locked",
+          "line": 143,
+          "label": "`current` gets `Home` where the model writes `LockedNotice`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-003",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M26",
+          "key": "b9a55d3c",
+          "op": "effect",
+          "decl": "submit_locked",
+          "line": 143,
+          "label": "drop the effect on `current` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-003",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M27",
+          "key": "d1c54549",
+          "op": "variant",
+          "decl": "submit_locked",
+          "line": 144,
+          "label": "`form` gets `Idle` where the model writes `ErrorLocked`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M28",
+          "key": "43119dfc",
+          "op": "effect",
+          "decl": "submit_locked",
+          "line": 144,
+          "label": "drop the effect on `form` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M29",
+          "key": "414267fb",
+          "op": "guard",
+          "decl": "click_logout",
+          "line": 153,
+          "label": "drop the guard `current == Dashboard`",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M30",
+          "key": "7941481a",
+          "op": "cmp",
+          "decl": "click_logout",
+          "line": 153,
+          "label": "`current == Dashboard`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "run happyPathFlow",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M31",
+          "key": "d3f3c89e",
+          "op": "variant",
+          "decl": "click_logout",
+          "line": 155,
+          "label": "`current` gets `Login` where the model writes `Home`",
+          "outcome": "killed",
+          "killed_by": [
+            "run happyPathFlow",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M32",
+          "key": "9642f163",
+          "op": "effect",
+          "decl": "click_logout",
+          "line": 155,
+          "label": "drop the effect on `current` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "run happyPathFlow",
+            "journey: Sign in"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M33",
+          "key": "9c56ae3d",
+          "op": "variant",
+          "decl": "click_logout",
+          "line": 156,
+          "label": "`form` gets `Submitting` where the model writes `Idle`",
+          "outcome": "survived",
+          "question": "9c56ae3d"
+        },
+        {
+          "id": "M34",
+          "key": "5913b3fe",
+          "op": "effect",
+          "decl": "click_logout",
+          "line": 156,
+          "label": "drop the effect on `form` (keep it as it was)",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M35",
+          "key": "b222972a",
+          "op": "effect",
+          "decl": "click_logout",
+          "line": 157,
+          "label": "drop the effect on `mySession` (keep it as it was)",
+          "outcome": "survived",
+          "question": "b222972a"
+        },
+        {
+          "id": "M36",
+          "key": "005112f7",
+          "op": "guard",
+          "decl": "session_expired",
+          "line": 166,
+          "label": "drop the guard `current == Dashboard`",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M37",
+          "key": "8540b1d2",
+          "op": "cmp",
+          "decl": "session_expired",
+          "line": 166,
+          "label": "`current == Dashboard`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M38",
+          "key": "34818a40",
+          "op": "effect",
+          "decl": "session_expired",
+          "line": 168,
+          "label": "drop the effect on `current` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M39",
+          "key": "efa51944",
+          "op": "guard",
+          "decl": "go_home",
+          "line": 176,
+          "label": "drop the guard `current == LockedNotice`",
+          "outcome": "survived",
+          "question": "efa51944"
+        },
+        {
+          "id": "M40",
+          "key": "1ec80a31",
+          "op": "cmp",
+          "decl": "go_home",
+          "line": 176,
+          "label": "`current == LockedNotice`: `==` -> `!=`",
+          "outcome": "survived",
+          "question": "efa51944"
+        }
+      ]
+    }
+  },
   "verification_log": [],
   "traceability": [],
   "by_id": {

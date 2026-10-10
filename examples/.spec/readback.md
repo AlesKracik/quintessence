@@ -4,20 +4,20 @@
 
 ## ⚠ Needs Your Attention
 
-- **auth** — 8 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [auth](./specs/auth.readback.md)
-- **auth-ui** — 4 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement — see [auth-ui](./specs/auth-ui.readback.md)
-- **subscription** — 8 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [subscription](./specs/subscription.readback.md)
+- **auth** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [auth](./specs/auth.readback.md)
+- **auth-ui** — 5 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [auth-ui](./specs/auth-ui.readback.md)
+- **subscription** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [subscription](./specs/subscription.readback.md)
 - **cart** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Open coverage GAPs … — see [cart](./specs/cart.readback.md)
 
 ## Areas
 
-| Area | Kind | Version | Status | Last verified |
-|---|---|---|---|---|
-| [auth](./specs/auth.readback.md) | area | 0.3.0 | formalized | never |
-| [auth-ui](./specs/auth-ui.readback.md) | area | 0.1.0 | formalized | never |
-| [session-ownership](./specs/session-ownership.readback.md) | contract | 1.0.0 | formalized | never |
-| [subscription](./specs/subscription.readback.md) | area | 0.1.0 | formalized | never |
-| [cart](./specs/cart.readback.md) | area | 0.1.0 | structured | never |
+| Area | Kind | Version | Status | Examples pin | Last verified |
+|---|---|---|---|---|---|
+| [auth](./specs/auth.readback.md) | area | 0.3.0 | formalized | 64% pinned by examples, 6 question(s) open | never |
+| [auth-ui](./specs/auth-ui.readback.md) | area | 0.1.0 | formalized | 62% pinned by examples, 11 question(s) open | never |
+| [session-ownership](./specs/session-ownership.readback.md) | contract | 1.0.0 | formalized | — | never |
+| [subscription](./specs/subscription.readback.md) | area | 0.1.0 | formalized | 62% pinned by examples, 8 question(s) open | never |
+| [cart](./specs/cart.readback.md) | area | 0.1.0 | structured | — | never |
 
 ## Journeys
 

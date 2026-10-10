@@ -176,6 +176,8 @@ Every command runs inside the **active change**, and can be narrowed to one **ar
     ├── spec-extract-audit.py      ← code→spec coverage: every decision site accounted for
     ├── spec-route.py              ← which /spec beat a target enters, and why
     ├── spec-mutate.py             ← mutate the implementation; check the gates turn red
+    ├── spec-questions.py          ← mutate the MODEL; what survives every example becomes
+    │                                a yes/no question (check_results.mutation)
     ├── spec-separation.py         ← refuse commits that move claims and code together
     ├── spec-diff.py               ← semantic diff between two revisions of the specs
     │                                (behavior / domain / boundary / evidence + obligations)
@@ -791,6 +793,8 @@ An example hosted on an **action** instead of a run (before a model exists, or f
 - **Regression pinning.** A counterexample that once shipped becomes `EX-00N` with `source: "regression-for-REQ-004"`, and stays checkable.
 
 `spec-lint` holds the references: the action must exist in the model, `quint_run` must exist, `refs[]` must resolve, and an example that claims nothing WARNs — it exercises the action while asserting nothing.
+
+**How many examples are enough** is measured, not guessed: `tools/spec-questions.py` changes the model in small ways and asks about each change no example notices (see "spec-questions" under "Mutation and Separation"). Every answered question is a new example; the questions stop when the examples pin what the person cares about.
 
 ---
 
@@ -1472,6 +1476,26 @@ The middle two rows are what make a brownfield spec worth keeping: one says the 
 
 ## Mutation and Separation: Two Gates on the Gates
 
+### spec-questions — what do the examples leave open?
+
+An agent writes the model; a person approves the examples. Between them is a seam: a model can pass every approved example and still decide something nobody approved — reset a counter on a declined call, allow a step from a state nobody thought about, pick one branch of an `if`. Lint cannot see it, the model checker cannot see it (the model is consistent with itself), and the code generated from the model inherits it.
+
+`tools/spec-questions.py <area>` measures the seam by changing the model one small step at a time — a comparison at its boundary, a dropped guard, a dropped effect, a state written as another variant, a constant moved by one — only where behavior lives (actions, the helpers they read, the constants they use; never an invariant or a witness predicate, which are claims about behavior). Each change is run against every `run` and every invariant:
+
+- **killed by an example** (or a journey's run): pinned by something a person approved;
+- **killed otherwise** (an invariant, a run that is no example): pinned, but by the agent's claims;
+- **survived**: nothing noticed. The tool replays random runs of the model on the changed model, state asserted after every step, until they part — and renders that step as a scenario with a question;
+- **no difference found**: no replay told it apart (an equivalent change, or one deeper than the bounds — never read as "equivalent");
+- **stillborn**: did not compile.
+
+A question reads like this, in the readback's **Questions the Examples Leave Open**:
+
+> **Given** cancel_unanswered(alice, true) **When** cancel_declined(alice)
+>
+> After cancel_unanswered(alice, true), when cancel_declined(alice): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.
+
+with the run that answers it as the model does — shortened to the calls the difference needs, since a random run drags along whatever else happened on the way. **Yes** adds that run as an example, and the change dies on the next run. **No** is a model bug found before any code exists. The **spec mutation score** — examples' kills over behavior-changing mutants — is the share of the model's behavior a person actually approved. It is reported, never gated: a low score says how much is the agent's choice, which may be fine; the questions say which choices.
+
 ### spec-mutate — would any of this notice?
 
 Three questions, and until now only two had an answer:
@@ -1480,6 +1504,7 @@ Three questions, and until now only two had an answer:
 |---|---|
 | Is the model safe? | Apalache invariant checking |
 | Is the model vacuous? | Witness probes |
+| Do the examples pin the model? | `tools/spec-questions.py` (above) |
 | **Would the gates catch a wrong implementation?** | **`tools/spec-mutate.py`** |
 
 A green `/spec-code-verify` says the implementation passed the checks that exist. It says nothing about whether those checks are *capable of failing*. `spec-mutate` answers that by breaking the implementation on purpose — boundary shifts, comparison and logic inversion, literal bumps, deleted `throw`/`raise` — and checking the area's own gates turn red.
@@ -1712,6 +1737,10 @@ Lint grades these the way every other precision lint is graded: WARN while autho
 ### spec-record equiv
 
 `tools/spec-record.py equiv <area>` runs the differential comparator: the original implementation and the regenerated one, driven through identical sequences, diffed at `boundary.observable_state`. Preflight refuses a verdict without an observation boundary, without a comparator command, or when `parallel_path` sits inside the original's code path. Writes `check_results.differential` mechanically, always with the sequence count.
+
+### spec-questions
+
+`tools/spec-questions.py <area>` mutates the model and turns each survivor into a question (see "Mutation and Separation"). `--dry-run` lists the mutants without quint; `--ops cmp,guard,effect,variant,const` selects operators; `--limit` (default 40) caps the run, spread across operators; `--jobs` sets how many mutants run at once (default: one per CPU); `--seed`, `--steps`, `--traces` and `--samples` bound the replays and the invariant simulation; `--summary FILE` appends the score and questions as Markdown (the nightly `spec-mutation.yml` workflow points it at the run's summary page); `--record` writes `check_results.mutation` (counts, score, questions, one row per mutant, and the `model_sha` measured — the readback flags results for an older model). Exit 0 whenever it ran: survivors are findings, not failures.
 
 ### spec-mutate
 

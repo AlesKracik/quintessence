@@ -220,6 +220,20 @@ Run `tools/spec-matrix.py <target> --outcomes --record` whenever the area declar
 
 An unhandled TIMEOUT is the single most common real-world semantic hole; this pass exists to make it impossible to ship one silently.
 
+### Step 4c — What the examples leave open (model mutation)
+
+Run `tools/spec-questions.py <target> --record` once the checks above are clean and the area has examples. It needs quint and takes minutes (mutants run in parallel, one per CPU), so run it when the model or its examples changed, not on every fix-and-recheck loop. `.github/workflows/spec-mutation.yml` also runs it nightly and on every PR that changes a model, and writes the questions to the run's summary page.
+
+What it does: it changes the model one small step at a time (a comparison at its boundary, a dropped guard, a dropped effect, a state written as another variant, a constant moved by one) and runs every `run` and invariant against each change. A change something turns red on is pinned. A change nothing notices is a behavior the model decided and nobody approved, and the tool finds the first step where the model and the changed model part. It records each one as a question in `check_results.mutation.questions`: Given / When, a yes/no question, and the example run that answers it as the model does.
+
+The questions are the user's to answer, never yours. Ask them one at a time (AskUserQuestion when available), in the words of the readback's "Questions the Examples Leave Open" section:
+
+- **Yes** → add the printed run to the model as an `@example` on the requirement in `refs` (give it a one-line title and a real name in place of `q_<key>`). Rerun: that mutant now dies.
+- **No** → the model is wrong there. Ask what should happen, fix the model, and add the example with the expectation they gave. This is the cheapest bug there will ever be: no code exists yet.
+- **Doesn't matter** → that is an answer too: the behavior is genuinely free. Record it as an `open_questions[]` entry with `status: "answered"` and the reason, so the next run's identical question can be recognised.
+
+Report the score (`score`: the share of behavior-changing mutants the examples kill) and how many questions are open. A low score is not a failure; it says how much of the model is the agent's choice rather than the user's.
+
 ### Step 4b — Adversarial red-team
 
 Runs **only when `--reality` was passed**. Suggest it when the requirement set changed materially since the last red-team (new REQs/INVs, version minor bump) — not during counterexample-fix loops.
