@@ -36,6 +36,11 @@
 # area's conformance.command into the CODE repo's own CI — the replay harness
 # is an ordinary test file and needs no spec tooling.
 #
+# In the template repo itself (before bootstrap, while examples/ exists),
+# `example-gates` runs the same kind of gates over examples/ — the examples
+# are the methodology's own regression suite, and nothing else checks that
+# they still compile and run.
+#
 # This file ships with the template; adjust paths/commands to your project.
 
 name: spec-ci
@@ -48,6 +53,7 @@ on:
       - "schemas/**"
       - "tools/**"
       - "tests/**"
+      - "examples/**"
       - ".github/workflows/**"
   push:
     branches: [main]
@@ -57,6 +63,7 @@ on:
       - "schemas/**"
       - "tools/**"
       - "tests/**"
+      - "examples/**"
       - ".github/workflows/**"
 
 jobs:
@@ -194,3 +201,79 @@ jobs:
             echo "── test: $f ($runs)"
             quint test $backend --match "^($runs)\$" "$f" || exit 1
           done
+
+  # Template repo only: examples/ is stripped by bootstrap, so in a project
+  # this job skips itself. The examples are what the methodology points
+  # people at; an example model that no longer typechecks, a run that no
+  # longer passes, or a lint FAIL in them teaches the wrong thing. Same
+  # checks the spec gates run on a project, aimed at examples/, plus the
+  # tool tests again with the Quint CLI present so the ones that compare
+  # the Python reader against `quint parse` actually run.
+  example-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect template repo
+        id: tpl
+        run: |
+          if [ -d examples/specs ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "No examples/ — bootstrapped project, example gates skipped."
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.tpl.outputs.ok == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        if: steps.tpl.outputs.ok == 'true'
+        with:
+          node-version: "22"
+
+      - name: Install Quint CLI + test dependencies
+        if: steps.tpl.outputs.ok == 'true'
+        run: |
+          npm install -g @informalsystems/quint
+          quint --version
+          pip install pytest jsonschema
+
+      - name: Quint typecheck (example models + probe modules)
+        if: steps.tpl.outputs.ok == 'true'
+        working-directory: examples
+        run: |
+          set -e
+          for f in specs/*.qnt; do
+            echo "── typecheck: $f"
+            quint typecheck "$f"
+          done
+
+      - name: Quint test (every run in the example models)
+        if: steps.tpl.outputs.ok == 'true'
+        working-directory: examples
+        run: |
+          set -e
+          backend=""
+          if quint test --help 2>&1 | grep -q -- "--backend"; then
+            backend="--backend=${QUINT_EVAL_BACKEND:-rust}"
+          fi
+          for f in specs/*.qnt; do
+            case "$f" in *.probes.qnt) continue;; esac
+            runs=$(python ../tools/quint_ir.py "$f" --json | python -c "import json,sys; print('|'.join(json.load(sys.stdin).get('runs') or []))")
+            if [ -z "$runs" ]; then echo "── test: $f (no runs)"; continue; fi
+            echo "── test: $f ($runs)"
+            quint test $backend --match "^($runs)\$" "$f"
+          done
+
+      - name: spec-lint over the examples (Quint's typed IR, no FAIL allowed)
+        if: steps.tpl.outputs.ok == 'true'
+        env:
+          QUINT_IR_ENGINE: cli
+        run: python tools/spec-lint.py --root examples --no-color
+
+      - name: Tool tests with the Quint CLI present
+        if: steps.tpl.outputs.ok == 'true'
+        run: python -m pytest tests/ -q -rs
