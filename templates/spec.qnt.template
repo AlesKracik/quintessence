@@ -150,13 +150,22 @@ module {{MODULE_NAME}} {
   // /// @when <trigger>
   // /// @unwanted
   // /// @shall <response>
-  // /// @meaning <the plain-words sentence a reviewer reads>
   // /// @enforced-by INV-NNN
-  // /// @refusal tests/<area>/refusal/<case>.test.ts
   // action {{ACTION_NAME}}({{PARAMS}}): bool = all {
   //   {{PRECONDITION}},          // CON-NNN guard, a plain boolean
   //   {{STATE_UPDATES}}
   // }
+  //
+  // ...and an EXAMPLE shows the refusal: reach the blocking state,
+  // attempt the call with .fail(), assert nothing moved.
+  //
+  // /// @example EX-NNN
+  // /// <the refused case, in the user's words>
+  // /// @refs REQ-NNN
+  // run {{REFUSAL_RUN}} = init
+  //   .then({{REACH_BLOCKING_STATE}})
+  //   .then({{ACTION_NAME}}({{ARGS}}).fail())
+  //   .expect({{NOTHING_MOVED}})
   //
   // With a local binding:
   //
@@ -252,7 +261,6 @@ module {{MODULE_NAME}} {
   // /// @status specified
   // /// @when <trigger>
   // /// @shall <response>
-  // /// @meaning <plain words>
   // /// @via {{ACTION_NAME}}
   // /// @refs REQ-001, DEC-002, billing.REQ-004
   // ///   (bare ID = this area; <area>.<ID> = another; any kind)

@@ -190,12 +190,22 @@ def probe_requirements(area):
                                             and w.get("enforced_by")):
             continue
         if req.get("modality") == "may":
-            for oc in w.get("outcomes") or []:
-                if oc.get("predicate"):
-                    out.append((req, outcome_probe_name(rid, oc.get("name")),
-                                oc["predicate"],
-                                (oc.get("delta") or {}).get("pre"),
-                                oc.get("name")))
+            outs = [oc for oc in w.get("outcomes") or [] if oc.get("predicate")]
+            for oc in outs:
+                # HONEST outcome: this outcome happened AND none of the
+                # others did. Without the negations one trace can witness
+                # every outcome at once — a predicate that does not tell
+                # "email" from "in-app" proves the latitude exists while
+                # demonstrating none of it.
+                predicate = oc["predicate"].strip()
+                siblings = [o["predicate"].strip() for o in outs if o is not oc]
+                if siblings:
+                    predicate = " and ".join(
+                        [f"({predicate})"] + [f"not({sib})" for sib in siblings])
+                out.append((req, outcome_probe_name(rid, oc.get("name")),
+                            predicate,
+                            (oc.get("delta") or {}).get("pre"),
+                            oc.get("name")))
             continue
         if w.get("predicate"):
             out.append((req, probe_name(rid), w["predicate"],

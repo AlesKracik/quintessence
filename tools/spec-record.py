@@ -128,11 +128,11 @@ the LLM keeps the judgment dimensions: completeness/correctness/coherence
 reads of the code):
   1. Witness preflight via itf_tools.witness_status — refuses conformance
      replay while any obligation is undischarged (stale/missing/not-run).
-     1b. Refusal preflight: every rejection requirement must name a
-     refusal.artifact that exists on disk. A rejection has no witness
-     trace by design and replay only replays traces, so without this
-     the requirement class most likely to be wrong in the code carries
-     no code-side evidence at all.
+     1b. Refusal preflight: every rejection requirement must be shown by
+     an example (an EX whose @refs names it). A rejection has no witness
+     trace by design, so its code-side evidence is that example's run,
+     replayed by the conformance harness; without one the requirement
+     class most likely to be wrong in the code carries no evidence.
   2. Runs conformance.command (trace replay incl. the tampered self-test)
      and the area's test_command from the code repo root; records exit
      codes. Counts are facts, not judgments.
@@ -1870,25 +1870,19 @@ def cmd_verify(args):
         bad += 1
 
     # ── 1b. Refusal preflight ────────────────────────────────────────────
-    # A rejection produces no state change, so it has no witness trace, so
-    # replay never touches it. Its evidence is a refusal artifact: drive the
-    # code into the blocking state, attempt the call, assert it is refused AND
-    # that nothing observable moved.
+    # A rejection produces no state change, so it has no witness trace. Its
+    # evidence is an example: a run that reaches the blocking state, attempts
+    # the call (`.fail()`), and asserts nothing moved — replayed against the
+    # code by the conformance harness like any other run.
     rejections = [r for r in (area.get("requirements") or []) if is_rejection(r)]
-    missing_refusals = []
-    for req in rejections:
-        rid = req.get("id", "?")
-        artifact = (req.get("refusal") or {}).get("artifact")
-        if not artifact:
-            missing_refusals.append(f"{rid} (none declared)")
-        elif not (repo_root / artifact).exists():
-            missing_refusals.append(f"{rid} -> {artifact} (file not found)")
-    if missing_refusals:
+    shown = {ref.split(".", 1)[-1] for ex in (area.get("examples") or [])
+             for ref in (ex.get("refs") or [])}
+    unshown = [r.get("id", "?") for r in rejections if r.get("id") not in shown]
+    if unshown:
         bad += 1
-        notes.append(f"refusal preflight: {len(missing_refusals)} rejection(s) "
-                     f"without a runnable artifact")
-        print(f"PREFLIGHT: {len(missing_refusals)} rejection requirement(s) with no "
-              f"refusal artifact — " + "; ".join(missing_refusals))
+        notes.append(f"refusal preflight: {len(unshown)} rejection(s) with no example")
+        print(f"PREFLIGHT: {len(unshown)} rejection requirement(s) shown by no "
+              f"example — " + ", ".join(unshown))
 
     # ── 2. Conformance replay ────────────────────────────────────────────
     conf_result = None  # None = not run
@@ -1912,20 +1906,6 @@ def cmd_verify(args):
             bad += 1
             print(f"CONFORMANCE: FAIL (exit {code})\n{tail}")
             notes.append(f"conformance failed (exit {code})")
-
-    # Refusal artifacts are ordinary test files inside the conformance suite,
-    # so their verdict is the suite's verdict. That is FILE-GRANULAR, not
-    # per-requirement: a green suite means the artifact ran green along with
-    # everything else, and a red suite does not say which part failed. Recorded
-    # honestly as such rather than pretending to per-requirement resolution.
-    if conf_result is not None and not missing_refusals:
-        for req in rejections:
-            refusal = req.setdefault("refusal", {})
-            refusal["status"] = "passing" if conf_result else "failing"
-            refusal["checked_at"] = now_iso()
-        if rejections:
-            print(f"REFUSAL: {len(rejections)} artifact(s) marked "
-                  f"{'passing' if conf_result else 'failing'} (from the conformance run)")
 
     # ── 2b. Property-based tier (optional) ───────────────────────────────
     # Replay is a handful of traces of a handful of steps: Apalache returns the

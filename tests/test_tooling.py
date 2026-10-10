@@ -13,7 +13,8 @@ Covers the deterministic, quint-free logic touched by the robustness pass:
   - modality: a witness per permitted outcome, an invariant per prohibition
   - the semantic diff (spec-diff) and the completeness dimension grid
   - witness soundness: argument binding, the delta conjunct, paired invariants
-  - refusal artifacts (code-side evidence for prohibitions)
+  - refusal examples (code-side evidence for prohibitions)
+  - encoding checks, honest `may` probes and executable journeys
   - spec-mutate (do the gates fail?) and spec-separation (claims vs code)
   - brownfield fidelity: the substitution boundary, extraction site detection
     and its ledger, provenance, and the differential/extraction dimensions
@@ -392,29 +393,6 @@ def test_spanned_vars_unioned():
 
 
 # ── Finding B (pass 2): precision lints gate at approval ─────────────────────
-
-def _ambiguity_codes(status, response):
-    findings = []
-    lint.check_ambiguity(
-        {"status": status,
-         "requirements": [{"id": "REQ-1", "status": "specified",
-                           "ears": {"response": response}}]},
-        "auth", findings)
-    return [(f.severity, f.check) for f in findings]
-
-
-@pytest.mark.parametrize("status,sev", [
-    ("formalized", "warn"), ("structured", "warn"),
-    ("in-review", "fail"), ("approved", "fail"),
-])
-def test_ambiguity_severity_by_status(status, sev):
-    codes = _ambiguity_codes(status, "handle errors gracefully")
-    assert (sev, "ambiguous-response") in codes
-
-
-def test_clean_response_no_ambiguity():
-    assert _ambiguity_codes("approved", "navigate to the Login screen") == []
-
 
 def _state_binding_codes(status):
     findings = []
@@ -1656,38 +1634,26 @@ def test_is_rejection_shared_definition():
     assert not itf.is_rejection(None)
 
 
-def _refusal_codes(reqs, status="formalized"):
+def _refusal_codes(reqs, status="formalized", examples=()):
     findings = []
-    lint.check_refusal_artifacts({"status": status, "requirements": reqs},
-                                 "auth", findings)
+    lint.check_refusal_examples({"status": status, "requirements": reqs,
+                                 "examples": list(examples)}, "auth", findings)
     return [(f.severity, f.check) for f in findings]
 
 
-def test_rejection_without_artifact_warns_then_fails():
+def test_rejection_without_example_warns_then_fails():
     req = [{"id": "REQ-005", "modality": "forbidden",
             "witness": {"status": "skipped", "enforced_by": "INV-002"}}]
-    assert (lint.WARN, "refusal-without-artifact") in _refusal_codes(req)
-    assert (lint.FAIL, "refusal-without-artifact") in _refusal_codes(req, "approved")
+    assert (lint.WARN, "refusal-without-example") in _refusal_codes(req)
+    assert (lint.FAIL, "refusal-without-example") in _refusal_codes(req, "approved")
 
 
-def test_refusal_without_unchanged_vars_warns():
-    # A rejection that throws after incrementing the counter is not a rejection.
+@pytest.mark.parametrize("ref", ["REQ-005", "auth.REQ-005"])
+def test_an_example_naming_the_rejection_shows_it(ref):
     req = [{"id": "REQ-005", "modality": "forbidden",
-            "refusal": {"artifact": "t.ts"}}]
-    assert (lint.WARN, "refusal-without-unchanged") in _refusal_codes(req)
-
-
-def test_complete_refusal_is_clean():
-    req = [{"id": "REQ-005", "modality": "forbidden",
-            "refusal": {"artifact": "t.ts", "unchanged": ["sessions"]}}]
-    assert _refusal_codes(req) == []
-
-
-def test_failing_refusal_blocks_review():
-    req = [{"id": "REQ-005", "modality": "forbidden",
-            "refusal": {"artifact": "t.ts", "unchanged": ["sessions"],
-                        "status": "failing"}}]
-    assert (lint.FAIL, "refusal-failing") in _refusal_codes(req, "in-review")
+            "witness": {"status": "skipped", "enforced_by": "INV-002"}}]
+    ex = [{"id": "EX-006", "refs": [ref], "when": {"action": "login"}}]
+    assert _refusal_codes(req, "approved", ex) == []
 
 
 def test_ordinary_requirement_owes_no_refusal():
@@ -1831,19 +1797,6 @@ def test_separation_catches_a_dropped_invariant_conjunct():
     after["invariants"][0]["description"] = "weaker"
     assert sep.claim_diff(sep.claims(before), sep.claims(json.dumps(after))) == \
         ["invariants.INV-001"]
-
-
-def test_separation_refusal_status_is_a_result_not_a_claim():
-    before = json.loads(_spec())
-    before["requirements"][0]["refusal"] = {"artifact": "t.ts", "unchanged": ["s"],
-                                            "status": "not-run"}
-    after = json.loads(json.dumps(before))
-    after["requirements"][0]["refusal"]["status"] = "passing"
-    assert sep.claim_diff(sep.claims(json.dumps(before)),
-                          sep.claims(json.dumps(after))) == []
-    after["requirements"][0]["refusal"]["unchanged"] = []
-    assert sep.claim_diff(sep.claims(json.dumps(before)),
-                          sep.claims(json.dumps(after))) == ["requirements.REQ-001"]
 
 
 def test_separation_path_matching_is_segment_wise():
@@ -3500,128 +3453,6 @@ def test_the_shipped_example_carries_a_current_brief():
     assert itf.brief_status(area)[0] == "current", "example brief pin is stale"
 
 
-# ── The meaning: the requirement in plain words, pinned per requirement ─────
-# EARS fields speak the system's vocabulary, identifiers and exception names
-# included. `meaning.text` says what that amounts to for a reviewer who has
-# never seen the code. It is authored prose, so it is pinned, not derived —
-# and a stale one is never rendered.
-
-def _req_with_meaning(text="In plain words: the thing happens.", **meaning):
-    req = {"id": "REQ-001", "status": "specified",
-           "ears": {"trigger": "an update carries a different serviceLevelPolicyId",
-                    "unwanted": True,
-                    "response": "refuse with NonMatchingTopologyException"}}
-    if text:
-        req["meaning"] = dict(text=text, **meaning)
-    return req
-
-
-def test_meaning_sha_ignores_bookkeeping_and_moves_with_the_requirement():
-    req = _req_with_meaning()
-    before = itf.compute_meaning_sha(req)
-    req["witness"] = {"status": "witnessed", "trace": "t.json"}
-    req["extraction"] = {"evidence": "svc.ts:10-20"}
-    assert itf.compute_meaning_sha(req) == before, \
-        "re-running the checker cannot make a plain-words sentence wrong"
-    req["ears"]["response"] = "accept the update"
-    assert itf.compute_meaning_sha(req) != before
-
-
-def test_meaning_pins_are_independent_per_requirement():
-    a, b = _req_with_meaning(), _req_with_meaning()
-    b["id"] = "REQ-002"
-    b_before = itf.compute_meaning_sha(b)
-    a["ears"]["response"] = "moved"
-    assert itf.compute_meaning_sha(b) == b_before, \
-        "editing one requirement must not unpin another's meaning"
-
-
-def test_meaning_status_reports_absent_current_and_stale():
-    assert itf.meaning_status(_req_with_meaning(text=""))[0] == "absent"
-    req = _req_with_meaning()
-    assert itf.meaning_status(req)[0] == "stale", "unpinned prose is not trustworthy"
-    req["meaning"]["written_against"] = itf.compute_meaning_sha(req)
-    assert itf.meaning_status(req)[0] == "current"
-    req["ears"]["response"] = "moved"
-    assert itf.meaning_status(req)[0] == "stale"
-
-
-@pytest.mark.parametrize("status,severity", [
-    ("structured", "warn"), ("formalized", "warn"),
-    ("in-review", "fail"), ("approved", "fail"),
-])
-@pytest.mark.parametrize("check,req", [
-    ("meaning-missing", _req_with_meaning(text="")),
-    ("meaning-stale", _req_with_meaning(written_against="0" * 64)),
-])
-def test_missing_or_stale_meaning_warns_then_fails_at_review(status, severity,
-                                                             check, req):
-    findings = []
-    lint.check_meaning({"status": status, "requirements": [json.loads(json.dumps(req))]},
-                       "auth", findings)
-    hits = [f for f in findings if f.check == check]
-    assert len(hits) == 1 and hits[0].severity == severity
-
-
-@pytest.mark.parametrize("status", ["raw", "deferred"])
-def test_requirements_with_nothing_to_distil_are_exempt(status):
-    req = _req_with_meaning(text="")
-    req["status"] = status
-    findings = []
-    lint.check_meaning({"status": "approved", "requirements": [req]}, "auth", findings)
-    assert findings == []
-
-
-def test_a_current_meaning_is_the_sentence_the_readback_leads_with():
-    req = _req_with_meaning()
-    req["meaning"]["written_against"] = itf.compute_meaning_sha(req)
-    out = "\n".join(readback.render_requirement(".", {"area": "auth"}, req, [], set()))
-    assert "In plain words: the thing happens." in out
-    # What was specified stays reachable, one click away.
-    assert "**As specified (EARS):** If an update carries a different " \
-           "serviceLevelPolicyId" in out
-    assert "EARS sentence" in out, "the fold has to say what it hides"
-
-
-def test_a_stale_meaning_is_not_rendered_as_the_headline():
-    """A distillation of an earlier requirement reads like it was reviewed."""
-    req = _req_with_meaning(text="STALE PROSE", written_against="0" * 64)
-    out = "\n".join(readback.render_requirement(".", {"area": "auth"}, req, [], set()))
-    headline = [ln for ln in out.split("\n") if ln.startswith("⏳")][0]
-    assert "NonMatchingTopologyException" in headline, "fell back to EARS"
-    assert "Plain-words summary is stale" in out
-    assert "STALE PROSE" in out, "the superseded sentence is quoted, not hidden"
-
-
-def test_meaning_carries_constraint_values_inline_like_the_ears_sentence():
-    req = _req_with_meaning(text="The account locks once failures reach MAX_TRIES.")
-    req["meaning"]["written_against"] = itf.compute_meaning_sha(req)
-    cons = [{"id": "CON-001", "name": "MAX_TRIES", "value": 5, "unit": "attempts"}]
-    assert "MAX_TRIES (= 5 attempts, CON-001)" in readback.req_sentence(req, cons)
-
-
-def test_missing_meanings_roll_up_in_needs_your_attention(tmp_path):
-    area = {"area": "auth", "requirements": [
-        _req_with_meaning(text=""),
-        dict(_req_with_meaning(text=""), id="REQ-002"),
-        dict(_req_with_meaning(text=""), id="REQ-003", status="raw"),
-    ]}
-    items = readback.attention_items(str(tmp_path), "auth", area)
-    hits = [i for i in items if "No plain-words summary" in i]
-    assert len(hits) == 1
-    assert "2 requirement(s)" in hits[0] and "REQ-003" not in hits[0]
-
-
-def test_the_shipped_examples_carry_current_meanings():
-    for name in ("auth", "cart", "subscription", "auth-ui"):
-        area = spec_source.load_area(TOOLS.parent / "examples", name)
-        for req in area["requirements"]:
-            if req.get("status") in ("raw", "deferred"):
-                continue
-            assert itf.meaning_status(req)[0] == "current", \
-                f"{name}/{req['id']} meaning pin is stale"
-
-
 # ── The quint surface beyond `verify --invariant` ───────────────────────────
 # Six accelerations/corrections landed at once, and five of them are
 # optimisations of an existing path. The property that matters across all of
@@ -5053,10 +4884,6 @@ def test_shas_cover_an_unstructured_requirement():
     area["requirements"][0]["description"] = "a completely different claim"
     assert itf.compute_spec_sha(area) != before
 
-    req = {"id": "REQ-001", "description": "the original claim"}
-    before = itf.compute_meaning_sha(req)
-    req["description"] = "a completely different claim"
-    assert itf.compute_meaning_sha(req) != before
 
 
 def _may_req(delta=None, status="specified"):
@@ -5795,8 +5622,6 @@ def _full_area():
              "status": "specified", "modality": "must", "determinism": "deterministic",
              "type": "functional", "source": "elicited", "quint_ref": "open",
              "ears": {"trigger": "opened", "response": "open it"},
-             "meaning": {"text": "Opening opens.", "author": "agent",
-                         "written_against": "e" * 64},
              "error_outcomes": [{"external": "Db", "outcome": "DOWN",
                                  "effect": "NO_CHANGE: retry", "idempotent": True,
                                  "note": "a note"}],
@@ -5813,10 +5638,7 @@ def _full_area():
              "ears": {"state": "it is Shut", "trigger": "shut again", "unwanted": True,
                       "response": "refuse"},
              "witness": {"status": "skipped", "enforced_by": "INV-001",
-                         "justification": "a prohibition"},
-             "refusal": {"artifact": "t/refuse.test.ts", "blocking_state": "st == Shut",
-                         "unchanged": ["st"], "status": "passing",
-                         "checked_at": "2026-01-01T00:00:00+00:00"}},
+                         "justification": "a prohibition"}},
             {"id": "REQ-003", "description": "Either way is fine.", "status": "specified",
              "modality": "may", "determinism": "nondeterministic", "quint_ref": "open",
              "ears": {"trigger": "x", "response": "y or z"},
@@ -6002,9 +5824,10 @@ def test_model_sha_ignores_doc_comments_but_not_predicates(tmp_path):
     qnt = tmp_path / "specs" / "a.qnt"
     area = spec_source.load_area(tmp_path, "a")
     sha = itf.compute_model_sha(tmp_path, "a", area)
-    qnt.write_text(qnt.read_text(encoding="utf-8").replace(
-        "/// @meaning Opening opens.", "/// @meaning Opening opens, reworded."),
-        encoding="utf-8")
+    text = qnt.read_text(encoding="utf-8")
+    assert "/// @shall open it" in text, "the edit below must hit a doc comment"
+    qnt.write_text(text.replace("/// @shall open it", "/// @shall open it, reworded"),
+                   encoding="utf-8")
     assert itf.compute_model_sha(tmp_path, "a", area) == sha
     qnt.write_text(qnt.read_text(encoding="utf-8").replace(
         "st.get(_lastUid) == Open\n", "st.get(_lastUid) != Shut\n", 1), encoding="utf-8")
@@ -6040,21 +5863,6 @@ def test_witness_host_ghost_type_must_match_the_action(tmp_path):
     findings = []
     lint.check_witness_hosts(area, sidecar, info, "a", findings)
     assert [f.check for f in findings] == ["witness-host-param-type"]
-
-
-def test_pin_writes_meaning_and_brief_pins_into_the_ledger(tmp_path, monkeypatch):
-    area = _full_area()
-    area["requirements"][0]["meaning"].pop("written_against")
-    area["brief"].pop("written_against")
-    _put_full(tmp_path, area)
-    qnt_before = (tmp_path / "specs" / "a.qnt").read_bytes()
-    monkeypatch.setattr(sys, "argv", ["itf_tools.py", "pin", "a", "--req", "REQ-001",
-                                      "--brief", "--root", str(tmp_path)])
-    itf.main()
-    derived = spec_source.load_area(tmp_path, "a")
-    assert itf.meaning_status(derived["requirements"][0])[0] == "current"
-    assert itf.brief_status(derived)[0] == "current"
-    assert (tmp_path / "specs" / "a.qnt").read_bytes() == qnt_before
 
 
 def test_the_source_schemas_are_generated_from_the_area_schema():

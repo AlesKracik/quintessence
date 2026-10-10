@@ -47,7 +47,7 @@ import spec_source  # noqa: E402
 # Everything a tool writes on its own. Changes confined to these are
 # bookkeeping, never claims.
 MECHANICAL_TOP = {"check_results", "verification_log", "last_modified"}
-MECHANICAL_REQ = {"status", "witness", "refusal", "traceability"}
+MECHANICAL_REQ = {"status", "witness", "traceability"}
 MECHANICAL_INV = {"formal_status"}
 
 
@@ -124,12 +124,6 @@ def claims(data):
         for oc in (w.get("outcomes") or []):
             kept.setdefault("_witness_outcomes", []).append(
                 {"name": oc.get("name"), "predicate": oc.get("predicate")})
-        # Same split for the refusal block: the artifact and the vars that must
-        # not move are claims; the pass/fail status is a result.
-        r = req.get("refusal") or {}
-        if r:
-            kept["_refusal"] = {k: v for k, v in r.items()
-                                if k not in ("status", "checked_at")}
         reqs[req["id"]] = kept
     out["requirements"] = reqs
 

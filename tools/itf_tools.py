@@ -164,8 +164,8 @@ def is_computed(req):
     Spelled as a skipped witness on a requirement that is neither
     `@unwanted` nor `forbidden`. Those two are what make a skip a REFUSAL;
     without either, reading the skip as a rejection asked a score formula for
-    a refusal artifact and a list of unchanged vars it cannot have. What it
-    owes instead is `verified_by` — the test that checks the calculation."""
+    a refusal example it cannot have. What it owes instead is `verified_by` —
+    the test that checks the calculation."""
     if not isinstance(req, dict):
         return False
     w = req.get("witness") or {}
@@ -178,7 +178,10 @@ def is_rejection(req):
     """True when a requirement forbids a behavior rather than requiring one.
 
     Shared so lint, spec-record and the readback cannot disagree about which
-    requirements owe a refusal artifact. Two forms count:
+    requirements owe a refusal EXAMPLE — an @example whose @refs names the
+    requirement and whose run attempts the refused call (`.fail()` in a
+    guard-style model, a recorded refusal result in a total-action one) and
+    asserts nothing moved. Two forms count:
 
       - modality "forbidden" (the typed form), or
       - an `@unwanted` requirement whose witness is deliberately SKIPPED with
@@ -297,55 +300,6 @@ def compute_spec_sha(area_data):
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def compute_meaning_sha(req):
-    """Canonical sha256 over the ONE requirement a distilled meaning restates.
-
-    The meaning is prose — the plain-words sentence a reviewer actually reads,
-    written by an agent that understood what the identifiers and exception
-    names stand for. Prose cannot be checked the way a witness can, so it is
-    pinned, exactly like a brief. Pinned per requirement rather than per area:
-    editing REQ-007 must not silently unpin the other forty meanings, and it
-    must certainly unpin REQ-007's own.
-
-    Covers only what the meaning restates — the EARS fields, modality, type and
-    fit criterion. Witness traces, check results and extraction bookkeeping are
-    excluded: re-running the checker cannot make a plain-words sentence wrong.
-    """
-    if not isinstance(req, dict):
-        return None
-    payload = {
-        "id": req.get("id"),
-        # Same reason as compute_spec_sha: the meaning restates whichever of
-        # the two the readback would otherwise render, and for an
-        # unstructured requirement that is `description`.
-        "description": req.get("description"),
-        "ears": req.get("ears"),
-        "modality": req.get("modality"),
-        "determinism": req.get("determinism"),
-        "type": req.get("type"),
-        "fit_criterion": req.get("fit_criterion"),
-    }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
-                           ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def meaning_status(req):
-    """(state, detail) for a requirement's distilled meaning: "absent",
-    "stale" or "current"."""
-    meaning = (req or {}).get("meaning") or {}
-    if not (meaning.get("text") or "").strip():
-        return "absent", None
-    pinned = meaning.get("written_against")
-    current = compute_meaning_sha(req)
-    if not pinned:
-        return "stale", "no written_against pin — freshness unverifiable"
-    if current and pinned != current:
-        return "stale", (f"the requirement has changed since the meaning was "
-                         f"written ({pinned[:12]})")
-    return "current", (current or "")[:12]
-
-
 def brief_status(area_data):
     """(state, detail) for a prose brief: "absent", "stale" or "current"."""
     brief = (area_data or {}).get("brief") or {}
@@ -390,7 +344,7 @@ def compute_model_sha(root, area_name, area_data):
     sidecar = Path(root) / "specs" / quint_file
     if not sidecar.exists():
         return None
-    # The model WITHOUT its `///` records: a reworded meaning or EARS field
+    # The model WITHOUT its `///` records: a reworded description or EARS field
     # changes what a reviewer reads, never what the checker explored, so it
     # must not stale every trace. Everything else — every declaration, every
     # witness predicate body — is hashed byte for byte.
@@ -685,72 +639,31 @@ def cmd_spec_sha(args):
         print("brief is current", file=sys.stderr)
 
 
-def cmd_meaning_sha(args):
-    """The pin each requirement's plain-words meaning is written against.
-    Prints one line per requirement — sha, state — so re-pinning after an
-    edit is a copy, not a recomputation by hand. Exits 1 if any is stale."""
-    root = Path(args.root)
-    area = _load_or_exit(root, args.area)
-    stale = 0
-    for req in area.get("requirements", []) or []:
-        if not isinstance(req, dict) or req.get("status") == "deferred":
-            continue
-        rid = req.get("id", "?")
-        if args.req and rid != args.req:
-            continue
-        state, detail = meaning_status(req)
-        if state == "stale":
-            stale += 1
-        note = {"absent": "no meaning recorded — write @meaning, then "
-                          "`itf_tools.py pin <area> --req <ID>`",
-                "stale": f"STALE: {detail}",
-                "current": "current"}[state]
-        print(f"{rid}\t{compute_meaning_sha(req)}\t{note}")
-    if stale:
-        sys.exit(1)
-
-
 def cmd_pin(args):
-    """Write freshness pins into the ledger (specs/<area>.records.json).
+    """Write the brief's freshness pin into the ledger
+    (specs/<area>.records.json).
 
-    A pin is a hash no human should type: the agent writes the prose (an
-    @meaning, the intent file's brief), then pins it here, and the pin
-    records that the prose was written against THIS version of what it
-    restates. Pinning is an assertion that the prose was re-read against
-    the current requirement — run it after re-reading, never to silence a
-    stale warning."""
+    A pin is a hash no human should type: someone writes the brief (the one
+    authored prose section, in the intent file), then pins it here, and the
+    pin records that the prose was written against THIS version of what it
+    describes. Pinning is an assertion that the brief was re-read against the
+    current spec — run it after re-reading, never to silence a stale
+    warning."""
     root = Path(args.root)
     area = _load_or_exit(root, args.area)
-    pinned = []
-    for req in area.get("requirements", []) or []:
-        rid = req.get("id")
-        if not (args.all_meanings or rid in (args.req or [])):
-            continue
-        meaning = req.get("meaning") or {}
-        if not (meaning.get("text") or "").strip():
-            print(f"{rid}: no @meaning to pin", file=sys.stderr)
-            continue
-        meaning["written_against"] = compute_meaning_sha(req)
-        pinned.append(rid)
-    unknown = sorted(set(args.req or []) - {r.get("id") for r in area.get("requirements") or []})
-    if unknown:
-        print(f"ERROR: no such requirement: {', '.join(unknown)}", file=sys.stderr)
-        sys.exit(2)
-    if args.brief:
-        if not (area.get("brief") or {}).get("text"):
-            print("ERROR: no brief to pin", file=sys.stderr)
-            sys.exit(2)
-        area["brief"]["written_against"] = compute_spec_sha(area)
-        pinned.append("brief")
-    if not pinned:
-        print("nothing pinned (pass --req ID, --all-meanings or --brief)", file=sys.stderr)
+    if not args.brief:
+        print("nothing pinned (pass --brief)", file=sys.stderr)
         sys.exit(1)
+    if not (area.get("brief") or {}).get("text"):
+        print("ERROR: no brief to pin", file=sys.stderr)
+        sys.exit(2)
+    area["brief"]["written_against"] = compute_spec_sha(area)
     try:
         save_area(root, args.area, area)
     except SpecSourceError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(2)
-    print(f"pinned: {', '.join(pinned)}")
+    print("pinned: brief")
 
 
 def cmd_sha(args):
@@ -985,21 +898,10 @@ def main():
     ps.add_argument("--root", default=".")
     ps.set_defaults(func=cmd_spec_sha)
 
-    pms = sub.add_parser("meaning-sha",
-                         help="Per-requirement sha — the pin a requirement's "
-                              "plain-words meaning is written against.")
-    pms.add_argument("area")
-    pms.add_argument("--req", help="Only this requirement ID.")
-    pms.add_argument("--root", default=".")
-    pms.set_defaults(func=cmd_meaning_sha)
-
     pp = sub.add_parser("pin",
-                        help="Write meaning/brief freshness pins into the "
+                        help="Write the brief's freshness pin into the "
                              "area's records file.")
     pp.add_argument("area")
-    pp.add_argument("--req", action="append", help="Pin this requirement's meaning (repeatable).")
-    pp.add_argument("--all-meanings", action="store_true",
-                    help="Pin every requirement that has a meaning.")
     pp.add_argument("--brief", action="store_true", help="Pin the brief.")
     pp.add_argument("--root", default=".")
     pp.set_defaults(func=cmd_pin)

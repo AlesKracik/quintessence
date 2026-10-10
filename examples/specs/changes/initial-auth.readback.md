@@ -11,12 +11,13 @@
 | auth | area | REQ-001, REQ-002, REQ-003, REQ-004, INV-001, INV-002, INV-003, CON-001, CON-002, DEC-001 | complete | ✗ | ✗ | ✗ |
 | auth-ui | area | UI-001, UI-002, UI-003, INV-001, DEC-001 | complete | ✗ | ✗ | ✗ |
 
-_(Phase columns are derived from the area JSONs at generation time — the manifest stores membership only.)_
+_(Phase columns are derived from the areas at generation time — the manifest stores membership only.)_
 
 ## ⚠ Needs Your Attention
 
 - **auth** — **Unchecked requirement** — REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
 - **auth** — **Unchecked requirement** — REQ-002: While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
+- **auth** — **Unchecked requirement** — REQ-003: While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
 - **auth** — **Unchecked requirement** — REQ-004: While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
 - **auth** — **Open coverage GAPs** — Q-003 (spec is silent on triaged-real cells).
 - **auth** — **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
@@ -31,13 +32,13 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
 ### auth
 
 - ⏳ **[REQ-001](auth.readback.md#req-001)** — When a registered user submits valid credentials, the system shall create an Active session owned by that user.
-  <details><summary>Quint `login` (`specs/auth.qnt:L58-L70`) + predicate</summary>
+  <details><summary>Quint `login` (`specs/auth.qnt:L94-L106`) + predicate</summary>
 
   ```quint
     action login(uid: UserId, sid: SessionId): bool = all {
-      require(not(isLocked(uid))),
-      require(not(sessions.keys().contains(sid))),
-      require(activeSessionsOf(uid).size() == 0),  // INV-001 guard
+      not(isLocked(uid)),
+      not(sessions.keys().contains(sid)),
+      activeSessionsOf(uid).size() == 0,          // INV-001 guard
       sessions'          = sessions.put(sid, Active),
       sessionOwner'      = sessionOwner.put(sid, uid),
       accountStatus'     = accountStatus,
@@ -48,18 +49,18 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
       ),
     }
   ```
-  **Witness predicate:** `sessions.keys().exists(sid => sessions.get(sid) == Active)`
+  **Witness predicate:** `sessions.keys().contains(_lastSid) and statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)`
 
   </details>
 - ⏳ **[REQ-002](auth.readback.md#req-002)** — While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
-  <details><summary>Quint `logout` (`specs/auth.qnt:L73-L87`) + predicate</summary>
+  <details><summary>Quint `logout` (`specs/auth.qnt:L109-L123`) + predicate</summary>
 
   ```quint
     action logout(sid: SessionId): bool = {
-      require(sessions.keys().contains(sid))
-      require(isActive(sid))
-      val uid = sessionOwner.get(sid)
+      val uid = if (sessionOwner.keys().contains(sid)) sessionOwner.get(sid) else ""
       all {
+        sessions.keys().contains(sid),
+        isActive(sid),
         sessions'          = sessions.put(sid, LoggedOut),
         sessionOwner'      = sessionOwner,
         accountStatus'     = accountStatus,
@@ -71,39 +72,43 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
       }
     }
   ```
-  **Witness predicate:** `sessions.keys().exists(sid => sessions.get(sid) == LoggedOut)`
+  **Witness predicate:** `statusOf(sessions, _lastSid) == LoggedOut`
 
   </details>
-- ◐ **[REQ-003](auth.readback.md#req-003)** — While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
-  <details><summary>Quint `login_failed` (`specs/auth.qnt:L90-L102`) + predicate</summary>
+- ⏳ **[REQ-003](auth.readback.md#req-003)** — While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
+  <details><summary>Quint `login_failed` (`specs/auth.qnt:L131-L147`) + predicate</summary>
 
   ```quint
     action login_failed(uid: UserId): bool = {
-      require(not(isLocked(uid)))
-      val cur = failedAttempts.getOrElse(uid, 0)
-      val next = cur + 1
-      val newStatus = if (next >= MAX_FAILED_ATTEMPTS) Locked else Unlocked
+      val nextCount = attemptsOf(uid) + 1
+      val locking = nextCount >= MAX_FAILED_ATTEMPTS
+      val doomed = activeSessionsOf(uid)
       all {
-        sessions'          = sessions,
+        not(isLocked(uid)),
+        sessions' = if (locking)
+                      doomed.fold(sessions, (acc, s) => acc.put(s, LoggedOut))
+                    else sessions,
         sessionOwner'      = sessionOwner,
-        accountStatus'     = accountStatus.put(uid, newStatus),
-        failedAttempts'    = failedAttempts.put(uid, next),
-        userActiveSession' = userActiveSession,
+        accountStatus'     = accountStatus.put(uid, if (locking) Locked else Unlocked),
+        failedAttempts'    = failedAttempts.put(uid, nextCount),
+        userActiveSession' = if (locking)
+                               userActiveSession.put(uid, Set())
+                             else userActiveSession,
       }
     }
   ```
-  **Witness predicate:** `accountStatus.keys().exists(uid => accountStatus.get(uid) == Locked)`
+  **Witness predicate:** `accountStatus.keys().contains(_lastUid) and accountStatus.get(_lastUid) == Locked`
 
   </details>
 - ⏳ **[REQ-004](auth.readback.md#req-004)** — While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
-  <details><summary>Quint `expire_session` (`specs/auth.qnt:L105-L119`) + predicate</summary>
+  <details><summary>Quint `expire_session` (`specs/auth.qnt:L150-L164`) + predicate</summary>
 
   ```quint
     action expire_session(sid: SessionId): bool = {
-      require(sessions.keys().contains(sid))
-      require(isActive(sid))
-      val uid = sessionOwner.get(sid)
+      val uid = if (sessionOwner.keys().contains(sid)) sessionOwner.get(sid) else ""
       all {
+        sessions.keys().contains(sid),
+        isActive(sid),
         sessions'          = sessions.put(sid, Expired),
         sessionOwner'      = sessionOwner,
         accountStatus'     = accountStatus,
@@ -115,7 +120,7 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
       }
     }
   ```
-  **Witness predicate:** `sessions.keys().exists(sid => sessions.get(sid) == Expired)`
+  **Witness predicate:** `statusOf(sessions, _lastSid) == Expired`
 
   </details>
 - ⏳ **INV-001** — At most one Active session per user.
@@ -128,7 +133,7 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
 ### auth-ui
 
 - ⏳ **[UI-001](auth-ui.readback.md#ui-001)** — While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
-  <details><summary>Quint `click_sign_in` (`specs/auth-ui.qnt:L42-L47`) + predicate</summary>
+  <details><summary>Quint `click_sign_in` (`specs/auth-ui.qnt:L69-L74`) + predicate</summary>
 
   ```quint
     action click_sign_in: bool = all {
@@ -142,7 +147,7 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
 
   </details>
 - ⏳ **[UI-002](auth-ui.readback.md#ui-002)** — While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
-  <details><summary>Quint `submit_success` (`specs/auth-ui.qnt:L51-L58`) + predicate</summary>
+  <details><summary>Quint `submit_success` (`specs/auth-ui.qnt:L80-L87`) + predicate</summary>
 
   ```quint
     action submit_success: bool = all {
@@ -158,7 +163,7 @@ _(Phase columns are derived from the area JSONs at generation time — the manif
 
   </details>
 - ⏳ **[UI-003](auth-ui.readback.md#ui-003)** — While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
-  <details><summary>Quint `submit_locked` (`specs/auth-ui.qnt:L61-L67`) + predicate</summary>
+  <details><summary>Quint `submit_locked` (`specs/auth-ui.qnt:L92-L98`) + predicate</summary>
 
   ```quint
     action submit_locked: bool = all {

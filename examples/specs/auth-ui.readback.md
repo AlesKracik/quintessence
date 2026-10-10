@@ -6,7 +6,7 @@
 
 **Status:** formalized  |  **Requirements:** 0/3 verified, 0/3 witnessed  |  **Invariants:** 0 proven + 0 bounded / 1  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Open questions:** 0  |  **Last verified:** never
 
-*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof — or a computed value, checked by the unit test it names)*
+*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
 ## Purpose
 
@@ -14,9 +14,9 @@ Login flow UI: Home screen, Login form, Dashboard (auth-required), LockedNotice.
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — UI-001: From the home page, the Sign in button takes the user to the login page. Nothing else happens yet — no credentials have been entered.
-- **Unchecked requirement** — UI-002: A user who enters credentials that check out is taken straight to the dashboard; the login page does not stay in the way.
-- **Unchecked requirement** — UI-003: If the credentials belong to an account that has been locked, the user is sent to a page that tells them so, rather than to the dashboard or back to a login form that will never work.
+- **Unchecked requirement** — UI-001: While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
+- **Unchecked requirement** — UI-002: While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
+- **Unchecked requirement** — UI-003: While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 
 ## Navigation
 
@@ -59,9 +59,9 @@ graph TB
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [UI-001](#ui-001) | From the home page, the Sign in button takes the user to the login page. Nothing else h… | must |
-| ⏳ | [UI-002](#ui-002) | A user who enters credentials that check out is taken straight to the dashboard; the lo… | must |
-| ⏳ | [UI-003](#ui-003) | If the credentials belong to an account that has been locked, the user is sent to a pag… | must |
+| ⏳ | [UI-001](#ui-001) | navigate to Login | must |
+| ⏳ | [UI-002](#ui-002) | navigate to Dashboard | must |
+| ⏳ | [UI-003](#ui-003) | navigate to LockedNotice | must |
 
 ## What the System Does
 
@@ -69,19 +69,24 @@ graph TB
 
 > **Who** · User<br>
 > **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
-> **Route** · ⏳ [UI-001](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ⏳ [UI-002](#ui-002) → [auth.REQ-003](auth.readback.md#req-003) → ⏳ [UI-003](#ui-003)
+> **Route** · ⏳ [UI-001](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ⏳ [UI-002](#ui-002) → [auth.REQ-003](auth.readback.md#req-003) → ⏳ [UI-003](#ui-003)<br>
+> **Runs as** · ✓ `auth.signInJourney` — `quint test` runs it; it walks 2 of 5 step(s) in order. Steps in auth-ui are outside it — reaching them needs a run in a model that imports it.
 
 **Step 1 of 5**
 
 #### UI-001
 
-⏳ From the home page, the Sign in button takes the user to the login page. Nothing else happens yet — no credentials have been entered.
+⏳ While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
 
-<details><summary>EARS sentence, Quint action `click_sign_in`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-001 — Sign in opens the login page | the initial state | click_sign_in | `current == Login and form == Idle` |
 
-**As specified (EARS):** While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-`specs/auth-ui.qnt:L69-L74` · model `e725263304be`
+<details><summary>Quint action `click_sign_in`, witness predicate + trace</summary>
+
+`specs/auth-ui.qnt:L69-L74` · model `3642e11db6b5`
 
 ```quint
   action click_sign_in: bool = all {
@@ -94,7 +99,7 @@ graph TB
 
 **Witness predicate:** `current == Login` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth-ui.qnt:172` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:190` — the doc comment this requirement is read from.
 
 </details>
 
@@ -104,13 +109,17 @@ graph TB
 
 #### UI-002
 
-⏳ A user who enters credentials that check out is taken straight to the dashboard; the login page does not stay in the way.
+⏳ While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 
-<details><summary>EARS sentence, Quint action `submit_success`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-002 — Valid credentials land on the Dashboard | click_sign_in | submit_success | `current == Dashboard and authenticated` |
 
-**As specified (EARS):** While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-`specs/auth-ui.qnt:L80-L87` · model `e725263304be`
+<details><summary>Quint action `submit_success`, witness predicate + trace</summary>
+
+`specs/auth-ui.qnt:L80-L87` · model `3642e11db6b5`
 
 ```quint
   action submit_success: bool = all {
@@ -125,7 +134,7 @@ graph TB
 
 **Witness predicate:** `current == Dashboard` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth-ui.qnt:187` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:201` — the doc comment this requirement is read from.
 
 </details>
 
@@ -139,13 +148,17 @@ graph TB
 
 #### UI-003
 
-⏳  *(failure path)* If the credentials belong to an account that has been locked, the user is sent to a page that tells them so, rather than to the dashboard or back to a login form that will never work.
+⏳  *(failure path)* While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 
-<details><summary>EARS sentence, Quint action `submit_locked`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-003 — A locked account gets the locked notice | click_sign_in | submit_locked | `current == LockedNotice` |
 
-**As specified (EARS):** While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-`specs/auth-ui.qnt:L92-L98` · model `e725263304be`
+<details><summary>Quint action `submit_locked`, witness predicate + trace</summary>
+
+`specs/auth-ui.qnt:L92-L98` · model `3642e11db6b5`
 
 ```quint
   action submit_locked: bool = all {
@@ -159,7 +172,7 @@ graph TB
 
 **Witness predicate:** `current == LockedNotice` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth-ui.qnt:201` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:212` — the doc comment this requirement is read from.
 
 </details>
 
@@ -168,6 +181,16 @@ graph TB
 _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · ✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a bounded ✓ by raising the bound or marking the invariant `proof: inductive`._
 
 - **INV-001** (`guardedDashboard`) — Dashboard is reachable only when authenticated == true. ('Shall always' statements are invariants, not requirements — Apalache proves them across all reachable states.) Criticality: critical. ⏳
+
+## Examples
+
+_Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
+
+| Example | Given | When | Then | Illustrates |
+|---|---|---|---|---|
+| EX-001 — Sign in opens the login page | the initial state | click_sign_in | `current == Login and form == Idle` | UI-001 |
+| EX-002 — Valid credentials land on the Dashboard | click_sign_in | submit_success | `current == Dashboard and authenticated` | UI-002 |
+| EX-003 — A locked account gets the locked notice | click_sign_in | submit_locked | `current == LockedNotice` | UI-003 |
 
 ## Completeness by Dimension
 
@@ -185,7 +208,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Extraction coverage | — | n/a (no code) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | — | no rejection requirements |
-| Examples | — | none written |
+| Examples | ✓ | 3 worked example(s) |
 | Invariants | ! | 0/1 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
 

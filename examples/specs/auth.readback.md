@@ -6,7 +6,7 @@
 
 **Status:** formalized  |  **Requirements:** 0/5 verified, 0/5 witnessed  |  **Invariants:** 0 proven + 0 bounded / 4  |  **Coverage:** 13 cells, 4 covered, 9 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Open questions:** 3  |  **Last verified:** never
 
-*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof — or a computed value, checked by the unit test it names)*
+*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
 ## Purpose
 
@@ -47,10 +47,10 @@ flowchart LR
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — REQ-001: Signing in with correct credentials gives the user a live session of their own — the thing every later request is checked against.
-- **Unchecked requirement** — REQ-002: Logging out ends the session it was asked about. The session record stays, marked as logged out, rather than disappearing.
-- **Unchecked requirement** — REQ-003: Every failed sign-in on an account that is still usable counts against it, and once the count reaches MAX_FAILED_ATTEMPTS (= 5, CON-001) the account is locked. The lock happens on the attempt that reaches the limit, not the one after it.
-- **Unchecked requirement** — REQ-004: A session left idle for longer than MAX_SESSION_AGE (= 24 step-units, CON-002) stops being usable on its own, without anyone having to log out.
+- **Unchecked requirement** — REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
+- **Unchecked requirement** — REQ-002: While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
+- **Unchecked requirement** — REQ-003: While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
+- **Unchecked requirement** — REQ-004: While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
 - **Open coverage GAPs** — Q-003 (spec is silent on triaged-real cells).
 - **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
@@ -60,11 +60,11 @@ flowchart LR
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [REQ-001](#req-001) | Signing in with correct credentials gives the user a live session of their own — the th… | must |
-| ⏳ | [REQ-002](#req-002) | Logging out ends the session it was asked about. The session record stays, marked as lo… | must |
-| ⏳ | [REQ-003](#req-003) | Every failed sign-in on an account that is still usable counts against it, and once the… | must |
-| ⏳ | [REQ-004](#req-004) | A session left idle for longer than MAX_SESSION_AGE stops being usable on its own, with… | must |
-| ⊘ | [REQ-005](#req-005) | A locked account cannot be signed into, even with the right password. The attempt chang… | forbidden |
+| ⏳ | [REQ-001](#req-001) | create an Active session owned by that user | must |
+| ⏳ | [REQ-002](#req-002) | transition that session to LoggedOut | must |
+| ⏳ | [REQ-003](#req-003) | increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS | must |
+| ⏳ | [REQ-004](#req-004) | transition it to Expired | must |
+| ⊘ | [REQ-005](#req-005) | refuse the login and leave every session and counter untouched | forbidden |
 
 ## What the System Does
 
@@ -72,7 +72,8 @@ flowchart LR
 
 > **Who** · User<br>
 > **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
-> **Route** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) → ⏳ [REQ-001](#req-001) → [auth-ui.UI-002](auth-ui.readback.md#ui-002) → ⏳ [REQ-003](#req-003) → [auth-ui.UI-003](auth-ui.readback.md#ui-003)
+> **Route** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) → ⏳ [REQ-001](#req-001) → [auth-ui.UI-002](auth-ui.readback.md#ui-002) → ⏳ [REQ-003](#req-003) → [auth-ui.UI-003](auth-ui.readback.md#ui-003)<br>
+> **Runs as** · ✓ `auth.signInJourney` — `quint test` runs it; it walks 2 of 5 step(s) in order. Steps in auth-ui are outside it — reaching them needs a run in a model that imports it.
 
 **Step 1 of 5** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) — specified in area *auth-ui*
 
@@ -80,13 +81,17 @@ flowchart LR
 
 #### REQ-001
 
-⏳ Signing in with correct credentials gives the user a live session of their own — the thing every later request is checked against.
+⏳ When a registered user submits valid credentials, the system shall create an Active session owned by that user.
 
-<details><summary>EARS sentence, Quint action `login`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-001 — Sign in | the initial state | login(alice, s1) | `isActive("s1") and activeSessionsOf("alice") == Set("s1")` |
 
-**As specified (EARS):** When a registered user submits valid credentials, the system shall create an Active session owned by that user.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-004](#what-must-always-be-true) `noEarlyLockout` ⏳
 
-`specs/auth.qnt:L101-L113` · model `5514d9372904`
+<details><summary>Quint action `login`, witness predicate + trace</summary>
+
+`specs/auth.qnt:L94-L106` · model `ab7c4452731e`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -106,7 +111,7 @@ flowchart LR
 
 **Witness predicate:** `sessions.keys().contains(_lastSid) and statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:277` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:322` — the doc comment this requirement is read from.
 
 </details>
 
@@ -118,13 +123,18 @@ flowchart LR
 
 #### REQ-003
 
-⏳  *(failure path)* Every failed sign-in on an account that is still usable counts against it, and once the count reaches MAX_FAILED_ATTEMPTS (= 5, CON-001) the account is locked. The lock happens on the attempt that reaches the limit, not the one after it.
+⏳  *(failure path)* While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
 
-<details><summary>EARS sentence, Quint action `login_failed`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-003 — The fifth failure locks the account | login_failed(bob) × 4 | login_failed(bob) | `isLocked("bob")` |
+| EX-004 — Four failures do not lock it | login_failed(bob) × 3 | login_failed(bob) | `not(isLocked("bob"))` |
 
-**As specified (EARS):** While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-004](#what-must-always-be-true) `noEarlyLockout` ⏳
 
-`specs/auth.qnt:L138-L154` · model `5514d9372904`
+<details><summary>Quint action `login_failed`, witness predicate + trace</summary>
+
+`specs/auth.qnt:L131-L147` · model `ab7c4452731e`
 
 ```quint
   action login_failed(uid: UserId): bool = {
@@ -148,7 +158,7 @@ flowchart LR
 
 **Witness predicate:** `accountStatus.keys().contains(_lastUid) and accountStatus.get(_lastUid) == Locked` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:309` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:347` — the doc comment this requirement is read from.
 
 </details>
 
@@ -162,13 +172,17 @@ flowchart LR
 
 #### REQ-002
 
-⏳ Logging out ends the session it was asked about. The session record stays, marked as logged out, rather than disappearing.
+⏳ While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
 
-<details><summary>EARS sentence, Quint action `logout`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-002 — Sign in, then out | login(alice, s1) | logout(s1) | `statusOf(sessions, "s1") == LoggedOut` |
 
-**As specified (EARS):** While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳
 
-`specs/auth.qnt:L116-L130` · model `5514d9372904`
+<details><summary>Quint action `logout`, witness predicate + trace</summary>
+
+`specs/auth.qnt:L109-L123` · model `ab7c4452731e`
 
 ```quint
   action logout(sid: SessionId): bool = {
@@ -190,19 +204,23 @@ flowchart LR
 
 **Witness predicate:** `statusOf(sessions, _lastSid) == LoggedOut` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:293` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:334` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-004
 
-⏳ A session left idle for longer than MAX_SESSION_AGE (= 24 step-units, CON-002) stops being usable on its own, without anyone having to log out.
+⏳ While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
 
-<details><summary>EARS sentence, Quint action `expire_session`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-005 — An Active session expires | login(alice, s1) | expire_session(s1) | `not(isActive("s1"))` |
 
-**As specified (EARS):** While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳
 
-`specs/auth.qnt:L157-L171` · model `5514d9372904`
+<details><summary>Quint action `expire_session`, witness predicate + trace</summary>
+
+`specs/auth.qnt:L150-L164` · model `ab7c4452731e`
 
 ```quint
   action expire_session(sid: SessionId): bool = {
@@ -224,26 +242,27 @@ flowchart LR
 
 **Witness predicate:** `statusOf(sessions, _lastSid) == Expired` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:333` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:366` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-005
 
-⊘  *(failure path)* A locked account cannot be signed into, even with the right password. The attempt changes nothing — no new session, and the failure count does not move either.
+⊘  *(failure path)* While the Account is Locked, if the user submits valid credentials, then the system shall refuse the login and leave every session and counter untouched.
 
-> **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-002**.
+> **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-002**. The examples below show the call being refused.
 
-> **Refusal check:** ⏳ `tests/auth/refusal/locked-login.test.ts` — drives the code into accountStatus[uid] == Locked, attempts the call, asserts it is refused and that `sessions`, `userActiveSession`, `failedAttempts` did not move.
-> _Replay cannot cover this: a rejection has no trace to replay._
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-006 — A locked account cannot sign in, and nothing moves | login_failed(bob) × 5 | login(bob, s2) — refused | `isLocked("bob") and attemptsOf("bob") == 5 and not(sessions.keys().contains("s2"))` |
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-004](#what-must-always-be-true) `noEarlyLockout` ⏳
 
 > **Witness skipped:** A prohibition has no reachable state to witness — there is no step in which 'the login did not happen' becomes visible. INV-002 (noSessionWhileLocked) carries the model-side proof.
 
-<details><summary>EARS sentence, Quint action `login`</summary>
+<details><summary>Quint action `login`</summary>
 
-**As specified (EARS):** While the Account is Locked, if the user submits valid credentials, then the system shall refuse the login and leave every session and counter untouched.
-
-`specs/auth.qnt:L101-L113` · model `5514d9372904`
+`specs/auth.qnt:L94-L106` · model `ab7c4452731e`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -273,6 +292,19 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 - **INV-002** (`noSessionWhileLocked`) — A Locked account has no Active session. Criticality: critical. ⏳
 - **INV-003** (`noAccessWithInvalidToken`) — Expired/LoggedOut sessions never appear in any user's active set. Criticality: high. ⏳
 - **INV-004** (`noEarlyLockout`) — Below MAX_FAILED_ATTEMPTS, the account stays unlocked. Criticality: high. ⏳
+
+## Examples
+
+_Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
+
+| Example | Given | When | Then | Illustrates |
+|---|---|---|---|---|
+| EX-001 — Sign in | the initial state | login(alice, s1) | `isActive("s1") and activeSessionsOf("alice") == Set("s1")` | REQ-001 |
+| EX-002 — Sign in, then out | login(alice, s1) | logout(s1) | `statusOf(sessions, "s1") == LoggedOut` | REQ-002 |
+| EX-003 — The fifth failure locks the account | login_failed(bob) × 4 | login_failed(bob) | `isLocked("bob")` | REQ-003 |
+| EX-004 — Four failures do not lock it | login_failed(bob) × 3 | login_failed(bob) | `not(isLocked("bob"))` | REQ-003, INV-004 |
+| EX-005 — An Active session expires | login(alice, s1) | expire_session(s1) | `not(isActive("s1"))` | REQ-004 |
+| EX-006 — A locked account cannot sign in, and nothing moves | login_failed(bob) × 5 | login(bob, s2) — refused | `isLocked("bob") and attemptsOf("bob") == 5 and not(sessions.keys().contains("s2"))` | REQ-005 |
 
 ## Limits and Bounds
 
@@ -321,8 +353,8 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Temporal behavior | — | none declared |
 | Extraction coverage | — | n/a (no code) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
-| Refusal coverage | ! | 1/1 rejection(s) with an artifact, 0 passing |
-| Examples | — | none written |
+| Refusal coverage | ✓ | 1/1 rejection(s) shown by an example |
+| Examples | ✓ | 6 worked example(s) |
 | Invariants | ! | 0/4 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
 

@@ -87,17 +87,10 @@ module auth {
   /// @when the user submits valid credentials
   /// @unwanted
   /// @shall refuse the login and leave every session and counter untouched
-  /// @meaning A locked account cannot be signed into, even with the right
-  ///   password. The attempt changes nothing — no new session, and the
-  ///   failure count does not move either.
-  /// @meaning-author agent
   /// @enforced-by INV-002
   /// @witness skipped: A prohibition has no reachable state to witness —
   ///   there is no step in which 'the login did not happen' becomes visible.
   ///   INV-002 (noSessionWhileLocked) carries the model-side proof.
-  /// @refusal tests/auth/refusal/locked-login.test.ts
-  /// @blocking accountStatus[uid] == Locked
-  /// @unchanged sessions, userActiveSession, failedAttempts
   action login(uid: UserId, sid: SessionId): bool = all {
     not(isLocked(uid)),
     not(sessions.keys().contains(sid)),
@@ -241,12 +234,29 @@ module auth {
       (attemptsOf(uid) < MAX_FAILED_ATTEMPTS) implies not(isLocked(uid))
     )
 
-  // -- Scenarios ----------------------------------------------------
+  // -- Examples -----------------------------------------------------
+  // Each run is an example: `quint test` executes it, the readback shows it
+  // as a Given / When / Then row (derived from the run, never typed beside
+  // it), and the code's conformance harness replays it.
 
+  /// @example EX-001
+  /// Sign in
+  /// @refs REQ-001
+  run signIn = init
+    .then(login("alice", "s1"))
+    .expect(isActive("s1") and activeSessionsOf("alice") == Set("s1"))
+
+  /// @example EX-002
+  /// Sign in, then out
+  /// @refs REQ-002
   run happyPath = init
     .then(login("alice", "s1"))
     .then(logout("s1"))
+    .expect(statusOf(sessions, "s1") == LoggedOut)
 
+  /// @example EX-003
+  /// The fifth failure locks the account
+  /// @refs REQ-003
   run lockoutScenario = init
     .then(login_failed("bob"))
     .then(login_failed("bob"))
@@ -257,6 +267,9 @@ module auth {
 
   // The boundary, asserted from the other side: four failures must NOT lock.
   // This is the scenario that fails when someone loosens the guard.
+  /// @example EX-004
+  /// Four failures do not lock it
+  /// @refs REQ-003, INV-004
   run belowThresholdScenario = init
     .then(login_failed("bob"))
     .then(login_failed("bob"))
@@ -264,10 +277,42 @@ module auth {
     .then(login_failed("bob"))
     .expect(not(isLocked("bob")))
 
+  /// @example EX-005
+  /// An Active session expires
+  /// @refs REQ-004
   run sessionExpiry = init
     .then(login("alice", "s1"))
     .then(expire_session("s1"))
     .expect(not(isActive("s1")))
+
+  // A refusal is shown, not asserted: drive the model into the blocking
+  // state, attempt the call with `.fail()` (the run fails if the call goes
+  // through), and assert nothing moved.
+  /// @example EX-006
+  /// A locked account cannot sign in, and nothing moves
+  /// @refs REQ-005
+  run lockedLoginRefused = init
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .then(login("bob", "s2").fail())
+    .expect(isLocked("bob") and attemptsOf("bob") == 5
+            and not(sessions.keys().contains("s2")))
+
+  // The "Sign in" journey (specs/journeys/sign-in.journey.json) walked end
+  // to end over this area's steps: alice signs in (REQ-001), then bob's
+  // failed attempts lock his account (REQ-003). Its UI steps live in
+  // auth-ui, whose model does not import this one yet.
+  run signInJourney = init
+    .then(login("alice", "s1"))
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .then(login_failed("bob"))
+    .expect(isActive("s1") and isLocked("bob"))
 
   // ----------------------------------------------------------
   // REQUIREMENTS — witness predicates, constants and transition
@@ -278,10 +323,6 @@ module auth {
   /// @status specified
   /// @when a registered user submits valid credentials
   /// @shall create an Active session owned by that user
-  /// @meaning Signing in with correct credentials gives the user a live
-  ///   session of their own — the thing every later request is checked
-  ///   against.
-  /// @meaning-author agent
   /// @via login
   /// @pre not(_prevSessions.keys().contains(_lastSid))
   /// @pre-note The session must not have existed before the call — otherwise
@@ -297,9 +338,6 @@ module auth {
   /// @while the user's session is Active
   /// @when the user requests logout
   /// @shall transition that session to LoggedOut
-  /// @meaning Logging out ends the session it was asked about. The session
-  ///   record stays, marked as logged out, rather than disappearing.
-  /// @meaning-author agent
   /// @via logout
   /// @pre statusOf(_prevSessions, _lastSid) == Active
   /// @pre-note Logging out something already logged out proves nothing.
@@ -316,11 +354,6 @@ module auth {
   /// @unwanted
   /// @shall increment failedAttempts and lock the account when it reaches
   ///   MAX_FAILED_ATTEMPTS
-  /// @meaning Every failed sign-in on an account that is still usable counts
-  ///   against it, and once the count reaches MAX_FAILED_ATTEMPTS the account
-  ///   is locked. The lock happens on the attempt that reaches the limit, not
-  ///   the one after it.
-  /// @meaning-author agent
   /// @via login_failed
   /// @pre not(_prevAccountStatus.keys().contains(_lastUid) and
   ///   _prevAccountStatus.get(_lastUid) == Locked)
@@ -337,9 +370,6 @@ module auth {
   /// @while the session is Active and has been inactive for longer than
   ///   MAX_SESSION_AGE
   /// @shall transition it to Expired
-  /// @meaning A session left idle for longer than MAX_SESSION_AGE stops being
-  ///   usable on its own, without anyone having to log out.
-  /// @meaning-author agent
   /// @via expire_session
   /// @pre statusOf(_prevSessions, _lastSid) == Active
   /// @pre-note Only an Active session can expire.

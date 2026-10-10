@@ -362,17 +362,6 @@
               "inferred_by": { "type": "string", "description": "'agent' | 'human' | 'agent+confirmed'. A confirmed inference is not the same claim as an unreviewed one." }
             }
           },
-          "meaning": {
-            "type": "object",
-            "additionalProperties": false,
-            "description": "The requirement in plain words — what it MEANS, written by whoever understood what the identifiers and exception names in the EARS fields stand for. 'refuse with NonMatchingTopologyException on serviceLevelPolicyId' names two symbols and asserts nothing a reviewer without the code can agree or disagree with; the meaning says what condition holds and what the system does about it. This is the sentence the readback prints as the requirement's headline; the EARS sentence moves into the collapsed details beside the Quint action, so the names stay one click away. Like a brief, it is prose and cannot be machine-checked, so it carries a freshness pin per requirement: `written_against` records the requirement sha it was written for, and spec-lint flags it once that requirement moves.",
-            "required": ["text"],
-            "properties": {
-              "text": { "type": "string", "minLength": 1, "description": "One or two sentences, plain English, no identifiers carrying the load. Declared state, screen and entity names are welcome — those are the vocabulary, not the leakage." },
-              "written_against": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 from `tools/itf_tools.py meaning-sha <area>` — the requirement content this meaning restates. Mismatch means the requirement moved and the plain-words sentence may describe something no longer specified." },
-              "author": { "type": "string", "enum": ["agent", "human"], "description": "Who wrote it. A human-written meaning is not re-authored by the agent without asking." }
-            }
-          },
           "ears": {
             "type": "object",
             "description": "EARS-structured requirement (Easy Approach to Requirements Syntax). The fields ARE the structure — the EARS pattern is derived from which are filled (trigger → 'When …', state → 'While …', both → complex, feature → 'Where …'; none → ubiquitous, which belongs in invariants[] instead). Mapping to Quint: trigger → action, state → require guard, response → effect. spec-lint validates; a requirement without ears past status raw/needs-validation gets a WARN.",
@@ -421,21 +410,9 @@
               "model_sha":  { "type": "string", "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one." }
             }
           },
-          "refusal": {
-            "type": "object",
-            "description": "Code-side evidence for a REJECTION requirement. Such a requirement produces no state change, so it correctly has no witness trace \u2014 and conformance replay only replays witness traces. Without this block the requirement class most likely to be wrong in the implementation carries zero code-side evidence: a login() written with no locked-account check replays every happy-path trace green, passes the tampered self-tests, and /spec-code-verify reports pass.",
-            "additionalProperties": false,
-            "properties": {
-              "artifact":  { "type": "string", "description": "Path of the test that drives the code into the blocking state, attempts the call, and asserts BOTH that it is refused AND that no observable var moved." },
-              "blocking_state": { "type": "string", "description": "The state the code must be driven into first, in the model's vocabulary (e.g. 'accountStatus[uid] == Locked')." },
-              "unchanged": { "type": "array", "items": { "type": "string" }, "description": "Observable vars that must be identical after the refused call. This half is what makes it a refusal: a rejection that throws AFTER incrementing the counter is not a rejection." },
-              "status":     { "type": "string", "enum": ["not-run", "passing", "failing"], "default": "not-run" },
-              "checked_at": { "type": "string", "format": "date-time" }
-            }
-          },
           "quint_ref": { "type": "string", "description": "Name of the Quint action that realizes this requirement." },
           "cross_refs": { "type": "array", "items": { "type": "string" }, "description": "References to other records: '<area>.<ID>' for another area, or a bare ID for this one (qualified to '<this-area>.<ID>' when the view is derived). Any declared ID kind resolves — REQ, INV, PROP, CON, EX, DEC, ASM, Q." },
-          "verified_by": { "type": "array", "items": { "type": "string" }, "description": "For a COMPUTED requirement — a derived value or pure calculation with no state transition (a score, a total, a formula): the test file(s) that verify it, as paths in the code repo. Written `@verified-by <path>`. A skipped witness on a requirement that is neither `@unwanted` nor `forbidden` is computed, not a refusal: it owes this instead of refusal.artifact/unchanged." }
+          "verified_by": { "type": "array", "items": { "type": "string" }, "description": "For a COMPUTED requirement — a derived value or pure calculation with no state transition (a score, a total, a formula): the test file(s) that verify it, as paths in the code repo. Written `@verified-by <path>`. A skipped witness on a requirement that is neither `@unwanted` nor `forbidden` is computed, not a refusal: it owes this instead of a refusal example." }
         }
       }
     },

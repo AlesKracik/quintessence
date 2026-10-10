@@ -7,9 +7,6 @@
 /// @while the Cart is Open
 /// @when a shopper adds a SKU already present
 /// @shall increase that line's quantity by the amount added
-/// @meaning Adding something already in the basket makes that line bigger
-///   rather than adding a second line for the same product.
-/// @meaning-author agent
 /// @via add_item
 /// @evidence code/legacy-cart/cart.js:31-35
 /// @confidence high
@@ -24,9 +21,6 @@
 /// @while the Cart is Open and holds fewer than MAX_ITEMS lines
 /// @when a shopper adds a new SKU
 /// @shall append a line for that SKU
-/// @meaning A product not yet in the basket gets its own line, as long as
-///   the basket is still open and has not already reached MAX_ITEMS lines.
-/// @meaning-author agent
 /// @via add_item
 /// @evidence code/legacy-cart/cart.js:26-36
 /// @confidence high
@@ -42,17 +36,10 @@
 /// @when a shopper adds an item
 /// @unwanted
 /// @shall refuse the call and leave the cart untouched
-/// @meaning Once a basket has been checked out it is finished: further
-///   attempts to add to it are refused and the basket's contents stay
-///   exactly as they were at checkout.
-/// @meaning-author agent
 /// @via add_item
 /// @enforced-by INV-001
 /// @witness skipped: A refusal has no reachable state to witness. INV-001
 ///   carries the model-side proof.
-/// @refusal tests/cart/refusal/closed-cart.test.js
-/// @blocking cart.status == "checked_out"
-/// @unchanged cart.items, cart.status
 /// @evidence code/legacy-cart/cart.js:22-24
 /// @confidence high
 /// @inferred-by agent
@@ -67,10 +54,6 @@
 /// @when the payment gateway throws during checkout
 /// @unwanted
 /// @shall leave the Cart Open and return ok:false with reason 'unavailable'
-/// @meaning If the payment provider fails during checkout, the basket stays
-///   open and the shopper is told the checkout did not go through — nothing
-///   is half-completed.
-/// @meaning-author agent
 /// @error PaymentGateway.OK not-idempotent: CheckedOut
 /// @error PaymentGateway.DECLINED idempotent: NO_CHANGE — the cart stays
 ///   Open; reason 'declined'

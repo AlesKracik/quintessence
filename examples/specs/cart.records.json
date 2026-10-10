@@ -238,29 +238,6 @@
     },
     "INV-002": {
       "formal_status": "specified"
-    },
-    "REQ-001": {
-      "meaning": {
-        "written_against": "2c3572a6509004f5737beaadd40c882efdeb2c7679467f597b1c25e805732ed6"
-      }
-    },
-    "REQ-002": {
-      "meaning": {
-        "written_against": "3ccc4fc8c099081e8c22f32be362a94ac85054f595106744237839b17d07668f"
-      }
-    },
-    "REQ-003": {
-      "refusal": {
-        "status": "not-run"
-      },
-      "meaning": {
-        "written_against": "8d40197da1f4d0b01ac56fcbafc2717486d23ee9a97e0c34c81802061de68632"
-      }
-    },
-    "REQ-004": {
-      "meaning": {
-        "written_against": "1e7b8eba045517d68ddf7f6e0ad9b3d75bba91312733bc1b5db00da6d44c1c1a"
-      }
     }
   }
 }

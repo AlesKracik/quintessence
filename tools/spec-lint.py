@@ -105,7 +105,7 @@ try:
     from quint_ir import DEFAULT_ENGINE as _quint_engine
     from quint_ir import zero_value as _zero_value
     # Shared rejection definition — lint, spec-record and the readback must
-    # not disagree about which requirements owe a refusal artifact.
+    # not disagree about which requirements owe a refusal example.
     from itf_tools import is_rejection, is_computed, witness_entries, skip_discharge
     # Generated-name conventions and the plumbing-action set live in
     # itf_tools so the probe generator, the recorder and these checks
@@ -115,7 +115,6 @@ try:
     from itf_tools import probe_name, outcome_probe_name, PLUMBING_ACTIONS
     from itf_tools import stream_encodes as _stream_encodes, soften_stdout
     from itf_tools import brief_status as _brief_status
-    from itf_tools import meaning_status as _meaning_status
     from itf_tools import compute_model_sha as _compute_model_sha
     from itf_tools import compute_spec_sha as _compute_spec_sha
     from itf_tools import load_trace as _load_trace
@@ -370,40 +369,6 @@ def check_ears(area_data, area_name, findings):
                 f"statement.", ref=rid)
 
 
-# Words that make a response untestable. Curated for signal, not coverage —
-# every entry is a word whose presence almost always means the response
-# doesn't say WHAT state results or WHERE it's visible. (ARM-style lint.)
-AMBIGUOUS_TERMS = re.compile(
-    r"\b(gracefully|appropriately?|properly|quickly|efficiently|robustly?|"
-    r"seamlessly?|intuitive(?:ly)?|user-friendly|flexible|timely|"
-    r"as needed|as appropriate|as required|if necessary|if needed|"
-    r"reasonable|sufficient(?:ly)?|adequate(?:ly)?|minimal|optimal|"
-    r"normally|usually|generally|etc\.?|and/or|TBD|TODO)\b",
-    re.IGNORECASE,
-)
-
-
-def check_ambiguity(area_data, area_name, findings):
-    """Vague words in ears.response make the requirement unwitnessable —
-    'handle errors gracefully' can never get a witness.predicate. Flag at
-    lint time so the sharpening happens before formalization, not after a
-    no-witness result. WARN during authoring; FAIL once the area reaches
-    in-review/approved — 'approved' must mean precise, not precise-ish."""
-    gating = area_data.get("status") in ("in-review", "approved")
-    severity = FAIL if gating else WARN
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") == "deferred":
-            continue
-        response = (req.get("ears") or {}).get("response") or ""
-        hits = sorted({m.group(0).lower() for m in AMBIGUOUS_TERMS.finditer(response)})
-        if hits:
-            add(findings, severity, "ears", "ambiguous-response", area_name,
-                f"{rid}.ears.response contains untestable wording: {', '.join(hits)}. "
-                f"Sharpen: what state results, visible where?",
-                ref=rid)
-
-
 def check_state_binding(area_data, area_name, findings):
     """ears.state should be phrased with a DECLARED entity state name
     ('the Session is Active', not 'the user is logged in') — that's what
@@ -534,7 +499,7 @@ def check_witnesses(root, area_data, area_name, findings):
                     f"value with no state transition. Name the unit test that "
                     f"checks it: `/// @verified-by <test path>`. (If it is a "
                     f"refusal, mark it @unwanted or @modality forbidden; it "
-                    f"then owes @refusal and @unchanged instead.)", ref=rid)
+                    f"then owes a refusal example instead.)", ref=rid)
             continue
 
         # Approval gate: every non-deferred functional REQ must be witnessed
@@ -572,9 +537,7 @@ def check_witnesses(root, area_data, area_name, findings):
             # is the mechanized vagueness gate: a functional response you can't
             # write a boolean witness for is too vague to ever be witnessed or
             # verified ("handle errors gracefully" — what observable state?).
-            # FAIL, not WARN — vagueness must block, not nag. The ambiguous-
-            # wording lint (check_ambiguous) catches phrasing; this catches the
-            # absence. Draft statuses (raw/needs-validation) are exempt so
+            # FAIL, not WARN — vagueness must block, not nag. Draft statuses (raw/needs-validation) are exempt so
             # elicitation isn't blocked mid-capture.
             add(findings, FAIL, "witness", "no-witness-predicate", area_name,
                 f"{rid} (status '{req.get('status')}') has no witness.predicate — the "
@@ -946,6 +909,156 @@ def check_unproducible_states(area_data, sidecar, area_name, findings):
             f"it, so every requirement and invariant mentioning it holds "
             f"vacuously. Add the transition, or drop the state.",
             ref=state)
+
+
+# ── Encoding checks: a claim the model does not encode is not a claim ───────
+# Each annotation below used to be checked for PRESENCE (the tag exists, the
+# name resolves). These check ENCODING: the model actually does what the
+# annotation says. A tag the model does not encode reads as specified in the
+# readback while nothing — not Apalache, not replay — ever looks at it.
+
+def model_decls(root, area_data, area_name):
+    """name -> declaration for the area's Quint model, or None when the area
+    has no model yet (Tier 1: records only) or the file is missing."""
+    return spec_source.model_declarations(root, area_name, area_data)
+
+
+def _ears_text(req):
+    ears = req.get("ears") or {}
+    return " ".join(str(ears.get(k) or "") for k in ("feature", "state", "trigger", "response"))
+
+
+def _cites(text, name):
+    return bool(name) and re.search(rf"\b{re.escape(name)}\b", text or "") is not None
+
+
+def check_cited_constants(area_data, decls, area_name, findings):
+    """A requirement whose sentence names a constant ('locks when the count
+    reaches MAX_FAILED_ATTEMPTS', 'expires after MAX_SESSION_AGE') makes a
+    claim about that number. Its own action must READ the constant — directly
+    or through a helper it calls — or the model implements some other rule
+    and the number in the sentence is decoration. Nothing downstream would
+    notice: the witness is found, replay goes green, the readback prints the
+    number beside the rule."""
+    if not decls:
+        return
+    severity = FAIL if at_review(area_data) else WARN
+    constants = [c for c in area_data.get("constraints", []) or [] if c.get("name")]
+    for req in area_data.get("requirements", []) or []:
+        if req.get("status") == "deferred":
+            continue
+        qref = req.get("quint_ref")
+        if not qref or (decls.get(qref) or {}).get("kind") != "action":
+            continue
+        text = _ears_text(req)
+        cited = [c for c in constants if _cites(text, c["name"])]
+        if not cited:
+            continue
+        reach = spec_source.name_closure(decls, [qref])
+        for con in cited:
+            if con["name"] not in reach:
+                rid = req.get("id", "?")
+                add(findings, severity, "encoding", "constant-cited-not-read", area_name,
+                    f"{rid}'s sentence names {con['name']} ({con.get('id')}), but its "
+                    f"action `{qref}` never reads it, not even through a helper. The "
+                    f"model does not implement the rule the sentence states. Make "
+                    f"`{qref}` depend on {con['name']}, or take the constant out of "
+                    f"the sentence.", ref=rid)
+
+
+def check_unread_constants(area_data, decls, area_name, findings):
+    """A constant the model declares but no action, invariant or property
+    reads states a rule nothing enforces. (One a requirement cites is
+    reported by check_cited_constants, against that requirement.)"""
+    if not decls:
+        return
+    severity = FAIL if at_review(area_data) else WARN
+    roots = [n for n, d in decls.items() if d.get("kind") in ("action", "temporal")]
+    roots += [i.get("quint_name") for i in area_data.get("invariants", []) or []]
+    roots += [p.get("quint_name") for p in area_data.get("properties", []) or []]
+    cited = {c.get("name") for c in area_data.get("constraints", []) or []
+             for r in area_data.get("requirements", []) or []
+             if _cites(_ears_text(r), c.get("name"))}
+    reach = set()
+    for r in roots:
+        if r:
+            reach |= spec_source.name_closure(decls, [r]) - {r}
+    for con in area_data.get("constraints", []) or []:
+        name = con.get("name")
+        if not name or name not in decls or name in cited or name in reach:
+            continue
+        add(findings, severity, "encoding", "constant-unread", area_name,
+            f"{con.get('id')} {name} = {con.get('value')} is declared, but no action, "
+            f"invariant or property reads it. Whatever rule it states, the model "
+            f"does not enforce it.", ref=con.get("id"))
+
+
+def _outcome_key(name):
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def check_error_outcomes_produced(area_data, sidecar, area_name, findings):
+    """`@error BillingProvider.DECLINED: NO_CHANGE` says what happens when the
+    dependency answers DECLINED. If no action ever produces that answer, the
+    model never meets it: the effect is unchecked prose, and the
+    external x outcome matrix counts a cell covered that nothing exercises.
+
+    The answer is found as a variant of some type (DECLINED, Declined and
+    declined all match), and some action must build it."""
+    if not sidecar or "__no_module__" in sidecar:
+        return
+    severity = FAIL if at_review(area_data) else WARN
+    variants = {}
+    for vs in (sidecar.get("type_variants") or {}).values():
+        for v in vs:
+            variants.setdefault(_outcome_key(v), v)
+    produced = set(sidecar.get("produced_variants") or [])
+    for vs in (sidecar.get("action_produces") or {}).values():
+        produced |= set(vs or [])
+    for req in area_data.get("requirements", []) or []:
+        if req.get("status") == "deferred":
+            continue
+        rid = req.get("id", "?")
+        for eo in req.get("error_outcomes", []) or []:
+            label = f"{eo.get('external')}.{eo.get('outcome')}"
+            variant = variants.get(_outcome_key(eo.get("outcome")))
+            if variant is None:
+                add(findings, severity, "encoding", "error-outcome-not-modeled", area_name,
+                    f"{rid} says what happens on {label}, but the model has no value "
+                    f"for that answer. Add it to the type the dependency's answers "
+                    f"live in, and an action that receives it.", ref=rid)
+            elif variant not in produced:
+                add(findings, severity, "encoding", "error-outcome-not-produced", area_name,
+                    f"{rid} says what happens on {label}, but no action ever produces "
+                    f"`{variant}`. The model never meets that answer, so the effect "
+                    f"\"{eo.get('effect')}\" is not checked by anything.", ref=rid)
+
+
+def check_spans_imported(area_data, sidecar, all_areas, area_name, findings):
+    """An area that `spans` another depends on its state. Unless the model
+    imports that area, every guard on it (`@guard auth::login succeeds`) is
+    prose, and an invariant over the dependency is proven about a stand-in
+    variable the dependency never touches."""
+    if area_data.get("kind") == "contract" or not sidecar or "__no_module__" in sidecar:
+        return
+    severity = FAIL if at_review(area_data) else WARN
+    imported = set()
+    for imp in sidecar.get("imports") or []:
+        imported.add(imp.get("module"))
+        if imp.get("from"):
+            imported.add(Path(imp["from"]).stem if imp["from"].endswith(".qnt")
+                         else Path(imp["from"]).name)
+    for other in area_data.get("spans", []) or []:
+        other_data = all_areas.get(other) if isinstance(all_areas, dict) else None
+        rel = ((other_data or {}).get("formal_model") or {}).get("quint_file") or f"{other}.qnt"
+        if other in imported or Path(rel).stem in imported:
+            continue
+        add(findings, severity, "encoding", "spans-without-import", area_name,
+            f"{area_name} spans {other} but its model never imports {other}. Every "
+            f"guard on {other} is prose, and an invariant about {other}'s state is "
+            f"proven about a local stand-in that {other} never changes. Import it "
+            f"qualified (`import {other} from \"./{Path(rel).stem}\"`) and read its "
+            f"state.")
 
 
 def check_constraint_values(area_data, sidecar, area_name, findings):
@@ -1460,6 +1573,17 @@ def check_modality(area_data, area_name, findings):
                     f"{rid} is modality 'may' but declares {len(outcomes)} witness "
                     f"outcome(s). A permission needs a witness per permitted outcome "
                     f"(at least two), or it is indistinguishable from a 'must'.", ref=rid)
+            seen_preds = {}
+            for oc in outcomes:
+                key = " ".join((oc.get("predicate") or "").split())
+                if key and key in seen_preds:
+                    add(findings, FAIL, "modality", "may-outcomes-identical", area_name,
+                        f"{rid} outcomes '{seen_preds[key]}' and '{oc.get('name')}' have "
+                        f"the same predicate, so no trace can show one without the "
+                        f"other. Each outcome's probe requires the others to be false; "
+                        f"give each a predicate over the state that tells them apart.",
+                        ref=rid)
+                seen_preds.setdefault(key, oc.get("name"))
             names = set()
             for oc in outcomes:
                 oname = oc.get("name")
@@ -1720,38 +1844,34 @@ def check_paired_invariants(root, area_data, sidecar, area_name, findings):
                 f"pass every gate here.", ref=cid)
 
 
-def check_refusal_artifacts(area_data, area_name, findings):
-    """Rule 4. Rejections have no witness, and replay only replays witnesses.
+def check_refusal_examples(area_data, area_name, findings):
+    """Rejections have no witness, and replay only replays witnesses.
 
-    So the requirement class most likely to be wrong in the implementation had
-    no code-side evidence at all: a login() written without the locked-account
-    check replays every happy-path trace green, passes the tampered
-    self-tests, and /spec-code-verify reports pass. The refusal artifact is the
-    missing half \u2014 drive the code into the blocking state, attempt the call,
-    assert it is refused AND that nothing observable moved."""
+    So the requirement class most likely to be wrong in the implementation
+    needs its evidence from somewhere else: an EXAMPLE. One whose @refs names
+    the rejection, whose run drives the model into the blocking state,
+    attempts the refused call (`login("bob", "s2").fail()` in a guard-style
+    model, or a step whose recorded result is the refusal in a total-action
+    one), and whose `.expect(..)` asserts that nothing moved. The example is
+    a row a reviewer reads in the readback and a run `quint test` executes —
+    and the code repo's conformance harness replays it like any trace."""
     review = at_review(area_data)
+    covered = set()
+    for ex in area_data.get("examples", []) or []:
+        for ref in ex.get("refs", []) or []:
+            covered.add(ref.split(".", 1)[1] if ref.startswith(f"{area_name}.") else ref)
     for req in area_data.get("requirements", []) or []:
-        if not is_rejection(req):
+        if not is_rejection(req) or req.get("status") == "deferred":
             continue
         rid = req.get("id", "?")
-        refusal = req.get("refusal") or {}
-        if not refusal.get("artifact"):
-            add(findings, FAIL if review else WARN, "refusal", "refusal-without-artifact",
+        if rid not in covered:
+            add(findings, FAIL if review else WARN, "refusal", "refusal-without-example",
                 area_name,
-                f"{rid} is a rejection requirement with no refusal.artifact. It has no "
-                f"witness trace by design, and conformance replay only replays witness "
-                f"traces \u2014 so nothing in the chain checks the implementation actually "
-                f"refuses.", ref=rid)
-            continue
-        if not refusal.get("unchanged"):
-            add(findings, WARN, "refusal", "refusal-without-unchanged", area_name,
-                f"{rid}.refusal names no `unchanged` vars. A rejection that throws "
-                f"after incrementing the counter is not a rejection \u2014 list what must "
-                f"be identical after the refused call.", ref=rid)
-        if review and refusal.get("status") == "failing":
-            add(findings, FAIL, "refusal", "refusal-failing", area_name,
-                f"{rid}.refusal.status is 'failing' \u2014 the implementation does not "
-                f"refuse.", ref=rid)
+                f"{rid} is a rejection requirement and no example shows it. It has "
+                f"no witness trace by design, so nothing in the chain shows the "
+                f"call being refused. Add an `@example` with `@refs {rid}` whose "
+                f"run reaches the blocking state, attempts the call (`.fail()`), "
+                f"and ends in `.expect(..)` asserting nothing moved.", ref=rid)
 
 
 def check_provenance(area_data, area_name, findings):
@@ -1792,50 +1912,6 @@ def check_provenance(area_data, area_name, findings):
         f"/spec-code-verify before trusting the traceability, and re-stamp "
         f"with `spec-record stamp {area_name} --generated` once the code "
         f"matches again.")
-
-
-def check_meaning(area_data, area_name, findings):
-    """Each requirement carries its behavior twice: the EARS fields, which say
-    it in the system's own vocabulary, and `meaning.text`, which says what that
-    amounts to for someone who has never seen the code.
-
-    The EARS fields alone are not review material once they lean on
-    identifiers — 'refuse with NonMatchingTopologyException on
-    serviceLevelPolicyId' is a sentence only the implementation can check, and
-    a reviewer nodding at it is nodding at a name. Distilling the meaning is a
-    judgement no pattern match can make, which is exactly why it is authored
-    prose and pinned rather than derived.
-
-    Graded like every other precision lint: WARN while the area is being
-    authored, FAIL from in-review on. `raw` requirements are exempt — they have
-    no EARS fields to distil yet.
-    """
-    gating = at_review(area_data)
-    severity = FAIL if gating else WARN
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") in ("deferred", "raw"):
-            continue
-        state, detail = _meaning_status(req)
-        if state == "absent":
-            add(findings, severity, "meaning", "meaning-missing", area_name,
-                f"{rid} has no `meaning.text` — the readback renders it as the "
-                f"EARS fields, identifiers and exception names included. Write "
-                f"one or two plain sentences saying what the requirement means, "
-                f"then pin them with `tools/itf_tools.py meaning-sha "
-                f"{area_name} --req {rid}`.", ref=rid)
-        elif state == "stale":
-            add(findings, severity, "meaning", "meaning-stale", area_name,
-                f"{rid}'s plain-words meaning is stale — {detail}. It is the "
-                f"sentence the readback leads with, and nothing else on the "
-                f"page can contradict it. Reread it against the requirement, "
-                f"then re-pin with `tools/itf_tools.py meaning-sha {area_name} "
-                f"--req {rid}`.", ref=rid)
-        elif not (req.get("meaning") or {}).get("author"):
-            add(findings, WARN, "meaning", "meaning-unattributed", area_name,
-                f"{rid}.meaning records no `author`. A human-written meaning is "
-                f"not re-authored without asking; an unattributed one gives the "
-                f"agent no way to know that.", ref=rid)
 
 
 def check_brief(area_data, area_name, findings):
@@ -2659,6 +2735,71 @@ def check_journeys(root, all_areas, findings, validator=None):
                 add(findings, FAIL, "journeys", "dangling-step-ref", jname,
                     f"step ref '{ref}' — '{rid}' is not in {area}'s requirements[] "
                     f"or navigation[].", ref=ref)
+                continue
+            check_journey_step_examples(step, all_areas, jname, findings)
+        check_journey_run(root, data, all_areas, jname, findings)
+
+
+def _usable_views(all_areas):
+    return {a: v for a, v in all_areas.items()
+            if isinstance(v, dict) and "__parse_error__" not in v}
+
+
+def check_journey_step_examples(step, all_areas, jname, findings):
+    """A step's example rows are what a reviewer reads at that point in the
+    flow. Each must resolve, and should exercise the step's own action — an
+    example of a different action at this step shows the wrong behavior."""
+    views = _usable_views(all_areas)
+    area, rid = step["ref"].split(".", 1)
+    action = spec_source.step_action(views.get(area), rid)
+    shown = spec_source.step_examples(step, views)
+    for qid, ex, _a in shown:
+        if ex is None:
+            add(findings, FAIL, "journeys", "journey-example-dangling", jname,
+                f"step {step['ref']} lists example '{qid}', which does not exist.",
+                ref=step["ref"])
+            continue
+        ex_action = (ex.get("when") or {}).get("action")
+        if action and ex_action and ex_action != action:
+            add(findings, WARN, "journeys", "journey-example-off-step", jname,
+                f"step {step['ref']} (action `{action}`) shows example {qid}, whose "
+                f"last call is `{ex_action}`. The row at this step should show "
+                f"this step's behavior.", ref=step["ref"])
+    if not shown:
+        add(findings, WARN, "journeys", "journey-step-without-example", jname,
+            f"step {step['ref']} has no example rows: the readback shows the step "
+            f"with nothing concrete under it. Add an `@example` whose `@refs` names "
+            f"{rid}, or list one in the step's `examples`.", ref=step["ref"])
+
+
+def check_journey_run(root, journey, all_areas, jname, findings):
+    """A journey is a claim that a flow works end to end. `run` makes it a
+    checked one: a Quint run that `quint test` executes and the conformance
+    harness replays, calling each step's action in the journey's order."""
+    views = _usable_views(all_areas)
+    steps = [s for s in journey.get("steps") or [] if "." in (s.get("ref") or "")]
+    if not journey.get("run"):
+        review = any(at_review(views[s["ref"].split(".", 1)[0]]) for s in steps
+                     if s["ref"].split(".", 1)[0] in views)
+        add(findings, FAIL if review else WARN, "journeys", "journey-not-executable",
+            jname,
+            f"journey '{journey.get('name', jname)}' has no `run`, so nothing checks "
+            f"that its steps work one after another. Add a Quint run that walks the "
+            f"flow and name it in the journey (`\"run\": \"<area>.<runName>\"`).")
+        return
+    res = spec_source.journey_run(
+        journey, views, lambda a: spec_source.model_declarations(root, a, views.get(a)))
+    if not res["found"]:
+        add(findings, FAIL, "journeys", "journey-run-dangling", jname,
+            f"run '{journey['run']}' does not exist: no `run {res['run'].split('.', 1)[1]}` "
+            f"in {res['area']}'s model.")
+        return
+    if res["order_error"]:
+        n, ref, action = res["order_error"]
+        add(findings, FAIL, "journeys", "journey-run-order", jname,
+            f"run '{journey['run']}' never calls `{action}` for step {n} ({ref}) after "
+            f"the steps before it. The run must walk the journey in its order.",
+            ref=ref)
 
 
 # ── Quint-first sources ───────────────────────────────────────────────────────
@@ -2849,7 +2990,6 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_area_meta(area_data, area_name, findings)
     check_ids(area_data, area_name, findings)
     check_ears(area_data, area_name, findings)
-    check_ambiguity(area_data, area_name, findings)
     check_state_binding(area_data, area_name, findings)
     check_fit_criteria(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
@@ -2866,7 +3006,11 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_ears_guard_correspondence(area_data, sidecar, area_name, findings)
     check_ears_effect_correspondence(area_data, sidecar, area_name, findings)
     check_unproducible_states(area_data, sidecar, area_name, findings)
-    check_meaning(area_data, area_name, findings)
+    decls = model_decls(root, area_data, area_name)
+    check_cited_constants(area_data, decls, area_name, findings)
+    check_unread_constants(area_data, decls, area_name, findings)
+    check_error_outcomes_produced(area_data, sidecar, area_name, findings)
+    check_spans_imported(area_data, sidecar, all_areas, area_name, findings)
     check_brief(area_data, area_name, findings)
     check_provenance(area_data, area_name, findings)
     check_extraction_coverage(area_data, area_name, findings)
@@ -2885,7 +3029,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_builtin_names(sidecar, area_name, findings)
     check_transition_invariant_names(area_data, sidecar, info, area_name, findings)
     check_paired_invariants(root, area_data, sidecar, area_name, findings)
-    check_refusal_artifacts(area_data, area_name, findings)
+    check_refusal_examples(area_data, area_name, findings)
     check_boundary(area_data, area_name, findings)
     check_extraction_ledger(area_data, area_name, findings)
     check_extraction_provenance(root, area_data, area_name, findings)

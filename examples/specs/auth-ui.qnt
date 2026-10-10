@@ -151,7 +151,22 @@ module authUi {
   val guardedDashboard: bool =
     (current == Dashboard) implies authenticated
 
-  // -- Scenarios ----------------------------------------------------
+  // -- Examples -----------------------------------------------------
+
+  /// @example EX-001
+  /// Sign in opens the login page
+  /// @refs UI-001
+  run openLogin = init
+    .then(click_sign_in)
+    .expect(current == Login and form == Idle)
+
+  /// @example EX-002
+  /// Valid credentials land on the Dashboard
+  /// @refs UI-002
+  run signInLands = init
+    .then(click_sign_in)
+    .then(submit_success)
+    .expect(current == Dashboard and authenticated)
 
   run happyPathFlow = init
     .then(click_sign_in)
@@ -159,6 +174,9 @@ module authUi {
     .then(click_logout)
     .expect(current == Home and not(authenticated))
 
+  /// @example EX-003
+  /// A locked account gets the locked notice
+  /// @refs UI-003
   run lockedFlow = init
     .then(click_sign_in)
     .then(submit_locked)
@@ -176,10 +194,6 @@ module authUi {
   /// @while the user is on Home
   /// @when the user clicks 'Sign in'
   /// @shall navigate to Login
-  /// @meaning From the home page, the Sign in button takes the user to the
-  ///   login page. Nothing else happens yet — no credentials have been
-  ///   entered.
-  /// @meaning-author agent
   /// @via click_sign_in
   val shall_UI_001: bool =
     current == Login
@@ -191,9 +205,6 @@ module authUi {
   /// @while the user is on Login
   /// @when the user submits valid credentials
   /// @shall navigate to Dashboard
-  /// @meaning A user who enters credentials that check out is taken straight
-  ///   to the dashboard; the login page does not stay in the way.
-  /// @meaning-author agent
   /// @via submit_success
   val shall_UI_002: bool =
     current == Dashboard
@@ -206,10 +217,6 @@ module authUi {
   /// @when the user submits credentials for a Locked account
   /// @unwanted
   /// @shall navigate to LockedNotice
-  /// @meaning If the credentials belong to an account that has been locked,
-  ///   the user is sent to a page that tells them so, rather than to the
-  ///   dashboard or back to a login form that will never work.
-  /// @meaning-author agent
   /// @via submit_locked
   val shall_UI_003: bool =
     current == LockedNotice

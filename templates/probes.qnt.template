@@ -105,8 +105,8 @@ module {{MODULE_NAME}}_probes {
   // A rejection requirement gets NO probe: a prohibition has no
   // reachable state to witness. Its model-side proof is the
   // invariant named in witness.enforced_by, and its code-side
-  // evidence is the artifact in requirements[].refusal — replay
-  // never covers it, because replay only replays witness traces.
+  // evidence is an @example run that attempts the call with
+  // .fail() — replayed against the code like any trace.
   //
   // Run with:
   //   quint verify --invariant=witness_{{REQ_ID}} \

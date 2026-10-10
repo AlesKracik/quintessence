@@ -42,7 +42,7 @@ from itf_tools import (  # noqa: E402
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
     skip_discharge, brief_status, action_params, GHOST_PARAM_RE,
-    compute_spec_sha, meaning_status, is_rejection, is_computed, witness_entries,
+    compute_spec_sha, is_rejection, is_computed, witness_entries,
     GHOST_PREFIXES,
 )
 from quint_ir import _strip_noise  # noqa: E402
@@ -66,8 +66,9 @@ LEGEND = ("*Legend: ✓ verified — witness trace replayed green against real c
           "◐ witnessed — proven possible in the model, not yet demonstrated in code · "
           "✗ no witness — claimed behavior is UNREACHABLE in the model · "
           "⏳ not checked yet · "
-          "⊘ skipped with justification (a refusal — an invariant carries the proof — "
-          "or a computed value, checked by the unit test it names)*")
+          "⊘ skipped with justification (a refusal — an invariant carries the proof "
+          "and an example shows the refused call — or a computed value, checked by "
+          "the unit test it names)*")
 
 
 def load_json(path):
@@ -279,23 +280,13 @@ def resolve_constraints(sentence, constraints):
 
 
 def req_sentence(req, constraints):
-    """The sentence a reviewer reads for this requirement.
-
-    The distilled plain-words meaning when one is recorded and still pinned to
-    the requirement it restates; the rendered EARS sentence otherwise. A
-    meaning that has gone stale is NOT used — a sentence written against an
-    earlier version of the requirement is worse than the mechanical one,
-    because it reads like it was reviewed.
-
-    Both go through constraint resolution: the boundary number belongs beside
-    the rule whichever wording carries it.
-    """
+    """The sentence a reviewer reads for this requirement: the EARS sentence
+    rendered from its fields, constraint values resolved in place. Rendered,
+    never authored — what the reader agrees to is exactly what the model and
+    the probes were built from. The example rows under it say the same thing
+    concretely."""
     if not req:
         return ""
-    meaning = req.get("meaning") or {}
-    text = (meaning.get("text") or "").strip()
-    if text and meaning_status(req)[0] == "current":
-        return resolve_constraints(text, constraints)
     return resolve_constraints(ears_sentence(req), constraints)
 
 
@@ -454,31 +445,16 @@ def attention_items(root, area_name, area):
             if detail:
                 line += f" _({detail})_" if sentence else f": {detail}"
             items.append(line)
-    # Plain-words meanings: prose, so they can only be pinned, not checked.
-    # A stale one is named individually — someone has to reread that
-    # requirement; missing ones roll up, because on an area that has never
-    # used them the per-requirement list would be the whole area.
-    missing_meaning = []
+    # A rejection has no witness; its evidence is an example that shows the
+    # call being refused. Without one, nothing concrete shows it at all.
+    shown = {ref.split(".", 1)[-1] for ex in (area.get("examples") or [])
+             for ref in (ex.get("refs") or [])}
     for req in area.get("requirements", []) or []:
-        if req.get("status") in ("deferred", "raw"):
-            continue
-        state, detail = meaning_status(req)
-        rid = req.get("id", "?")
-        if state == "stale":
-            items.append(f"**Stale plain-words summary** — {rid}: {detail}. The "
-                         f"readback has fallen back to the EARS sentence; reread "
-                         f"the requirement and re-pin with "
-                         f"`tools/itf_tools.py meaning-sha {area_name} --req {rid}`.")
-        elif state == "absent":
-            missing_meaning.append(rid)
-    if missing_meaning:
-        items.append(
-            f"**No plain-words summary** — {len(missing_meaning)} requirement(s) "
-            f"({', '.join(missing_meaning[:5])}"
-            f"{', …' if len(missing_meaning) > 5 else ''}) render as the EARS "
-            f"fields rendered mechanically, identifiers and exception names "
-            f"included. A reviewer without the code cannot agree or disagree "
-            f"with those. Run `/spec {area_name}` to distil them.")
+        if is_rejection(req) and req.get("status") != "deferred" \
+                and req.get("id") not in shown:
+            items.append(f"**Refusal shown by no example** — {req.get('id')}: "
+                         f"{req_sentence(req, constraints)} Add an example whose run "
+                         f"attempts the call (`.fail()`) and asserts nothing moved.")
     matrix = cr.get("matrix")
     if matrix:
         if matrix.get("uncovered", 0) > 0:
@@ -688,9 +664,70 @@ def header_bar(area, area_name):
             f"**Last verified:** {last_ver}")
 
 
-def render_requirement(root, area, req, constraints, rendered_full):
+def _cell(text):
+    return (text or "—").replace("|", "\\|").replace("\n", " ")
+
+
+def example_rows(shown, decls):
+    """The Given / When / Then table for examples shown at one point —
+    rows DERIVED from the runs (spec_source.example_row), so the row a
+    reviewer agrees to is the run `quint test` executes."""
+    rows = []
+    for qid, ex, _area in shown:
+        if ex is None:
+            rows.append(f"| ⚠ {qid} | _no such example_ | | |")
+            continue
+        row = spec_source.example_row(ex, decls or {})
+        if not row:
+            continue
+        title = ex.get("title")
+        label = f"{ex.get('id')}" + (f" — {_cell(title)}" if title else "")
+        rows.append(f"| {label} | {_cell(row['given'])} | {_cell(row['when'])} "
+                    f"| `{_cell(row['then'])}` |")
+    if not rows:
+        return []
+    return ["| Example | Given | When | Then |", "|---|---|---|---|"] + rows + [""]
+
+
+def _mutated_vars(decls, action):
+    """Vars the action changes: assigned with a primed `x' = ...` that is not
+    the no-change idiom `x' = x`."""
+    host = (decls or {}).get(action) or {}
+    body = host.get("body") or ""
+    names = {n for n, h in (decls or {}).items() if h.get("kind") == "var"}
+    out = set()
+    for v in names:
+        if re.search(rf"\b{re.escape(v)}'\s*=", body) and \
+                not re.search(rf"\b{re.escape(v)}'\s*=\s*{re.escape(v)}\s*(?:[,}}]|$)", body):
+            out.add(v)
+    return out
+
+
+def guarding_invariants(area, req, decls):
+    """Invariants that constrain what this requirement's action changes:
+    every invariant reading a var the action writes, plus a prohibition's
+    enforcing invariant. Derived from the model, so the list cannot omit
+    one that the checker in fact holds this step to."""
+    invs = [i for i in area.get("invariants", []) or [] if i.get("id")]
+    enforced = (req.get("witness") or {}).get("enforced_by")
+    action = req.get("quint_ref")
+    changed = _mutated_vars(decls, action) if decls and action else set()
+    out = []
+    for inv in invs:
+        qn = inv.get("quint_name")
+        reads = spec_source.name_closure(decls, [qn]) if (decls and qn) else set()
+        if inv.get("id") == enforced or (changed and changed & reads):
+            out.append(inv)
+    return out
+
+
+def render_requirement(root, area, req, constraints, rendered_full,
+                       shown=None, decls=None):
     """Markdown block for one requirement. rendered_full: set of ids already
-    fully rendered (later occurrences become one-line links)."""
+    fully rendered (later occurrences become one-line links). `shown` is the
+    examples to show as rows (default: every example whose @refs names it);
+    `decls` the area model's declarations, from which rows and the guarding
+    invariants are derived."""
     rid = req.get("id", "?")
     lines = []
     if rid in rendered_full:
@@ -704,14 +741,6 @@ def render_requirement(root, area, req, constraints, rendered_full):
     sentence = req_sentence(req, constraints)
     lines.append(f"{mark}{tag} {sentence}")
     lines.append("")
-    m_state, m_detail = meaning_status(req)
-    if m_state == "stale":
-        # The headline fell back to the EARS sentence. Say why, and show the
-        # sentence that was superseded — a reviewer who read it last time
-        # needs to know it no longer describes this requirement.
-        lines.append(f"> ⚠ **Plain-words summary is stale** — {m_detail}. "
-                     f"It said: “{(req.get('meaning') or {}).get('text', '').strip()}”")
-        lines.append("")
     prov = req.get("extraction") or {}
     if prov.get("evidence"):
         conf = prov.get("confidence")
@@ -736,12 +765,14 @@ def render_requirement(root, area, req, constraints, rendered_full):
         enforced = w.get("enforced_by")
         lines.append("> **Forbidden** \u2014 this must never happen, so there is no trace to "
                      "find. The proof is the invariant that stays true"
-                     + (f": **{enforced}**." if enforced else " (none named yet)."))
+                     + (f": **{enforced}**." if enforced else " (none named yet).")
+                     + " The examples below show the call being refused.")
         lines.append("")
     elif modality == "may":
         lines.append("> **Permitted, not required** — the system MAY do any of the "
                      "following, and the choice is not this spec's to make. Each needs "
-                     "its own witness, or the permission has quietly become a rule:")
+                     "its own witness, found with the other outcomes false, or the "
+                     "permission has quietly become a rule:")
         for oc in (w.get("outcomes") or []):
             ocm = {"witnessed": "◐", "no-witness": "✗",
                    "hollow": "✗"}.get(oc.get("status"), "⏳")
@@ -763,16 +794,25 @@ def render_requirement(root, area, req, constraints, rendered_full):
                      f"{eo.get('effect')}{idem}")
     if req.get("error_outcomes"):
         lines.append("")
-    refusal = req.get("refusal") or {}
-    if refusal:
-        mark = {"passing": "\u2713", "failing": "\u2717"}.get(refusal.get("status"), "\u23f3")
-        unchanged = ", ".join(f"`{v}`" for v in (refusal.get("unchanged") or []))
-        lines.append(f"> **Refusal check:** {mark} `{refusal.get('artifact', '—')}` "
-                     f"\u2014 drives the code into "
-                     f"{refusal.get('blocking_state') or 'the blocking state'}, attempts "
-                     f"the call, asserts it is refused"
-                     + (f" and that {unchanged} did not move." if unchanged else "."))
-        lines.append("> _Replay cannot cover this: a rejection has no trace to replay._")
+    if shown is None:
+        rid_q = f"{area.get('area')}.{rid}"
+        shown = [(f"{area.get('area')}.{e.get('id')}", e, area.get("area"))
+                 for e in area.get("examples", []) or []
+                 if rid in (e.get("refs") or []) or rid_q in (e.get("refs") or [])]
+    table = example_rows(shown, decls)
+    if table:
+        lines.extend(table)
+    elif req.get("status") not in ("raw", "deferred"):
+        lines.append("> _No example rows yet — nothing concrete shows this behavior._")
+        lines.append("")
+    guards = guarding_invariants(area, req, decls)
+    if guards:
+        bound, scopes, steps = check_bound(area), check_scopes(area), check_steps(area)
+        parts = [f"[{g['id']}](#what-must-always-be-true)"
+                 + (f" `{g['quint_name']}`" if g.get("quint_name") else "")
+                 + f" {invariant_mark(g, bound, scopes.get(g['id']), steps.get(g['id']))}"
+                 for g in guards]
+        lines.append("> **Guarded by** · " + " · ".join(parts))
         lines.append("")
     if is_computed(req):
         tests = ", ".join(f"`{t}`" for t in (req.get("verified_by") or []))
@@ -853,7 +893,30 @@ def render_requirement(root, area, req, constraints, rendered_full):
     return lines
 
 
-def journey_card(area_name, j, reqs):
+def run_line(j, run):
+    """One line saying whether the journey is checked end to end — the
+    difference between a picture of a flow and a flow that runs."""
+    if run is None:
+        return ("> **Runs as** · ⚠ _nothing yet_ — no Quint run walks this flow, so "
+                "its steps are checked one at a time, never together.")
+    ref = f"`{run['run']}`"
+    if not run["found"]:
+        return f"> **Runs as** · ✗ {ref} — no such run in {run['area']}'s model."
+    if run["order_error"]:
+        n, sref, action = run["order_error"]
+        return (f"> **Runs as** · ✗ {ref} — breaks at step {n} ({sref}): it never "
+                f"calls `{action}` after the steps before it.")
+    total = len(journey_steps(j))
+    line = (f"> **Runs as** · ✓ {ref} — `quint test` runs it; it walks "
+            f"{len(run['covered'])} of {total} step(s) in order")
+    if run["outside"]:
+        areas = sorted({r.split(".", 1)[0] for r in run["outside"]})
+        line += (f". Steps in {', '.join(areas)} are outside it — reaching them "
+                 f"needs a run in a model that imports {'them' if len(areas) > 1 else 'it'}")
+    return line + "."
+
+
+def journey_card(area_name, j, reqs, run=None):
     """Heading plus who/story/route card for one journey.
 
     The gloss used to run the actor and the description together behind the
@@ -880,6 +943,7 @@ def journey_card(area_name, j, reqs):
             hops.append(f"⚠ {rid}")
     if hops:
         card.append("> **Route** · " + " → ".join(hops))
+    card.append(run_line(j, run))
     if card:
         # Consecutive `> ` lines are one paragraph in Markdown, so Who/Story/
         # Route would reflow into a single wrapped sentence. An explicit break
@@ -913,17 +977,43 @@ def step_marker(idx, total, ref, note=None, elsewhere=None):
     return lines
 
 
+def _views_for(root, area_name, area, journeys):
+    """Area views a set of journeys refers to — this area's, plus every other
+    area a step, an example or a run names."""
+    views = {area_name: area}
+    names = set()
+    for j in journeys:
+        if "." in (j.get("run") or ""):
+            names.add(j["run"].split(".", 1)[0])
+        for s in j.get("steps", []) or []:
+            if "." in (s.get("ref") or ""):
+                names.add(s["ref"].split(".", 1)[0])
+            names.update(e.split(".", 1)[0] for e in s.get("examples") or [] if "." in e)
+    for n in sorted(names - {area_name}):
+        try:
+            v = load_area(root, n)
+        except Exception:  # noqa: BLE001 — a broken neighbour is lint's to report
+            v = None
+        if isinstance(v, dict):
+            views[n] = v
+    return views
+
+
 def what_the_system_does(root, area_name, area, journeys):
     lines = ["## What the System Does", ""]
     constraints = area.get("constraints", []) or []
+    decls = spec_source.model_declarations(root, area_name, area)
     reqs = {r.get("id"): r for r in area.get("requirements", []) or []
             if r.get("id") and r.get("status") != "deferred"}
     rendered_full = set()
     touching = [j for j in journeys
                 if any(s.get("ref", "").startswith(f"{area_name}.")
                        for s in j.get("steps", []) or [])]
+    views = _views_for(root, area_name, area, touching)
     for j in touching:
-        lines.extend(journey_card(area_name, j, reqs))
+        run = spec_source.journey_run(
+            j, views, lambda a: spec_source.model_declarations(root, a, views.get(a)))
+        lines.extend(journey_card(area_name, j, reqs, run))
         steps = journey_steps(j)
         total = len(steps)
         for idx, step in enumerate(steps, 1):
@@ -938,8 +1028,9 @@ def what_the_system_does(root, area_name, area, journeys):
                 # the block is upstream.
                 lines.extend(step_marker(idx, total, ref,
                                          note if rid not in rendered_full else None))
-                lines.extend(render_requirement(root, area, reqs[rid], constraints,
-                                                rendered_full))
+                lines.extend(render_requirement(
+                    root, area, reqs[rid], constraints, rendered_full,
+                    shown=spec_source.step_examples(step, views), decls=decls))
             else:
                 lines.extend(step_marker(idx, total, ref, note))
                 lines.append("⚠ _Requirement not found in this area._")
@@ -952,7 +1043,8 @@ def what_the_system_does(root, area_name, area, journeys):
             lines.append("> _Specified here, but not yet placed in any journey above._")
             lines.append("")
         for r in sorted(leftover, key=lambda x: x.get("id", "")):
-            lines.extend(render_requirement(root, area, r, constraints, rendered_full))
+            lines.extend(render_requirement(root, area, r, constraints, rendered_full,
+                                            decls=decls))
     if not touching and reqs:
         lines.insert(2, "_No journeys reference this area. Run `/spec _journeys/<name>` "
                         "to group requirements into flows._")
@@ -1347,12 +1439,8 @@ def at_a_glance(area):
              "| | ID | Behavior | Modality |", "|---|---|---|---|"]
     for r in reqs:
         rid = r.get("id", "?")
-        # Plain words when they are pinned and current; the raw response
-        # otherwise. The index has to read like the detail it indexes.
-        meaning = r.get("meaning") or {}
-        response = (meaning.get("text") or "").strip() \
-            if meaning_status(r)[0] == "current" \
-            else ((r.get("ears") or {}).get("response") or "").strip()
+        response = ((r.get("ears") or {}).get("response")
+                    or r.get("description") or "").strip()
         if len(response) > 88:
             response = response[:87].rstrip() + "…"
         modality = r.get("modality") or "must"
@@ -1586,36 +1674,28 @@ def externals_section(area):
     return lines
 
 
-def examples_section(area):
-    """Gap I. Concrete cases the author wrote down. Seeds and regressions \u2014
-    the proof of reachability is still the machine-found witness trace."""
+def examples_section(root, area_name, area):
+    """Every example as a Given / When / Then row, with what it illustrates.
+    The same rows appear at the requirements and journey steps they belong
+    to; this is the index. Rows are derived from the runs, never authored
+    beside them."""
     examples = area.get("examples", []) or []
     if not examples:
         return []
-    lines = ["## Worked Examples", "",
-             "_Author-written scenarios: illustration and regression pins, not proof. "
-             "A witness trace shows a behavior is reachable at all; an example only "
-             "asserts the one case somebody thought of._", ""]
+    decls = spec_source.model_declarations(root, area_name, area)
+    lines = ["## Examples", "",
+             "_Concrete cases, each a Quint `run` that `quint test` executes and the "
+             "code's conformance harness replays. A witness trace shows a behavior is "
+             "reachable at all; an example pins the one case it states._", "",
+             "| Example | Given | When | Then | Illustrates |", "|---|---|---|---|---|"]
     for ex in sorted(examples, key=lambda e: e.get("id", "")):
-        title = ex.get("title") or ex.get("id")
-        lines.append(f"**{ex.get('id')} — {title}**")
-        lines.append("")
-        given = ex.get("given") or {}
-        if given:
-            lines.append("- Given: " + ", ".join(f"`{k}` = `{v}`" for k, v in given.items()))
-        when = ex.get("when") or {}
-        args = when.get("args") or {}
-        arglist = ", ".join(f"{k}={v}" for k, v in args.items())
-        lines.append(f"- When: `{when.get('action', '?')}({arglist})`")
-        expect = dict(ex.get("expect") or {})
-        run_cond = expect.pop(spec_source.RUN_EXPECT_KEY, None)
-        if run_cond:
-            lines.append(f"- Expect (the run's `.expect`): `{run_cond}`")
-        if expect:
-            lines.append("- Expect: " + ", ".join(f"`{k}` = `{v}`" for k, v in expect.items()))
-        if ex.get("refs"):
-            lines.append("- Illustrates: " + ", ".join(ex["refs"]))
-        lines.append("")
+        row = spec_source.example_row(ex, decls or {}) or {}
+        title = ex.get("title")
+        label = f"{ex.get('id')}" + (f" — {_cell(title)}" if title else "")
+        refs = ", ".join(ex.get("refs") or []) or "—"
+        lines.append(f"| {label} | {_cell(row.get('given'))} | {_cell(row.get('when'))} "
+                     f"| `{_cell(row.get('then'))}` | {refs} |")
+    lines.append("")
     return lines
 
 
@@ -1640,6 +1720,8 @@ def dimensions_section(area):
     # only `justification` and so missed every skip discharged by the typed
     # `enforced_by` form — the one spec-record actually writes.
     rejections = [r for r in reqs if is_rejection(r)]
+    shown_ids = {ref.split(".", 1)[-1] for ex in (area.get("examples") or [])
+                 for ref in (ex.get("refs") or [])}
     witnessed = [r for r in reqs if req_is_discharged(r)]
     closed = [e for e in entities if e.get("closed")]
     all_redteam = [q for q in area.get("open_questions", []) or []
@@ -1722,12 +1804,9 @@ def dimensions_section(area):
             if differential.get("result") in ("equivalent-in-sequences", "diverged")
             else "not measured \u2014 needs a parallel build and `spec-record equiv`"),
         row("Refusal coverage",
-            all((r.get("refusal") or {}).get("status") == "passing" for r in rejections)
-            if rejections else None,
-            f"{sum(1 for r in rejections if (r.get('refusal') or {}).get('artifact'))}"
-            f"/{len(rejections)} rejection(s) with an artifact, "
-            f"{sum(1 for r in rejections if (r.get('refusal') or {}).get('status') == 'passing')}"
-            f" passing"
+            all(r.get("id") in shown_ids for r in rejections) if rejections else None,
+            f"{sum(1 for r in rejections if r.get('id') in shown_ids)}"
+            f"/{len(rejections)} rejection(s) shown by an example"
             if rejections else "no rejection requirements"),
         row("Examples", bool(examples) or None,
             f"{len(examples)} worked example(s)" if examples else "none written"),
@@ -1788,7 +1867,7 @@ def emit_area(root, area_name):
     lines += what_the_system_does(root, area_name, area, journeys)
     lines += invariants_section(area)
     lines += externals_section(area)
-    lines += examples_section(area)
+    lines += examples_section(root, area_name, area)
     lines += extraction_section(area)
     lines += limits_section(root, area_name, area)
     if not area.get("screens"):
@@ -2066,6 +2145,11 @@ def emit_project(root):
         for j in journeys:
             gloss = " — ".join(filter(None, [j.get("actor"), j.get("description")]))
             lines.append(f"### {j.get('name', j['_file'])}" + (f" — *{gloss}*" if gloss else ""))
+            lines.append("")
+            views = {a: d for a, d in loaded.items() if isinstance(d, dict)}
+            run = spec_source.journey_run(
+                j, views, lambda a: spec_source.model_declarations(root, a, views.get(a)))
+            lines.append(run_line(j, run))
             lines.append("")
             lines.append("| # | Step | Area | Status |")
             lines.append("|---|---|---|---|")

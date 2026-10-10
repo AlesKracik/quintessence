@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "journey.schema.json",
   "title": "Cross-Area Journey",
-  "description": "One file per journey at specs/journeys/<slug>.journey.json. A journey is THE use-case mechanism: a named user-visible flow, steps referencing requirement IDs in qualified <area>.<ID> form, in temporal order. Most journeys live inside one area (a 'login' flow over auth alone is a normal journey); some cross boundaries — same shape either way. Same overlay discipline as change manifests: references only, never content — the requirements stay in their area JSONs; delete every journey and the specs are complete. Born at capture time in both directions: in greenfield elicitation one story told = one journey; in brownfield the flow is deduced from the call graph during extraction, one journey per reachable entry point, updated (not duplicated) on re-extraction. Documentation/review layer; no formal verification obligation (a joint-reachability witness across modules is a possible later extension).",
+  "description": "One file per journey at specs/journeys/<slug>.journey.json. A journey is THE use-case mechanism: a named user-visible flow, steps referencing requirement IDs in qualified <area>.<ID> form, in temporal order. Most journeys live inside one area (a 'login' flow over auth alone is a normal journey); some cross boundaries — same shape either way. Same overlay discipline as change manifests: references only, never content — the requirements stay in their area JSONs; delete every journey and the specs are complete. Born at capture time in both directions: in greenfield elicitation one story told = one journey; in brownfield the flow is deduced from the call graph during extraction, one journey per reachable entry point, updated (not duplicated) on re-extraction. EXECUTABLE: `run` names the Quint run that walks the flow end to end (checked by `quint test`, and replayed against code like any example); spec-lint checks that the run calls each step's action in the journey's order. Each step carries its example rows (`examples`, or every example whose @refs names the step), which is what the readback shows at that step.",
   "type": "object",
   "required": ["name", "steps"],
   "additionalProperties": false,
@@ -19,6 +19,11 @@
     "description": {
       "type": "string",
       "description": "One line: what the actor accomplishes end to end."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "The Quint `run` that walks this journey end to end, qualified <area>.<runName>. It must call the action of every step specified in that area, in this journey's order (spec-lint `journey-run-order`); steps in other areas are covered only through qualified calls (`auth::login(..)`), which needs a model that imports them. Without a run the journey is a picture of a flow rather than a checked one (`journey-not-executable`)."
     },
     "steps": {
       "type": "array",
@@ -37,6 +42,14 @@
           "note": {
             "type": "string",
             "description": "Optional gloss for the step in journey context, e.g. 'payment declined counterpart'."
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*\\.EX-\\d{3}$"
+            },
+            "description": "Qualified example ids (<area>.EX-NNN) shown as Given/When/Then rows at this step. Optional: without it the step shows every example whose @refs names the step's requirement. Each example should exercise the step's own action (`journey-example-off-step`)."
           }
         }
       }

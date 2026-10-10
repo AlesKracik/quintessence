@@ -105,46 +105,26 @@
     "REQ-001": {
       "witness": {
         "status": "not-run"
-      },
-      "meaning": {
-        "written_against": "ceb17865e326eb542c59e7c1f795861611734954669a5d020b2434c45573b378"
       }
     },
     "REQ-002": {
       "witness": {
         "status": "not-run"
-      },
-      "meaning": {
-        "written_against": "0535cb90348ccfaf0b94f3a4fb86bfda7d1abfdebdc0468a7a05e48cd9d69307"
       }
     },
     "REQ-003": {
       "witness": {
         "status": "not-run"
-      },
-      "meaning": {
-        "written_against": "82ac1867981caaa9f2f6ee69c5b57beab83beb41a400854ef86c09d22b852099"
       }
     },
     "REQ-004": {
       "witness": {
         "status": "not-run"
-      },
-      "meaning": {
-        "written_against": "5b59afac3d809d4ea63136c82cf10edb65d011165c29b46db2a7d1e38cd6c6b0"
       }
     },
     "REQ-005": {
       "witness": {
         "status": "not-run"
-      },
-      "meaning": {
-        "written_against": "38ffc060b5f6d9bb6494a70047753d02e4eff074f49ca353bbb319fefb18d327"
-      }
-    },
-    "REQ-006": {
-      "meaning": {
-        "written_against": "2cdfc6ed63a90ef659f17c0dd56d360d1af42a181f831c5bcc69d75a6f035946"
       }
     },
     "REQ-007": {
@@ -158,9 +138,6 @@
             "status": "not-run"
           }
         }
-      },
-      "meaning": {
-        "written_against": "5ba0e166d741526609996ad0804c7ea1bd928e7ca358e5a3ff77333632ceea9f"
       }
     }
   }

@@ -15,7 +15,7 @@ QUINT-FIRST. An area is three files, each the single source of one thing:
                               assumptions, decisions, open questions, state
                               machines, architecture, configuration.
   specs/<area>.records.json   ledgers no human types: check results,
-                              witness and refusal verdicts, freshness pins,
+                              witness verdicts, freshness pins,
                               verification log, traceability, provenance,
                               and the three triage ledgers.
 
@@ -60,7 +60,6 @@ A blank `///` line ends a continuation.
 
   REQ   @while @when @where @unwanted @shall     ears.state/trigger/feature/
                                                  unwanted/response
-        @meaning <text>  @meaning-author <who>   meaning.text / .author
         @type @status @modality @determinism @source
         @fit <metric> | <target> | <measurement>
         @error <External>.<OUTCOME> [idempotent|not-idempotent]: <effect>
@@ -76,14 +75,15 @@ A blank `///` line ends a continuation.
                                                  witness (+ justification).
                                                  On an @unwanted or forbidden
                                                  requirement it is a REFUSAL
-                                                 (owes @refusal + @unchanged);
+                                                 (owes an @example that shows
+                                                 the refusal: an EX whose
+                                                 @refs names it);
                                                  on any other it is COMPUTED —
                                                  a derived value with no
                                                  transition — and owes
         @verified-by <path>, <path>              verified_by: the unit
                                                  test(s) that check it
         @justification <text>                    justification, no skip
-        @refusal <path>  @blocking <expr>  @unchanged a, b
         @refs ID, ID                             cross_refs: `<area>.<ID>`
                                                  for another area, a bare ID
                                                  for this one (qualified when
@@ -148,6 +148,9 @@ Usage:
                         # derive back, diff against the legacy JSON
   tools/spec_source.py schemas [--write]               # intent/records schemas,
                         # carved out of schemas/area.schema.json
+  tools/spec_source.py prune-removed [<area>] [--root .] [--write]
+                        # drop the tags and ledger fields of removed
+                        # features (@meaning, @refusal, ...)
 """
 
 import argparse
@@ -183,9 +186,7 @@ RECORD_KEYS = ("check_results", "verification_log", "traceability",
 WITNESS_MACHINE = ("status", "trace", "checked_at", "steps", "model_sha")
 MACHINE_PATHS = {
     "requirements": ("witness.status", "witness.trace", "witness.checked_at",
-                     "witness.steps", "witness.model_sha",
-                     "refusal.status", "refusal.checked_at",
-                     "meaning.written_against"),
+                     "witness.steps", "witness.model_sha"),
     "invariants": ("formal_status",),
     "properties": ("formal_status",),
     "constraints": (),
@@ -210,8 +211,6 @@ TAGS = {
         "where": ("ears.feature", "text"),
         "unwanted": ("ears.unwanted", "flag"),
         "shall": ("ears.response", "text"),
-        "meaning": ("meaning.text", "text"),
-        "meaning-author": ("meaning.author", "text"),
         "type": ("type", "text"),
         "status": ("status", "text"),
         "modality": ("modality", "text"),
@@ -223,10 +222,7 @@ TAGS = {
         "pre-note": ("witness.delta.note", "text"),
         "enforced-by": ("witness.enforced_by", "text"),
         "justification": ("witness.justification", "text"),
-        "refusal": ("refusal.artifact", "text"),
         "verified-by": ("verified_by", "list"),
-        "blocking": ("refusal.blocking_state", "text"),
-        "unchanged": ("refusal.unchanged", "list"),
         "refs": ("cross_refs", "list"),
         **EXTRACTION_TAGS,
         # special: fit, error, error-note, witness
@@ -277,15 +273,32 @@ TAGS = {
 }
 SPECIAL_TAGS = {"requirements": ("fit", "error", "error-note", "witness"),
                 "examples": ("when",)}
+# Tags that used to exist. Each is reported by name with what replaced it,
+# instead of as an unknown tag: an author who meets "unknown tag @meaning"
+# cannot tell a typo from a removal.
+REMOVED_TAGS = {
+    "meaning": "agent-written plain-words summaries are gone: the readback "
+               "leads with the EARS sentence and the example rows. Delete the "
+               "tag (and its continuation lines)",
+    "meaning-author": "removed together with @meaning. Delete it",
+    "refusal": "refusal artifacts are gone: a refusal is shown by an "
+               "@example whose @refs names this requirement and whose run "
+               "attempts the call with `.fail()`. Delete the tag",
+    "blocking": "removed together with @refusal; the example's run reaches the "
+                "blocking state. Delete it",
+    "unchanged": "removed together with @refusal; the example's `.expect(...)` "
+                 "asserts what did not move. Delete it",
+}
+# Requirement fields of removed features; migrate drops them.
+REMOVED_FIELDS = ("meaning", "refusal")
 # The order migrate emits tags in (and so the order a reader meets them).
 EMIT_ORDER = {
     "requirements": ("type", "status", "modality", "determinism", "source",
                      "where", "while", "when", "unwanted", "shall",
-                     "meaning", "meaning-author", "fit", "error", "via",
+                     "fit", "error", "via",
                      "predicate", "pre", "pre-note", "enforced-by", "witness",
-                     "justification", "verified-by", "refusal", "blocking",
-                     "unchanged", "refs", "evidence", "confidence", "inferred-by",
-                     "fingerprint"),
+                     "justification", "verified-by", "refs", "evidence",
+                     "confidence", "inferred-by", "fingerprint"),
     "invariants": ("criticality", "proof", "over", "quint-name", "predicate",
                    "alloy", "smt", "refs", "source", "evidence", "confidence",
                    "inferred-by", "fingerprint"),
@@ -462,7 +475,7 @@ TAG_RE = re.compile(r"^@([a-z][a-z-]*)(?:\s+(.*))?$")
 
 def strip_docs(text):
     """The model with its `///` record comments removed — what model_sha
-    hashes. Editing a meaning or an EARS field changes what a reviewer reads,
+    hashes. Editing a description or an EARS field changes what a reviewer reads,
     not what the checker explored, so it must not stale every witness."""
     return "".join(line for line in (text or "").splitlines(keepends=True)
                    if not DOC_RE.match(line))
@@ -559,7 +572,11 @@ def _parse_host(lines, i, lang):
     if lang != "quint":
         return host
     code = " ".join(s for s in (_strip_line_comment(l).strip() for l in extent) if s)
-    after = code[code.find(host["name"]) + len(host["name"]):] if host["name"] else ""
+    # The name as a whole word: a plain substring search finds `f` inside
+    # `def` and `a` inside `action`, and loses the parameters.
+    nm = re.search(rf"(?<![A-Za-z0-9_]){re.escape(host['name'])}(?![A-Za-z0-9_])",
+                   code) if host["name"] else None
+    after = code[nm.end():] if nm else ""
     if after.startswith("("):
         depth = 0
         for k, c in enumerate(after):
@@ -628,6 +645,318 @@ def read_records(text, lang="quint", filename=None):
     if doc:
         out.extend(_parse_records(doc, None, filename))
     return out
+
+
+# ── Declarations: what the model's names reach ─────────────────────────────
+# Pure Python on purpose, like the record reader: the encoding checks and the
+# journey and example rendering must run where the Quint CLI does not.
+
+IDENT_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def declarations(text):
+    """Every module-member declaration in a Quint file, documented or not:
+    name -> host (kind, pure, body, params, line, source). Members are the
+    headers at the indent directly inside a `module`; local `val`s inside an
+    action body sit deeper and are part of that action's body instead."""
+    lines = (text or "").splitlines()
+    out = {}
+    mod_indent = None
+    member_indent = None
+    for i, line in enumerate(lines):
+        if DOC_RE.match(line) or line.strip().startswith("//"):
+            continue
+        m = QUINT_HEADER.match(line)
+        if not m:
+            continue
+        indent = len(m.group("indent"))
+        if m.group("kind") == "module":
+            mod_indent, member_indent = indent, None
+            continue
+        if mod_indent is None or indent <= mod_indent:
+            continue
+        if member_indent is None:
+            member_indent = indent
+        if indent != member_indent or not m.group("name"):
+            continue
+        host = _parse_host(lines, i, "quint")
+        if host and host["name"] not in out:
+            out[host["name"]] = host
+    return out
+
+
+def _code_only(body):
+    """A declaration body with string literals blanked, so `"login"` in an
+    argument is not read as a reference to the action `login`."""
+    # Length-preserving, so positions found in the blanked text index the
+    # original body too.
+    return re.sub(r'"(?:\\.|[^"\\])*"',
+                  lambda m: '"' + " " * (len(m.group(0)) - 2) + '"', body or "")
+
+
+def name_closure(decls, roots):
+    """Every identifier reachable from `roots` through the bodies of the
+    module's own declarations: what an action (or invariant) READS, helpers
+    included. `login_failed` reaches MAX_FAILED_ATTEMPTS through its own
+    body; `expire_session` reaches it only if some helper it calls does."""
+    seen, frontier = set(), [r for r in roots if r]
+    while frontier:
+        name = frontier.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        host = decls.get(name)
+        if not host or not host.get("body"):
+            continue
+        params = {p for p, _ in host.get("params") or []}
+        for tok in IDENT_TOKEN.findall(_code_only(host["body"])):
+            if tok not in seen and tok not in params:
+                frontier.append(tok)
+    return seen
+
+
+def _balanced(text, i):
+    """Index just past the parenthesis group opening at text[i] == '('."""
+    depth = 0
+    in_str = False
+    for k in range(i, len(text)):
+        c = text[k]
+        if c == '"' and (k == 0 or text[k - 1] != "\\"):
+            in_str = not in_str
+        if in_str:
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+    return len(text)
+
+
+def run_calls(decls, run_name, _stack=None):
+    """The actions a `run` performs, in order — the run's steps.
+
+    Each step is {"action", "args", "qualifier", "fails"}: `args` is the
+    argument text as written, `qualifier` the module of a qualified call
+    (`auth::login(..)` -> "auth"), and `fails` true for `A.fail()` — a call
+    the run expects to be REFUSED, the way a guard-style model shows a
+    prohibition. A run that chains another run (`happyPath.then(...)`)
+    contributes that run's steps in place. `init` is the starting point, not
+    a step, and the trailing `.expect(..)` is the run's claim, not a step."""
+    _stack = _stack or set()
+    host = decls.get(run_name)
+    if not host or host.get("kind") != "run" or run_name in _stack:
+        return []
+    _stack = _stack | {run_name}
+    body = host.get("body") or ""
+    cond = _run_expectation(body)
+    if cond is not None:
+        # Cut the trailing .expect(...) chain off before scanning for calls.
+        text = body.strip()
+        while text.endswith(")"):
+            k = len(text) - 1
+            depth = 0
+            while k >= 0:
+                depth += text[k] == ")"
+                depth -= text[k] == "("
+                if depth == 0:
+                    break
+                k -= 1
+            if k < 0 or not text[:k].rstrip().endswith(".expect"):
+                break
+            text = text[:k].rstrip()[:-len(".expect")].rstrip()
+        body = text
+    actions = {n for n, h in decls.items() if h.get("kind") == "action"}
+    runs = {n for n, h in decls.items() if h.get("kind") == "run"}
+    steps = []
+    code = _code_only(body)
+    pos = 0
+    while True:
+        m = IDENT_TOKEN.search(code, pos)
+        if not m:
+            break
+        name, start, end = m.group(0), m.start(), m.end()
+        pos = end
+        qualifier = None
+        if start >= 2 and code[start - 2:start] == "::":
+            q = re.search(r"([A-Za-z_][A-Za-z0-9_]*)::$", code[:start])
+            qualifier = q.group(1) if q else None
+        elif code[end:end + 2] == "::":
+            continue  # the module half of a qualified name
+        if start and code[start - 1] == ".":
+            continue  # a method: .then .expect .fail .reps
+        if name in runs and not qualifier:
+            steps.extend(run_calls(decls, name, _stack))
+            continue
+        if name == "init" or (name not in actions and not qualifier):
+            continue
+        args, parens = "", code[end:end + 1] == "("
+        after = end
+        if parens:
+            after = _balanced(body, end)
+            args = " ".join(body[end + 1:after - 1].split())
+        fails = bool(re.match(r"\s*\.\s*fail\s*\(\s*\)", code[after:]))
+        steps.append({"action": name, "args": args, "qualifier": qualifier,
+                      "fails": fails, "parens": parens})
+        pos = after
+    return steps
+
+
+def _show_args(args):
+    return re.sub(r'"([^"\\]*)"', r"\1", args or "")
+
+
+def render_call(step):
+    """`login("alice", "s1")` -> `login(alice, s1)`; a refused call reads
+    `login(bob, s2) — refused`."""
+    name = f"{step['qualifier']}::{step['action']}" if step.get("qualifier") else step["action"]
+    text = f"{name}({_show_args(step.get('args'))})" if step.get("parens", True) else name
+    return text + (" — refused" if step.get("fails") else "")
+
+
+def collapse_calls(steps):
+    """Consecutive identical calls folded into one `× n` entry, so five
+    failed logins read as one line instead of five."""
+    out = []
+    for s in steps:
+        text = render_call(s)
+        if out and out[-1][0] == text:
+            out[-1][1] += 1
+        else:
+            out.append([text, 1])
+    return [t if n == 1 else f"{t} × {n}" for t, n in out]
+
+
+def example_row(example, decls):
+    """One example as a (given, when, then) row of plain strings — DERIVED
+    from the run it sits on, never written beside it, so the row a reviewer
+    reads is the run `quint test` executes.
+
+    A run's last call is When, everything before it is Given (from `init`),
+    its trailing `.expect(..)` is Then. An example hosted on an action reads
+    its @given / @when / @expect JSON instead. Returns None when there is
+    nothing to show."""
+    def kv(d):
+        return ", ".join(f"{k} = {json.dumps(v) if not isinstance(v, str) else v}"
+                         for k, v in (d or {}).items())
+    run = example.get("quint_run")
+    if run and run in decls:
+        steps = run_calls(decls, run)
+        if steps:
+            given = collapse_calls(steps[:-1])
+            then = _run_expectation(decls[run].get("body")) or kv(
+                {k: v for k, v in (example.get("expect") or {}).items()
+                 if k != RUN_EXPECT_KEY})
+            return {"given": "; then ".join(given) if given else "the initial state",
+                    "when": render_call(steps[-1]),
+                    "then": then or "—"}
+    when = example.get("when") or {}
+    if not when.get("action"):
+        return None
+    args = when.get("args")
+    shown = (kv(args) if isinstance(args, dict) else
+             ", ".join(map(str, args)) if isinstance(args, list) else "")
+    expect = {k: v for k, v in (example.get("expect") or {}).items() if k != RUN_EXPECT_KEY}
+    return {"given": kv(example.get("given")) or "the initial state",
+            "when": f"{when['action']}({shown})",
+            "then": kv(expect) or (example.get("expect") or {}).get(RUN_EXPECT_KEY) or "—"}
+
+
+# ── Journeys: steps, their example rows, and the run that walks them ───────
+
+def model_declarations(root, name, view):
+    """name -> declaration for an area's Quint model, or None when it has no
+    model yet (Tier 1: records only) or the file is missing."""
+    rel = ((view or {}).get("formal_model") or {}).get("quint_file") or f"{name}.qnt"
+    try:
+        text = (specs_dir(root) / rel).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return declarations(text) if has_model(text) else None
+
+
+def step_action(view, rid):
+    """The action a journey step is realized by: a requirement's quint_ref,
+    or a navigation edge's action."""
+    for r in (view or {}).get("requirements") or []:
+        if r.get("id") == rid:
+            return r.get("quint_ref")
+    for n in (view or {}).get("navigation") or []:
+        if n.get("id") == rid:
+            return n.get("action")
+    return None
+
+
+def step_examples(step, views):
+    """[(qualified id, example or None, area)] shown at one journey step:
+    the step's explicit `examples`, else every example of the step's area
+    whose @refs names the step. None marks an id that resolves to nothing."""
+    area, rid = step["ref"].split(".", 1)
+    explicit = step.get("examples") or []
+    if explicit:
+        out = []
+        for q in explicit:
+            a, eid = q.split(".", 1)
+            ex = next((e for e in ((views.get(a) or {}).get("examples") or [])
+                       if e.get("id") == eid), None)
+            out.append((q, ex, a))
+        return out
+    return [(f"{area}.{e['id']}", e, area)
+            for e in ((views.get(area) or {}).get("examples") or [])
+            if rid in (e.get("refs") or []) or f"{area}.{rid}" in (e.get("refs") or [])]
+
+
+def _qualifiers(area, view):
+    rel = ((view or {}).get("formal_model") or {}).get("quint_file") or f"{area}.qnt"
+    return {area, Path(rel).stem, area.replace("-", "_")}
+
+
+def journey_run(journey, views, decls_for):
+    """What the journey's run proves about the journey.
+
+    Returns None for a journey with no run, else a dict:
+      run, area      the qualified run and the area whose model holds it
+      found          False when the run does not exist
+      covered        step refs the run calls, in the journey's order
+      outside        step refs in an area the run never calls
+      order_error    (step number, ref, action) of the first step whose action
+                     the run does not call after the previous step's, or None
+    `decls_for(area)` returns that area's declarations (or None)."""
+    ref = journey.get("run")
+    if not ref or "." not in ref:
+        return None
+    rarea, rname = ref.split(".", 1)
+    decls = decls_for(rarea) if rarea in views else None
+    res = {"run": ref, "area": rarea, "found": False, "covered": [],
+           "outside": [], "order_error": None}
+    if not decls or (decls.get(rname) or {}).get("kind") != "run":
+        return res
+    res["found"] = True
+    calls = run_calls(decls, rname)
+    idx = 0
+    steps = [s for s in journey.get("steps") or [] if "." in (s.get("ref") or "")]
+    for n, step in enumerate(steps, 1):
+        a, rid = step["ref"].split(".", 1)
+        action = step_action(views.get(a), rid)
+        if a == rarea:
+            quals = {None}
+        else:
+            quals = _qualifiers(a, views.get(a))
+            if not any(c["qualifier"] in quals for c in calls):
+                res["outside"].append(step["ref"])
+                continue
+        if not action:
+            res["outside"].append(step["ref"])
+            continue
+        k = next((i for i in range(idx, len(calls))
+                  if calls[i]["action"] == action and calls[i]["qualifier"] in quals), None)
+        if k is None:
+            res["order_error"] = (n, step["ref"], action)
+            break
+        res["covered"].append(step["ref"])
+        idx = k + 1
+    return res
 
 
 # ── Derive ──────────────────────────────────────────────────────────────────
@@ -786,6 +1115,9 @@ def _apply_tags(rec, kind, item, problems):
                     args = _json_value(m.group(2), rec, problems)
                     if args is not _BAD:
                         item["when"]["args"] = args
+        elif name in REMOVED_TAGS:
+            problems.append(f"{_where(rec)}: {rec['id']}: @{name} was removed — "
+                            f"{REMOVED_TAGS[name]}.")
         else:
             problems.append(f"{_where(rec)}: {rec['id']}: unknown tag @{name} on "
                             f"{'an' if rec['tag'][0] in 'aeiou' else 'a'} @{rec['tag']} record")
@@ -901,6 +1233,7 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
     actions = set()
     for m in re.finditer(r"^\s*action\s+([A-Za-z_][A-Za-z0-9_]*)", model_text or "", re.M):
         actions.add(m.group(1))
+    decls = declarations(model_text) if model_text else {}
 
     out = {k: [] for k in MODEL_KEYS + UI_KEYS}
     by_id, origin, outcomes, screens_seen = {}, {}, [], {}
@@ -970,7 +1303,11 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
                 if cond and not item.get("expect"):
                     item["expect"] = {RUN_EXPECT_KEY: cond}
                 if "when" not in item:
-                    a = _run_last_action(host.get("body"), actions)
+                    # The run's own last step, zero-argument actions
+                    # (`.then(click_sign_in)`) included.
+                    steps = run_calls(decls, hn) if hn in decls else []
+                    a = steps[-1]["action"] if steps else _run_last_action(
+                        host.get("body"), actions)
                     if a:
                         item["when"] = {"action": a}
             elif hk == "action" and "when" not in item:
@@ -1505,6 +1842,13 @@ def migrate_area(legacy, model_text, als_text=None, ir=None):
     records). Lossless: a field it cannot place raises SpecSourceError."""
     name = legacy.get("area")
     ir = ir or {}
+    # Fields of removed features (agent-written meanings, refusal artifacts)
+    # have no tag any more. They are dropped, not refused: they never claimed
+    # anything the model or an example does not now say better.
+    legacy = copy.deepcopy(legacy)
+    for req in legacy.get("requirements") or []:
+        for gone in REMOVED_FIELDS:
+            req.pop(gone, None)
     intent = {"$schema": "../schemas/intent.schema.json"}
     for k, v in legacy.items():
         if k in MODEL_KEYS or k in UI_KEYS or k in RECORD_KEYS or k == "$schema":
@@ -1842,12 +2186,6 @@ def source_schemas(area_schema):
             "status": {"type": "string", "enum": ["verified"],
                        "description": "Written by `spec-record verify` on a green replay; overrides the authored @status."},
             "witness": witness_rec,
-            "refusal": {"type": "object", "additionalProperties": False,
-                        "properties": {f: copy.deepcopy(req["refusal"]["properties"][f])
-                                       for f in ("status", "checked_at")}},
-            "meaning": {"type": "object", "additionalProperties": False,
-                        "properties": {"written_against": copy.deepcopy(
-                            req["meaning"]["properties"]["written_against"])}},
             "formal_status": {"type": "string", "enum": sorted(set(
                 props["invariants"]["items"]["properties"]["formal_status"]["enum"]) | set(
                 props["properties"]["items"]["properties"]["formal_status"]["enum"]))},
@@ -1860,7 +2198,7 @@ def source_schemas(area_schema):
         "description": (
             "GENERATED by `tools/spec_source.py schemas --write` from "
             "area.schema.json. The ledger of an area: what the tools recorded "
-            "(check results, witness and refusal verdicts, freshness pins, "
+            "(check results, witness verdicts, freshness pins, "
             "verification log, traceability, provenance) and the three triage "
             "ledgers. Written through spec_source.save_area(), which refuses to "
             "change anything authored."),
@@ -1990,6 +2328,83 @@ def _cmd_roundtrip(args):
     return 1 if diffs else 0
 
 
+def prune_removed_text(text):
+    """A model's text with every removed tag (REMOVED_TAGS) dropped, together
+    with its continuation lines. Returns (text, number of tags dropped)."""
+    out, dropping, dropped = [], False, 0
+    for line in (text or "").splitlines(keepends=True):
+        m = DOC_RE.match(line)
+        if not m:
+            dropping = False
+            out.append(line)
+            continue
+        body = m.group(1).strip()
+        tm = TAG_RE.match(body)
+        if tm:
+            dropping = tm.group(1) in REMOVED_TAGS
+            dropped += dropping
+            if dropping:
+                continue
+        elif not body:
+            dropping = False
+        elif dropping:
+            continue
+        out.append(line)
+    return "".join(out), dropped
+
+
+def prune_removed_records(records):
+    """The ledger without removed per-id fields. Returns (records, count)."""
+    records = copy.deepcopy(records or {})
+    n = 0
+    for entry in (records.get("by_id") or {}).values():
+        for gone in REMOVED_FIELDS:
+            if isinstance(entry, dict) and gone in entry:
+                del entry[gone]
+                n += 1
+    for rid in [k for k, v in (records.get("by_id") or {}).items() if v == {}]:
+        del records["by_id"][rid]
+    return records, n
+
+
+def _cmd_prune_removed(args):
+    """Drop the tags and ledger fields of removed features from an area's
+    files — @meaning, @meaning-author, @refusal, @blocking, @unchanged and
+    their `meaning` / `refusal` ledger entries. Dry run unless --write."""
+    root = Path(args.root)
+    names = [args.area] if args.area else list_areas(root)
+    total = 0
+    for name in names:
+        intent = json.loads(intent_path(root, name).read_text(encoding="utf-8"))
+        changes = []
+        for rel in (model_file(intent, name), alloy_file(intent)):
+            if not rel:
+                continue
+            path = specs_dir(root) / rel
+            if not path.exists():
+                continue
+            text, n = prune_removed_text(path.read_text(encoding="utf-8"))
+            if n:
+                changes.append(f"{rel}: {n} tag(s)")
+                if args.write:
+                    path.write_text(text, encoding="utf-8")
+        rpath = records_path(root, name)
+        if rpath.exists():
+            recs, n = prune_removed_records(json.loads(rpath.read_text(encoding="utf-8")))
+            if n:
+                changes.append(f"{rpath.name}: {n} ledger field(s)")
+                if args.write:
+                    write_records(root, name, recs)
+        total += len(changes)
+        for c in changes:
+            print(f"{name}: {c}")
+    if not total:
+        print("nothing to prune")
+    elif not args.write:
+        print("(dry run — pass --write to apply)")
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -2003,9 +2418,16 @@ def main(argv=None):
     sp = sub.add_parser("schemas", help="(re)generate intent/records schemas")
     sp.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
     sp.add_argument("--write", action="store_true")
+    sp = sub.add_parser("prune-removed",
+                        help="drop tags and ledger fields of removed features "
+                             "(@meaning, @refusal, ...)")
+    sp.add_argument("area", nargs="?", help="default: every area")
+    sp.add_argument("--root", default=".")
+    sp.add_argument("--write", action="store_true")
     args = p.parse_args(argv)
     return {"derive": _cmd_derive, "migrate": _cmd_migrate,
-            "roundtrip": _cmd_roundtrip, "schemas": _cmd_schemas}[args.cmd](args)
+            "roundtrip": _cmd_roundtrip, "schemas": _cmd_schemas,
+            "prune-removed": _cmd_prune_removed}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -66,10 +66,6 @@ module subscription {
   /// @when a subscription is cancelled mid-period
   /// @unwanted
   /// @shall issue no refund
-  /// @meaning Cancelling part-way through a paid period never refunds the
-  ///   unused part. The customer keeps the access instead of getting money
-  ///   back.
-  /// @meaning-author agent
   /// @enforced-by INV-002
   /// @witness skipped: A prohibition has no witness trace — there is no
   ///   reachable state in which 'no refund happened' becomes visible. INV-002
@@ -82,10 +78,6 @@ module subscription {
   /// @determinism nondeterministic
   /// @when a cancellation succeeds
   /// @shall confirm to the customer by email or in-app notice
-  /// @meaning A successful cancellation may be confirmed to the customer, by
-  ///   email or in the app. Which one, or whether to confirm at all, is left
-  ///   open on purpose.
-  /// @meaning-author agent
   action cancel_subscription(c: CustomerId): bool = all {
     status.get(c) == Active,
     lastBillingResult' = lastBillingResult.set(c, Success),
@@ -217,9 +209,6 @@ module subscription {
   /// @while the Subscription is Active
   /// @when the customer cancels
   /// @shall stop future billing and mark the Subscription Cancelled
-  /// @meaning Cancelling a live subscription stops it being billed again and
-  ///   records it as cancelled.
-  /// @meaning-author agent
   /// @error BillingProvider.SUCCESS idempotent: Cancelled
   /// @error BillingProvider.DECLINED idempotent: NO_CHANGE — surface the
   ///   provider's reason to the customer; the subscription stays Active
@@ -234,9 +223,6 @@ module subscription {
   /// @modality must
   /// @while the Subscription is Cancelled and the paid period has not ended
   /// @shall keep access available
-  /// @meaning Cancelling does not cut the customer off immediately: they keep
-  ///   what they already paid for until the paid period runs out.
-  /// @meaning-author agent
   /// @via cancel_subscription
   val shall_REQ_002: bool =
     status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))
@@ -250,10 +236,6 @@ module subscription {
   /// @while the Subscription is Cancelled
   /// @when the customer cancels again
   /// @shall make no further change and report success
-  /// @meaning Cancelling something already cancelled is treated as a no-op
-  ///   that succeeded, not as an error — a retried or duplicated request
-  ///   cannot do extra damage.
-  /// @meaning-author agent
   /// @via cancel_again
   val shall_REQ_003: bool =
     status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))
@@ -267,10 +249,6 @@ module subscription {
   /// @when the billing provider times out during cancellation
   /// @unwanted
   /// @shall leave the Subscription Active and billing enabled
-  /// @meaning If the billing provider does not answer during a cancellation,
-  ///   the subscription stays live and billed. The system does not record a
-  ///   cancellation it could not confirm.
-  /// @meaning-author agent
   /// @error BillingProvider.TIMEOUT idempotent: NO_CHANGE — the subscription
   ///   stays Active and billable; retry
   /// @error BillingProvider.NETWORK_ERROR idempotent: NO_CHANGE — the request
@@ -287,9 +265,6 @@ module subscription {
   /// @while the Subscription is Cancelled
   /// @when the paid period ends
   /// @shall withdraw access and mark the Subscription Expired
-  /// @meaning When the paid period ends on a cancelled subscription, access
-  ///   stops and the subscription is recorded as expired.
-  /// @meaning-author agent
   /// @via expire_period
   val shall_REQ_005: bool =
     status.keys().exists(c => status.get(c) == Expired and not(accessUntilPeriodEnd.get(c)))

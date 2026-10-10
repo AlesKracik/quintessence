@@ -3,6 +3,7 @@
   "name": "Sign in",
   "actor": "User",
   "description": "User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.",
+  "run": "auth.signInJourney",
   "steps": [
     { "ref": "auth-ui.UI-001" },
     { "ref": "auth.REQ-001" },

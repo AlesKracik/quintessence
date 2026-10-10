@@ -16,6 +16,8 @@ flowchart LR
 - **EARS** constrains each requirement to one of five sentence patterns, so "precise" is checkable (filled fields), not vibes.
 - **Witness traces** prove every claimed behavior is actually reachable in the model — a verified-but-vacuous spec (invariants trivially true over an empty state space) cannot slip through.
 - **Conformance replay** runs the model's own traces against the real code through a thin adapter — a requirement is *verified* only when its witness trace replays green.
+- **No free-floating claims.** Every annotation is either generated from the model or checked against it: the readback renders sentences and example rows from the model, and the encoding checks fail a tag the model does not implement.
+- **Humans judge behaviors, not translations.** Reviewers read concrete Given / When / Then rows, organized as journeys that run end to end — not prose that restates a formula.
 
 ### The arrows are dependencies, not a schedule
 
@@ -222,7 +224,6 @@ module auth {
   /// @status specified
   /// @when a registered user submits valid credentials
   /// @shall create an Active session owned by that user
-  /// @meaning Signing in with correct credentials gives the user a live session of their own.
   /// @via login
   /// @pre not(_prevSessions.keys().contains(_lastSid))
   def shall_REQ_001(_lastSid: SessionId, _lastUid: UserId): bool =
@@ -230,8 +231,15 @@ module auth {
 
   /// @example EX-001
   /// Sign in, then out
-  /// @refs REQ-001, REQ-002
-  run happyPath = init.then(login("alice", "s1")).then(logout("alice", "s1"))
+  /// @refs REQ-002
+  run happyPath = init.then(login("alice", "s1")).then(logout("s1"))
+    .expect(statusOf(sessions, "s1") == LoggedOut)
+
+  /// @example EX-002
+  /// A locked account cannot sign in, and nothing moves
+  /// @refs REQ-005
+  run lockedLoginRefused = lockedBob.then(login("bob", "s2").fail())
+    .expect(not(sessions.keys().contains("s2")))
 }
 ```
 
@@ -279,8 +287,7 @@ module auth {
     { "date": "2026-05-14T10:00:00Z", "spec_sha": "abc1234", "code_sha": "def5678", "status": "pass", "drift_detected": false, "summary": "4 scenarios, 0 failures" }
   ],
   "by_id": {
-    "REQ-001": { "witness": { "status": "witnessed", "trace": "auth/traces/REQ-001.itf.json", "checked_at": "2026-05-15T12:00:00Z", "model_sha": "ce84c1a2…" },
-                 "meaning": { "written_against": "5b59afac…" } },
+    "REQ-001": { "witness": { "status": "witnessed", "trace": "auth/traces/REQ-001.itf.json", "checked_at": "2026-05-15T12:00:00Z", "model_sha": "ce84c1a2…" } },
     "INV-001": { "formal_status": "verified" }
   }
 }
@@ -300,20 +307,20 @@ The JSON that remains holds only what a model cannot say, and what no human shou
 
 | File | Holds | Why there |
 |---|---|---|
-| `<area>.qnt` doc comments | requirements (EARS fields, meaning, modality, determinism, type, fit criterion, `@error` outcomes, refusal artifact and blocking state, delta, discharge, extraction evidence), invariants, properties, constants, examples, and an interactive surface's screens and navigation edges | every one is checkable against a declaration; on that declaration, the reviewer reads the claim and the formula as one diff |
+| `<area>.qnt` doc comments | requirements (EARS fields, modality, determinism, type, fit criterion, `@error` outcomes, delta, discharge, extraction evidence), invariants, properties, constants, examples, and an interactive surface's screens and navigation edges | every one is checkable against a declaration; on that declaration, the reviewer reads the claim and the formula as one diff |
 | `<area>.intent.json` | kind, spans, version, status, purpose, brief, scope, boundary, concepts (entities, closed worlds), externals, assumptions, decisions, open questions, state machines, architecture, `ui_components`, `formal_model` and `conformance` config | none of it is about one declaration; some of it (a closed entity's state list, a state machine) is a claim *about* the model that must stay independent of the model's text, or it could not catch the model drifting |
-| `<area>.records.json` | `check_results`, witness/outcome/refusal verdicts and traces, `formal_status`, freshness pins (`meaning.written_against`, `brief.written_against`), `verification_log`, `traceability`, `generated_from` / `extracted_from`, and the three triage ledgers | machine-written or ledger-shaped, high-churn, keyed by id or by code fingerprint; in the model, every check run would rewrite the file the check just hashed |
+| `<area>.records.json` | `check_results`, witness/outcome verdicts and traces, `formal_status`, the brief's freshness pin (`brief.written_against`), `verification_log`, `traceability`, `generated_from` / `extracted_from`, and the three triage ledgers | machine-written or ledger-shaped, high-churn, keyed by id or by code fingerprint; in the model, every check run would rewrite the file the check just hashed |
 
 The table is code, not prose: `MODEL_KEYS`, `UI_KEYS`, `RECORD_KEYS` and `MACHINE_PATHS` in `tools/spec_source.py`, from which derive, save, migrate and the two generated schemas are all read.
 
 Choices worth stating:
 
 - **Error outcomes are `@error` tags on the requirement** (`@error BillingProvider.TIMEOUT idempotent: NO_CHANGE — retry`): an error outcome is part of what the requirement promises, and the external×outcome matrix covers a cell only through a requirement, so it travels with it.
-- **Refusal artifacts are tags on the prohibition** (`@refusal`, `@blocking`, `@unchanged`) — the claim "this test drives the code into that state and asserts nothing moved". Whether it passed is `refusal.status` in the ledger.
+- **A refusal is shown by an example, not declared by a tag.** An `@example` whose `@refs` names the prohibition, and whose run attempts the call with `.fail()`, is both the claim and the test — see "Refusal Examples".
 - **The extraction triage ledger is in `records.json`**, with `matrix_triage` and `outcome_triage`. Its rows are keyed by code fingerprint and point into another repository; a doc comment documents a model declaration, and a site is not one. Agent-written verdicts, but ledger-shaped — the one part of `records.json` written by hand.
-- **Freshness pins are in `records.json`**, never in the `.qnt`: a pin is a hash of the requirement's semantic fields (`tools/itf_tools.py pin <area> --req <ID>` writes it), and storing it in the file it hashes would make every re-pin an edit to the claim.
+- **Freshness pins are in `records.json`**, never in the intent file: a pin is a hash of the semantic content the brief describes (`tools/itf_tools.py pin <area> --brief` writes it), and storing it in the file it hashes would make every re-pin an edit to the claim.
 - **Screens and navigation edges are records on the model**, `ui_components` is not. A screen *is* a variant of the screen type and an edge *is* the action that moves the screen variable, so a `screens[]` / `navigation[]` copy in JSON could gain or lose an entry with every check green — nothing tied an edge to the action that takes it. A component's fields and visible states have no declaration in the model; they stay in the intent file.
-- **Check results, witness status and traces are in `records.json`.** `model_sha` hashes the model **without** its `///` records (`spec_source.strip_docs`), so rewording a meaning never stales a trace, while any change to a declaration — a witness host's body included — does.
+- **Check results, witness status and traces are in `records.json`.** `model_sha` hashes the model **without** its `///` records (`spec_source.strip_docs`), so rewording a record never stales a trace, while any change to a declaration — a witness host's body included — does.
 
 ### The grammar
 
@@ -349,7 +356,7 @@ Two routes were open. **Native**: every tool reads doc comments itself, and the 
 
 New, from the sources (`check_sources`, `check_witness_hosts`): `record-grammar` (unknown tag, duplicate id, an `@outcome-of` naming no requirement, malformed `@error`/`@fit`/`@when`), `record-without-host`, `legacy-spec-file`, `witness-host-param-type` (a ghost parameter typed differently from the `@via` action's parameter — the model typechecks, the probe would not bind), `witness-host-without-via`, `constant-value-twice`; and schema validation of the intent file and the ledger against their generated schemas, on top of the view's.
 
-Every cross-check that still applies is unchanged, because lint reads the same view as before: EARS structure and precision, meaning/brief freshness, `quint_ref` resolution (`@via` can still name an action that does not exist), the predicate naming state, binding to the call's ghosts, delta present and kept by the probe, paired invariants, refusal artifacts, modality, scope, externals, assumptions, closed worlds, the EARS↔model bridge, orphan actions, examples, cross-references, journeys and manifests. Three became true by construction and stay as cheap guards: an invariant's `quint_name` resolves (it is the host's name), a constraint's value matches the model (it *is* the model's literal), an example's `quint_run` exists (it is the host).
+Every cross-check that still applies is unchanged, because lint reads the same view as before: EARS structure and precision, brief freshness, `quint_ref` resolution (`@via` can still name an action that does not exist), the predicate naming state, binding to the call's ghosts, delta present and kept by the probe, paired invariants, refusal artifacts, modality, scope, externals, assumptions, closed worlds, the EARS↔model bridge, orphan actions, examples, cross-references, journeys and manifests. Three became true by construction and stay as cheap guards: an invariant's `quint_name` resolves (it is the host's name), a constraint's value matches the model (it *is* the model's literal), an example's `quint_run` exists (it is the host).
 
 ### Migrating a JSON-first area
 
@@ -434,26 +441,15 @@ Why this works as the precision mechanism:
 - **Completeness is checkable.** Every `state`/`trigger` pair feeds the state×event matrix; every happy-path REQ prompts an unwanted counterpart.
 - **Still plain English.** Stakeholders review the rendered sentence; no notation to learn.
 
-`spec-lint` enforces the structural rules: `response` required; `unwanted` requires a `trigger`; no trigger/state/feature at all → WARN "that's an invariant, move it to `invariants[]`" (requirements are behaviors, each demonstrable by a witness trace; always-true statements are Apalache's job). Plus two precision lints:
+`spec-lint` enforces the structural rules: `response` required; `unwanted` requires a `trigger`; no trigger/state/feature at all → WARN "that's an invariant, move it to `invariants[]`" (requirements are behaviors, each demonstrable by a witness trace; always-true statements are Apalache's job). Plus one precision lint that ties the sentence to the model:
 
-- **Ambiguity** — untestable words in `response` ("gracefully", "appropriately", "as needed", "TBD", …) → WARN with "sharpen: what state results, visible where?". A response that can't name its resulting state can never get a witness predicate.
 - **State binding** — `ears.state` that names no declared entity state ("the user is logged in" instead of "the Session is Active") → WARN. Phrasing preconditions with declared state names is what makes the requirement↔state-machine link checkable and matrix triage mechanical.
 
-### The Meaning: what the requirement says, in plain words
+### What a reviewer reads
 
-EARS fields speak the system's vocabulary. That is what makes them translate into Quint — but it also means they will name identifiers, fields and exception classes, and a requirement carried by those names is not review material:
+The readback leads every requirement with its **EARS sentence, rendered from the fields** — never with prose written beside it. Under the sentence come its **example rows**: Given / When / Then, each derived from a Quint `run` (see "Examples"). A reviewer who bounces off `NonMatchingTopologyException` reads `update(policy = gold) — refused | policy == silver` instead, and that row is exactly what `quint test` executes.
 
-> If an update request carries a `serviceLevelPolicyId` different from the persisted one, then the system shall refuse with `NonMatchingTopologyException` on `serviceLevelPolicyId`.
-
-Every noun in that sentence is a thing only the implementation can check. A reviewer nodding at it is nodding at a name. So each requirement carries its behavior twice: `ears`, for the model and the code, and `meaning.text`, for the human:
-
-> If an update asks for a different service-level policy than the one already stored, the system refuses the change and leaves the stored policy in place.
-
-The readback leads with the meaning and moves the EARS sentence into the collapsed details, so what was actually specified stays one click away and the distillation can be checked against it. Constraint values resolve inline in either wording.
-
-**Distilling is a judgement, so it is authored, not derived.** No pattern match can decide what `NonMatchingTopologyException` amounts to — only something that read the requirement can. That makes it prose, and prose gets the same treatment every other unverifiable claim gets in this methodology: a **freshness pin**, per requirement. `meaning.written_against` records the sha of the requirement it restates (`tools/itf_tools.py meaning-sha <area> [--req <ID>]`), covering the EARS fields, modality, determinism, type and fit criterion — the things a meaning could be wrong about — and nothing else, so re-running the checker never unpins prose it cannot have affected. Editing one requirement unpins that requirement's meaning and no other's.
-
-A **stale** meaning is not rendered. The headline falls back to the EARS sentence and the page says the summary went stale and what it used to say — a distillation of an earlier version of the requirement is worse than the mechanical sentence, because it reads like it was reviewed. `spec-lint` grades both a missing and a stale meaning like every other precision lint: WARN while authoring, FAIL from `in-review` on (`raw` requirements are exempt — they have no fields to distil yet).
+This replaced an authored plain-words `meaning` per requirement. The meaning was pinned against the requirement it restated, but a pin proves prose was not edited since, not that it is right — and it was the sentence reviewers read first. What humans agree to now is either rendered from the model (the sentence, the rows, the guarding invariants) or a concrete case they can check by hand. The one authored prose section left is the area's brief.
 
 ### Modality: MUST, MAY, FORBIDDEN
 
@@ -462,10 +458,12 @@ EARS says what happens. **Modality says with what force** — and the force deci
 | `modality` | Means | Evidence required |
 |---|---|---|
 | `must` (default) | Exactly this outcome is required. | One witness trace, as always. |
-| `may` | Several outcomes are permitted and the choice is **not the spec's to make**. | One witness **per permitted outcome** (`witness.outcomes[]`). |
+| `may` | Several outcomes are permitted and the choice is **not the spec's to make**. | One witness **per permitted outcome** (`witness.outcomes[]`), each found with the other outcomes false. |
 | `forbidden` | The behavior must never occur. | No trace can exist for a non-event — it names the invariant that carries the proof (`witness.enforced_by`). |
 
 The `may` rule exists because of a specific, common failure: a spec permits two behaviors, one witness trace is found for whichever the author happened to think of first, and the permission silently becomes a requirement. Everyone downstream then treats the other legal outcome as a bug. Requiring a witness per outcome makes latitude survive contact with verification — `spec-lint` FAILs a `may` with fewer than two outcomes, and `spec-record` runs a separate probe for each.
+
+**Each outcome's probe requires the others to be false.** Without that, one predicate loose enough to hold for every outcome ("the subscription is Cancelled" for both "confirm by email" and "confirm in-app") lets one trace witness them all, and the latitude is "proven" while none of it is shown. The generated probe for outcome *k* is `(pred_k) and not(pred_j) …` for every other outcome *j*, so two outcomes the state cannot tell apart come back `no-witness`. Two outcomes with literally the same predicate FAIL lint before anything runs (`may-outcomes-identical`).
 
 `forbidden` replaces prose with a reference. The old escape hatch — `witness: { status: "skipped", justification: "rejection — enforced by INV-002" }` — still works, but a sentence cannot be checked and an ID can: `enforced_by: "INV-002"` FAILs when the invariant does not exist, and the readback prints the link instead of the excuse. At review time `spec-lint` WARNs on the untyped form and points at the typed one.
 
@@ -512,7 +510,7 @@ Each requirement carries a `witness` block:
 | Every witness bound to its call | `spec-lint` (param ghosts vs `action_params`) | the postcondition may hold of state another call produced |
 | Every witness carries a delta | `spec-lint` + the probe's third conjunct | the step may have changed nothing |
 | Every numeric bound two-sided | `constraints[].paired_invariant` | the threshold could fire early and nothing would notice |
-| Every rejection has an artifact | `spec-record verify` preflight | replay covers no prohibition |
+| Every rejection shown by an example | `spec-lint` (`refusal-without-example`) + `spec-record verify` preflight | nothing shows the call being refused |
 
 **Rejection requirements have no witness — by design.** "If the account is Locked, login shall be rejected" produces no state change; reachability probes can't demonstrate a non-event. The rule: encode the rejection as (or pair it with) the **invariant that stays true** (`noSessionWhileLocked`), set `modality: "forbidden"` and point `witness.enforced_by` at that invariant. `/spec-check`'s recorder then writes `status: "skipped"` for you — the skip is a *result*, not something you author. Don't delete the requirement and don't force a meaningless predicate: the invariant carries the proof, `enforced_by` carries the checkable link back to it. The prose form (`justification: "rejection — enforced by INV-002"`) still discharges the gate, but only the typed form FAILs when the invariant it names does not exist.
 
@@ -616,6 +614,7 @@ One bounds the threshold from above (it fires), the other from below (it does no
 
 1. `/spec-code-generate` generates a **conformance adapter** (one method per Quint action calling the real API; one getter per Quint var returning the abstracted observable code state; a `reset()`) and a **replay harness**. It also generates **tampered self-test traces — one per observable Quint var** (`_selftest.tampered.<var>.itf.json`), each a copy of a witness trace with that var's final value deliberately corrupted; the harness must FAIL on every one. One tamper would only prove the harness catches divergence on the single var it flipped — a getter echoing expectations on a *different* var would slip through. A harness that passes any tampered trace has a broken adapter (getters echoing expectations, `reset()` not resetting) and all its green results are void.
 2. `/spec-code-verify` replays every witness trace (refusing stale ones): drive the code step-by-step with the trace's actions and ghost-recorded parameters, after each step assert the code state equals the trace's model state under the adapter mapping.
+   It replays the **example and journey runs** the same way: `quint test --out-itf=<dir>/{test}.itf.json` writes each run's trace, and a `.fail()` step is replayed as a call the implementation must refuse with no observable var moving. That is where refusals and end-to-end flows get their code-side evidence.
 3. **A requirement is `verified` if and only if its witness trace replays green against the implementation.**
 
 Wire `conformance.command` into the **code repo's own CI** as well — the harness is an ordinary test file, so code changes that break model conformance fail on the code PR with no spec tooling installed.
@@ -639,29 +638,34 @@ Gap (1) is **narrower than it used to be, and will never close.** No tool can de
 
 ---
 
-## Refusal Artifacts: Code-Side Evidence for Prohibitions
+## Refusal Examples: Code-Side Evidence for Prohibitions
 
-A rejection produces no state change, so it correctly has **no witness trace** — and conformance replay only replays witness traces. The consequence is uncomfortable and was true until now: **the requirement class most likely to be wrong in the implementation had zero code-side evidence.**
+A rejection produces no state change, so it correctly has **no witness trace** — and witness replay only replays witness traces. Left there, **the requirement class most likely to be wrong in the implementation has zero code-side evidence**: a `login()` written with no locked-account check replays every happy-path trace green, passes every tampered self-test, and `/spec-code-verify` reports pass.
 
-Concretely: a `login()` written with no locked-account check replays every happy-path trace green, passes every tampered self-test, and `/spec-code-verify` reports pass. The model-side proof (`INV-002 noSessionWhileLocked`) says the *model* forbids it. Nothing said the code did.
+The evidence is an **example** — a run that drives the model into the blocking state, attempts the call with `.fail()`, and asserts that nothing moved:
 
-A refusal artifact is the missing half:
-
-```json
-"refusal": {
-  "artifact": "tests/auth/refusal/locked-login.test.ts",
-  "blocking_state": "accountStatus[uid] == Locked",
-  "unchanged": ["sessions", "userActiveSession", "failedAttempts"]
-}
+```quint
+  /// @example EX-006
+  /// A locked account cannot sign in, and nothing moves
+  /// @refs REQ-005
+  run lockedLoginRefused = init
+    .then(login_failed("bob")) … ×5
+    .then(login("bob", "s2").fail())
+    .expect(isLocked("bob") and attemptsOf("bob") == 5
+            and not(sessions.keys().contains("s2")))
 ```
 
-It drives the code into the blocking state, attempts the call, and asserts **both** halves: that it is refused, **and** that no observable var moved. The second half is not decoration — a rejection that throws after incrementing the counter is not a rejection.
+`quint test` fails the run if the call goes through, so the model side is checked; the code repo's conformance harness replays the run, so the code side is too — the `.fail()` step must be refused by the implementation, and the `.expect` asserts both halves: refused, **and** no observable var moved. A rejection that throws after incrementing the counter is not a rejection. The readback shows it as a row: `login_failed(bob) × 5 | login(bob, s2) — refused | isLocked("bob") and …`.
 
-**Keyed on a deliberately skipped witness, not on `ears.unwanted` alone.** Much unwanted-behavior handling *does* change state — a timeout that moves the order to `PENDING` is witnessable and already covered by replay. The distinguishing property of a refusal is that there is nothing to witness. `is_rejection()` lives in `itf_tools.py` so lint, `spec-record` and the readback cannot drift apart about which requirements owe an artifact.
+In a **total-action** model — every action always fires and records a result (`Refused`, `Conflict`, …) instead of being disabled by its guard — a refusal is an ordinary step whose recorded result is the refusal, and the same example shape applies without `.fail()`.
 
-**Not every skip is a refusal.** A pure calculation — effort is the sum of issue effort, TCV by priority — has no transition either, but nothing is being *refused*; asking it for a refusal artifact and a list of unchanged vars is a category error. So a skipped witness counts as a rejection only on a requirement that is `forbidden` or `@unwanted`. Any other skipped requirement is **computed** (`is_computed()`): it owes `verified_by` — `/// @verified-by <test path>`, the unit test that checks the calculation — and lint WARNs `computed-without-verified-by` (FAIL from in-review) when it names none. The readback renders it as a computed requirement with its test, not as a rejection.
+This replaced a separate refusal *artifact* (a hand-written test file named by `@refusal`, with `@blocking` and `@unchanged` tags): a second, unchecked description of what the example now states and runs.
 
-`spec-record verify` refuses to report success while a rejection has no artifact on disk, and marks `refusal.status` from the conformance run. That is **file-granular**: a green suite means the artifact ran green along with everything else. Recorded as such rather than pretending to per-requirement resolution.
+**Keyed on a deliberately skipped witness, not on `ears.unwanted` alone.** Much unwanted-behavior handling *does* change state — a timeout that moves the order to `PENDING` is witnessable and already covered by replay. The distinguishing property of a refusal is that there is nothing to witness. `is_rejection()` lives in `itf_tools.py` so lint, `spec-record` and the readback cannot drift apart about which requirements owe a refusal example.
+
+**Not every skip is a refusal.** A pure calculation — effort is the sum of issue effort, TCV by priority — has no transition either, but nothing is being *refused*. So a skipped witness counts as a rejection only on a requirement that is `forbidden` or `@unwanted`. Any other skipped requirement is **computed** (`is_computed()`): it owes `verified_by` — `/// @verified-by <test path>`, the unit test that checks the calculation — and lint WARNs `computed-without-verified-by` (FAIL from in-review) when it names none.
+
+`spec-lint` WARNs `refusal-without-example` while authoring and FAILs it from `in-review` on; `spec-record verify` names every rejection no example shows in its preflight.
 
 ### The property-based tier
 
@@ -757,29 +761,39 @@ Two deliberate design points:
 
 ---
 
-## Worked Examples: Seeds and Regressions, Never Proof
+## Examples: Rows a Reviewer Reads, Runs the Checker Executes
 
-`examples[]` holds author-written scenarios in `given → when → expect` form, compiled to a Quint `run` and replayed through the same conformance harness as witness traces.
+An example is a Quint `run` with an `@example` record on it. It is three things at once:
 
-```json
-{
-  "id": "EX-001", "title": "Cancel mid-period: billing stops, access stays",
-  "given":  { "status": "Active", "billingEnabled": true },
-  "when":   { "action": "cancel_subscription", "args": { "c": "alice" } },
-  "expect": { "status": "Cancelled", "billingEnabled": false, "accessUntilPeriodEnd": true },
-  "refs": ["REQ-001", "REQ-002"], "quint_run": "cancelHappyPath"
-}
+- **a row in the readback** — Given / When / Then, *derived* from the run (`spec_source.example_row`): the run's calls before the last are Given (repeated calls folded, `login_failed(bob) × 4`), its last call is When (`— refused` for a `.fail()`), its trailing `.expect(..)` is Then. Nothing is typed beside the run, so the row cannot say one thing while the run does another;
+- **a test** — `quint test` executes it against the model;
+- **a conformance case** — the code repo's harness replays it against the implementation, exactly like a witness trace.
+
+```quint
+  /// @example EX-003
+  /// The fifth failure locks the account
+  /// @refs REQ-003
+  run lockoutScenario = init
+    .then(login_failed("bob")) … ×5
+    .expect(isLocked("bob"))
 ```
 
-**They are not the proof, and the distinction matters.** A witness trace is *found by the checker* and demonstrates that a behavior is reachable at all; an example only asserts the one case somebody thought of. A spec whose evidence is examples is a spec tested against its author's imagination.
+renders, at REQ-003 and at every journey step that names REQ-003, as
 
-What they are genuinely good for:
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-003 — The fifth failure locks the account | login_failed(bob) × 4 | login_failed(bob) | `isLocked("bob")` |
 
-- **Brownfield capture.** Production behavior is known long before a model exists. An example records it in a form that survives being formalized later.
+An example hosted on an **action** instead of a run (before a model exists, or for brownfield capture) carries `@given {json}`, `@when <action> [{json args}]` and `@expect {json}`, and renders from those.
+
+**They are not the proof of reachability, and the distinction matters.** A witness trace is *found by the checker* and shows a behavior is reachable at all; an example pins the one case it states. What examples are for:
+
+- **Review.** A concrete row is the most checkable thing a human can be shown: `withdraw(40) → balance 60` is right or wrong at a glance, where a formula is a thing to audit.
+- **Refusals.** The only evidence a prohibition gets (see "Refusal Examples").
+- **Brownfield capture.** Production behavior is known long before a model exists; an example records it in a form that survives being formalized later.
 - **Regression pinning.** A counterexample that once shipped becomes `EX-00N` with `source: "regression-for-REQ-004"`, and stays checkable.
-- **Review.** A stakeholder who bounces off EARS will read `withdraw(40) → balance 60`.
 
-`spec-lint` holds the references: the action must exist in the sidecar, `quint_run` must exist, `refs[]` must resolve, and an example that claims nothing WARNs — it exercises the action while asserting nothing. A run ending in `.expect(<cond>)` claims `<cond>`: that is its expectation, derived from the model, so no `@expect` copy is needed beside it.
+`spec-lint` holds the references: the action must exist in the model, `quint_run` must exist, `refs[]` must resolve, and an example that claims nothing WARNs — it exercises the action while asserting nothing.
 
 ---
 
@@ -1129,6 +1143,26 @@ The next step up would be typed EARS slots — `{"var": "accountStatus", "is":
 this paragraph mean this Quint" to "is this slot right". Not implemented;
 noted because it is where this goes.
 
+### Encoding checks: a claim the model does not encode is not a claim
+
+The bridge asks whether a sentence and its action talk about the same
+variables. Four more checks close the places where an annotation used to be
+checked only for **presence** — the tag exists, the name resolves — while
+nothing looked at whether the model does what it says. Each WARNs while
+authoring and FAILs from `in-review` on.
+
+| Check | The annotation says | What must be true of the model |
+|---|---|---|
+| `constant-cited-not-read` | a requirement's sentence names a constant (`expires after MAX_SESSION_AGE`) | its `@via` action reads that constant, directly or through a helper it calls (`spec_source.name_closure`) |
+| `constant-unread` | a `@con` constant is declared | some action, invariant or property reads it |
+| `error-outcome-not-modeled` / `-not-produced` | `@error Provider.DECLINED: NO_CHANGE` | the model has a value for that answer (a variant `DECLINED` / `Declined`) **and** some action produces it — otherwise the effect is prose and the external×outcome matrix counts a cell nobody exercises |
+| `spans-without-import` | an area `spans` another | its model imports that area — otherwise every guard on it is prose, and an invariant about the dependency's state is proven about a local stand-in it never changes |
+
+These are found from the model's own text (`spec_source.declarations`), so
+they run in Tier 1 with no Quint CLI. They are the first half of the rule
+the whole framework now follows: **no free-floating claims** — every
+annotation is either generated from the model or checked against it.
+
 ## Architecture (Layers 0–6)
 
 Architecture is **separate from behavior**. The spec says what the system does; architecture says how it's realized. Six layers compose by inheritance; each is optional.
@@ -1221,15 +1255,17 @@ Lifecycle is git-shaped, no extra ceremony: slug ↔ suggested branch `change/<s
 
 `spec-lint` validates manifests on every run (full or single-area): schema, slug↔filename, targets resolve to real specs, no dangling IDs, no stored phase flags (FAIL — status is derived, never stored). Landed/abandoned manifests are history and only need to parse — later changes may legitimately remove IDs they reference.
 
-## Journeys: Use Cases in Temporal Order
+## Journeys: Use Cases in Temporal Order, Run End to End
 
 A **journey** (`specs/journeys/<slug>.journey.json`, `schemas/journey.schema.json`) is the use-case mechanism: a named user-visible flow whose `steps[]` reference requirement IDs in qualified `<area>.<ID>` form, in the order the user experiences them. Most journeys live inside one area; some cross boundaries — same shape either way, so there is exactly one place flows live. Same overlay discipline as change manifests: references only, never content; delete every journey and the specs stay complete.
 
 **Journeys are born at capture time, in both directions.** In greenfield elicitation, one story told is one journey file — the story already arrives with a name and an order, so writing it down costs nothing and reconstructing it later from a flat ID list is guesswork. In brownfield, the order is in the call graph instead of in someone's memory: `/spec` deduces one journey per reachable entry point (route handler, CLI command, public method, queue consumer) as part of reverse engineering, with the extracted requirements as steps in call order, and **updates** those journeys on re-extraction rather than duplicating them — added, removed and reordered steps land in the extraction diff, and a journey whose entry point is gone is reported, not deleted. Journeys are also edited directly via `/spec _journeys/<name>`. A journey step with no matching REQ is a gap: capture the requirement in its owning area first.
 
-Readbacks are where journeys pay off: the per-area "What the System Does" groups requirements as **journey slices** — a who/story/route card per journey (the route is the whole flow as marked, linked hops, so the shape is visible before any requirement is read), then this area's steps in flow order under a `Step n of m` marker, foreign steps as one-line connectors into their own area, and the project-wide readback renders each journey as a step table with status marks and links — review reads as flows a human walks, not ID-sorted lists.
+**A journey is executable.** Its `run` names the Quint run that walks the flow end to end (`"run": "auth.signInJourney"`): `quint test` executes it, the code's conformance harness replays it, and `spec-lint` checks that it calls each step's action in the journey's order (`journey-run-order`) — a run that skips a step, or takes them out of order, FAILs. Steps in another area are covered only through qualified calls (`auth::login(..)`), which needs a model that imports that area; until then the readback says which steps the run leaves outside. A journey with no run is a picture of a flow rather than a checked one: `journey-not-executable` WARNs, and FAILs once any of its areas is `in-review`.
 
-Journeys carry no formal verification obligation (v1 is a documentation/review layer); a joint-reachability witness across modules is a natural later extension. `spec-lint` validates them: unique names, every ref resolves, no duplicate steps.
+**Each step carries its example rows.** A step lists `examples` explicitly, or shows every example whose `@refs` names the step's requirement. An example whose last call is not the step's own action is flagged (`journey-example-off-step`), and a step with no rows is reported (`journey-step-without-example`): the readback would show the step with nothing concrete under it.
+
+Readbacks are where journeys pay off. The per-area "What the System Does" groups requirements as **journey slices**: a who/story/route card per journey, with a **Runs as** line saying whether the flow is checked end to end (✓ the run and how many steps it walks, ✗ where it breaks, ⚠ no run yet), then this area's steps in flow order under a `Step n of m` marker. Each step shows the EARS sentence, its example rows, and **Guarded by** — the invariants that read what the step's action changes, derived from the model. Foreign steps are one-line connectors into their own area, and the project-wide readback renders each journey as a step table with status marks and links. Review reads as flows a human walks, each step concrete, not as ID-sorted lists. `spec-lint` also validates the basics: unique names, every ref resolves, no duplicate steps.
 
 ---
 
@@ -1322,7 +1358,7 @@ The code already made every decision an elicitation session would have to ask ab
 | branch condition | `ears.state` / `ears.trigger` |
 | `catch` per dependency | `externals[].outcomes[]` + `error_outcomes[]` |
 | enum / status column | entity `states[]` + `closed: true` |
-| early return / throw | `modality: "forbidden"` + `refusal.artifact` |
+| early return / throw | `modality: "forbidden"` + an example that shows the refusal |
 | an observable choice already made | `DEC-NNN` with `affects[]` |
 | a genuinely free choice | `modality: "may"`, one outcome per branch |
 
@@ -1504,7 +1540,6 @@ requirement.status:   raw → needs-validation → specified → verified
 requirement.witness.status: not-run → witnessed | no-witness | skipped
                       (modality "may": witnessed only when EVERY witness.outcomes[] entry is)
 requirement.modality: must (default) | may | forbidden
-requirement.refusal.status: not-run → passing | failing   (code-side evidence for a prohibition)
 invariant.formal_status: specified | not-run → verified            (bounded ✓ — valid only to this
                                                           check's own checks[].steps)
                                   → verified-inductive   (proven over ALL reachable states; proof: inductive)
@@ -1594,7 +1629,7 @@ Four consequences worth knowing:
 
 ### spec-lint
 
-`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; ambiguous-wording and state-binding on `ears.state`/`response`, and a missing or stale per-requirement `meaning` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; a discharge carried at any status *other* than `skipped` → FAIL (`justification-without-skip`), reported as the missing status rather than as a missing predicate; an `over: "probes"` invariant with no `predicate` → FAIL (`invariant-over-probes-without-predicate`) — the probe generator has nothing to emit, so the val exists nowhere — and a `predicate` on an `over: "model"` invariant → WARN, since nothing reads it there; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), the EARS↔model bridge (a precondition the action never reads, a response promising a state the action never writes or never builds, a declared state no assignment can produce — see "The EARS↔Model Bridge"), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so instead of silently skipping schema validation — a PARTIAL banner at the top of the report and on the total line, `"partial": true` in `--json` — and `tools/check-tooling.sh` offers to install it (`--install` does it unasked), and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
+`tools/spec-lint.py` checks each area for: missing required fields, ID format violations, broken cross-references (`auth.REQ-001` pointing at nonexistent IDs), EARS structure (pattern-required fields; WARN on unstructured requirements past `raw`; state-binding on `ears.state` — **WARN while authoring, FAIL once the area is `in-review`/`approved`**, so "approved" means precise, not precise-ish), the encoding checks (a cited constant its action never reads, an unread constant, an error outcome the model never produces, a `spans` without an import — see "Encoding checks"), rejections no example shows, fit criteria (non-functional REQ without `fit_criterion` → FAIL past raw), witness obligations (no `witness.predicate` on a functional REQ past draft → **FAIL** — the mechanized vagueness gate: a response you can't write a boolean witness for is too vague to verify; a **constant** predicate (`true`) or one **naming no state variable** → FAIL — it witnesses nothing, degrading "every claim a witness" to "every action fires"; a predicate naming no var its own `quint_ref` action assigns → WARN; recorded trace file missing/invalid → FAIL; stale or missing `model_sha` on a witnessed trace → FAIL; a `skipped` witness carrying neither `enforced_by` nor a `justification` → FAIL, while a prohibition's typed `enforced_by` discharges it and is exempt from the predicate gate — a non-event has nothing to witness; a discharge carried at any status *other* than `skipped` → FAIL (`justification-without-skip`), reported as the missing status rather than as a missing predicate; an `over: "probes"` invariant with no `predicate` → FAIL (`invariant-over-probes-without-predicate`) — the probe generator has nothing to emit, so the val exists nowhere — and a `predicate` on an `over: "model"` invariant → WARN, since nothing reads it there; `approved` with any unwitnessed requirement → FAIL; `no-witness` result → FAIL), unresolved open questions blocking approval, unverified critical invariants, sidecar actions unreachable from `init`/`step` and the area's own references (`orphan-action`, WARN), a `formal_model.quint_file` aimed at a sidecar that is missing or carries no module declaration (WARN while authoring, FAIL from `in-review` on), the EARS↔model bridge (a precondition the action never reads, a response promising a state the action never writes or never builds, a declared state no assignment can produce — see "The EARS↔Model Bridge"), components declared but not implemented, referenced patterns/protocols that don't exist, topology orphans, change manifests and journeys (validated on every invocation, including single-area runs; a journey's run must walk its steps in order, and each step's examples must resolve and fit the step), drift between architecture and `traceability[]`. When the `jsonschema` lib is missing, lint says so instead of silently skipping schema validation — a PARTIAL banner at the top of the report and on the total line, `"partial": true` in `--json` — and `tools/check-tooling.sh` offers to install it (`--install` does it unasked), and when `QUINT_IR_ENGINE=cli` is set but the Quint CLI is absent it FAILs `quint/engine-unavailable` — without that, every sidecar parses as "no module" and every check reading one passes without being computed. `spec-matrix` and `spec-record` refuse outright in that state: an empty event axis would make `--strict` exit 0 over a matrix with no cells in it, and the recorder would write a ledger of verdicts nothing computed. A sidecar that exists but yields no module is always a FAIL (`sidecar-unparseable`), never graded by authoring status — unlike one that has simply not been written yet. Runs as a pre-commit hook on changes under `specs/` and `.spec/`.
 
 ### spec-record
 
@@ -1699,17 +1734,15 @@ Lint grades these the way every other precision lint is graded: WARN while autho
 
 Everything in a readback is derived, which is what makes its git diff the review — and it is also why the document opens with a one-line purpose and then drops straight into Quint excerpts and witness predicates. Derived sections can state what is true; they cannot orient a reader who does not yet know the shape of the area.
 
-So the intent file carries a **`brief`**: a few paragraphs, plus three optional facets — *how it fits together*, *why it is this way*, *what to watch out for*. It is the one long-form thing an agent writes into the readback. Determinism survives because the brief is an **input**, rendered verbatim, never composed at render time: identical input still yields byte-identical output.
+So the intent file carries a **`brief`**: a few paragraphs, plus three optional facets — *how it fits together*, *why it is this way*, *what to watch out for*. It is the one authored prose section in the readback. Determinism survives because the brief is an **input**, rendered verbatim, never composed at render time: identical input still yields byte-identical output.
 
 Prose cannot be checked the way a witness can, so it gets the same treatment a witness trace gets — **a freshness pin**. `brief.written_against` records `tools/itf_tools.py spec-sha <area>`, a hash of the semantic content the brief describes: EARS fields, modality, invariants, constraint values, entity states, scope, externals. Bookkeeping is deliberately excluded, so re-running the checker never invalidates prose it cannot have affected.
 
 Once the spec moves past its pin, `spec-lint` reports `brief-stale` — WARN while authoring, **FAIL from `in-review` on** — and the readback prints the brief under "⚠ This brief may be out of date" instead of letting it read with the same authority as the derived sections below it. An orientation written for a previous version of the area is worse than none, because nothing else in the document can contradict it.
 
-The same pin, one level down: **`requirements[].meaning`** — the plain-words sentence the readback leads with, pinned per requirement against the requirement it restates (see "The Meaning"). The brief orients; the meaning translates. Both are authored inputs, both render verbatim, both go stale loudly rather than quietly.
-
 The rest of the digestibility work is layering, not prose: a **Shape** diagram (entities with their state counts, the externals depended on, the areas spanned — all derived), and an **At a Glance** table indexing every requirement with its status mark before the per-requirement detail begins. A reader descends to the depth they need rather than meeting the deepest layer first.
 
-`tools/spec-readback.py` renders the readbacks deterministically — the document humans trust is produced by code, not by an agent following a style guide. `area <name>` / `change [slug]` / `project` / `all` emit the Markdown files; `status <slug> --json` emits the derived phase grid that drives the `/spec` change dashboard (the single implementation of the spec/checked/applied/verified rules). Sections it renders beyond the core: **Scope** (what completeness is relative to), **What the Outside World Can Do** (every external outcome with what the system does about it, plus the assumptions results rest on), **Worked Examples**, and **Completeness by Dimension** — a per-dimension grid where ✓ means obligations discharged, ! means outstanding, and — means *nothing declared to measure*, which never renders as a pass. Highlights baked into the renderer: a one-line **ship verdict** at the top (`✓ READY` / `⚠ NOT READY — <blockers>` / `⏳ EMPTY`) so go/no-go is a glance, not arithmetic on the stats bar; the **Needs Your Attention** entries render each requirement's sentence inline — its plain-words meaning where one is pinned and current, the EARS sentence otherwise (no scrolling to learn what `UI-001` is); honest invariant marks (`✓ proven` inductive vs `✓ (≤N steps)` bounded — never a bare `✓`); constraint values resolved inline in EARS sentences, witness one-liners with compressed action runs, verbatim Quint excerpts pinned by `file:line` + short model sha, `(failure path)` tags from `ears.unwanted`, fit criteria for NFRs, the Limits-and-Bounds table with per-constraint history from landed change manifests, and resolved questions in the Reference section.
+`tools/spec-readback.py` renders the readbacks deterministically — the document humans trust is produced by code, not by an agent following a style guide. `area <name>` / `change [slug]` / `project` / `all` emit the Markdown files; `status <slug> --json` emits the derived phase grid that drives the `/spec` change dashboard (the single implementation of the spec/checked/applied/verified rules). Sections it renders beyond the core: **Scope** (what completeness is relative to), **What the Outside World Can Do** (every external outcome with what the system does about it, plus the assumptions results rest on), **Examples** (every example as a Given / When / Then row), and **Completeness by Dimension** — a per-dimension grid where ✓ means obligations discharged, ! means outstanding, and — means *nothing declared to measure*, which never renders as a pass. Highlights baked into the renderer: a one-line **ship verdict** at the top (`✓ READY` / `⚠ NOT READY — <blockers>` / `⏳ EMPTY`) so go/no-go is a glance, not arithmetic on the stats bar; the **Needs Your Attention** entries render each requirement's EARS sentence inline (no scrolling to learn what `UI-001` is); honest invariant marks (`✓ proven` inductive vs `✓ (≤N steps)` bounded — never a bare `✓`); constraint values resolved inline in EARS sentences, witness one-liners with compressed action runs, verbatim Quint excerpts pinned by `file:line` + short model sha, `(failure path)` tags from `ears.unwanted`, fit criteria for NFRs, the Limits-and-Bounds table with per-constraint history from landed change manifests, and resolved questions in the Reference section.
 
 **Lists are rendered, not joined.** `render_list()` decides between an inline `**Label:** a, b, c` and one bullet per item, and the rule that matters is not length: **any item containing a comma goes to bullets, at any size.** A comma-joined list stops being a list the moment one of its items has a comma in it — "Protection Group lifecycle: create, update, soft delete" is *one* scope item that reads as three, and nothing in the rendered text tells a reviewer where it ends. Bullets also win past three items or 72 characters. Entities render one per line for the same reason (each carries a prose description, and a middle dot between them is an invisible separator), and the ship verdict keeps its scope clause short — a long scope list belongs in the Scope section, not inlined where it would bury the go/no-go. The decision is a function of the items alone, so identical input still yields identical output: the readback is reviewed as a `git diff`, and a layout that drifted with anything else would make that diff unreadable.
 

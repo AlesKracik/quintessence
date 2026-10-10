@@ -6,7 +6,7 @@
 
 **Status:** structured  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 2  |  **Coverage:** matrix not run  |  **Extraction:** 18/18 sites accounted  |  **Open questions:** 4  |  **Last verified:** never
 
-*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof — or a computed value, checked by the unit test it names)*
+*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
 ## Purpose
 
@@ -55,9 +55,10 @@ flowchart LR
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — REQ-001: Adding something already in the basket makes that line bigger rather than adding a second line for the same product.
-- **Unchecked requirement** — REQ-002: A product not yet in the basket gets its own line, as long as the basket is still open and has not already reached MAX_ITEMS (= 20, CON-001) lines.
-- **Unchecked requirement** — REQ-004: If the payment provider fails during checkout, the basket stays open and the shopper is told the checkout did not go through — nothing is half-completed.
+- **Unchecked requirement** — REQ-001: While the Cart is Open, when a shopper adds a SKU already present, the system shall increase that line's quantity by the amount added.
+- **Unchecked requirement** — REQ-002: While the Cart is Open and holds fewer than MAX_ITEMS (= 20, CON-001) lines, when a shopper adds a new SKU, the system shall append a line for that SKU.
+- **Unchecked requirement** — REQ-004: While the Cart is Open, if the payment gateway throws during checkout, then the system shall leave the Cart Open and return ok:false with reason 'unavailable'.
+- **Refusal shown by no example** — REQ-003: While the Cart is CheckedOut, if a shopper adds an item, then the system shall refuse the call and leave the cart untouched. Add an example whose run attempts the call (`.fail()`) and asserts nothing moved.
 - **Coverage unknown** — state machines declared but the state×event matrix has never been recorded (run `tools/spec-matrix.py` with `--record`).
 - **Open question** — Q-001: What should adding an item to a full cart do — throw as today, or return a result the UI can render? The code throws, which no requirement describes. _(source: extraction)_
 - **Open question** — Q-002: Retry after a thrown charge assumes the money did not move (ASM-001). Should checkout send an idempotency key before we rely on that? _(source: extraction)_
@@ -68,10 +69,10 @@ flowchart LR
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [REQ-001](#req-001) | Adding something already in the basket makes that line bigger rather than adding a seco… | must |
-| ⏳ | [REQ-002](#req-002) | A product not yet in the basket gets its own line, as long as the basket is still open… | must |
-| ⊘ | [REQ-003](#req-003) | Once a basket has been checked out it is finished: further attempts to add to it are re… | forbidden |
-| ⏳ | [REQ-004](#req-004) | If the payment provider fails during checkout, the basket stays open and the shopper is… | must |
+| ⏳ | [REQ-001](#req-001) | increase that line's quantity by the amount added | must |
+| ⏳ | [REQ-002](#req-002) | append a line for that SKU | must |
+| ⊘ | [REQ-003](#req-003) | refuse the call and leave the cart untouched | forbidden |
+| ⏳ | [REQ-004](#req-004) | leave the Cart Open and return ok:false with reason 'unavailable' | must |
 
 ## What the System Does
 
@@ -79,13 +80,15 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 #### REQ-001
 
-⏳ Adding something already in the basket makes that line bigger rather than adding a second line for the same product.
+⏳ While the Cart is Open, when a shopper adds a SKU already present, the system shall increase that line's quantity by the amount added.
 
 > _Extracted from `code/legacy-cart/cart.js:31-35` (high confidence)._
 
-<details><summary>EARS sentence, Quint action `add_item`</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | `cart.items = [{sku: 'a', qty: 3}]` |
 
-**As specified (EARS):** While the Cart is Open, when a shopper adds a SKU already present, the system shall increase that line's quantity by the amount added.
+<details><summary>Quint action `add_item`</summary>
 
 _action `add_item` not found in `specs/cart.qnt`_
 
@@ -95,46 +98,45 @@ _action `add_item` not found in `specs/cart.qnt`_
 
 #### REQ-002
 
-⏳ A product not yet in the basket gets its own line, as long as the basket is still open and has not already reached MAX_ITEMS (= 20, CON-001) lines.
+⏳ While the Cart is Open and holds fewer than MAX_ITEMS (= 20, CON-001) lines, when a shopper adds a new SKU, the system shall append a line for that SKU.
 
 > _Extracted from `code/legacy-cart/cart.js:26-36` (high confidence)._
 
-<details><summary>EARS sentence, Quint action `add_item`</summary>
+> _No example rows yet — nothing concrete shows this behavior._
 
-**As specified (EARS):** While the Cart is Open and holds fewer than MAX_ITEMS (= 20, CON-001) lines, when a shopper adds a new SKU, the system shall append a line for that SKU.
+<details><summary>Quint action `add_item`</summary>
 
 _action `add_item` not found in `specs/cart.qnt`_
 
-**Record:** `specs/cart.qnt:18` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:15` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-003
 
-⊘  *(failure path)* Once a basket has been checked out it is finished: further attempts to add to it are refused and the basket's contents stay exactly as they were at checkout.
+⊘  *(failure path)* While the Cart is CheckedOut, if a shopper adds an item, then the system shall refuse the call and leave the cart untouched.
 
 > _Extracted from `code/legacy-cart/cart.js:22-24` (high confidence)._
 
-> **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-001**.
+> **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-001**. The examples below show the call being refused.
 
-> **Refusal check:** ⏳ `tests/cart/refusal/closed-cart.test.js` — drives the code into cart.status == "checked_out", attempts the call, asserts it is refused and that `cart.items`, `cart.status` did not move.
-> _Replay cannot cover this: a rejection has no trace to replay._
+> _No example rows yet — nothing concrete shows this behavior._
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `checkedOutIsFrozen` ⏳
 
 > **Witness skipped:** A refusal has no reachable state to witness. INV-001 carries the model-side proof.
 
-<details><summary>EARS sentence, Quint action `add_item`</summary>
-
-**As specified (EARS):** While the Cart is CheckedOut, if a shopper adds an item, then the system shall refuse the call and leave the cart untouched.
+<details><summary>Quint action `add_item`</summary>
 
 _action `add_item` not found in `specs/cart.qnt`_
 
-**Record:** `specs/cart.qnt:35` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:29` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-004
 
-⏳  *(failure path)* If the payment provider fails during checkout, the basket stays open and the shopper is told the checkout did not go through — nothing is half-completed.
+⏳  *(failure path)* While the Cart is Open, if the payment gateway throws during checkout, then the system shall leave the Cart Open and return ok:false with reason 'unavailable'.
 
 > _Extracted from `code/legacy-cart/cart.js:58-62` (medium confidence)._
 
@@ -142,13 +144,13 @@ _action `add_item` not found in `specs/cart.qnt`_
 > **On PaymentGateway/DECLINED:** NO_CHANGE — the cart stays Open; reason 'declined' (safe to retry)
 > **On PaymentGateway/UNAVAILABLE:** NO_CHANGE — the cart stays Open; reason 'unavailable'; caller retries (safe to retry)
 
-<details><summary>EARS sentence, Quint action `checkout_unavailable`</summary>
+> _No example rows yet — nothing concrete shows this behavior._
 
-**As specified (EARS):** While the Cart is Open, if the payment gateway throws during checkout, then the system shall leave the Cart Open and return ok:false with reason 'unavailable'.
+<details><summary>Quint action `checkout_unavailable`</summary>
 
 _action `checkout_unavailable` not found in `specs/cart.qnt`_
 
-**Record:** `specs/cart.qnt:60` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:47` — the doc comment this requirement is read from.
 
 </details>
 
@@ -171,16 +173,13 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 - **ASM-001** — A charge that throws did not take the money, so retrying is safe. Bears on: REQ-004. Checked in production by: Nothing today. A gateway idempotency key would discharge it.
 
-## Worked Examples
+## Examples
 
-_Author-written scenarios: illustration and regression pins, not proof. A witness trace shows a behavior is reachable at all; an example only asserts the one case somebody thought of._
+_Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
 
-**EX-001 — Adding a SKU twice merges the lines**
-
-- Given: `cart.status` = `Open`, `cart.items` = `[{sku: 'a', qty: 1}]`
-- When: `add_item(sku=a, qty=2)`
-- Expect: `cart.items` = `[{sku: 'a', qty: 3}]`
-- Illustrates: REQ-001
+| Example | Given | When | Then | Illustrates |
+|---|---|---|---|---|
+| EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | `cart.items = [{sku: 'a', qty: 3}]` | REQ-001 |
 
 ## What the Code Does That the Spec Does Not
 
@@ -248,7 +247,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Temporal behavior | — | none declared |
 | Extraction coverage | ✓ | 9 mapped, 9 triaged, 0 unclaimed of 18 site(s) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
-| Refusal coverage | ! | 1/1 rejection(s) with an artifact, 0 passing |
+| Refusal coverage | ! | 0/1 rejection(s) shown by an example |
 | Examples | ✓ | 1 worked example(s) |
 | Invariants | ! | 0/2 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |

@@ -6,7 +6,7 @@
 
 **Status:** formalized  |  **Requirements:** 0/7 verified, 0/7 witnessed  |  **Invariants:** 0 proven + 0 bounded / 3  |  **Coverage:** 12 cells, 2 covered, 10 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Open questions:** 1  |  **Last verified:** never
 
-*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof — or a computed value, checked by the unit test it names)*
+*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
 ## Purpose
 
@@ -38,25 +38,26 @@ flowchart LR
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — REQ-001: Cancelling a live subscription stops it being billed again and records it as cancelled.
-- **Unchecked requirement** — REQ-002: Cancelling does not cut the customer off immediately: they keep what they already paid for until the paid period runs out.
-- **Unchecked requirement** — REQ-003: Cancelling something already cancelled is treated as a no-op that succeeded, not as an error — a retried or duplicated request cannot do extra damage.
-- **Unchecked requirement** — REQ-004: If the billing provider does not answer during a cancellation, the subscription stays live and billed. The system does not record a cancellation it could not confirm.
-- **Unchecked requirement** — REQ-005: When the paid period ends on a cancelled subscription, access stops and the subscription is recorded as expired.
-- **Unchecked requirement** — REQ-007: A successful cancellation may be confirmed to the customer, by email or in the app. Which one, or whether to confirm at all, is left open on purpose. _(REQ-007/email)_
+- **Unchecked requirement** — REQ-001: While the Subscription is Active, when the customer cancels, the system shall stop future billing and mark the Subscription Cancelled.
+- **Unchecked requirement** — REQ-002: While the Subscription is Cancelled and the paid period has not ended, the system shall keep access available.
+- **Unchecked requirement** — REQ-003: While the Subscription is Cancelled, when the customer cancels again, the system shall make no further change and report success.
+- **Unchecked requirement** — REQ-004: While the Subscription is Active, if the billing provider times out during cancellation, then the system shall leave the Subscription Active and billing enabled.
+- **Unchecked requirement** — REQ-005: While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired.
+- **Unchecked requirement** — REQ-007: When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice. _(REQ-007/email)_
+- **Refusal shown by no example** — REQ-006: If a subscription is cancelled mid-period, then the system shall issue no refund. Add an example whose run attempts the call (`.fail()`) and asserts nothing moved.
 - **Open question** — Q-001: After MAX_CANCEL_RETRIES exhausted TIMEOUTs, does the subscription stay Active forever, or does an operator get paged? ASM-001 assumes the provider answers eventually; nothing here says what happens if it does not. _(source: elicitation)_
 
 ## At a Glance
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [REQ-001](#req-001) | Cancelling a live subscription stops it being billed again and records it as cancelled. | must |
-| ⏳ | [REQ-002](#req-002) | Cancelling does not cut the customer off immediately: they keep what they already paid… | must |
-| ⏳ | [REQ-003](#req-003) | Cancelling something already cancelled is treated as a no-op that succeeded, not as an… | must |
-| ⏳ | [REQ-004](#req-004) | If the billing provider does not answer during a cancellation, the subscription stays l… | must |
-| ⏳ | [REQ-005](#req-005) | When the paid period ends on a cancelled subscription, access stops and the subscriptio… | must |
-| ⊘ | [REQ-006](#req-006) | Cancelling part-way through a paid period never refunds the unused part. The customer k… | forbidden |
-| ⏳ | [REQ-007](#req-007) | A successful cancellation may be confirmed to the customer, by email or in the app. Whi… | may |
+| ⏳ | [REQ-001](#req-001) | stop future billing and mark the Subscription Cancelled | must |
+| ⏳ | [REQ-002](#req-002) | keep access available | must |
+| ⏳ | [REQ-003](#req-003) | make no further change and report success | must |
+| ⏳ | [REQ-004](#req-004) | leave the Subscription Active and billing enabled | must |
+| ⏳ | [REQ-005](#req-005) | withdraw access and mark the Subscription Expired | must |
+| ⊘ | [REQ-006](#req-006) | issue no refund | forbidden |
+| ⏳ | [REQ-007](#req-007) | confirm to the customer by email or in-app notice | may |
 
 ## What the System Does
 
@@ -64,16 +65,20 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 #### REQ-001
 
-⏳ Cancelling a live subscription stops it being billed again and records it as cancelled.
+⏳ While the Subscription is Active, when the customer cancels, the system shall stop future billing and mark the Subscription Cancelled.
 
 > **On BillingProvider/SUCCESS:** Cancelled (safe to retry)
 > **On BillingProvider/DECLINED:** NO_CHANGE — surface the provider's reason to the customer; the subscription stays Active (safe to retry)
 
-<details><summary>EARS sentence, Quint action `cancel_subscription`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | `status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true` |
 
-**As specified (EARS):** While the Subscription is Active, when the customer cancels, the system shall stop future billing and mark the Subscription Cancelled.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
-`specs/subscription.qnt:L89-L95` · model `7c6b83d779cc`
+<details><summary>Quint action `cancel_subscription`, witness predicate + trace</summary>
+
+`specs/subscription.qnt:L81-L87` · model `7c6b83d779cc`
 
 ```quint
   action cancel_subscription(c: CustomerId): bool = all {
@@ -87,19 +92,23 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 **Witness predicate:** `status.keys().exists(c => status.get(c) == Cancelled and not(billingEnabled.get(c)))` — true exactly when the behavior has happened.
 
-**Record:** `specs/subscription.qnt:211` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:203` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-002
 
-⏳ Cancelling does not cut the customer off immediately: they keep what they already paid for until the paid period runs out.
+⏳ While the Subscription is Cancelled and the paid period has not ended, the system shall keep access available.
 
-<details><summary>EARS sentence, Quint action `cancel_subscription`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | `status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true` |
 
-**As specified (EARS):** While the Subscription is Cancelled and the paid period has not ended, the system shall keep access available.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
-`specs/subscription.qnt:L89-L95` · model `7c6b83d779cc`
+<details><summary>Quint action `cancel_subscription`, witness predicate + trace</summary>
+
+`specs/subscription.qnt:L81-L87` · model `7c6b83d779cc`
 
 ```quint
   action cancel_subscription(c: CustomerId): bool = all {
@@ -113,19 +122,21 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 **Witness predicate:** `status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))` — true exactly when the behavior has happened.
 
-**Record:** `specs/subscription.qnt:230` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:219` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-003
 
-⏳ Cancelling something already cancelled is treated as a no-op that succeeded, not as an error — a retried or duplicated request cannot do extra damage.
+⏳ While the Subscription is Cancelled, when the customer cancels again, the system shall make no further change and report success.
 
-<details><summary>EARS sentence, Quint action `cancel_again`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-002 — Cancelling twice is harmless | cancel_subscription(alice) | cancel_again(alice) | `status = Cancelled, accessUntilPeriodEnd = true` |
 
-**As specified (EARS):** While the Subscription is Cancelled, when the customer cancels again, the system shall make no further change and report success.
+<details><summary>Quint action `cancel_again`, witness predicate + trace</summary>
 
-`specs/subscription.qnt:L100-L106` · model `7c6b83d779cc`
+`specs/subscription.qnt:L92-L98` · model `7c6b83d779cc`
 
 ```quint
   action cancel_again(c: CustomerId): bool = all {
@@ -139,22 +150,26 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 **Witness predicate:** `status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))` — true exactly when the behavior has happened.
 
-**Record:** `specs/subscription.qnt:244` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:230` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-004
 
-⏳  *(failure path)* If the billing provider does not answer during a cancellation, the subscription stays live and billed. The system does not record a cancellation it could not confirm.
+⏳  *(failure path)* While the Subscription is Active, if the billing provider times out during cancellation, then the system shall leave the Subscription Active and billing enabled.
 
 > **On BillingProvider/TIMEOUT:** NO_CHANGE — the subscription stays Active and billable; retry (safe to retry)
 > **On BillingProvider/NETWORK_ERROR:** NO_CHANGE — the request never landed; retry (safe to retry)
 
-<details><summary>EARS sentence, Quint action `cancel_times_out`, witness predicate + trace</summary>
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-003 — Provider times out: nothing moves | status = Active, billingEnabled = true | cancel_times_out(c = alice) | `status = Active, billingEnabled = true` |
 
-**As specified (EARS):** While the Subscription is Active, if the billing provider times out during cancellation, then the system shall leave the Subscription Active and billing enabled.
+> **Guarded by** · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
-`specs/subscription.qnt:L112-L118` · model `7c6b83d779cc`
+<details><summary>Quint action `cancel_times_out`, witness predicate + trace</summary>
+
+`specs/subscription.qnt:L104-L110` · model `7c6b83d779cc`
 
 ```quint
   action cancel_times_out(c: CustomerId): bool = all {
@@ -168,19 +183,21 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 **Witness predicate:** `status.keys().exists(c => lastBillingResult.get(c) == Timeout and status.get(c) == Active)` — true exactly when the behavior has happened.
 
-**Record:** `specs/subscription.qnt:261` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:243` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-005
 
-⏳ When the paid period ends on a cancelled subscription, access stops and the subscription is recorded as expired.
+⏳ While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired.
 
-<details><summary>EARS sentence, Quint action `expire_period`, witness predicate + trace</summary>
+> _No example rows yet — nothing concrete shows this behavior._
 
-**As specified (EARS):** While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
-`specs/subscription.qnt:L121-L127` · model `7c6b83d779cc`
+<details><summary>Quint action `expire_period`, witness predicate + trace</summary>
+
+`specs/subscription.qnt:L113-L119` · model `7c6b83d779cc`
 
 ```quint
   action expire_period(c: CustomerId): bool = all {
@@ -194,23 +211,25 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 **Witness predicate:** `status.keys().exists(c => status.get(c) == Expired and not(accessUntilPeriodEnd.get(c)))` — true exactly when the behavior has happened.
 
-**Record:** `specs/subscription.qnt:282` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:260` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-006
 
-⊘  *(failure path)* Cancelling part-way through a paid period never refunds the unused part. The customer keeps the access instead of getting money back.
+⊘  *(failure path)* If a subscription is cancelled mid-period, then the system shall issue no refund.
 
-> **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-002**.
+> **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-002**. The examples below show the call being refused.
+
+> _No example rows yet — nothing concrete shows this behavior._
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
 > **Witness skipped:** A prohibition has no witness trace — there is no reachable state in which 'no refund happened' becomes visible. INV-002 carries the proof.
 
-<details><summary>EARS sentence, Quint action `cancel_subscription`</summary>
+<details><summary>Quint action `cancel_subscription`</summary>
 
-**As specified (EARS):** If a subscription is cancelled mid-period, then the system shall issue no refund.
-
-`specs/subscription.qnt:L89-L95` · model `7c6b83d779cc`
+`specs/subscription.qnt:L81-L87` · model `7c6b83d779cc`
 
 ```quint
   action cancel_subscription(c: CustomerId): bool = all {
@@ -228,17 +247,19 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 #### REQ-007
 
-⏳ A successful cancellation may be confirmed to the customer, by email or in the app. Which one, or whether to confirm at all, is left open on purpose.
+⏳ When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice.
 
-> **Permitted, not required** — the system MAY do any of the following, and the choice is not this spec's to make. Each needs its own witness, or the permission has quietly become a rule:
+> **Permitted, not required** — the system MAY do any of the following, and the choice is not this spec's to make. Each needs its own witness, found with the other outcomes false, or the permission has quietly become a rule:
 >   - ⏳ **email**: `status.keys().exists(c => status.get(c) == Cancelled)`
 >   - ⏳ **in-app**: `status.keys().exists(c => status.get(c) == Cancelled and accessUntilPeriodEnd.get(c))`
 
-<details><summary>EARS sentence, Quint action `cancel_subscription`</summary>
+> _No example rows yet — nothing concrete shows this behavior._
 
-**As specified (EARS):** When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice.
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
-`specs/subscription.qnt:L89-L95` · model `7c6b83d779cc`
+<details><summary>Quint action `cancel_subscription`</summary>
+
+`specs/subscription.qnt:L81-L87` · model `7c6b83d779cc`
 
 ```quint
   action cancel_subscription(c: CustomerId): bool = all {
@@ -250,7 +271,7 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
   }
 ```
 
-**Record:** `specs/subscription.qnt:77` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:73` — the doc comment this requirement is read from.
 
 </details>
 
@@ -276,30 +297,15 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 - **ASM-001** — BillingProvider eventually responds to a cancellation request, within at most three retry windows. Bears on: INV-003, REQ-004. Checked in production by: Synthetic cancellation probe every 5 minutes; pages if a request is unanswered for 15.
 - **ASM-002** — The paid period end is known locally and does not depend on the provider being reachable. Bears on: REQ-002, REQ-005. _Believed, not checked._
 
-## Worked Examples
+## Examples
 
-_Author-written scenarios: illustration and regression pins, not proof. A witness trace shows a behavior is reachable at all; an example only asserts the one case somebody thought of._
+_Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
 
-**EX-001 — Cancel mid-period: billing stops, access stays**
-
-- Given: `status` = `Active`, `billingEnabled` = `True`
-- When: `cancel_subscription(c=alice)`
-- Expect: `status` = `Cancelled`, `billingEnabled` = `False`, `accessUntilPeriodEnd` = `True`
-- Illustrates: REQ-001, REQ-002
-
-**EX-002 — Cancelling twice is harmless**
-
-- Given: `status` = `Cancelled`, `accessUntilPeriodEnd` = `True`
-- When: `cancel_again(c=alice)`
-- Expect: `status` = `Cancelled`, `accessUntilPeriodEnd` = `True`
-- Illustrates: REQ-003
-
-**EX-003 — Provider times out: nothing moves**
-
-- Given: `status` = `Active`, `billingEnabled` = `True`
-- When: `cancel_times_out(c=alice)`
-- Expect: `status` = `Active`, `billingEnabled` = `True`
-- Illustrates: REQ-004, INV-003
+| Example | Given | When | Then | Illustrates |
+|---|---|---|---|---|
+| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | `status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true` | REQ-001, REQ-002 |
+| EX-002 — Cancelling twice is harmless | cancel_subscription(alice) | cancel_again(alice) | `status = Cancelled, accessUntilPeriodEnd = true` | REQ-003 |
+| EX-003 — Provider times out: nothing moves | status = Active, billingEnabled = true | cancel_times_out(c = alice) | `status = Active, billingEnabled = true` | REQ-004, INV-003 |
 
 ## Limits and Bounds
 
@@ -337,7 +343,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Temporal behavior | — | none declared |
 | Extraction coverage | — | n/a (no code) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
-| Refusal coverage | ! | 0/1 rejection(s) with an artifact, 0 passing |
+| Refusal coverage | ! | 0/1 rejection(s) shown by an example |
 | Examples | ✓ | 3 worked example(s) |
 | Invariants | ! | 0/3 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
