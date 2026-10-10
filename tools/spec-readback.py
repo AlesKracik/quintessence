@@ -2216,18 +2216,19 @@ def emit_project(root):
     lines.append("")
     lines.append("## Areas")
     lines.append("")
-    lines.append("| Area | Kind | Version | Status | Last verified |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| Area | Kind | Version | Status | Examples pin | Last verified |")
+    lines.append("|---|---|---|---|---|---|")
     for a in areas:
         d = loaded.get(a)
         if d is None:
-            lines.append(f"| {a} | ? | ? | MISSING | — |")
+            lines.append(f"| {a} | ? | ? | MISSING | — | — |")
             continue
         log = d.get("verification_log") or []
         last = (log[-1]["date"][:10] + (" ✓" if log[-1].get("status") == "pass" else " ✗")) \
             if log else "never"
+        pin = mutation_cell(d) if (d.get("check_results") or {}).get("mutation") else "—"
         lines.append(f"| [{a}](./specs/{a}.readback.md) | {d.get('kind')} | "
-                     f"{d.get('version')} | {d.get('status')} | {last} |")
+                     f"{d.get('version')} | {d.get('status')} | {pin} | {last} |")
     lines.append("")
     if journeys:
         lines.append("## Journeys")

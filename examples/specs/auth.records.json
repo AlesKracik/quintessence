@@ -15,6 +15,628 @@
       "gaps": [
         "Q-003"
       ]
+    },
+    "mutation": {
+      "ran_at": "2026-10-10T16:30:47+00:00",
+      "model_sha": "ca0993f4795f7d904756f6601754a92fab957639813b5431780e2920aacfe2d9",
+      "seed": 7,
+      "max_steps": 10,
+      "traces": 20,
+      "mutants": 40,
+      "stillborn": 0,
+      "killed_by_examples": 23,
+      "killed_otherwise": 7,
+      "survived": 6,
+      "no_difference": 4,
+      "score": 0.639,
+      "questions": [
+        {
+          "kind": "outcome",
+          "given": "the initial state",
+          "when": "login(charlie, s3)",
+          "model": "failedAttempts[charlie] = 0",
+          "question": "From the start, when login(charlie, s3): should failedAttempts[charlie] = 0 hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_3b71c867 = init.then(login(\"charlie\", \"s3\")).expect(failedAttempts.get(\"charlie\") == 0)",
+          "refs": [
+            "REQ-001",
+            "REQ-005"
+          ],
+          "mutants": [
+            "3b71c867"
+          ],
+          "change": "login: drop the effect on `failedAttempts` (keep it as it was)",
+          "key": "3b71c867"
+        },
+        {
+          "kind": "refused",
+          "given": "login(charlie, s3); then logout(s3)",
+          "when": "logout(s3)",
+          "model": null,
+          "question": "After login(charlie, s3); then logout(s3), should logout(s3) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_249ef86b = init.then(login(\"charlie\", \"s3\")).then(logout(\"s3\")).then(logout(\"s3\").fail())",
+          "refs": [
+            "REQ-002"
+          ],
+          "mutants": [
+            "249ef86b"
+          ],
+          "change": "logout: drop the guard `isActive(sid)`",
+          "key": "249ef86b"
+        },
+        {
+          "kind": "refused",
+          "given": "login_failed(bob) × 5",
+          "when": "login_failed(bob)",
+          "model": null,
+          "question": "After login_failed(bob) × 5, should login_failed(bob) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_0faf1af0 = init.then(login_failed(\"bob\")).then(login_failed(\"bob\")).then(login_failed(\"bob\")).then(login_failed(\"bob\")).then(login_failed(\"bob\")).then(login_failed(\"bob\").fail())",
+          "refs": [
+            "REQ-003"
+          ],
+          "mutants": [
+            "0faf1af0"
+          ],
+          "change": "login_failed: drop the guard `not(isLocked(uid))`",
+          "key": "0faf1af0"
+        },
+        {
+          "kind": "refused",
+          "given": "login(charlie, s1); then tick × 4; then expire_session(s1)",
+          "when": "expire_session(s1)",
+          "model": null,
+          "question": "After login(charlie, s1); then tick × 4; then expire_session(s1), should expire_session(s1) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_07a48908 = init.then(login(\"charlie\", \"s1\")).then(tick).then(tick).then(tick).then(tick).then(expire_session(\"s1\")).then(expire_session(\"s1\").fail())",
+          "refs": [
+            "REQ-004"
+          ],
+          "mutants": [
+            "07a48908"
+          ],
+          "change": "expire_session: drop the guard `isActive(sid)`",
+          "key": "07a48908"
+        },
+        {
+          "kind": "refused",
+          "given": "the initial state",
+          "when": "unlock_account(charlie)",
+          "model": null,
+          "question": "From the start, should unlock_account(charlie) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_d7e85e1c = init.then(unlock_account(\"charlie\").fail())",
+          "refs": [],
+          "mutants": [
+            "d7e85e1c"
+          ],
+          "change": "unlock_account: drop the guard `isLocked(uid)`",
+          "key": "d7e85e1c"
+        },
+        {
+          "kind": "refused",
+          "given": "the initial state",
+          "when": "tick",
+          "model": null,
+          "question": "From the start, should tick be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_6b84d96d = init.then(tick.fail())",
+          "refs": [],
+          "mutants": [
+            "6b84d96d"
+          ],
+          "change": "tick: drop the guard `sessions.keys().exists(sid => isActive(sid))`",
+          "key": "6b84d96d"
+        }
+      ],
+      "results": [
+        {
+          "id": "M01",
+          "key": "870eaa1f",
+          "op": "const",
+          "decl": "MAX_FAILED_ATTEMPTS",
+          "line": 37,
+          "label": "`MAX_FAILED_ATTEMPTS` = 4 instead of 5",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M02",
+          "key": "472ee1ef",
+          "op": "const",
+          "decl": "MAX_FAILED_ATTEMPTS",
+          "line": 37,
+          "label": "`MAX_FAILED_ATTEMPTS` = 6 instead of 5",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M03",
+          "key": "3cbae448",
+          "op": "const",
+          "decl": "MAX_SESSION_AGE",
+          "line": 44,
+          "label": "`MAX_SESSION_AGE` = 2 instead of 3",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-007"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M04",
+          "key": "e53f2576",
+          "op": "const",
+          "decl": "MAX_SESSION_AGE",
+          "line": 44,
+          "label": "`MAX_SESSION_AGE` = 4 instead of 3",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M05",
+          "key": "925e8b45",
+          "op": "cmp",
+          "decl": "isActive",
+          "line": 61,
+          "label": "`statusOf(sessions, sid) == Active`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-002",
+            "EX-007",
+            "EX-005",
+            "EX-001"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M06",
+          "key": "43a58ba9",
+          "op": "cmp",
+          "decl": "isLocked",
+          "line": 64,
+          "label": "`if (accountStatus.keys().contains(uid)) accountStatus.get(uid) == Locked else false`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M07",
+          "key": "384b2f06",
+          "op": "guard",
+          "decl": "login",
+          "line": 103,
+          "label": "drop the guard `not(isLocked(uid))`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-006"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M08",
+          "key": "0caf8efb",
+          "op": "guard",
+          "decl": "login",
+          "line": 104,
+          "label": "drop the guard `not(sessions.keys().contains(sid))`",
+          "outcome": "killed",
+          "killed_by": [
+            "noAccessWithInvalidToken"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M09",
+          "key": "19d0c765",
+          "op": "guard",
+          "decl": "login",
+          "line": 105,
+          "label": "drop the guard `activeSessionsOf(uid).size() == 0`",
+          "outcome": "killed",
+          "killed_by": [
+            "atMostOneActiveSession"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M10",
+          "key": "038c4a9d",
+          "op": "cmp",
+          "decl": "login",
+          "line": 105,
+          "label": "`activeSessionsOf(uid).size() == 0`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-002",
+            "EX-007",
+            "EX-005",
+            "EX-001"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M11",
+          "key": "b4a27885",
+          "op": "effect",
+          "decl": "login",
+          "line": 106,
+          "label": "drop the effect on `sessions` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-002",
+            "EX-007",
+            "EX-005",
+            "EX-001"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M12",
+          "key": "5f6eff6b",
+          "op": "variant",
+          "decl": "login",
+          "line": 106,
+          "label": "`sessions` gets `Expired` where the model writes `Active`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-002",
+            "EX-007",
+            "EX-005",
+            "EX-001"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M13",
+          "key": "240a4c0e",
+          "op": "effect",
+          "decl": "login",
+          "line": 107,
+          "label": "drop the effect on `sessionOwner` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "noAccessWithInvalidToken"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M14",
+          "key": "3b71c867",
+          "op": "effect",
+          "decl": "login",
+          "line": 109,
+          "label": "drop the effect on `failedAttempts` (keep it as it was)",
+          "outcome": "survived",
+          "question": "3b71c867"
+        },
+        {
+          "id": "M15",
+          "key": "a80ab674",
+          "op": "effect",
+          "decl": "login",
+          "line": 110,
+          "label": "drop the effect on `userActiveSession` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M16",
+          "key": "56052796",
+          "op": "effect",
+          "decl": "login",
+          "line": 114,
+          "label": "drop the effect on `idleFor` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-007",
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M17",
+          "key": "5970835c",
+          "op": "guard",
+          "decl": "logout",
+          "line": 121,
+          "label": "drop the guard `sessions.keys().contains(sid)`",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M18",
+          "key": "249ef86b",
+          "op": "guard",
+          "decl": "logout",
+          "line": 122,
+          "label": "drop the guard `isActive(sid)`",
+          "outcome": "survived",
+          "question": "249ef86b"
+        },
+        {
+          "id": "M19",
+          "key": "7d699a22",
+          "op": "effect",
+          "decl": "logout",
+          "line": 123,
+          "label": "drop the effect on `sessions` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M20",
+          "key": "0b19c3fa",
+          "op": "variant",
+          "decl": "logout",
+          "line": 123,
+          "label": "`sessions` gets `Active` where the model writes `LoggedOut`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M21",
+          "key": "d09e48a4",
+          "op": "effect",
+          "decl": "logout",
+          "line": 127,
+          "label": "drop the effect on `userActiveSession` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "noAccessWithInvalidToken"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M22",
+          "key": "53ae20d6",
+          "op": "cmp",
+          "decl": "login_failed",
+          "line": 143,
+          "label": "`val locking = nextCount >= MAX_FAILED_ATTEMPTS`: `>=` -> `>`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M23",
+          "key": "0faf1af0",
+          "op": "guard",
+          "decl": "login_failed",
+          "line": 146,
+          "label": "drop the guard `not(isLocked(uid))`",
+          "outcome": "survived",
+          "question": "0faf1af0"
+        },
+        {
+          "id": "M24",
+          "key": "e0184ab8",
+          "op": "effect",
+          "decl": "login_failed",
+          "line": 147,
+          "label": "drop the effect on `sessions` (keep it as it was)",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M25",
+          "key": "cff3afef",
+          "op": "variant",
+          "decl": "login_failed",
+          "line": 148,
+          "label": "`sessions` gets `Active` where the model writes `LoggedOut`",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M26",
+          "key": "82e12df8",
+          "op": "effect",
+          "decl": "login_failed",
+          "line": 151,
+          "label": "drop the effect on `accountStatus` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M27",
+          "key": "9cb1c385",
+          "op": "variant",
+          "decl": "login_failed",
+          "line": 151,
+          "label": "`accountStatus` gets `Unlocked` where the model writes `Locked`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M28",
+          "key": "781765e4",
+          "op": "variant",
+          "decl": "login_failed",
+          "line": 151,
+          "label": "`accountStatus` gets `Locked` where the model writes `Unlocked`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004",
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M29",
+          "key": "ed9677ac",
+          "op": "effect",
+          "decl": "login_failed",
+          "line": 152,
+          "label": "drop the effect on `failedAttempts` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-006",
+            "EX-003"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M30",
+          "key": "15dd8203",
+          "op": "effect",
+          "decl": "login_failed",
+          "line": 153,
+          "label": "drop the effect on `userActiveSession` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "noAccessWithInvalidToken",
+            "noSessionWhileLocked"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M31",
+          "key": "ef3d9a10",
+          "op": "guard",
+          "decl": "expire_session",
+          "line": 165,
+          "label": "drop the guard `sessions.keys().contains(sid)`",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M32",
+          "key": "07a48908",
+          "op": "guard",
+          "decl": "expire_session",
+          "line": 166,
+          "label": "drop the guard `isActive(sid)`",
+          "outcome": "survived",
+          "question": "07a48908"
+        },
+        {
+          "id": "M33",
+          "key": "d3830da0",
+          "op": "guard",
+          "decl": "expire_session",
+          "line": 167,
+          "label": "drop the guard `idleOf(sid) > MAX_SESSION_AGE`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-007"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M34",
+          "key": "62367abe",
+          "op": "cmp",
+          "decl": "expire_session",
+          "line": 167,
+          "label": "`idleOf(sid) > MAX_SESSION_AGE`: `>` -> `>=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-007"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M35",
+          "key": "f417c6e9",
+          "op": "effect",
+          "decl": "expire_session",
+          "line": 168,
+          "label": "drop the effect on `sessions` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M36",
+          "key": "0e6a7f91",
+          "op": "variant",
+          "decl": "expire_session",
+          "line": 168,
+          "label": "`sessions` gets `LoggedOut` where the model writes `Expired`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M37",
+          "key": "831b60de",
+          "op": "effect",
+          "decl": "expire_session",
+          "line": 172,
+          "label": "drop the effect on `userActiveSession` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "noAccessWithInvalidToken"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M38",
+          "key": "d7e85e1c",
+          "op": "guard",
+          "decl": "unlock_account",
+          "line": 182,
+          "label": "drop the guard `isLocked(uid)`",
+          "outcome": "survived",
+          "question": "d7e85e1c"
+        },
+        {
+          "id": "M39",
+          "key": "7624109c",
+          "op": "variant",
+          "decl": "unlock_account",
+          "line": 185,
+          "label": "`accountStatus` gets `Locked` where the model writes `Unlocked`",
+          "outcome": "killed",
+          "killed_by": [
+            "noEarlyLockout"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M40",
+          "key": "6b84d96d",
+          "op": "guard",
+          "decl": "tick",
+          "line": 195,
+          "label": "drop the guard `sessions.keys().exists(sid => isActive(sid))`",
+          "outcome": "survived",
+          "question": "6b84d96d"
+        }
+      ]
     }
   },
   "verification_log": [],

@@ -23,10 +23,12 @@ _(Phase columns are derived from the areas at generation time — the manifest s
 - **auth** — **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **auth** — **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
 - **auth** — **Open question** — Q-003: State×event gap: when Account=Locked and login_failed fires, the spec is silent (REQ-003 covers Unlocked only). Should attempts against a locked account be counted toward anything, ignored, or raise an alert? _(source: matrix)_
+- **auth** — **The examples leave 6 behavior(s) open** — the model decides them and no example does. Answer the [questions](#questions-the-examples-leave-open): yes adds an example, no finds a model bug.
 - **auth-ui** — **Unchecked requirement** — UI-001: While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
 - **auth-ui** — **Unchecked requirement** — UI-002: While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 - **auth-ui** — **Unchecked requirement** — UI-003: While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 - **auth-ui** — **Unchecked requirement** — UI-004: While the user is on Dashboard, when the session expires, the system shall return to Login.
+- **auth-ui** — **The examples leave 11 behavior(s) open** — the model decides them and no example does. Answer the [questions](#questions-the-examples-leave-open): yes adds an example, no finds a model bug.
 
 ## What This Change Does
 

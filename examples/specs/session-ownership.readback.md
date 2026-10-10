@@ -6,7 +6,7 @@
 
 **✓ READY** — all requirements verified against code, all invariants hold (bounded, in scope, or proven), no open questions — NOTE: no scope declared, so 'complete' has no boundary to be complete against.
 
-**Status:** formalized  |  **Requirements:** 0/0 verified, 0/0 witnessed  |  **Invariants:** 0 proven + 0 bounded + 2 in-scope / 2  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Open questions:** 0  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/0 verified, 0/0 witnessed  |  **Invariants:** 0 proven + 0 bounded + 2 in-scope / 2  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Mutation:** not run  |  **Open questions:** 0  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
@@ -44,6 +44,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | — | no rejection requirements |
 | Examples | — | none written |
+| Behavior the examples pin | — | never measured — `tools/spec-questions.py <area> --record` |
 | Invariants | ✓ | 2/2 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
 

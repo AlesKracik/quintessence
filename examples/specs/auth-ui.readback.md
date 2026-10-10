@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 4 of 4 requirement(s) not verified against code; 1 of 1 invariant(s) not holding.
 
-**Status:** formalized  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 1  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Open questions:** 0  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 1  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Mutation:** 62% pinned by examples, 11 question(s) open  |  **Open questions:** 0  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
 
@@ -18,6 +18,165 @@ Login flow UI: Home screen, Login form, Dashboard (auth-required), LockedNotice.
 - **Unchecked requirement** — UI-002: While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 - **Unchecked requirement** — UI-003: While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 - **Unchecked requirement** — UI-004: While the user is on Dashboard, when the session expires, the system shall return to Login.
+- **The examples leave 11 behavior(s) open** — the model decides them and no example does. Answer the [questions](#questions-the-examples-leave-open): yes adds an example, no finds a model bug.
+
+## Questions the Examples Leave Open
+
+_Small changes to the model that every example and invariant still pass: 13 of 40 tried (`tools/spec-questions.py`, 4340c15). Each is a behavior the model chose and nobody approved. **Yes** pins it: add the run as an example. **No** means the model is wrong here._
+
+### b79923fe · [UI-001](#ui-001)
+
+**Given** click_sign_in **When** click_sign_in
+
+> After click_sign_in, should click_sign_in be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of UI-001:
+
+```quint
+run q_b79923fe = init.then(click_sign_in).then(click_sign_in.fail())
+```
+
+<sub>Raised by the variant: click_sign_in: drop the guard `current == Home`.</sub>
+
+### d5442974 · [UI-002](#ui-002)
+
+**Given** the initial state **When** submit_success(alice, s1)
+
+> From the start, should submit_success(alice, s1) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of UI-002:
+
+```quint
+run q_d5442974 = init.then(submit_success("alice", "s1").fail())
+```
+
+<sub>Raised by the variant: submit_success: drop the guard `current == Login`.</sub>
+
+### f8263eaa · [UI-002](#ui-002)
+
+**Given** click_sign_in **When** submit_success(bob, s1)
+
+> After click_sign_in, when submit_success(bob, s1): should form = Idle hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example of UI-002:
+
+```quint
+run q_f8263eaa = init.then(click_sign_in).then(submit_success("bob", "s1")).expect(form == Idle)
+```
+
+<sub>Raised by the variant: submit_success: `form` gets `Submitting` where the model writes `Idle`.</sub>
+
+### e20334a7 · [UI-002](#ui-002)
+
+**Given** click_sign_in; then submit_invalid(alice) **When** submit_success(bob, s2)
+
+> After click_sign_in; then submit_invalid(alice), when submit_success(bob, s2): should form = Idle hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example of UI-002:
+
+```quint
+run q_e20334a7 = init.then(click_sign_in).then(submit_invalid("alice")).then(submit_success("bob", "s2")).expect(form == Idle)
+```
+
+<sub>Raised by the variant: submit_success: drop the effect on `form` (keep it as it was).</sub>
+
+### aaa2ce5e · [UI-003](#ui-003)
+
+**Given** click_sign_in **When** submit_locked(bob)
+
+> After click_sign_in, should submit_locked(bob) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example of UI-003:
+
+```quint
+run q_aaa2ce5e = init.then(click_sign_in).then(submit_locked("bob").fail())
+```
+
+<sub>Raised by the variant: submit_locked: drop the guard `accountLocked(u)`.</sub>
+
+### 20ee0d29
+
+**Given** the initial state **When** submit_invalid(alice)
+
+> From the start, should submit_invalid(alice) be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_20ee0d29 = init.then(submit_invalid("alice").fail())
+```
+
+<sub>Raised by the variant: submit_invalid: drop the guard `current == Login`.</sub>
+
+### 8e18e124
+
+**Given** click_sign_in **When** submit_invalid(bob)
+
+> After click_sign_in, when submit_invalid(bob): should form = ErrorBadCreds hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_8e18e124 = init.then(click_sign_in).then(submit_invalid("bob")).expect(form == ErrorBadCreds)
+```
+
+<sub>Raised by the variant: submit_invalid: `form` gets `ErrorLocked` where the model writes `ErrorBadCreds`.</sub>
+
+### 9c56ae3d
+
+**Given** click_sign_in; then submit_success(alice, s1) **When** click_logout
+
+> After click_sign_in; then submit_success(alice, s1), when click_logout: should form = Idle hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_9c56ae3d = init.then(click_sign_in).then(submit_success("alice", "s1")).then(click_logout).expect(form == Idle)
+```
+
+<sub>Raised by the variant: click_logout: `form` gets `Submitting` where the model writes `Idle`.</sub>
+
+### b222972a
+
+**Given** click_sign_in; then submit_success(alice, s1) **When** click_logout
+
+> After click_sign_in; then submit_success(alice, s1), when click_logout: should mySession = "" hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_b222972a = init.then(click_sign_in).then(submit_success("alice", "s1")).then(click_logout).expect(mySession == "")
+```
+
+<sub>Raised by the variant: click_logout: drop the effect on `mySession` (keep it as it was).</sub>
+
+### efa51944
+
+**Given** the initial state **When** go_home
+
+> From the start, should go_home be refused? The model refuses it; a model that allows it passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_efa51944 = init.then(go_home.fail())
+```
+
+<sub>Raised by the variant: go_home: drop the guard `current == LockedNotice`.</sub>
+
+### 7ef96d74
+
+**At the start**
+
+> Initially, should form = Idle hold? The model says so; a model where it does not passes every example too.
+
+Yes → add as an example:
+
+```quint
+run q_7ef96d74 = init.expect(form == Idle)
+```
+
+<sub>Raised by the variant: init: `form` gets `Submitting` where the model writes `Idle`.</sub>
 
 ## Navigation
 
@@ -88,6 +247,8 @@ graph TB
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
+> **Left open** · [b79923fe](#b79923fe) click_sign_in — the model decides, no example does
+
 <details><summary>Quint action `click_sign_in`, witness predicate + trace</summary>
 
 `specs/auth-ui.qnt:L101-L107` · model `4340c1516108`
@@ -121,6 +282,8 @@ graph TB
 | EX-002 — Valid credentials land on the Dashboard | click_sign_in | submit_success(alice, s1) | `current == Dashboard and authenticated` |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Left open** · [d5442974](#d5442974) submit_success(alice, s1) · [f8263eaa](#f8263eaa) submit_success(bob, s1) · [e20334a7](#e20334a7) submit_success(bob, s2) — the model decides, no example does
 
 <details><summary>Quint action `submit_success`, witness predicate + trace</summary>
 
@@ -159,6 +322,8 @@ graph TB
 | EX-003 — Five bad passwords lock the account; the next submit shows the locked notice | click_sign_in; then submit_invalid(bob) × 5 | submit_locked(bob) | `current == LockedNotice and form == ErrorLocked` |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Left open** · [aaa2ce5e](#aaa2ce5e) submit_locked(bob) — the model decides, no example does
 
 <details><summary>Quint action `submit_locked`, witness predicate + trace</summary>
 
@@ -249,6 +414,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | — | no rejection requirements |
 | Examples | ✓ | 4 worked example(s) |
+| Behavior the examples pin | ! | 62% pinned by examples, 11 question(s) open |
 | Invariants | ! | 0/1 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |
 

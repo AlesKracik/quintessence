@@ -16,6 +16,649 @@
       "triaged": 16,
       "uncovered": 0,
       "orphans": 0
+    },
+    "mutation": {
+      "ran_at": "2026-10-10T16:26:45+00:00",
+      "model_sha": "4eb1600672b8b32c1016319ce2c00665a8a4113d81c3afa34e9973c0c45f0140",
+      "seed": 7,
+      "max_steps": 10,
+      "traces": 20,
+      "mutants": 38,
+      "stillborn": 0,
+      "killed_by_examples": 23,
+      "killed_otherwise": 5,
+      "survived": 9,
+      "no_difference": 1,
+      "score": 0.622,
+      "questions": [
+        {
+          "kind": "refused",
+          "given": "cancel_subscription(alice, InApp)",
+          "when": "cancel_subscription(alice, Email)",
+          "model": null,
+          "question": "After cancel_subscription(alice, InApp), should cancel_subscription(alice, Email) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_1d0a35d2 = init.then(cancel_subscription(\"alice\", InApp)).then(cancel_subscription(\"alice\", Email).fail())",
+          "refs": [
+            "REQ-001",
+            "REQ-002",
+            "REQ-007"
+          ],
+          "mutants": [
+            "1d0a35d2"
+          ],
+          "change": "cancel_subscription: drop the guard `status.get(c) == Active`",
+          "key": "1d0a35d2"
+        },
+        {
+          "kind": "outcome",
+          "given": "cancel_unanswered(alice, true)",
+          "when": "cancel_subscription(alice, InApp)",
+          "model": "unansweredTries[alice] = 0",
+          "question": "After cancel_unanswered(alice, true), when cancel_subscription(alice, InApp): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_c2966184 = init.then(cancel_unanswered(\"alice\", true)).then(cancel_subscription(\"alice\", InApp)).expect(unansweredTries.get(\"alice\") == 0)",
+          "refs": [
+            "REQ-001",
+            "REQ-002",
+            "REQ-007"
+          ],
+          "mutants": [
+            "c2966184"
+          ],
+          "change": "cancel_subscription: drop the effect on `unansweredTries` (keep it as it was)",
+          "key": "c2966184"
+        },
+        {
+          "kind": "outcome",
+          "given": "cancel_unanswered(alice, false)",
+          "when": "cancel_declined(alice)",
+          "model": "unansweredTries[alice] = 0",
+          "question": "After cancel_unanswered(alice, false), when cancel_declined(alice): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_a05aa295 = init.then(cancel_unanswered(\"alice\", false)).then(cancel_declined(\"alice\")).expect(unansweredTries.get(\"alice\") == 0)",
+          "refs": [
+            "REQ-008"
+          ],
+          "mutants": [
+            "a05aa295"
+          ],
+          "change": "cancel_declined: drop the effect on `unansweredTries` (keep it as it was)",
+          "key": "a05aa295"
+        },
+        {
+          "kind": "outcome",
+          "given": "the initial state",
+          "when": "cancel_unanswered(bob, false)",
+          "model": "lastBillingResult[bob] = NetworkError",
+          "question": "From the start, when cancel_unanswered(bob, false): should lastBillingResult[bob] = NetworkError hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_68ef8975 = init.then(cancel_unanswered(\"bob\", false)).expect(lastBillingResult.get(\"bob\") == NetworkError)",
+          "refs": [
+            "REQ-004"
+          ],
+          "mutants": [
+            "68ef8975",
+            "e786da47"
+          ],
+          "change": "cancel_unanswered: drop the effect on `lastBillingResult` (keep it as it was)",
+          "key": "68ef8975"
+        },
+        {
+          "kind": "outcome",
+          "given": "the initial state",
+          "when": "cancel_unanswered(bob, true)",
+          "model": "lastBillingResult[bob] = Timeout",
+          "question": "From the start, when cancel_unanswered(bob, true): should lastBillingResult[bob] = Timeout hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_404d46eb = init.then(cancel_unanswered(\"bob\", true)).expect(lastBillingResult.get(\"bob\") == Timeout)",
+          "refs": [
+            "REQ-004"
+          ],
+          "mutants": [
+            "404d46eb"
+          ],
+          "change": "cancel_unanswered: `lastBillingResult` gets `NetworkError` where the model writes `Timeout`",
+          "key": "404d46eb"
+        },
+        {
+          "kind": "refused",
+          "given": "the initial state",
+          "when": "cancel_again(alice)",
+          "model": null,
+          "question": "From the start, should cancel_again(alice) be refused? The model refuses it; a model that allows it passes every example too.",
+          "example": "run q_909c2265 = init.then(cancel_again(\"alice\").fail())",
+          "refs": [
+            "REQ-003"
+          ],
+          "mutants": [
+            "909c2265"
+          ],
+          "change": "cancel_again: drop the guard `status.get(c) == Cancelled`",
+          "key": "909c2265"
+        },
+        {
+          "kind": "initial",
+          "given": "the initial state",
+          "when": "—",
+          "model": "lastBillingResult[alice] = Success and lastBillingResult[bob] = Success",
+          "question": "Initially, should lastBillingResult[alice] = Success and lastBillingResult[bob] = Success hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_ead78f89 = init.expect(lastBillingResult.get(\"alice\") == Success and lastBillingResult.get(\"bob\") == Success)",
+          "refs": [],
+          "mutants": [
+            "ead78f89"
+          ],
+          "change": "init: `lastBillingResult` gets `Declined` where the model writes `Success`",
+          "key": "ead78f89"
+        },
+        {
+          "kind": "initial",
+          "given": "the initial state",
+          "when": "—",
+          "model": "notice[alice] = NoNotice and notice[bob] = NoNotice",
+          "question": "Initially, should notice[alice] = NoNotice and notice[bob] = NoNotice hold? The model says so; a model where it does not passes every example too.",
+          "example": "run q_ce72947e = init.expect(notice.get(\"alice\") == NoNotice and notice.get(\"bob\") == NoNotice)",
+          "refs": [],
+          "mutants": [
+            "ce72947e"
+          ],
+          "change": "init: `notice` gets `Email` where the model writes `NoNotice`",
+          "key": "ce72947e"
+        }
+      ],
+      "results": [
+        {
+          "id": "M01",
+          "key": "f6222d70",
+          "op": "const",
+          "decl": "MAX_CANCEL_RETRIES",
+          "line": 66,
+          "label": "`MAX_CANCEL_RETRIES` = 2 instead of 3",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M02",
+          "key": "660b6aad",
+          "op": "const",
+          "decl": "MAX_CANCEL_RETRIES",
+          "line": 66,
+          "label": "`MAX_CANCEL_RETRIES` = 4 instead of 3",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M03",
+          "key": "1d0a35d2",
+          "op": "guard",
+          "decl": "cancel_subscription",
+          "line": 87,
+          "label": "drop the guard `status.get(c) == Active`",
+          "outcome": "survived",
+          "question": "1d0a35d2"
+        },
+        {
+          "id": "M04",
+          "key": "46d1103b",
+          "op": "cmp",
+          "decl": "cancel_subscription",
+          "line": 87,
+          "label": "`status.get(c) == Active`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001",
+            "journey: Cancel a subscription",
+            "EX-002",
+            "EX-007",
+            "EX-006"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M05",
+          "key": "ea8c7abf",
+          "op": "guard",
+          "decl": "cancel_subscription",
+          "line": 88,
+          "label": "drop the guard `n != NoNotice`",
+          "outcome": "no-difference"
+        },
+        {
+          "id": "M06",
+          "key": "62149f2e",
+          "op": "cmp",
+          "decl": "cancel_subscription",
+          "line": 88,
+          "label": "`n != NoNotice`: `!=` -> `==`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001",
+            "journey: Cancel a subscription",
+            "EX-002",
+            "EX-007",
+            "EX-006"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M07",
+          "key": "81dab7ee",
+          "op": "effect",
+          "decl": "cancel_subscription",
+          "line": 89,
+          "label": "drop the effect on `lastBillingResult` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "unacceptedCancelLeavesActive"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M08",
+          "key": "2f93135a",
+          "op": "variant",
+          "decl": "cancel_subscription",
+          "line": 89,
+          "label": "`lastBillingResult` gets `Declined` where the model writes `Success`",
+          "outcome": "killed",
+          "killed_by": [
+            "unacceptedCancelLeavesActive"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M09",
+          "key": "1d450289",
+          "op": "effect",
+          "decl": "cancel_subscription",
+          "line": 90,
+          "label": "drop the effect on `status` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001",
+            "journey: Cancel a subscription",
+            "EX-002",
+            "EX-007",
+            "EX-006"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M10",
+          "key": "9f798bfe",
+          "op": "variant",
+          "decl": "cancel_subscription",
+          "line": 90,
+          "label": "`status` gets `Expired` where the model writes `Cancelled`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001",
+            "journey: Cancel a subscription",
+            "EX-002",
+            "EX-007",
+            "EX-006"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M11",
+          "key": "c5d53343",
+          "op": "effect",
+          "decl": "cancel_subscription",
+          "line": 91,
+          "label": "drop the effect on `billingEnabled` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001",
+            "journey: Cancel a subscription"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M12",
+          "key": "49daf8e6",
+          "op": "effect",
+          "decl": "cancel_subscription",
+          "line": 92,
+          "label": "drop the effect on `accessUntilPeriodEnd` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001",
+            "EX-002",
+            "EX-006"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M13",
+          "key": "c2966184",
+          "op": "effect",
+          "decl": "cancel_subscription",
+          "line": 93,
+          "label": "drop the effect on `unansweredTries` (keep it as it was)",
+          "outcome": "survived",
+          "question": "c2966184"
+        },
+        {
+          "id": "M14",
+          "key": "b6a50934",
+          "op": "effect",
+          "decl": "cancel_subscription",
+          "line": 94,
+          "label": "drop the effect on `notice` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M15",
+          "key": "df0f1917",
+          "op": "guard",
+          "decl": "cancel_declined",
+          "line": 100,
+          "label": "drop the guard `status.get(c) == Active`",
+          "outcome": "killed",
+          "killed_by": [
+            "unacceptedCancelLeavesActive"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M16",
+          "key": "8fc56c77",
+          "op": "cmp",
+          "decl": "cancel_declined",
+          "line": 100,
+          "label": "`status.get(c) == Active`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M17",
+          "key": "cb30a2ec",
+          "op": "effect",
+          "decl": "cancel_declined",
+          "line": 101,
+          "label": "drop the effect on `lastBillingResult` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M18",
+          "key": "b0c49414",
+          "op": "variant",
+          "decl": "cancel_declined",
+          "line": 101,
+          "label": "`lastBillingResult` gets `Timeout` where the model writes `Declined`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-004"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M19",
+          "key": "a05aa295",
+          "op": "effect",
+          "decl": "cancel_declined",
+          "line": 105,
+          "label": "drop the effect on `unansweredTries` (keep it as it was)",
+          "outcome": "survived",
+          "question": "a05aa295"
+        },
+        {
+          "id": "M20",
+          "key": "56426485",
+          "op": "guard",
+          "decl": "cancel_unanswered",
+          "line": 116,
+          "label": "drop the guard `status.get(c) == Active`",
+          "outcome": "killed",
+          "killed_by": [
+            "unacceptedCancelLeavesActive"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M21",
+          "key": "88b8e6a6",
+          "op": "cmp",
+          "decl": "cancel_unanswered",
+          "line": 116,
+          "label": "`status.get(c) == Active`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "journey: Cancel a subscription",
+            "EX-003",
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M22",
+          "key": "096a503e",
+          "op": "guard",
+          "decl": "cancel_unanswered",
+          "line": 117,
+          "label": "drop the guard `triesOf(c) < MAX_CANCEL_RETRIES`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M23",
+          "key": "f59254b3",
+          "op": "cmp",
+          "decl": "cancel_unanswered",
+          "line": 117,
+          "label": "`triesOf(c) < MAX_CANCEL_RETRIES`: `<` -> `<=`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M24",
+          "key": "68ef8975",
+          "op": "effect",
+          "decl": "cancel_unanswered",
+          "line": 118,
+          "label": "drop the effect on `lastBillingResult` (keep it as it was)",
+          "outcome": "survived",
+          "question": "68ef8975"
+        },
+        {
+          "id": "M25",
+          "key": "404d46eb",
+          "op": "variant",
+          "decl": "cancel_unanswered",
+          "line": 118,
+          "label": "`lastBillingResult` gets `NetworkError` where the model writes `Timeout`",
+          "outcome": "survived",
+          "question": "404d46eb"
+        },
+        {
+          "id": "M26",
+          "key": "e786da47",
+          "op": "variant",
+          "decl": "cancel_unanswered",
+          "line": 118,
+          "label": "`lastBillingResult` gets `Success` where the model writes `NetworkError`",
+          "outcome": "survived",
+          "question": "68ef8975"
+        },
+        {
+          "id": "M27",
+          "key": "d7158fdf",
+          "op": "effect",
+          "decl": "cancel_unanswered",
+          "line": 119,
+          "label": "drop the effect on `unansweredTries` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M28",
+          "key": "909c2265",
+          "op": "guard",
+          "decl": "cancel_again",
+          "line": 129,
+          "label": "drop the guard `status.get(c) == Cancelled`",
+          "outcome": "survived",
+          "question": "909c2265"
+        },
+        {
+          "id": "M29",
+          "key": "b481a74a",
+          "op": "cmp",
+          "decl": "cancel_again",
+          "line": 129,
+          "label": "`status.get(c) == Cancelled`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "journey: Cancel a subscription",
+            "EX-002"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M30",
+          "key": "aef7b456",
+          "op": "guard",
+          "decl": "expire_period",
+          "line": 140,
+          "label": "drop the guard `status.get(c) == Cancelled`",
+          "outcome": "killed",
+          "killed_by": [
+            "noBillingAfterCancel",
+            "unacceptedCancelLeavesActive"
+          ],
+          "by_example": false
+        },
+        {
+          "id": "M31",
+          "key": "02f36951",
+          "op": "cmp",
+          "decl": "expire_period",
+          "line": 140,
+          "label": "`status.get(c) == Cancelled`: `==` -> `!=`",
+          "outcome": "killed",
+          "killed_by": [
+            "journey: Cancel a subscription",
+            "EX-007"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M32",
+          "key": "78d102f5",
+          "op": "effect",
+          "decl": "expire_period",
+          "line": 141,
+          "label": "drop the effect on `status` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "journey: Cancel a subscription",
+            "EX-007"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M33",
+          "key": "6394c643",
+          "op": "variant",
+          "decl": "expire_period",
+          "line": 141,
+          "label": "`status` gets `Active` where the model writes `Expired`",
+          "outcome": "killed",
+          "killed_by": [
+            "journey: Cancel a subscription",
+            "EX-007"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M34",
+          "key": "93e4cfb0",
+          "op": "effect",
+          "decl": "expire_period",
+          "line": 142,
+          "label": "drop the effect on `accessUntilPeriodEnd` (keep it as it was)",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-007"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M35",
+          "key": "34901ad9",
+          "op": "guard",
+          "decl": "request_refund",
+          "line": 166,
+          "label": "drop the guard `false`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-006"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M36",
+          "key": "4ae432ae",
+          "op": "variant",
+          "decl": "init",
+          "line": 224,
+          "label": "`status` gets `Cancelled` where the model writes `Active`",
+          "outcome": "killed",
+          "killed_by": [
+            "EX-001",
+            "journey: Cancel a subscription",
+            "EX-002",
+            "EX-007",
+            "EX-004",
+            "EX-003",
+            "EX-006",
+            "EX-005"
+          ],
+          "by_example": true
+        },
+        {
+          "id": "M37",
+          "key": "ead78f89",
+          "op": "variant",
+          "decl": "init",
+          "line": 227,
+          "label": "`lastBillingResult` gets `Declined` where the model writes `Success`",
+          "outcome": "survived",
+          "question": "ead78f89"
+        },
+        {
+          "id": "M38",
+          "key": "ce72947e",
+          "op": "variant",
+          "decl": "init",
+          "line": 229,
+          "label": "`notice` gets `Email` where the model writes `NoNotice`",
+          "outcome": "survived",
+          "question": "ce72947e"
+        }
+      ]
     }
   },
   "matrix_triage": [
