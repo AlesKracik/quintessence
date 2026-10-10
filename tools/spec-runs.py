@@ -248,10 +248,13 @@ def labelled(trace, steps, params_of, variants, consts, meta):
     it calls."""
     states = [dict(s) for s in trace.get("states") or []]
     moving = [s for s in steps if not s.get("fails")]
-    if len(states) != len(moving) + 1:
+    # quint writes a state for a refused step too (the same state again);
+    # a trace without one is read the same way.
+    per_step = len(states) == len(steps) + 1
+    if not per_step and len(states) != len(moving) + 1:
         raise ValueError(f"the trace has {len(states)} states; the run makes "
-                         f"{len(moving)} call(s) that move it, so it should have "
-                         f"{len(moving) + 1}")
+                         f"{len(steps)} call(s), {len(moving)} of them moving it, so it "
+                         f"should have {len(steps) + 1} or {len(moving) + 1}")
     labels = []
     for s in steps:
         names = params_of(s["action"], s.get("qualifier"))
@@ -286,6 +289,12 @@ def labelled(trace, steps, params_of, variants, consts, meta):
         if refused:
             model = {k: v for k, v in out[-1].items()
                      if k not in ghosts and k not in (ACTION_VAR, REFUSED_VAR)}
+            if per_step:
+                written = {k: v for k, v in states[i].items() if k != "#meta"}
+                if written != model:
+                    raise ValueError(f"the model's state moved on `{name}`, a call "
+                                     f"the run expects refused")
+                i += 1
         else:
             model = {k: v for k, v in states[i].items() if k != "#meta"}
             i += 1

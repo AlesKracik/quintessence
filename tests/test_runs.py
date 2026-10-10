@@ -125,9 +125,18 @@ def test_a_refused_call_is_a_state_where_nothing_moves():
         assert refused[var] == states[2][var]
 
 
+def test_quint_writing_a_state_for_the_refused_step_reads_the_same():
+    """`quint test` writes the unchanged state again for a `.fail()` step."""
+    with_refusal = dict(RAW, states=RAW["states"] + [_st(3, CLOSED, 2)])
+    assert _labelled(with_refusal)["states"] == _labelled()["states"]
+    moved = dict(RAW, states=RAW["states"] + [_st(3, OPEN, 2)])
+    with pytest.raises(ValueError, match="moved on `add`"):
+        _labelled(moved)
+
+
 def test_a_trace_that_does_not_fit_the_run_is_an_error():
     short = dict(RAW, states=RAW["states"][:2])
-    with pytest.raises(ValueError, match="should have 3"):
+    with pytest.raises(ValueError, match="should have 4 or 3"):
         _labelled(short)
 
 
