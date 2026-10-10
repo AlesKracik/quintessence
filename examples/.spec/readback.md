@@ -16,7 +16,7 @@
 | [auth](./specs/auth.readback.md) | area | 0.3.0 | formalized | 64% pinned by examples, 6 question(s) open | never |
 | [auth-ui](./specs/auth-ui.readback.md) | area | 0.1.0 | formalized | 62% pinned by examples, 11 question(s) open | never |
 | [session-ownership](./specs/session-ownership.readback.md) | contract | 1.0.0 | formalized | — | never |
-| [subscription](./specs/subscription.readback.md) | area | 0.1.0 | formalized | 62% pinned by examples, 8 question(s) open | never |
+| [subscription](./specs/subscription.readback.md) | area | 0.1.0 | formalized | 68% pinned by examples, 6 question(s) open | never |
 | [cart](./specs/cart.readback.md) | area | 0.1.0 | structured | — | never |
 
 ## Journeys

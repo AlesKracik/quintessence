@@ -1,0 +1,384 @@
+{
+  "#meta": {
+    "source": "subscription.qnt run refundRefused (tools/spec-runs.py)",
+    "run": "refundRefused",
+    "label": "EX-006",
+    "model_sha": "702fd470bfc08a8b09aabac6c7e2f579be6e59edf24a7c2a364fba8258d64171",
+    "format": "ITF",
+    "format-description": "https://apalache-mc.org/docs/adr/015adr-trace.html"
+  },
+  "vars": [
+    "accessUntilPeriodEnd",
+    "billingEnabled",
+    "lastBillingResult",
+    "notice",
+    "status",
+    "unansweredTries",
+    "_lastAction",
+    "_refused",
+    "_lastC",
+    "_lastN"
+  ],
+  "states": [
+    {
+      "accessUntilPeriodEnd": {
+        "#map": [
+          [
+            "alice",
+            false
+          ],
+          [
+            "bob",
+            false
+          ]
+        ]
+      },
+      "billingEnabled": {
+        "#map": [
+          [
+            "alice",
+            true
+          ],
+          [
+            "bob",
+            true
+          ]
+        ]
+      },
+      "lastBillingResult": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "Success",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "Success",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "notice": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "NoNotice",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "NoNotice",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "status": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "Active",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "Active",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "unansweredTries": {
+        "#map": [
+          [
+            "alice",
+            {
+              "#bigint": "0"
+            }
+          ],
+          [
+            "bob",
+            {
+              "#bigint": "0"
+            }
+          ]
+        ]
+      },
+      "_lastAction": "init",
+      "_refused": false,
+      "_lastC": "alice",
+      "_lastN": {
+        "tag": "InApp",
+        "value": {
+          "#tup": []
+        }
+      },
+      "#meta": {
+        "index": 0
+      }
+    },
+    {
+      "accessUntilPeriodEnd": {
+        "#map": [
+          [
+            "alice",
+            true
+          ],
+          [
+            "bob",
+            false
+          ]
+        ]
+      },
+      "billingEnabled": {
+        "#map": [
+          [
+            "alice",
+            false
+          ],
+          [
+            "bob",
+            true
+          ]
+        ]
+      },
+      "lastBillingResult": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "Success",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "Success",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "notice": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "InApp",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "NoNotice",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "status": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "Cancelled",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "Active",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "unansweredTries": {
+        "#map": [
+          [
+            "alice",
+            {
+              "#bigint": "0"
+            }
+          ],
+          [
+            "bob",
+            {
+              "#bigint": "0"
+            }
+          ]
+        ]
+      },
+      "_lastAction": "cancel_subscription",
+      "_refused": false,
+      "_lastC": "alice",
+      "_lastN": {
+        "tag": "InApp",
+        "value": {
+          "#tup": []
+        }
+      },
+      "#meta": {
+        "index": 1
+      }
+    },
+    {
+      "accessUntilPeriodEnd": {
+        "#map": [
+          [
+            "alice",
+            true
+          ],
+          [
+            "bob",
+            false
+          ]
+        ]
+      },
+      "billingEnabled": {
+        "#map": [
+          [
+            "alice",
+            false
+          ],
+          [
+            "bob",
+            true
+          ]
+        ]
+      },
+      "lastBillingResult": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "Success",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "Success",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "notice": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "InApp",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "NoNotice",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "status": {
+        "#map": [
+          [
+            "alice",
+            {
+              "tag": "Cancelled",
+              "value": {
+                "#tup": []
+              }
+            }
+          ],
+          [
+            "bob",
+            {
+              "tag": "Active",
+              "value": {
+                "#tup": []
+              }
+            }
+          ]
+        ]
+      },
+      "unansweredTries": {
+        "#map": [
+          [
+            "alice",
+            {
+              "#bigint": "0"
+            }
+          ],
+          [
+            "bob",
+            {
+              "#bigint": "0"
+            }
+          ]
+        ]
+      },
+      "_lastAction": "request_refund",
+      "_refused": true,
+      "_lastC": "alice",
+      "_lastN": {
+        "tag": "InApp",
+        "value": {
+          "#tup": []
+        }
+      },
+      "#meta": {
+        "index": 2
+      }
+    }
+  ]
+}

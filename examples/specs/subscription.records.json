@@ -18,18 +18,18 @@
       "orphans": 0
     },
     "mutation": {
-      "ran_at": "2026-10-10T16:26:45+00:00",
-      "model_sha": "4eb1600672b8b32c1016319ce2c00665a8a4113d81c3afa34e9973c0c45f0140",
+      "ran_at": "2026-10-10T17:00:34+00:00",
+      "model_sha": "702fd470bfc08a8b09aabac6c7e2f579be6e59edf24a7c2a364fba8258d64171",
       "seed": 7,
       "max_steps": 10,
       "traces": 20,
       "mutants": 38,
       "stillborn": 0,
-      "killed_by_examples": 23,
+      "killed_by_examples": 25,
       "killed_otherwise": 5,
-      "survived": 9,
+      "survived": 7,
       "no_difference": 1,
-      "score": 0.622,
+      "score": 0.676,
       "questions": [
         {
           "kind": "refused",
@@ -48,40 +48,6 @@
           ],
           "change": "cancel_subscription: drop the guard `status.get(c) == Active`",
           "key": "1d0a35d2"
-        },
-        {
-          "kind": "outcome",
-          "given": "cancel_unanswered(alice, true)",
-          "when": "cancel_subscription(alice, InApp)",
-          "model": "unansweredTries[alice] = 0",
-          "question": "After cancel_unanswered(alice, true), when cancel_subscription(alice, InApp): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.",
-          "example": "run q_c2966184 = init.then(cancel_unanswered(\"alice\", true)).then(cancel_subscription(\"alice\", InApp)).expect(unansweredTries.get(\"alice\") == 0)",
-          "refs": [
-            "REQ-001",
-            "REQ-002",
-            "REQ-007"
-          ],
-          "mutants": [
-            "c2966184"
-          ],
-          "change": "cancel_subscription: drop the effect on `unansweredTries` (keep it as it was)",
-          "key": "c2966184"
-        },
-        {
-          "kind": "outcome",
-          "given": "cancel_unanswered(alice, false)",
-          "when": "cancel_declined(alice)",
-          "model": "unansweredTries[alice] = 0",
-          "question": "After cancel_unanswered(alice, false), when cancel_declined(alice): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.",
-          "example": "run q_a05aa295 = init.then(cancel_unanswered(\"alice\", false)).then(cancel_declined(\"alice\")).expect(unansweredTries.get(\"alice\") == 0)",
-          "refs": [
-            "REQ-008"
-          ],
-          "mutants": [
-            "a05aa295"
-          ],
-          "change": "cancel_declined: drop the effect on `unansweredTries` (keep it as it was)",
-          "key": "a05aa295"
         },
         {
           "kind": "outcome",
@@ -211,7 +177,8 @@
             "journey: Cancel a subscription",
             "EX-002",
             "EX-007",
-            "EX-006"
+            "EX-006",
+            "EX-009"
           ],
           "by_example": true
         },
@@ -237,7 +204,8 @@
             "journey: Cancel a subscription",
             "EX-002",
             "EX-007",
-            "EX-006"
+            "EX-006",
+            "EX-009"
           ],
           "by_example": true
         },
@@ -337,8 +305,11 @@
           "decl": "cancel_subscription",
           "line": 93,
           "label": "drop the effect on `unansweredTries` (keep it as it was)",
-          "outcome": "survived",
-          "question": "c2966184"
+          "outcome": "killed",
+          "killed_by": [
+            "EX-009"
+          ],
+          "by_example": true
         },
         {
           "id": "M14",
@@ -375,6 +346,7 @@
           "label": "`status.get(c) == Active`: `==` -> `!=`",
           "outcome": "killed",
           "killed_by": [
+            "EX-008",
             "EX-004"
           ],
           "by_example": true
@@ -412,8 +384,11 @@
           "decl": "cancel_declined",
           "line": 105,
           "label": "drop the effect on `unansweredTries` (keep it as it was)",
-          "outcome": "survived",
-          "question": "a05aa295"
+          "outcome": "killed",
+          "killed_by": [
+            "EX-008"
+          ],
+          "by_example": true
         },
         {
           "id": "M20",
@@ -438,8 +413,10 @@
           "outcome": "killed",
           "killed_by": [
             "journey: Cancel a subscription",
+            "EX-008",
             "EX-003",
-            "EX-005"
+            "EX-005",
+            "EX-009"
           ],
           "by_example": true
         },
@@ -629,12 +606,14 @@
           "killed_by": [
             "EX-001",
             "journey: Cancel a subscription",
+            "EX-008",
             "EX-002",
             "EX-007",
             "EX-004",
             "EX-003",
             "EX-006",
-            "EX-005"
+            "EX-005",
+            "EX-009"
           ],
           "by_example": true
         },
