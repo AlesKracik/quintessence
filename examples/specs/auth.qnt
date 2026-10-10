@@ -286,10 +286,12 @@ module auth {
     .expect(not(isActive("s1")))
 
   // A refusal is shown, not asserted: drive the model into the blocking
-  // state, attempt the call with `.fail()` (the run fails if the call goes
-  // through), and assert nothing moved.
+  // state, assert it, and END with the call `.fail()` — the run fails if
+  // the call goes through. A refused step leaves the model's state as it
+  // was (Quint assigns nothing after `.fail()`, so nothing can follow it);
+  // that nothing moved in the CODE is what conformance replay checks.
   /// @example EX-006
-  /// A locked account cannot sign in, and nothing moves
+  /// A locked account cannot sign in
   /// @refs REQ-005
   run lockedLoginRefused = init
     .then(login_failed("bob"))
@@ -297,9 +299,8 @@ module auth {
     .then(login_failed("bob"))
     .then(login_failed("bob"))
     .then(login_failed("bob"))
+    .expect(isLocked("bob") and attemptsOf("bob") == 5)
     .then(login("bob", "s2").fail())
-    .expect(isLocked("bob") and attemptsOf("bob") == 5
-            and not(sessions.keys().contains("s2")))
 
   // The "Sign in" journey (specs/journeys/sign-in.journey.json) walked end
   // to end over this area's steps: alice signs in (REQ-001), then bob's

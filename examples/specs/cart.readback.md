@@ -58,7 +58,7 @@ flowchart LR
 - **Unchecked requirement** — REQ-001: While the Cart is Open, when a shopper adds a SKU already present, the system shall increase that line's quantity by the amount added.
 - **Unchecked requirement** — REQ-002: While the Cart is Open and holds fewer than MAX_ITEMS (= 20, CON-001) lines, when a shopper adds a new SKU, the system shall append a line for that SKU.
 - **Unchecked requirement** — REQ-004: While the Cart is Open, if the payment gateway throws during checkout, then the system shall leave the Cart Open and return ok:false with reason 'unavailable'.
-- **Refusal shown by no example** — REQ-003: While the Cart is CheckedOut, if a shopper adds an item, then the system shall refuse the call and leave the cart untouched. Add an example whose run attempts the call (`.fail()`) and asserts nothing moved.
+- **Refusal shown by no example** — REQ-003: While the Cart is CheckedOut, if a shopper adds an item, then the system shall refuse the call and leave the cart untouched. Add an example whose run reaches the blocking state and ends with the call `.fail()`.
 - **Coverage unknown** — state machines declared but the state×event matrix has never been recorded (run `tools/spec-matrix.py` with `--record`).
 - **Open question** — Q-001: What should adding an item to a full cart do — throw as today, or return a result the UI can render? The code throws, which no requirement describes. _(source: extraction)_
 - **Open question** — Q-002: Retry after a thrown charge assumes the money did not move (ASM-001). Should checkout send an idempotency key before we rely on that? _(source: extraction)_
@@ -86,7 +86,7 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | `cart.items = [{sku: 'a', qty: 3}]` |
+| EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | cart.items = [{sku: 'a', qty: 3}] |
 
 <details><summary>Quint action `add_item`</summary>
 
@@ -179,7 +179,7 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 
 | Example | Given | When | Then | Illustrates |
 |---|---|---|---|---|
-| EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | `cart.items = [{sku: 'a', qty: 3}]` | REQ-001 |
+| EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | cart.items = [{sku: 'a', qty: 3}] | REQ-001 |
 
 ## What the Code Does That the Spec Does Not
 

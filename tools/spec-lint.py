@@ -1850,9 +1850,9 @@ def check_refusal_examples(area_data, area_name, findings):
     So the requirement class most likely to be wrong in the implementation
     needs its evidence from somewhere else: an EXAMPLE. One whose @refs names
     the rejection, whose run drives the model into the blocking state,
-    attempts the refused call (`login("bob", "s2").fail()` in a guard-style
-    model, or a step whose recorded result is the refusal in a total-action
-    one), and whose `.expect(..)` asserts that nothing moved. The example is
+    asserts it, and ends with the refused call (`login("bob", "s2").fail()`
+    in a guard-style model, or a step whose recorded result is the refusal
+    in a total-action one). The example is
     a row a reviewer reads in the readback and a run `quint test` executes —
     and the code repo's conformance harness replays it like any trace."""
     review = at_review(area_data)
@@ -1870,8 +1870,8 @@ def check_refusal_examples(area_data, area_name, findings):
                 f"{rid} is a rejection requirement and no example shows it. It has "
                 f"no witness trace by design, so nothing in the chain shows the "
                 f"call being refused. Add an `@example` with `@refs {rid}` whose "
-                f"run reaches the blocking state, attempts the call (`.fail()`), "
-                f"and ends in `.expect(..)` asserting nothing moved.", ref=rid)
+                f"run reaches the blocking state, asserts it with `.expect(..)`, "
+                f"and ends with the call `.fail()`.", ref=rid)
 
 
 def check_provenance(area_data, area_name, findings):

@@ -454,7 +454,7 @@ def attention_items(root, area_name, area):
                 and req.get("id") not in shown:
             items.append(f"**Refusal shown by no example** — {req.get('id')}: "
                          f"{req_sentence(req, constraints)} Add an example whose run "
-                         f"attempts the call (`.fail()`) and asserts nothing moved.")
+                         f"reaches the blocking state and ends with the call `.fail()`.")
     matrix = cr.get("matrix")
     if matrix:
         if matrix.get("uncovered", 0) > 0:
@@ -668,6 +668,13 @@ def _cell(text):
     return (text or "—").replace("|", "\\|").replace("\n", " ")
 
 
+def _then_cell(row):
+    """A run's `.expect` condition renders as code; a refusal or a JSON
+    expectation is plain words."""
+    text = _cell((row or {}).get("then"))
+    return f"`{text}`" if (row or {}).get("then_is_code") else text
+
+
 def example_rows(shown, decls):
     """The Given / When / Then table for examples shown at one point —
     rows DERIVED from the runs (spec_source.example_row), so the row a
@@ -683,7 +690,7 @@ def example_rows(shown, decls):
         title = ex.get("title")
         label = f"{ex.get('id')}" + (f" — {_cell(title)}" if title else "")
         rows.append(f"| {label} | {_cell(row['given'])} | {_cell(row['when'])} "
-                    f"| `{_cell(row['then'])}` |")
+                    f"| {_then_cell(row)} |")
     if not rows:
         return []
     return ["| Example | Given | When | Then |", "|---|---|---|---|"] + rows + [""]
@@ -1694,7 +1701,7 @@ def examples_section(root, area_name, area):
         label = f"{ex.get('id')}" + (f" — {_cell(title)}" if title else "")
         refs = ", ".join(ex.get("refs") or []) or "—"
         lines.append(f"| {label} | {_cell(row.get('given'))} | {_cell(row.get('when'))} "
-                     f"| `{_cell(row.get('then'))}` | {refs} |")
+                     f"| {_then_cell(row)} | {refs} |")
     lines.append("")
     return lines
 

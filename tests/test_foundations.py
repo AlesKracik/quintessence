@@ -99,8 +99,8 @@ SHOP = '''module shop {
     .then(order)
     .then(order)
     .then(order)
-    .then(order_again.fail())
     .expect(orders == 3)
+    .then(order_again.fail())
 
   run journeyRun = init.then(order).then(restock).expect(stock == 5)
   run backwards = init.then(restock).then(order).expect(orders == 1)
@@ -185,8 +185,8 @@ def test_run_calls_keep_arguments_and_qualifiers():
 def test_an_example_row_is_derived_from_its_run():
     d = spec_source.declarations(SHOP)
     row = spec_source.example_row({"quint_run": "fourthRefused"}, d)
-    assert row == {"given": "order × 3", "when": "order_again — refused",
-                   "then": "orders == 3"}
+    assert row == {"given": "order × 3, so `orders == 3`", "when": "order_again — refused",
+                   "then": "refused — nothing changes", "then_is_code": False}
     assert spec_source.example_row({"quint_run": "oneOrder"}, d)["given"] == \
         "the initial state"
 
@@ -196,7 +196,7 @@ def test_an_action_hosted_example_row_reads_its_json():
                                    "when": {"action": "cancel", "args": {"c": "alice"}},
                                    "expect": {"status": "Cancelled"}}, {})
     assert row == {"given": "status = Active", "when": "cancel(c = alice)",
-                   "then": "status = Cancelled"}
+                   "then": "status = Cancelled", "then_is_code": False}
 
 
 def test_a_run_example_with_zero_argument_actions_gets_its_action():
@@ -204,6 +204,8 @@ def test_a_run_example_with_zero_argument_actions_gets_its_action():
     ex = {e["id"]: e for e in area["examples"]}
     assert ex["EX-001"]["when"] == {"action": "order"}
     assert ex["EX-003"]["when"] == {"action": "order_again"}
+    # Ending in a refused call is the run's claim, so it asserts something.
+    assert ex["EX-003"]["expect"] == {"run.refuses": "order_again — refused"}
 
 
 # ── Encoding checks ─────────────────────────────────────────────────────────
@@ -434,5 +436,5 @@ def test_the_examples_section_is_a_table_of_derived_rows(tmp_path):
     area = _project(tmp_path)
     out = "\n".join(readback.examples_section(tmp_path, "shop", area))
     assert "| Example | Given | When | Then | Illustrates |" in out
-    assert "| EX-003 — The fourth order is refused | order × 3 | order_again — refused " \
-           "| `orders == 3` | REQ-003 |" in out
+    assert "| EX-003 — The fourth order is refused | order × 3, so `orders == 3` " \
+           "| order_again — refused | refused — nothing changes | REQ-003 |" in out

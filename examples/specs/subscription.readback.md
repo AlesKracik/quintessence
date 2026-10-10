@@ -44,7 +44,7 @@ flowchart LR
 - **Unchecked requirement** — REQ-004: While the Subscription is Active, if the billing provider times out during cancellation, then the system shall leave the Subscription Active and billing enabled.
 - **Unchecked requirement** — REQ-005: While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired.
 - **Unchecked requirement** — REQ-007: When a cancellation succeeds, the system shall confirm to the customer by email or in-app notice. _(REQ-007/email)_
-- **Refusal shown by no example** — REQ-006: If a subscription is cancelled mid-period, then the system shall issue no refund. Add an example whose run attempts the call (`.fail()`) and asserts nothing moved.
+- **Refusal shown by no example** — REQ-006: If a subscription is cancelled mid-period, then the system shall issue no refund. Add an example whose run reaches the blocking state and ends with the call `.fail()`.
 - **Open question** — Q-001: After MAX_CANCEL_RETRIES exhausted TIMEOUTs, does the subscription stay Active forever, or does an operator get paged? ASM-001 assumes the provider answers eventually; nothing here says what happens if it does not. _(source: elicitation)_
 
 ## At a Glance
@@ -72,7 +72,7 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | `status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true` |
+| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
@@ -102,7 +102,7 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | `status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true` |
+| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ⏳ · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
@@ -132,7 +132,7 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-002 — Cancelling twice is harmless | cancel_subscription(alice) | cancel_again(alice) | `status = Cancelled, accessUntilPeriodEnd = true` |
+| EX-002 — Cancelling twice is harmless | cancel_subscription(alice) | cancel_again(alice) | status = Cancelled, accessUntilPeriodEnd = true |
 
 <details><summary>Quint action `cancel_again`, witness predicate + trace</summary>
 
@@ -163,7 +163,7 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-003 — Provider times out: nothing moves | status = Active, billingEnabled = true | cancel_times_out(c = alice) | `status = Active, billingEnabled = true` |
+| EX-003 — Provider times out: nothing moves | status = Active, billingEnabled = true | cancel_times_out(c = alice) | status = Active, billingEnabled = true |
 
 > **Guarded by** · [INV-003](#what-must-always-be-true) `timeoutLeavesActive` ⏳
 
@@ -303,9 +303,9 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 
 | Example | Given | When | Then | Illustrates |
 |---|---|---|---|---|
-| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | `status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true` | REQ-001, REQ-002 |
-| EX-002 — Cancelling twice is harmless | cancel_subscription(alice) | cancel_again(alice) | `status = Cancelled, accessUntilPeriodEnd = true` | REQ-003 |
-| EX-003 — Provider times out: nothing moves | status = Active, billingEnabled = true | cancel_times_out(c = alice) | `status = Active, billingEnabled = true` | REQ-004, INV-003 |
+| EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice) | status = Cancelled, billingEnabled = false, accessUntilPeriodEnd = true | REQ-001, REQ-002 |
+| EX-002 — Cancelling twice is harmless | cancel_subscription(alice) | cancel_again(alice) | status = Cancelled, accessUntilPeriodEnd = true | REQ-003 |
+| EX-003 — Provider times out: nothing moves | status = Active, billingEnabled = true | cancel_times_out(c = alice) | status = Active, billingEnabled = true | REQ-004, INV-003 |
 
 ## Limits and Bounds
 
