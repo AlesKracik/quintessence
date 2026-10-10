@@ -581,3 +581,18 @@ def test_a_generated_probe_reads_its_ghosts_only_after_the_path_holds():
     assert first == '_lastAction == "cancel_subscription"'
     assert "val reached_REQ_001: bool = not(witness_REQ_001)" in text
     assert area["requirements"]
+
+
+def test_strict_simulation_fails_when_the_quint_cannot_screen_probes(
+        tmp_path, monkeypatch):
+    """An older quint without `run --witnesses` screens nothing; --strict
+    must not read that silence as every requirement reached."""
+    _prescreen_project(tmp_path)
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports",
+                        lambda q, sub, flag: flag != "--witnesses")
+    monkeypatch.setattr(record, "run_simulate",
+                        lambda *a, **k: ("ok", "", 0.1, {}, []))
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_SimArgs(tmp_path, True))
+    assert exc.value.code == 1

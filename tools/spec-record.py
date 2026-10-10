@@ -1042,6 +1042,8 @@ def cmd_check(args):
                         print(f"{'simulate':<12} {'0 traces':<26} {name} — "
                               f"unreachable in {explored} random runs "
                               f"(vacuity red flag; Apalache still decides)")
+                    else:
+                        print(f"{'simulate':<12} {f'{hits}/{explored} traces':<26} {name}")
                 if rows:
                     simulation["witnesses"] = rows
                 if not counts and res != "ok":
@@ -1052,6 +1054,13 @@ def cmd_check(args):
                           f"not run: {detail}")
                 print(f"{'simulate':<12} {'witness pre-screen':<26} ({dur:.1f}s, "
                       f"{len(rows)} probe(s) reported)")
+            elif sim_probes:
+                # An older quint: nothing was screened, and --strict must not
+                # read that as nothing being wrong.
+                sim_problems.append("this quint has no `run --witnesses`, so no "
+                                    "probe was screened")
+                print(f"{'simulate':<12} {'skipped':<26} witness pre-screen — this "
+                      f"quint has no `run --witnesses`")
 
     if args.only_simulate:
         # Write ONLY the simulation block. Touching check_results.ran_at here

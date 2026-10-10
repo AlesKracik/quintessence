@@ -333,7 +333,13 @@ jobs:
           areas=$(python -c "import json,pathlib; print(' '.join(p.name[:-len('.intent.json')] for p in sorted(pathlib.Path('examples/specs').glob('*.intent.json')) if (json.loads(p.read_text(encoding='utf-8')).get('formal_model') or {}).get('probes_file')))")
           for area in $areas; do
             echo "── simulate: $area"
-            "$RUNNER_TEMP/annotate.sh" "simulate $area" python tools/spec-record.py check "$area" --root examples --only-simulate --strict --steps 20 --samples 10000 --seed 7 || status=1
+            out=$("$RUNNER_TEMP/annotate.sh" "simulate $area" python tools/spec-record.py check "$area" --root examples --only-simulate --strict --steps 20 --samples 10000 --seed 7) || status=1
+            echo "$out"
+            # What was explored and reached, on the checks page whether or
+            # not it passed: a gate that only speaks when it fails cannot be
+            # told apart from one that checked nothing.
+            summary=$(echo "$out" | grep -E "^simulate" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::notice title=simulate $area::$summary"
           done
           exit $status
 
