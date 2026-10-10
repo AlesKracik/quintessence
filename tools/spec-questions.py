@@ -416,8 +416,14 @@ class Unrenderable(Exception):
     pass
 
 
-def literal(v):
-    """An ITF value as a Quint expression."""
+def literal(v, names=None):
+    """An ITF value as a Quint expression. `names` maps a variant declared in
+    an imported module to how this model refers to it (`tag:Active` ->
+    `auth::Active`)."""
+    names = names or {}
+
+    def lit(x):
+        return literal(x, names)
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, int):
@@ -425,26 +431,26 @@ def literal(v):
     if isinstance(v, str):
         return json.dumps(v)
     if isinstance(v, list):
-        return "[" + ", ".join(literal(x) for x in v) + "]"
+        return "[" + ", ".join(lit(x) for x in v) + "]"
     if isinstance(v, dict):
         if "#bigint" in v:
             return str(int(v["#bigint"]))
         if "#set" in v:
-            return "Set(" + ", ".join(literal(x) for x in v["#set"]) + ")"
+            return "Set(" + ", ".join(lit(x) for x in v["#set"]) + ")"
         if "#map" in v:
-            return "Map(" + ", ".join(f"{literal(k)} -> {literal(x)}"
-                                      for k, x in v["#map"]) + ")"
+            return "Map(" + ", ".join(f"{lit(k)} -> {lit(x)}" for k, x in v["#map"]) + ")"
         if "#tup" in v:
-            return "(" + ", ".join(literal(x) for x in v["#tup"]) + ")"
+            return "(" + ", ".join(lit(x) for x in v["#tup"]) + ")"
         if "#unserializable" in v:
             raise Unrenderable(str(v["#unserializable"]))
         if set(v) == {"tag", "value"}:
+            tag = names.get(f"tag:{v['tag']}", v["tag"])
             inner = v["value"]
             if inner == {"#tup": []} or inner == {}:
-                return v["tag"]
-            return f"{v['tag']}({literal(inner)})"
+                return tag
+            return f"{tag}({lit(inner)})"
         fields = [k for k in v if not k.startswith("#")]
-        return "{ " + ", ".join(f"{k}: {literal(v[k])}" for k in fields) + " }"
+        return "{ " + ", ".join(f"{k}: {lit(v[k])}" for k in fields) + " }"
     raise Unrenderable(repr(v))
 
 
@@ -486,11 +492,17 @@ def var_names(decls, imported):
     module's variables bare (`sessions`); inside a model that imports that
     module qualified they are `auth::sessions`."""
     own = {n for n, h in decls.items() if h.get("kind") == "var"}
+    own_tags = {v for h in decls.values() if h.get("kind") == "type"
+                for v in spec_source.type_variants(h.get("body"))}
     out = {}
     for alias, other in (imported or {}).items():
         for n, h in other.items():
             if h.get("kind") == "var" and n not in own:
                 out.setdefault(n, f"{alias}::{n}")
+            if h.get("kind") == "type":
+                for v in spec_source.type_variants(h.get("body")):
+                    if v not in own_tags:
+                        out.setdefault(f"tag:{v}", f"{alias}::{v}")
     return out
 
 
@@ -503,16 +515,16 @@ def facts(state, names=None):
         ref = names.get(var, var)
         if isinstance(v, dict) and "#map" in v and v["#map"]:
             for k, x in v["#map"]:
-                out.append((f"{ref}.get({literal(k)}) == {literal(x)}",
+                out.append((f"{ref}.get({literal(k, names)}) == {literal(x, names)}",
                             f"{var}[{shown(k)}] = {shown(x)}"))
         else:
-            out.append((f"{ref} == {literal(v)}", f"{var} = {shown(v)}"))
+            out.append((f"{ref} == {literal(v, names)}", f"{var} = {shown(v)}"))
     return out
 
 
 def state_expr(state, names=None):
     names = names or {}
-    return " and ".join(f"{names.get(var, var)} == {literal(v)}"
+    return " and ".join(f"{names.get(var, var)} == {literal(v, names)}"
                         for var, v in sorted(state_vars(state).items())) or "true"
 
 
@@ -544,7 +556,7 @@ def step_templates(decls):
     return nondets, templates
 
 
-def bind(template, picks):
+def bind(template, picks, names=None):
     """The template with each nondet name replaced by its picked value."""
     code = spec_source._code_only(template)
     out, pos = [], 0
@@ -552,13 +564,13 @@ def bind(template, picks):
         name = m.group(0)
         if name in picks:
             out.append(template[pos:m.start()])
-            out.append(literal(picks[name]))
+            out.append(literal(picks[name], names))
             pos = m.end()
     out.append(template[pos:])
     return "".join(out)
 
 
-def trace_steps(trace, nondets, templates):
+def trace_steps(trace, nondets, templates, names=None):
     """[{call, state}] for a `quint run --mbt` trace — the initial state as
     step 0 with call None — or None when a step cannot be rebuilt."""
     states = trace.get("states") or []
@@ -577,8 +589,8 @@ def trace_steps(trace, nondets, templates):
             if isinstance(v, dict) and v.get("tag") == "Some":
                 picks[name] = v["value"]
         try:
-            call = bind(template, picks)
-            literal(state_vars(st))
+            call = bind(template, picks, names)
+            literal(state_vars(st), names)
         except Unrenderable:
             return None
         if any(re.search(rf"\b{re.escape(n)}\b", spec_source._code_only(call))
@@ -841,18 +853,18 @@ class Workers:
         return sum(q.calls for q in self.all)
 
 
-def suite(ctx, q, write, prefix, source_text, seed):
+def suite(ctx, q, write, prefix, source_text, seed, traces=None, steps=None):
     """Random traces of `source_text`, rebuilt as calls and states."""
     args = ctx["args"]
     nondets, templates = ctx["steps_of"]
     outdir = Path(q.cwd) / f"itf_{prefix}"
-    raw = q.traces(write(source_text, f"_src_{prefix}.qnt"), args.traces, args.steps,
-                   seed, outdir)
+    raw = q.traces(write(source_text, f"_src_{prefix}.qnt"), traces or args.traces,
+                   steps or args.steps, seed, outdir)
     shutil.rmtree(outdir, ignore_errors=True)
     q.last_read = len(raw)
     out = []
     for i, tr in enumerate(raw):
-        steps = trace_steps(tr, nondets, templates)
+        steps = trace_steps(tr, nondets, templates, ctx["names"])
         if steps:
             out.append((i, steps))
     return out
@@ -874,6 +886,50 @@ def locate(ctx, q, write, model_text, prefix, traces):
                             f"^{prefix}_")
     failed = {n for n, s in res.items() if s == "failed"}
     return first_divergence(prefix, bad, failed), dict(bad)
+
+
+def shrink(ctx, q, write, mt, kind, prefix, call, cond):
+    """The scenario without the calls the difference does not need.
+
+    A random trace drags along whatever else happened on the way — another
+    customer's cancellation, an unrelated tick. Each round tries dropping
+    one call and keeps the first shorter scenario that still parts the
+    model from the mutant the same way; two quint calls a round, and it
+    stops when no single call can go."""
+    if kind == "initial" or not prefix:
+        return prefix
+    text = ctx["text"]
+    expect = f".expect({cond})" if cond else ""
+    while prefix:
+        cands = [prefix[:i] + prefix[i + 1:] for i in range(len(prefix))]
+        on_model, on_mutant = [], []
+        for i, c in enumerate(cands):
+            chain = "init" + "".join(f".then({x})" for x in c)
+            if kind == "refused":
+                on_model.append(f"  run qs_{i} = {chain}.then({call}.fail())")
+                on_mutant.append(f"  run qs_{i} = {chain}.then({call})")
+            else:
+                on_model.append(f"  run qs_{i} = {chain}.then({call}){expect}")
+                on_mutant.append(f"  run qs_{i} = {chain}.then({call})"
+                                 + (expect if kind == "outcome" else ""))
+                on_mutant.append(f"  run qs_{i}_x = {chain}"
+                                 + (f".then({call})" if kind == "outcome" else ""))
+        _c, _o, ro = q.test(write(with_runs(text, on_model)), "^qs_")
+        _c, _o, rm = q.test(write(with_runs(mt, on_mutant)), "^qs_")
+
+        def keeps(i):
+            if ro.get(f"qs_{i}") != "passed":
+                return False
+            if kind == "refused":
+                return rm.get(f"qs_{i}") == "passed"
+            # The mutant still runs the scenario up to the point that matters
+            # and still parts there — not earlier, for some other reason.
+            return rm.get(f"qs_{i}") == "failed" and rm.get(f"qs_{i}_x") == "passed"
+        pick = next((i for i in range(len(cands)) if keeps(i)), None)
+        if pick is None:
+            break
+        prefix = cands[pick]
+    return prefix
 
 
 def evaluate(m, ctx, q, write):
@@ -933,7 +989,11 @@ def evaluate(m, ctx, q, write):
     if not found:
         # The other way round: what the mutant allows and the model refuses
         # never shows up in the model's own traces.
-        other = suite(ctx, q, write, "qb", mt, args.seed + 1)
+        # Wider than the first pass: a step the model refuses is usually one
+        # only a longer or rarer run reaches (a sixth failure on a locked
+        # account), and this pass runs only for the mutants still unexplained.
+        other = suite(ctx, q, write, "qb", mt, args.seed + 1,
+                      traces=args.traces * 3, steps=args.steps + 5)
         if other:
             hit, steps_by = locate(ctx, q, write, text, "qb", other)
             if hit and hit[2] == "refused":
@@ -944,6 +1004,8 @@ def evaluate(m, ctx, q, write):
         row["outcome"] = "no-difference"
         return row, None
     kind, prefix_calls, call, fs = found
+    prefix_calls = shrink(ctx, q, write, mt, kind, prefix_calls, call,
+                          " and ".join(c for c, _t in fs))
     row["outcome"] = "survived"
     qn = question(kind, prefix_calls, call, fs, refs_for(area, call), ctx["area_name"],
                   m["key"])
@@ -1064,6 +1126,9 @@ def run_area(root, area_name, args):
             questions.append(qn)
             row["question"] = m["key"]
 
+    # The questions about a requirement first, the ones about where the model
+    # starts last: those are most often a placeholder value.
+    questions.sort(key=lambda x: (x["kind"] == "initial", not x.get("refs")))
     counts = {o: sum(1 for r in results if r.get("outcome") == o)
               for o in ("stillborn", "killed", "survived", "no-difference")}
     by_example = sum(1 for r in results if r.get("outcome") == "killed" and r.get("by_example"))
@@ -1113,6 +1178,23 @@ def print_report(report):
               f"  {qn['question']}\n  change: {qn['change']}\n  yes -> {qn['example']}")
 
 
+def markdown_report(report):
+    """The run as Markdown — for a CI job summary, where people read it."""
+    score = report.get("score")
+    lines = [f"### {report['area']} — "
+             + ("score n/a" if score is None else f"{score:.0%} of behavior-changing "
+                f"mutants killed by examples"), "",
+             f"{report['mutants']} mutants: {report['killed_by_examples']} killed by "
+             f"examples, {report['killed_otherwise']} otherwise, {report['survived']} "
+             f"survived, {report['no_difference']} no difference found, "
+             f"{report['stillborn']} stillborn.", ""]
+    for qn in report.get("questions") or []:
+        refs = f" ({', '.join(qn['refs'])})" if qn.get("refs") else ""
+        lines += [f"**{qn['key']}**{refs} — {qn['question']}", "",
+                  "```quint", qn["example"], "```", ""]
+    return "\n".join(lines) + "\n"
+
+
 def main(argv=None):
     soften_stdout()
     ap = argparse.ArgumentParser(description="Model mutation: what the examples leave open.")
@@ -1134,6 +1216,8 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--record", action="store_true",
                     help="write check_results.mutation into the area's records")
+    ap.add_argument("--summary", metavar="FILE",
+                    help="append the run as Markdown to FILE (e.g. $GITHUB_STEP_SUMMARY)")
     args = ap.parse_args(argv)
     root = Path(args.root)
     report, summary = run_area(root, args.area, args)
@@ -1141,6 +1225,9 @@ def main(argv=None):
         print(json.dumps(report, indent=2))
     else:
         print_report(report)
+    if args.summary and summary is not None:
+        with open(args.summary, "a", encoding="utf-8") as fh:
+            fh.write(markdown_report(report))
     if args.record and summary is not None:
         area = spec_source.load_area(root, args.area)
         area.setdefault("check_results", {})["mutation"] = summary

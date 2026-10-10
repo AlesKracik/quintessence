@@ -1,0 +1,107 @@
+# Spec mutation — what the examples leave open (tools/spec-questions.py).
+#
+# Slow (minutes per area) and not a gate: a surviving mutant is a question
+# for a person, not a failure. So it runs nightly, on demand, and on a PR
+# that changes a model or the tool itself, and writes what it found to the
+# run's summary page: the score per area and each question with the example
+# that answers it.
+#
+# In a project: every area with a Quint model. In the template repo (before
+# bootstrap): the examples, and the recorded block is also posted as
+# annotations so it can be copied into the examples' records.
+
+name: spec-mutation
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "specs/**/*.qnt"
+      - "examples/specs/**/*.qnt"
+      - "tools/spec-questions.py"
+      - ".github/workflows/spec-mutation.yml"
+
+jobs:
+  areas:
+    runs-on: ubuntu-latest
+    outputs:
+      root: ${{ steps.list.outputs.root }}
+      areas: ${{ steps.list.outputs.areas }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        name: Areas with a model
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, pathlib
+          root = "." if pathlib.Path(".spec/project.json").exists() else (
+              "examples" if pathlib.Path("examples/specs").is_dir() else "")
+          areas = []
+          if root:
+              for p in sorted(pathlib.Path(root, "specs").glob("*.intent.json")):
+                  intent = json.loads(p.read_text(encoding="utf-8"))
+                  name = p.name[:-len(".intent.json")]
+                  qnt = (intent.get("formal_model") or {}).get("quint_file") or f"{name}.qnt"
+                  if intent.get("kind") != "contract" and pathlib.Path(root, "specs", qnt).exists():
+                      text = pathlib.Path(root, "specs", qnt).read_text(encoding="utf-8")
+                      if "action " in text:
+                          areas.append(name)
+          print(f"root={root}")
+          print(f"areas={json.dumps(areas)}")
+          PY
+
+  mutate:
+    needs: areas
+    if: needs.areas.outputs.areas != '[]' && needs.areas.outputs.areas != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        area: ${{ fromJson(needs.areas.outputs.areas) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Quint CLI
+        run: npm install -g @informalsystems/quint && quint --version
+
+      - name: Mutate ${{ matrix.area }}
+        run: |
+          root="${{ needs.areas.outputs.root }}"
+          area="${{ matrix.area }}"
+          # Annotations are cut at 4 KB: long text goes out as numbered parts.
+          cat > "$RUNNER_TEMP/parts.py" <<'PY'
+          import sys
+          path, title, level = sys.argv[1:4]
+          text = open(path, encoding="utf-8").read()
+          parts = [text[i:i + 3800] for i in range(0, len(text), 3800)] or [""]
+          for i, c in enumerate(parts[:9], 1):
+              msg = c.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::{level} title={title} ({i}/{len(parts)})::{msg}")
+          PY
+          start=$(date +%s)
+          # The step shell runs with -e: capture the exit code instead of dying on it.
+          code=0
+          python tools/spec-questions.py "$area" --root "$root" --record \
+            --summary "$GITHUB_STEP_SUMMARY" > "$RUNNER_TEMP/report.txt" 2>&1 || code=$?
+          echo "took $(( $(date +%s) - start ))s" >> "$RUNNER_TEMP/report.txt"
+          cat "$RUNNER_TEMP/report.txt"
+          if [ $code -eq 0 ]; then level=notice; else level=error; fi
+          python "$RUNNER_TEMP/parts.py" "$RUNNER_TEMP/report.txt" "mutation $area" "$level"
+          if [ $code -eq 0 ] && [ "$root" = "examples" ]; then
+            python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['check_results'].get('mutation', {}), separators=(',', ':'), ensure_ascii=False))" "$root/specs/$area.records.json" > "$RUNNER_TEMP/record.json"
+          fi
+          exit $code
+
+      - name: Post the recorded block (template repo)
+        if: needs.areas.outputs.root == 'examples'
+        run: |
+          [ -f "$RUNNER_TEMP/record.json" ] || exit 0
+          python "$RUNNER_TEMP/parts.py" "$RUNNER_TEMP/record.json" "mutation record ${{ matrix.area }}" notice

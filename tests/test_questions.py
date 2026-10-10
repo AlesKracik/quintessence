@@ -243,6 +243,14 @@ def test_an_imported_var_is_named_through_its_module():
         "module auth {\n  var sessions: int\n  var screen: int\n}\n"),
                 "util": {}}
     assert sq.var_names(decls, imported) == {"sessions": "auth::sessions"}
+    # A variant of an imported type is named through its module too.
+    imported["auth"].update(spec_source.declarations(
+        "module auth {\n  type S = | Active | Gone\n}\n"))
+    names = sq.var_names(decls, imported)
+    assert names["tag:Active"] == "auth::Active"
+    assert sq.literal({"#map": [["s1", V]]}, names) == 'Map("s1" -> auth::Active)'
+    assert sq.state_expr({"sessions": {"#map": [["s1", V]]}}, names) == \
+        'auth::sessions == Map("s1" -> auth::Active)'
 
 
 def test_the_first_parting_is_the_earliest_failing_run_of_any_trace():
@@ -444,9 +452,46 @@ def test_a_recorded_run_fits_the_records_schema(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(sq, "Quint", FakeQuint)
     monkeypatch.setattr(sq.shutil, "which", lambda name: "/usr/bin/quint")
-    assert sq.main(["shop", "--root", str(tmp_path), "--record", "--ops", "const,variant"]) == 0
+    summary_md = tmp_path / "summary.md"
+    assert sq.main(["shop", "--root", str(tmp_path), "--record", "--ops", "const,variant",
+                    "--summary", str(summary_md)]) == 0
+    md = summary_md.read_text(encoding="utf-8")
+    assert md.startswith("### shop — ") and "```quint\nrun q_" in md
     records = json.loads((specs / "shop.records.json").read_text(encoding="utf-8"))
     mutation = records["check_results"]["mutation"]
     assert mutation["questions"] and mutation["killed_by_examples"] == 1
     schema = json.loads((TOOLS.parent / "schemas" / "records.schema.json").read_text())
     jsonschema.validate(records, schema)
+
+
+class ShrinkQuint:
+    """The difference needs `add` before `close`; nothing else matters."""
+
+    def __init__(self, cwd):
+        self.cwd = Path(cwd)
+
+    def test(self, file, match):
+        text = (self.cwd / file).read_text(encoding="utf-8")
+        mutant = "MUTANT" in text
+        res = {}
+        for name, h in spec_source.declarations(text).items():
+            if h.get("kind") != "run" or not name.startswith("qs_"):
+                continue
+            body = h.get("body") or ""
+            failed = mutant and not name.endswith("_x") and ".then(add)" in body
+            res[name] = "failed" if failed else "passed"
+        return (1 if "failed" in res.values() else 0), "", res
+
+
+def test_a_scenario_keeps_only_the_calls_the_difference_needs(tmp_path):
+    q = ShrinkQuint(tmp_path)
+
+    def write(text, name=None):
+        (tmp_path / (name or "shop.qnt")).write_text(text, encoding="utf-8")
+        return name or "shop.qnt"
+    ctx = {"text": STEPPED}
+    mutant = STEPPED.replace("module shop {", "module shop {\n  // MUTANT")
+    got = sq.shrink(ctx, q, write, mutant, "outcome",
+                    ['shout("ann")', "add", 'shout("bo")'], "close", "count == 1")
+    assert got == ["add"]
+    assert sq.shrink(ctx, q, write, mutant, "initial", ["add"], None, "") == ["add"]
