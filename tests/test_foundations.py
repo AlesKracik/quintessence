@@ -278,6 +278,12 @@ def test_spans_without_an_import_is_reported_and_an_import_clears_it(tmp_path):
     findings = []
     lint.check_spans_imported(area, imported, {}, "ui", findings)
     assert findings == []
+    # The lint's own sidecar keeps imports as bare module names — the shape
+    # the check meets when spec-lint actually runs.
+    findings = []
+    lint.check_spans_imported(area, lint.parse_sidecar(tmp_path / "ui2.qnt"), {}, "ui",
+                              findings)
+    assert findings == []
     findings = []
     lint.check_spans_imported(dict(area, kind="contract"), bare, {}, "ui", findings)
     assert findings == [], "a contract's imports are check_contract_spans' business"
@@ -379,6 +385,69 @@ def test_the_journey_schema_accepts_a_run_and_step_examples():
         jsonschema.validate(_journey(run="journeyRun"), schema)
 
 
+def _shop_run(steps, run="journeyRun", model=SHOP, extra_reqs=()):
+    views = {"shop": {"requirements": [
+        {"id": "REQ-001", "quint_ref": "order"},
+        {"id": "REQ-002", "quint_ref": "restock"}, *extra_reqs]}}
+    decls = spec_source.declarations(model)
+    return spec_source.journey_run(
+        {"run": f"shop.{run}", "steps": [{"ref": f"shop.{s}"} for s in steps]},
+        views, lambda a: decls)
+
+
+def test_one_call_covers_consecutive_steps_it_realizes():
+    """A cancel that stops billing and keeps access is one call and two
+    requirements; the journey lists both, the run makes the call once."""
+    res = _shop_run(["REQ-001", "REQ-004", "REQ-002"],
+                    extra_reqs=[{"id": "REQ-004", "quint_ref": "order"}])
+    assert res["order_error"] is None
+    assert res["covered"] == ["shop.REQ-001", "shop.REQ-004", "shop.REQ-002"]
+
+
+def test_the_same_step_twice_needs_two_calls():
+    assert _shop_run(["REQ-001", "REQ-001", "REQ-002"])["order_error"] == (
+        2, "shop.REQ-001", "order")
+    model = SHOP.replace("run journeyRun = init.then(order)",
+                         "run journeyRun = init.then(order).then(order)")
+    assert _shop_run(["REQ-001", "REQ-001", "REQ-002"], model=model)["order_error"] is None
+
+
+def test_a_step_in_an_imported_model_is_covered_by_the_call_that_performs_it():
+    ui = '''module ui {
+  import shop from "./shop"
+  var screen: str
+  action init = all { shop::init, screen' = "home" }
+  action buy = all { screen == "home", shop::order, screen' = "done" }
+  action browse = all { shop::stock' = shop::stock, shop::orders' = shop::orders, screen' = "list" }
+  run buyRun = init.then(browse).then(buy).expect(screen == "done")
+}
+'''
+    decls = spec_source.declarations(ui)
+    shop = spec_source.declarations(SHOP)
+    resolve = {"shop": shop}.get
+    assert ("shop", "order") in spec_source.action_reach(decls, "buy", resolve)
+    assert spec_source.action_reach(decls, "browse", resolve) == {(None, "browse")}, (
+        "a primed name is an assignment and a read of a var is not a call")
+    views = {"shop": {"requirements": [{"id": "REQ-001", "quint_ref": "order"}]},
+             "ui": {"requirements": [{"id": "UI-001", "quint_ref": "buy"}]}}
+    res = spec_source.journey_run(
+        {"run": "ui.buyRun", "steps": [{"ref": "shop.REQ-001"}, {"ref": "ui.UI-001"}]},
+        views, {"ui": decls, "shop": shop}.get)
+    assert res["order_error"] is None and res["outside"] == []
+    assert res["covered"] == ["shop.REQ-001", "ui.UI-001"]
+
+
+def test_the_shipped_cancel_journey_runs_every_step():
+    views = {"subscription": spec_source.load_area(EXAMPLES, "subscription")}
+    journey = json.loads((EXAMPLES / "specs" / "journeys" /
+                          "cancel-subscription.journey.json").read_text(encoding="utf-8"))
+    res = spec_source.journey_run(
+        journey, views,
+        lambda a: spec_source.model_declarations(EXAMPLES, a, views[a]))
+    assert res["found"] and res["order_error"] is None and res["outside"] == []
+    assert res["covered"] == [s["ref"] for s in journey["steps"]]
+
+
 def test_the_shipped_sign_in_journey_runs_over_its_auth_steps():
     views = {a: spec_source.load_area(EXAMPLES, a) for a in ("auth", "auth-ui")}
     journey = json.loads((EXAMPLES / "specs" / "journeys" / "sign-in.journey.json")
@@ -386,8 +455,10 @@ def test_the_shipped_sign_in_journey_runs_over_its_auth_steps():
     res = spec_source.journey_run(
         journey, views, lambda a: spec_source.model_declarations(EXAMPLES, a, views[a]))
     assert res["found"] and res["order_error"] is None
-    assert res["covered"] == ["auth.REQ-001", "auth.REQ-003"]
-    assert res["outside"] == ["auth-ui.UI-001", "auth-ui.UI-002", "auth-ui.UI-003"]
+    # The run is the UI's, and each UI step calls the auth action it causes,
+    # so the one run covers both areas' steps.
+    assert res["outside"] == []
+    assert res["covered"] == [s["ref"] for s in journey["steps"]]
 
 
 def test_the_shipped_examples_lint_without_failures():
@@ -438,3 +509,90 @@ def test_the_examples_section_is_a_table_of_derived_rows(tmp_path):
     assert "| Example | Given | When | Then | Illustrates |" in out
     assert "| EX-003 — The fourth order is refused | order × 3, so `orders == 3` " \
            "| order_again — refused | refused — nothing changes | REQ-003 |" in out
+
+
+# ── The witness pre-screen counts the probes the right way up ───────────────
+
+record = _load("spec_record_f", "spec-record.py")
+
+
+def _prescreen_project(tmp_path):
+    _project(tmp_path)
+    specs = tmp_path / "specs"
+    (specs / "shop.intent.json").write_text(json.dumps(
+        {"kind": "area", "area": "shop", "version": "0.1.0", "status": "formalized",
+         "formal_model": {"quint_file": "shop.qnt",
+                          "probes_file": "shop.probes.qnt"}}), encoding="utf-8")
+    (specs / "shop.probes.qnt").write_text(
+        "module shop_probes {\n"
+        "  val witness_REQ_001: bool = not(true)\n"
+        "  val witness_REQ_002: bool = not(true)\n"
+        "  val reached_REQ_001: bool = not(witness_REQ_001)\n"
+        "  val reached_REQ_002: bool = not(witness_REQ_002)\n"
+        "}\n", encoding="utf-8")
+
+
+class _SimArgs:
+    def __init__(self, root, strict):
+        self.root, self.area = str(root), "shop"
+        self.steps = self.timeout = self.only = None
+        self.no_witness, self.emit_json = True, False
+        self.no_simulate, self.only_simulate = False, True
+        self.samples = self.seed = None
+        self.strict = strict
+
+
+@pytest.mark.parametrize("strict,code", [(False, 0), (True, 1)])
+def test_the_witness_prescreen_counts_the_probes_the_right_way_up(
+        tmp_path, monkeypatch, strict, code):
+    """A probe is the negation of its behavior, true at init — counting the
+    runs in which IT held counted every run, so a vacuous requirement could
+    never show up as 0. The pre-screen counts the positive `reached_` form."""
+    _prescreen_project(tmp_path)
+    seen = []
+
+    def fake(quint, target, invariants, *a, witnesses=None, **k):
+        seen.append((Path(target).name, tuple(witnesses or ())))
+        counts = ({"reached_REQ_001": (0, 500), "reached_REQ_002": (12, 500)}
+                  if witnesses else {})
+        return "ok", "", 0.1, counts, []
+
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_simulate", fake)
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_SimArgs(tmp_path, strict))
+    assert exc.value.code == code, "only --strict turns a 0 into a failure"
+    assert ("shop.probes.qnt", ("reached_REQ_001", "reached_REQ_002")) in seen
+    sim = spec_source.load_area(tmp_path, "shop")["check_results"]["simulation"]
+    assert sim["witnesses"] == [
+        {"probe": "witness_REQ_001", "traces": 0, "explored": 500},
+        {"probe": "witness_REQ_002", "traces": 12, "explored": 500}]
+
+
+def test_a_generated_probe_reads_its_ghosts_only_after_the_path_holds():
+    """At init `_lastC` is "" and `_prevStatus` is Map(); a `get` on either
+    is a runtime error in the simulator. The path conjunct is false until an
+    action runs, so it goes first and evaluation stops there."""
+    area = spec_source.load_area(EXAMPLES, "subscription")
+    text = (EXAMPLES / "specs" / "subscription.probes.qnt").read_text(encoding="utf-8")
+    body = lint.probe_body(text, "witness_REQ_001")
+    first = body.split("not(", 1)[1].strip().splitlines()[0]
+    assert first == '_lastAction == "cancel_subscription"'
+    assert "val reached_REQ_001: bool = not(witness_REQ_001)" in text
+    assert area["requirements"]
+
+
+def test_strict_simulation_fails_when_the_quint_cannot_screen_probes(
+        tmp_path, monkeypatch):
+    """An older quint without `run --witnesses` screens nothing; --strict
+    must not read that silence as every requirement reached."""
+    _prescreen_project(tmp_path)
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports",
+                        lambda q, sub, flag: flag != "--witnesses")
+    monkeypatch.setattr(record, "run_simulate",
+                        lambda *a, **k: ("ok", "", 0.1, {}, []))
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_SimArgs(tmp_path, True))
+    assert exc.value.code == 1

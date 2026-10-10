@@ -193,7 +193,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
                        load_trace, witness_status, is_hollow,
                        area_json_path, is_rejection, skip_discharge,
-                       probe_name, outcome_probe_name)
+                       probe_name, outcome_probe_name, reach_name)
 from spec_source import (load_area, save_area as save_records,  # noqa: E402
                          records_path, SpecSourceError)
 import spec_source  # noqa: E402
@@ -957,6 +957,7 @@ def cmd_check(args):
     simulation = None
     sim_falsified = set()      # quint_names the simulator violated
     sim_probe_hits = {}        # probe val name -> traces it appeared in
+    sim_problems = []          # what --strict fails on
     if not args.no_simulate and qnt_file.exists():
         sim_pool = [i for i in (area.get("invariants") or [])
                     if i.get("quint_name") and selected(i)
@@ -970,9 +971,17 @@ def cmd_check(args):
         sim_trans = [i["quint_name"] for i in sim_pool
                      if (i.get("over") or "model") == "probes"
                      and i["quint_name"] in probe_vals]
-        sim_probes = [probe_name(r["id"]) for r in (area.get("requirements") or [])
-                      if r.get("id") and selected(r)
-                      and probe_name(r["id"]) in probe_vals]
+        sim_probes = []
+        for r in area.get("requirements") or []:
+            if not (r.get("id") and selected(r)):
+                continue
+            names = [probe_name(r["id"])] + [
+                outcome_probe_name(r["id"], oc.get("name"))
+                for oc in ((r.get("witness") or {}).get("outcomes") or [])]
+            # Screened through the probe's positive form: the probe itself
+            # is a negation, true at init, so every run "witnesses" it.
+            sim_probes += [n for n in names if n in probe_vals
+                           and reach_name(n) in probe_vals]
         if sim_invs or sim_trans or sim_probes:
             quint = need_quint()
             backend = eval_backend if quint_supports(quint, "run", "--backend") else None
@@ -992,6 +1001,8 @@ def cmd_check(args):
                     sim_timeout, seed=sim_seed, backend=backend,
                     init=init, step=step)
                 simulation[key] = {"result": res, "checked": len(names)}
+                if res in ("violation", "error"):
+                    sim_problems.append(f"{key}: {res}" + (f" — {detail}" if detail else ""))
                 if detail:
                     simulation[key]["detail"] = detail
                 if falsified:
@@ -1013,27 +1024,43 @@ def cmd_check(args):
                 print(f"{'simulate':<12} {mark:<26} ({dur:.1f}s, "
                       f"{len(names)} {what}, {sim_samples} samples)")
             if sim_probes and quint_supports(quint, "run", "--witnesses"):
-                _, _, dur, counts, _ = run_simulate(
+                res, detail, dur, counts, _ = run_simulate(
                     quint, probes_file, [], sim_samples, sim_steps, sim_timeout,
                     seed=sim_seed, backend=backend, init="initP", step="stepP",
-                    witnesses=sim_probes)
-                if counts:
-                    rows = []
-                    for name in sim_probes:
-                        hits, explored = counts.get(name, (None, None))
-                        if hits is None:
-                            continue
-                        rows.append({"probe": name, "traces": hits,
-                                     "explored": explored})
-                        sim_probe_hits[name] = hits
-                        if hits == 0:
-                            print(f"{'simulate':<12} {'0 traces':<26} {name} — "
-                                  f"unreachable in {explored} random runs "
-                                  f"(vacuity red flag; Apalache still decides)")
-                    if rows:
-                        simulation["witnesses"] = rows
-                    print(f"{'simulate':<12} {'witness pre-screen':<26} ({dur:.1f}s, "
-                          f"{len(rows)} probe(s) reported)")
+                    witnesses=[reach_name(n) for n in sim_probes])
+                rows = []
+                for name in sim_probes:
+                    hits, explored = counts.get(reach_name(name), (None, None))
+                    if hits is None:
+                        sim_problems.append(f"{name}: the simulator reported no count")
+                        continue
+                    rows.append({"probe": name, "traces": hits,
+                                 "explored": explored})
+                    sim_probe_hits[name] = hits
+                    if hits == 0:
+                        sim_problems.append(f"{name}: reached in none of {explored} runs")
+                        print(f"{'simulate':<12} {'0 traces':<26} {name} — "
+                              f"unreachable in {explored} random runs "
+                              f"(vacuity red flag; Apalache still decides)")
+                    else:
+                        print(f"{'simulate':<12} {f'{hits}/{explored} traces':<26} {name}")
+                if rows:
+                    simulation["witnesses"] = rows
+                if not counts and res != "ok":
+                    # The run did not get as far as counting — an error in
+                    # the probe module. Said, not swallowed: a silent pre-
+                    # screen reads exactly like one that found nothing wrong.
+                    print(f"{'simulate':<12} {'ERROR':<26} witness pre-screen did "
+                          f"not run: {detail}")
+                print(f"{'simulate':<12} {'witness pre-screen':<26} ({dur:.1f}s, "
+                      f"{len(rows)} probe(s) reported)")
+            elif sim_probes:
+                # An older quint: nothing was screened, and --strict must not
+                # read that as nothing being wrong.
+                sim_problems.append("this quint has no `run --witnesses`, so no "
+                                    "probe was screened")
+                print(f"{'simulate':<12} {'skipped':<26} witness pre-screen — this "
+                      f"quint has no `run --witnesses`")
 
     if args.only_simulate:
         # Write ONLY the simulation block. Touching check_results.ran_at here
@@ -1047,6 +1074,9 @@ def cmd_check(args):
             save_area(root, args.area, area)
             print(f"\nrecorded check_results.simulation in {area_path} "
                   f"(no verdicts written — simulation is advisory)")
+        if getattr(args, "strict", False) and sim_problems:
+            print("\n--strict: " + "; ".join(sim_problems))
+            sys.exit(1)
         sys.exit(0)
 
     # ── 1. Invariants + properties ───────────────────────────────────────
@@ -2213,6 +2243,11 @@ def main():
                     help="Run the simulator pre-gate and stop. Records "
                          "check_results.simulation only — no verdicts, and "
                          "check_results.ran_at is left alone.")
+    pc.add_argument("--strict", action="store_true",
+                    help="With --only-simulate: exit 1 when the simulator "
+                         "found an invariant violation or did not run, or a "
+                         "witness probe was reached in none of the explored "
+                         "runs. The example gate in CI; still not a verdict.")
     pc.add_argument("--samples", type=int,
                     help="Override quint.max_samples for the simulator.")
     pc.add_argument("--seed", help="Simulator seed, for a reproducible pre-gate.")

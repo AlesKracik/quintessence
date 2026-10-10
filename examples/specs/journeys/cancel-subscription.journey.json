@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../schemas/journey.schema.json",
+  "name": "Cancel a subscription",
+  "actor": "Customer",
+  "description": "Customer cancels mid-period. The first try goes unanswered and changes nothing; the retry succeeds, billing stops and access stays; a second cancel is harmless; the paid period ends and access stops.",
+  "run": "subscription.cancelJourney",
+  "steps": [
+    { "ref": "subscription.REQ-004", "note": "the provider does not answer the first try", "examples": ["subscription.EX-003"] },
+    { "ref": "subscription.REQ-001", "examples": ["subscription.EX-001"] },
+    { "ref": "subscription.REQ-002", "note": "same step as the cancel: access stays until the period ends" },
+    { "ref": "subscription.REQ-003", "examples": ["subscription.EX-002"] },
+    { "ref": "subscription.REQ-005", "examples": ["subscription.EX-007"] }
+  ]
+}

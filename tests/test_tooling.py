@@ -3881,9 +3881,10 @@ def test_the_ir_separates_a_mutation_from_an_identity_assignment():
     preservation look like a model that ignores the variable."""
     qnt = TOOLS.parent / "examples" / "specs" / "subscription.qnt"
     ir = quint_ir.parse_qnt(qnt, engine="regex")
-    assert ir["action_mutations"]["cancel_times_out"] == ["lastBillingResult"]
-    assert "status" in ir["action_preserves"]["cancel_times_out"]
-    assert "status" not in ir["action_mutations"]["cancel_times_out"]
+    assert sorted(ir["action_mutations"]["cancel_unanswered"]) == [
+        "lastBillingResult", "unansweredTries"]
+    assert "status" in ir["action_preserves"]["cancel_unanswered"]
+    assert "status" not in ir["action_mutations"]["cancel_unanswered"]
 
 
 def test_the_ir_maps_a_declared_state_to_the_var_that_holds_it():
@@ -5889,7 +5890,10 @@ def test_the_quint_ir_documents_the_same_declarations_as_the_python_reader():
                                   capture_output=True, text=True)
             assert proc.returncode == 0, proc.stdout + proc.stderr
             ir = json.loads(out.read_text(encoding="utf-8"))
-        mod = ir["modules"][0]
+        # A model that imports another (auth-ui imports auth) parses to
+        # both modules, the imported one first: take the file's own.
+        own = quint_ir.parse_qnt(qnt, engine="regex")["module_name"]
+        mod = next(m for m in ir["modules"] if m["name"] == own)
         recs = [r for r in spec_source.read_records(qnt.read_text(encoding="utf-8"))
                 if r["tag"] != "outcome-of"]
         # The IR hangs a type's doc on one of its constructors; credit the type.

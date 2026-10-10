@@ -3,17 +3,17 @@
   "area": "subscription",
   "check_results": {
     "outcomes": {
-      "ran_at": "2026-09-07T16:19:39+00:00",
+      "ran_at": "2026-10-10T14:45:19+00:00",
       "cells": 4,
       "covered": 4,
       "triaged": 0,
       "uncovered": 0
     },
     "matrix": {
-      "ran_at": "2026-09-07T16:20:49+00:00",
-      "cells": 12,
+      "ran_at": "2026-10-10T14:45:19+00:00",
+      "cells": 18,
       "covered": 2,
-      "triaged": 10,
+      "triaged": 16,
       "uncovered": 0,
       "orphans": 0
     }
@@ -29,9 +29,16 @@
     {
       "entity": "Subscription",
       "state": "Active",
-      "event": "cancel_times_out",
+      "event": "cancel_declined",
       "verdict": "NO-OP",
-      "reason": "REQ-004: the provider timing out deliberately changes nothing — the subscription stays Active and billable. INV-003 is the proof."
+      "reason": "REQ-008: a declined cancellation deliberately changes nothing but the recorded answer — the subscription stays Active and billable. INV-003 is the proof; EX-004 shows it."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Active",
+      "event": "cancel_unanswered",
+      "verdict": "NO-OP",
+      "reason": "REQ-004: the provider not answering deliberately changes nothing but the recorded answer and the try count — the subscription stays Active and billable. INV-003 is the proof; EX-003 shows it."
     },
     {
       "entity": "Subscription",
@@ -42,10 +49,10 @@
     },
     {
       "entity": "Subscription",
-      "state": "Cancelled",
-      "event": "cancel_subscription",
-      "verdict": "IMPOSSIBLE",
-      "reason": "cancel_subscription's guard requires Active; the repeat path is cancel_again."
+      "state": "Active",
+      "event": "request_refund",
+      "verdict": "NO-OP",
+      "reason": "REQ-006: a refund request is refused in every state and nothing changes (DEC-001)."
     },
     {
       "entity": "Subscription",
@@ -57,9 +64,44 @@
     {
       "entity": "Subscription",
       "state": "Cancelled",
-      "event": "cancel_times_out",
+      "event": "cancel_declined",
       "verdict": "IMPOSSIBLE",
-      "reason": "The provider is only called from the Active state; there is no second call to time out."
+      "reason": "cancel_declined's guard requires Active; a cancelled subscription has nothing left for the provider to decline."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_subscription",
+      "verdict": "IMPOSSIBLE",
+      "reason": "cancel_subscription's guard requires Active; the repeat path is cancel_again."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "cancel_unanswered",
+      "verdict": "IMPOSSIBLE",
+      "reason": "cancel_unanswered's guard requires Active: the provider is only called from the Active state, so there is no second call to go unanswered."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Cancelled",
+      "event": "request_refund",
+      "verdict": "NO-OP",
+      "reason": "REQ-006: a refund request is refused in every state and nothing changes (DEC-001); EX-006 shows it right after a cancellation, when it is most likely to be asked."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_again",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Expired is terminal; cancel_again's guard requires Cancelled."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "cancel_declined",
+      "verdict": "IMPOSSIBLE",
+      "reason": "Expired is terminal and the provider is not called from it."
     },
     {
       "entity": "Subscription",
@@ -72,14 +114,7 @@
     {
       "entity": "Subscription",
       "state": "Expired",
-      "event": "cancel_again",
-      "verdict": "IMPOSSIBLE",
-      "reason": "Expired is terminal; cancel_again's guard requires Cancelled."
-    },
-    {
-      "entity": "Subscription",
-      "state": "Expired",
-      "event": "cancel_times_out",
+      "event": "cancel_unanswered",
       "verdict": "IMPOSSIBLE",
       "reason": "Expired is terminal and the provider is not called from it."
     },
@@ -89,6 +124,13 @@
       "event": "expire_period",
       "verdict": "IMPOSSIBLE",
       "reason": "Already Expired; expire_period's guard requires Cancelled."
+    },
+    {
+      "entity": "Subscription",
+      "state": "Expired",
+      "event": "request_refund",
+      "verdict": "NO-OP",
+      "reason": "REQ-006: a refund request is refused in every state and nothing changes (DEC-001)."
     }
   ],
   "outcome_triage": [],
@@ -100,6 +142,9 @@
       "formal_status": "specified"
     },
     "INV-003": {
+      "formal_status": "specified"
+    },
+    "INV-004": {
       "formal_status": "specified"
     },
     "REQ-001": {
@@ -138,6 +183,11 @@
             "status": "not-run"
           }
         }
+      }
+    },
+    "REQ-008": {
+      "witness": {
+        "status": "not-run"
       }
     }
   }

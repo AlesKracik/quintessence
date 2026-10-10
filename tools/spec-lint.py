@@ -1044,6 +1044,10 @@ def check_spans_imported(area_data, sidecar, all_areas, area_name, findings):
     severity = FAIL if at_review(area_data) else WARN
     imported = set()
     for imp in sidecar.get("imports") or []:
+        # parse_sidecar keeps only the module names; the IR keeps the path.
+        if isinstance(imp, str):
+            imported.add(imp)
+            continue
         imported.add(imp.get("module"))
         if imp.get("from"):
             imported.add(Path(imp["from"]).stem if imp["from"].endswith(".qnt")

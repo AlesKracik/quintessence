@@ -5,9 +5,9 @@
 ## ⚠ Needs Your Attention
 
 - **auth** — 8 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [auth](./specs/auth.readback.md)
-- **auth-ui** — 3 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement — see [auth-ui](./specs/auth-ui.readback.md)
+- **auth-ui** — 4 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement — see [auth-ui](./specs/auth-ui.readback.md)
 - **subscription** — 8 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [subscription](./specs/subscription.readback.md)
-- **cart** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Refusal shown by no example … — see [cart](./specs/cart.readback.md)
+- **cart** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Open coverage GAPs … — see [cart](./specs/cart.readback.md)
 
 ## Areas
 
@@ -21,9 +21,21 @@
 
 ## Journeys
 
+### Cancel a subscription — *Customer — Customer cancels mid-period. The first try goes unanswered and changes nothing; the retry succeeds, billing stops and access stays; a second cancel is harmless; the paid period ends and access stops.*
+
+> **Runs as** · ✓ `subscription.cancelJourney` — `quint test` runs it; it walks 5 of 5 step(s) in order.
+
+| # | Step | Area | Status |
+|---|---|---|---|
+| 1 | [REQ-004](./specs/subscription.readback.md#req-004) — While the Subscription is Active, if the billing provider does not answer the cancellation, then the system shall leave the Subscription Active and billing enabled. — the provider does not answer the first try | subscription | ⏳ |
+| 2 | [REQ-001](./specs/subscription.readback.md#req-001) — While the Subscription is Active, when the customer cancels, the system shall stop future billing and mark the Subscription Cancelled. | subscription | ⏳ |
+| 3 | [REQ-002](./specs/subscription.readback.md#req-002) — While the Subscription is Cancelled and the paid period has not ended, the system shall keep access available. — same step as the cancel: access stays until the period ends | subscription | ⏳ |
+| 4 | [REQ-003](./specs/subscription.readback.md#req-003) — While the Subscription is Cancelled, when the customer cancels again, the system shall make no further change and report success. | subscription | ⏳ |
+| 5 | [REQ-005](./specs/subscription.readback.md#req-005) — While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired. | subscription | ⏳ |
+
 ### Sign in — *User — User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.*
 
-> **Runs as** · ✓ `auth.signInJourney` — `quint test` runs it; it walks 2 of 5 step(s) in order. Steps in auth-ui are outside it — reaching them needs a run in a model that imports it.
+> **Runs as** · ✓ `auth-ui.signInJourney` — `quint test` runs it; it walks 5 of 5 step(s) in order.
 
 | # | Step | Area | Status |
 |---|---|---|---|

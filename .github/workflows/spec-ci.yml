@@ -293,6 +293,56 @@ jobs:
           done
           exit $status
 
+      - name: Completeness over the examples (state × event, external × outcome)
+        if: steps.tpl.outputs.ok == 'true'
+        env:
+          QUINT_IR_ENGINE: cli
+        run: |
+          status=0
+          for area in $(python -c "import json; print(' '.join(a['name'] for a in json.load(open('examples/.spec/project.json'))['areas'] if a.get('kind') != 'contract'))"); do
+            echo "── matrix: $area"
+            "$RUNNER_TEMP/annotate.sh" "matrix $area" python tools/spec-matrix.py --root examples "$area" --stdout --strict || status=1
+            echo "── outcomes: $area"
+            "$RUNNER_TEMP/annotate.sh" "outcomes $area" python tools/spec-matrix.py --root examples "$area" --outcomes --stdout --strict || status=1
+          done
+          exit $status
+
+      - name: Probe modules current (examples)
+        if: steps.tpl.outputs.ok == 'true'
+        run: |
+          status=0
+          areas=$(python -c "import json,pathlib; print(' '.join(p.name[:-len('.intent.json')] for p in sorted(pathlib.Path('examples/specs').glob('*.intent.json')) if (json.loads(p.read_text(encoding='utf-8')).get('formal_model') or {}).get('probe_domains')))")
+          for area in $areas; do
+            "$RUNNER_TEMP/annotate.sh" "probes $area" python tools/spec-probes.py --root examples "$area" --check || status=1
+          done
+          exit $status
+
+      # The cheap half of /spec-check, as a regression gate on the examples:
+      # the simulator explores random runs of every model with a probe
+      # module, checking each invariant on the way and counting the runs that
+      # reach each requirement's behavior. An invariant broken in a run, or a
+      # requirement no run reaches, fails the gate. Not a verdict — the model
+      # checker gives those — but an example whose requirement became
+      # unreachable, or whose invariant broke, is caught on the PR that did
+      # it. Seeded, so a run is reproducible; 20 steps, because the lockout
+      # needs five failures in a row.
+      - name: Simulate the examples (invariants hold, every requirement reached)
+        if: steps.tpl.outputs.ok == 'true'
+        run: |
+          status=0
+          areas=$(python -c "import json,pathlib; print(' '.join(p.name[:-len('.intent.json')] for p in sorted(pathlib.Path('examples/specs').glob('*.intent.json')) if (json.loads(p.read_text(encoding='utf-8')).get('formal_model') or {}).get('probes_file')))")
+          for area in $areas; do
+            echo "── simulate: $area"
+            out=$("$RUNNER_TEMP/annotate.sh" "simulate $area" python tools/spec-record.py check "$area" --root examples --only-simulate --strict --steps 20 --samples 10000 --seed 7) || status=1
+            echo "$out"
+            # What was explored and reached, on the checks page whether or
+            # not it passed: a gate that only speaks when it fails cannot be
+            # told apart from one that checked nothing.
+            summary=$(echo "$out" | grep -E "^simulate" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::notice title=simulate $area::$summary"
+          done
+          exit $status
+
       - name: spec-lint over the examples (Quint's typed IR, no FAIL allowed)
         if: steps.tpl.outputs.ok == 'true'
         env:

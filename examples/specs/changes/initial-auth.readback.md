@@ -18,7 +18,7 @@ _(Phase columns are derived from the areas at generation time — the manifest s
 - **auth** — **Unchecked requirement** — REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
 - **auth** — **Unchecked requirement** — REQ-002: While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
 - **auth** — **Unchecked requirement** — REQ-003: While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
-- **auth** — **Unchecked requirement** — REQ-004: While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
+- **auth** — **Unchecked requirement** — REQ-004: While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 3 ticks, CON-002), the system shall transition it to Expired.
 - **auth** — **Open coverage GAPs** — Q-003 (spec is silent on triaged-real cells).
 - **auth** — **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **auth** — **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
@@ -26,13 +26,14 @@ _(Phase columns are derived from the areas at generation time — the manifest s
 - **auth-ui** — **Unchecked requirement** — UI-001: While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
 - **auth-ui** — **Unchecked requirement** — UI-002: While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 - **auth-ui** — **Unchecked requirement** — UI-003: While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
+- **auth-ui** — **Unchecked requirement** — UI-004: While the user is on Dashboard, when the session expires, the system shall return to Login.
 
 ## What This Change Does
 
 ### auth
 
 - ⏳ **[REQ-001](auth.readback.md#req-001)** — When a registered user submits valid credentials, the system shall create an Active session owned by that user.
-  <details><summary>Quint `login` (`specs/auth.qnt:L94-L106`) + predicate</summary>
+  <details><summary>Quint `login` (`specs/auth.qnt:L102-L115`) + predicate</summary>
 
   ```quint
     action login(uid: UserId, sid: SessionId): bool = all {
@@ -47,13 +48,14 @@ _(Phase columns are derived from the areas at generation time — the manifest s
         uid,
         activeSessionsOf(uid).union(Set(sid))
       ),
+      idleFor'           = idleFor.put(sid, 0),
     }
   ```
   **Witness predicate:** `sessions.keys().contains(_lastSid) and statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)`
 
   </details>
 - ⏳ **[REQ-002](auth.readback.md#req-002)** — While the user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
-  <details><summary>Quint `logout` (`specs/auth.qnt:L109-L123`) + predicate</summary>
+  <details><summary>Quint `logout` (`specs/auth.qnt:L118-L133`) + predicate</summary>
 
   ```quint
     action logout(sid: SessionId): bool = {
@@ -69,6 +71,7 @@ _(Phase columns are derived from the areas at generation time — the manifest s
           uid,
           activeSessionsOf(uid).exclude(Set(sid))
         ),
+        idleFor'           = idleFor,
       }
     }
   ```
@@ -76,7 +79,7 @@ _(Phase columns are derived from the areas at generation time — the manifest s
 
   </details>
 - ⏳ **[REQ-003](auth.readback.md#req-003)** — While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS (= 5, CON-001).
-  <details><summary>Quint `login_failed` (`specs/auth.qnt:L131-L147`) + predicate</summary>
+  <details><summary>Quint `login_failed` (`specs/auth.qnt:L141-L158`) + predicate</summary>
 
   ```quint
     action login_failed(uid: UserId): bool = {
@@ -94,14 +97,15 @@ _(Phase columns are derived from the areas at generation time — the manifest s
         userActiveSession' = if (locking)
                                userActiveSession.put(uid, Set())
                              else userActiveSession,
+        idleFor'           = idleFor,
       }
     }
   ```
   **Witness predicate:** `accountStatus.keys().contains(_lastUid) and accountStatus.get(_lastUid) == Locked`
 
   </details>
-- ⏳ **[REQ-004](auth.readback.md#req-004)** — While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 24 step-units, CON-002), the system shall transition it to Expired.
-  <details><summary>Quint `expire_session` (`specs/auth.qnt:L150-L164`) + predicate</summary>
+- ⏳ **[REQ-004](auth.readback.md#req-004)** — While the session is Active and has been inactive for longer than MAX_SESSION_AGE (= 3 ticks, CON-002), the system shall transition it to Expired.
+  <details><summary>Quint `expire_session` (`specs/auth.qnt:L162-L178`) + predicate</summary>
 
   ```quint
     action expire_session(sid: SessionId): bool = {
@@ -109,6 +113,7 @@ _(Phase columns are derived from the areas at generation time — the manifest s
       all {
         sessions.keys().contains(sid),
         isActive(sid),
+        idleOf(sid) > MAX_SESSION_AGE,
         sessions'          = sessions.put(sid, Expired),
         sessionOwner'      = sessionOwner,
         accountStatus'     = accountStatus,
@@ -117,6 +122,7 @@ _(Phase columns are derived from the areas at generation time — the manifest s
           uid,
           activeSessionsOf(uid).exclude(Set(sid))
         ),
+        idleFor'           = idleFor,
       }
     }
   ```
@@ -127,57 +133,58 @@ _(Phase columns are derived from the areas at generation time — the manifest s
 - ⏳ **INV-002** — A Locked account has no Active session.
 - ⏳ **INV-003** — Expired/LoggedOut sessions never appear in any user's active set.
 - **CON-001** — `MAX_FAILED_ATTEMPTS` = 5
-- **CON-002** — `MAX_SESSION_AGE` = 24 step-units
+- **CON-002** — `MAX_SESSION_AGE` = 3 ticks
 - **DEC-001** (accepted) — JWT (RS256) over session cookies
 
 ### auth-ui
 
 - ⏳ **[UI-001](auth-ui.readback.md#ui-001)** — While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
-  <details><summary>Quint `click_sign_in` (`specs/auth-ui.qnt:L69-L74`) + predicate</summary>
+  <details><summary>Quint `click_sign_in` (`specs/auth-ui.qnt:L101-L107`) + predicate</summary>
 
   ```quint
     action click_sign_in: bool = all {
       current == Home,
-      current'       = Login,
-      form'          = Idle,
-      authenticated' = authenticated,
+      current'   = Login,
+      form'      = Idle,
+      mySession' = mySession,
+      authUnchanged,
     }
   ```
   **Witness predicate:** `current == Login`
 
   </details>
 - ⏳ **[UI-002](auth-ui.readback.md#ui-002)** — While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
-  <details><summary>Quint `submit_success` (`specs/auth-ui.qnt:L80-L87`) + predicate</summary>
+  <details><summary>Quint `submit_success` (`specs/auth-ui.qnt:L115-L121`) + predicate</summary>
 
   ```quint
-    action submit_success: bool = all {
+    action submit_success(u: UserId, s: SessionId): bool = all {
       current == Login,
-      not(authenticated),                       // not already logged in
-      // Assumption: credentials would be checked against auth's User store.
-      current'       = Dashboard,
-      form'          = Idle,
-      authenticated' = true,
+      auth::login(u, s),
+      current'   = Dashboard,
+      form'      = Idle,
+      mySession' = s,
     }
   ```
-  **Witness predicate:** `current == Dashboard`
+  **Witness predicate:** `current == Dashboard and authenticated and mySession == _lastS`
 
   </details>
 - ⏳ **[UI-003](auth-ui.readback.md#ui-003)** — While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
-  <details><summary>Quint `submit_locked` (`specs/auth-ui.qnt:L92-L98`) + predicate</summary>
+  <details><summary>Quint `submit_locked` (`specs/auth-ui.qnt:L140-L147`) + predicate</summary>
 
   ```quint
-    action submit_locked: bool = all {
+    action submit_locked(u: UserId): bool = all {
       current == Login,
-      not(authenticated),
-      current'       = LockedNotice,
-      form'          = ErrorLocked,
-      authenticated' = authenticated,
+      accountLocked(u),
+      current'   = LockedNotice,
+      form'      = ErrorLocked,
+      mySession' = mySession,
+      authUnchanged,
     }
   ```
-  **Witness predicate:** `current == LockedNotice`
+  **Witness predicate:** `current == LockedNotice and form == ErrorLocked and accountLocked(_lastU)`
 
   </details>
-- ⏳ **INV-001** — Dashboard is reachable only when authenticated == true. ('Shall always' statements are invariants, not requirements — Apalache proves them across all reachable states.)
+- ⏳ **INV-001** — Dashboard is shown only while the session this browser holds is Active in auth. ('Shall always' statements are invariants, not requirements — Apalache proves them across all reachable states.)
 - **DEC-001** (accepted) — Model the navigation as a Quint state machine
 
 ## Open Questions Blocking

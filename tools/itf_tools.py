@@ -128,6 +128,15 @@ def probe_name(req_id):
     return "witness_" + req_id.replace("-", "_")
 
 
+def reach_name(probe):
+    """The positive form of a probe, `reached_<..>` for `witness_<..>`: the
+    formula `quint run --witnesses` counts. A probe is the NEGATION of the
+    behavior (the model checker's counterexample to it is the witness), so
+    it holds at init and counting it says nothing."""
+    return "reached_" + probe[len("witness_"):] if probe.startswith("witness_") \
+        else "reached_" + probe
+
+
 def outcome_probe_name(req_id, outcome_name):
     """Probe for one permitted outcome of a `may` requirement. Distinct name
     per outcome, since each is proven separately."""
