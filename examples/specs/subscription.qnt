@@ -307,6 +307,35 @@ module subscription {
     .then(expire_period("alice"))
     .expect(status.get("alice") == Expired and not(accessUntilPeriodEnd.get("alice")))
 
+  // Two answered questions. tools/spec-questions.py found that nothing
+  // pinned what an ANSWER from the provider does to the retry count: a
+  // model that kept counting after a decline, or after a successful
+  // cancel, passed every example above. Asked "should the count be 0?",
+  // the answer was yes for both — the budget is for tries nobody
+  // answered, and an answer ends that run of tries. Each answer is the
+  // run the tool printed, given a name and a title; the mutant it was
+  // asked about now dies on EX-008 / EX-009, and the question is gone
+  // from the readback. (Answered here to demonstrate the loop; in a real
+  // project the person who owns the behavior answers.)
+
+  /// @example EX-008
+  /// A decline after an unanswered try resets the retry count
+  /// @refs REQ-008, INV-004
+  /// @source answered-question
+  run declineResetsRetries = init
+    .then(cancel_unanswered("alice", false))
+    .then(cancel_declined("alice"))
+    .expect(unansweredTries.get("alice") == 0)
+
+  /// @example EX-009
+  /// A successful cancel after an unanswered try resets the retry count
+  /// @refs REQ-001, INV-004
+  /// @source answered-question
+  run successResetsRetries = init
+    .then(cancel_unanswered("alice", true))
+    .then(cancel_subscription("alice", InApp))
+    .expect(unansweredTries.get("alice") == 0)
+
   // The "Cancel a subscription" journey
   // (specs/journeys/cancel-subscription.journey.json), end to end:
   // the first try goes unanswered, the retry succeeds, a second

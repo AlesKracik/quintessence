@@ -85,7 +85,6 @@ CALL_RE = re.compile(rf"^\s*({QNAME})\s*(\(.*\))?\s*$", re.S)
 CMP_RE = re.compile(r">=|<=|==|!=|>|<")
 CMP_SWAP = {">=": ">", ">": ">=", "<=": "<", "<": "<=", "==": "!=", "!=": "=="}
 CONST_RE = re.compile(r"^\s*pure\s+val\s+([A-Za-z_]\w*)\s*:\s*int\s*=\s*(-?\d+)\b")
-IMPORT_RE = re.compile(r'^\s*import\s+([A-Za-z_]\w*)(?:\.\*)?\s+from\s+"([^"]+)"', re.M)
 PROPERTY_TAGS = {"req", "outcome-of", "inv", "prop"}
 
 
@@ -210,16 +209,7 @@ def _parts(masked, s, e):
 
 def imported_decls(root, text):
     """alias -> declarations of each module this model imports."""
-    out = {}
-    for alias, rel in IMPORT_RE.findall(text):
-        path = spec_source.specs_dir(root) / (rel[2:] if rel.startswith("./") else rel)
-        if not path.suffix:
-            path = path.with_suffix(".qnt")
-        try:
-            out[alias] = spec_source.declarations(path.read_text(encoding="utf-8"))
-        except OSError:
-            out[alias] = {}
-    return out
+    return spec_source.imported_declarations(root, text)
 
 
 def _is_action_call(part, decls, imported):

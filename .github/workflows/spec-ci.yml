@@ -168,6 +168,20 @@ jobs:
             python tools/spec-probes.py "$area" --check
           done
 
+      - name: Run traces current (areas with a conformance harness)
+        if: steps.boot.outputs.ok == 'true'
+        run: |
+          set -e
+          # The code repo's harness replays every example and journey run from
+          # specs/<area>/traces/runs/ (tools/spec-runs.py). A trace older than
+          # the model replays an older spec, so it fails here, before the
+          # code repo's CI trusts it.
+          areas=$(python -c "import json,pathlib; print(' '.join(p.name[:-len('.intent.json')] for p in sorted(pathlib.Path('specs').glob('*.intent.json')) if (json.loads(p.read_text(encoding='utf-8')).get('conformance') or {}).get('command')))")
+          for area in $areas; do
+            echo "── run traces: $area"
+            python tools/spec-runs.py "$area" --check
+          done
+
       - name: Quint typecheck (sidecars + probe modules)
         if: steps.boot.outputs.ok == 'true'
         run: |
@@ -341,6 +355,28 @@ jobs:
             summary=$(echo "$out" | grep -E "^simulate" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::notice title=simulate $area::$summary"
           done
+          exit $status
+
+      # Every example and journey run as the trace a code repo's harness
+      # replays: generated with the real quint, then checked current. The
+      # examples have no implementation to replay against, so this proves the
+      # generator, and shows what it produced.
+      - name: Run traces of the examples
+        if: steps.tpl.outputs.ok == 'true'
+        run: |
+          status=0
+          for area in auth auth-ui subscription; do
+            out=$("$RUNNER_TEMP/annotate.sh" "run traces $area" python tools/spec-runs.py "$area" --root examples) || status=1
+            echo "$out"
+            "$RUNNER_TEMP/annotate.sh" "run traces $area current" python tools/spec-runs.py "$area" --root examples --check > /dev/null || status=1
+            msg=$(echo "$out" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::notice title=run traces $area::$msg"
+          done
+          sample=examples/specs/subscription/traces/runs/refundRefused.itf.json
+          if [ -f "$sample" ]; then
+            msg=$(python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(',', ':'))[:3800])" "$sample" | sed 's/%/%25/g')
+            echo "::notice title=sample run trace::$msg"
+          fi
           exit $status
 
       - name: spec-lint over the examples (Quint's typed IR, no FAIL allowed)
