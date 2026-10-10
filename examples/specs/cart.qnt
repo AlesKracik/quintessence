@@ -99,5 +99,13 @@
 /// @expect {"cart.items": "[{sku: 'a', qty: 3}]"}
 /// @refs REQ-001
 /// @source extracted-from-production
+///
+/// @example EX-002
+/// Adding to a checked-out cart is refused and the cart is untouched
+/// @given {"cart.status": "CheckedOut", "cart.items": "[{sku: 'a', qty: 1}]"}
+/// @when add_item {"sku": "b", "qty": 1}
+/// @expect {"result": "refused", "cart.items": "[{sku: 'a', qty: 1}]"}
+/// @refs REQ-003
+/// @source extracted
 module cart {
 }

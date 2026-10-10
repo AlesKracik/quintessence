@@ -6,17 +6,24 @@
 // `/// @nav From -> To` record on that action. spec_source.py derives
 // screens[] and navigation[] from them; lint checks every variant has a
 // record and every edge's action reads and sets `current` as it claims. The
-// invariant `guardedDashboard` proves Dashboard is unreachable without
-// authenticated == true.
+// invariant `guardedDashboard` proves Dashboard is unreachable without an
+// Active session in auth.
 
 module authUi {
 
-  // NO wildcard import of the auth module. `import auth.* from "./auth"` pulls
-  // in that module's `init` and `step`, which collide with this module's own —
-  // and nothing here actually references an auth symbol: `authenticated` is
-  // modelled locally as the UI's view of session state. If a UI invariant ever
-  // needs auth's state, import it QUALIFIED (`import auth from "./auth"`) and
-  // write `auth::sessions`, so the two step relations stay distinct.
+  // auth's state and actions, imported QUALIFIED. The UI keeps no idea of
+  // its own about who is signed in: the edge that signs in, the one that
+  // fails, the one that signs out and the one that expires each CALL the
+  // auth action (`auth::login(u, s)`), and auth's guard is the edge's guard.
+  // So the invariant below is proven about the sessions auth keeps, not
+  // about a local flag nothing else changes — and a journey step in auth is
+  // covered by the UI step that performs it. Qualified, not `auth.*`: a
+  // wildcard import would bring auth's own `init` and `step`, which collide
+  // with this module's.
+  import auth from "./auth"
+
+  type UserId    = str
+  type SessionId = str
 
   // -- Screen state machine -----------------------------------------
 
@@ -50,16 +57,41 @@ module authUi {
 
   // -- State --------------------------------------------------------
 
-  var current:       Screen
-  var form:          FormState
-  var authenticated: bool         // true when the user has an Active session in auth
+  var current:   Screen
+  var form:      FormState
+  // The session this browser holds; "" when signed out. Whether it is
+  // still good is auth's business, read through `authenticated`.
+  var mySession: SessionId
+
+  pure val USERS:    Set[UserId]    = Set("alice", "bob")
+  pure val SESSIONS: Set[SessionId] = Set("s1", "s2")
+
+  // What the UI reads of auth, named here. Signed in = the session this
+  // browser holds is Active in auth. (Named rather than written inline
+  // because the witness predicates below are inlined into the probe
+  // module, which imports this module and not auth.)
+  val authenticated: bool = auth::isActive(mySession)
+  def accountLocked(u: UserId): bool = auth::isLocked(u)
 
   // -- Init ---------------------------------------------------------
 
   action init = all {
-    current'       = Home,
-    form'          = Idle,
-    authenticated' = false,
+    auth::init,
+    current'   = Home,
+    form'      = Idle,
+    mySession' = "",
+  }
+
+  // auth's state, left exactly as it is — for the UI steps that do not
+  // touch it. Quint requires every variable assigned in every step, the
+  // imported ones included.
+  action authUnchanged = all {
+    auth::sessions'          = auth::sessions,
+    auth::sessionOwner'      = auth::sessionOwner,
+    auth::accountStatus'     = auth::accountStatus,
+    auth::failedAttempts'    = auth::failedAttempts,
+    auth::userActiveSession' = auth::userActiveSession,
+    auth::idleFor'           = auth::idleFor,
   }
 
   // -- Navigation actions -------------------------------------------
@@ -68,43 +100,50 @@ module authUi {
   /// click 'Sign in'
   action click_sign_in: bool = all {
     current == Home,
-    current'       = Login,
-    form'          = Idle,
-    authenticated' = authenticated,
+    current'   = Login,
+    form'      = Idle,
+    mySession' = mySession,
+    authUnchanged,
   }
 
-  // Guard: not locked, credentials are valid. Modeled as a precondition.
+  // Signing in IS auth's login (REQ-001): the screen moves because auth
+  // accepted it, and auth's guard — account not locked, no other Active
+  // session, a fresh session id — is this edge's guard.
   /// @nav Login -> Dashboard
   /// submit valid credentials
   /// @guard auth::login succeeds
-  action submit_success: bool = all {
+  action submit_success(u: UserId, s: SessionId): bool = all {
     current == Login,
-    not(authenticated),                       // not already logged in
-    // Assumption: credentials would be checked against auth's User store.
-    current'       = Dashboard,
-    form'          = Idle,
-    authenticated' = true,
+    auth::login(u, s),
+    current'   = Dashboard,
+    form'      = Idle,
+    mySession' = s,
   }
 
+  // A bad password is auth's failed login (REQ-003): it counts, and the
+  // fifth one locks the account.
+  /// @nav Login -> Login
+  /// submit invalid credentials (stays, shows error)
+  action submit_invalid(u: UserId): bool = all {
+    current == Login,
+    auth::login_failed(u),
+    current'   = Login,
+    form'      = ErrorBadCreds,
+    mySession' = mySession,
+  }
+
+  // auth's REQ-005 as the user meets it: the login is refused — auth is
+  // left exactly as it was — and the notice says why.
   /// @nav Login -> LockedNotice
   /// submit when account locked
   /// @guard auth::isLocked(user)
-  action submit_locked: bool = all {
+  action submit_locked(u: UserId): bool = all {
     current == Login,
-    not(authenticated),
-    current'       = LockedNotice,
-    form'          = ErrorLocked,
-    authenticated' = authenticated,
-  }
-
-  /// @nav Login -> Login
-  /// submit invalid credentials (stays, shows error)
-  action submit_invalid: bool = all {
-    current == Login,
-    not(authenticated),
-    current'       = Login,
-    form'          = ErrorBadCreds,
-    authenticated' = authenticated,
+    accountLocked(u),
+    current'   = LockedNotice,
+    form'      = ErrorLocked,
+    mySession' = mySession,
+    authUnchanged,
   }
 
   /// @nav Dashboard -> Home
@@ -112,40 +151,70 @@ module authUi {
   /// @guard auth::logout succeeds
   action click_logout: bool = all {
     current == Dashboard,
-    authenticated,
-    current'       = Home,
-    form'          = Idle,
-    authenticated' = false,
+    auth::logout(mySession),
+    current'   = Home,
+    form'      = Idle,
+    mySession' = "",
+  }
+
+  // auth expires the idle session (REQ-004) and the UI follows it back to
+  // the login form.
+  /// @nav Dashboard -> Login
+  /// the session expires (sign in again)
+  /// @guard auth::expire_session succeeds
+  action session_expired: bool = all {
+    current == Dashboard,
+    auth::expire_session(mySession),
+    current'   = Login,
+    form'      = Idle,
+    mySession' = "",
   }
 
   /// @nav LockedNotice -> Home
-  /// after lockout expires (page refresh)
+  /// back to Home
   action go_home: bool = all {
     current == LockedNotice,
-    current'       = Home,
-    form'          = Idle,
-    authenticated' = authenticated,
+    current'   = Home,
+    form'      = Idle,
+    mySession' = mySession,
+    authUnchanged,
+  }
+
+  // Time passes on whatever screen is showing: auth's clock ticks, and an
+  // idle session gets older.
+  action time_passes: bool = all {
+    auth::tick,
+    current'   = current,
+    form'      = form,
+    mySession' = mySession,
   }
 
   // -- Step ---------------------------------------------------------
 
-  action step = any {
-    click_sign_in,
-    submit_success,
-    submit_locked,
-    submit_invalid,
-    click_logout,
-    go_home,
+  action step = {
+    nondet u = oneOf(USERS)
+    nondet s = oneOf(SESSIONS)
+    any {
+      click_sign_in,
+      submit_success(u, s),
+      submit_invalid(u),
+      submit_locked(u),
+      click_logout,
+      session_expired,
+      go_home,
+      time_passes,
+    }
   }
 
   // -- Invariants ---------------------------------------------------
 
-  // INV-001: Dashboard reachable only when authenticated.
-  // Apalache will verify this holds across all reachable states.
+  // INV-001: Dashboard reachable only when authenticated — and
+  // `authenticated` reads auth's sessions, so this is a claim about the
+  // real session, not about a flag the UI sets for itself.
   /// @inv INV-001
-  /// Dashboard is reachable only when authenticated == true. ('Shall always'
-  /// statements are invariants, not requirements — Apalache proves them
-  /// across all reachable states.)
+  /// Dashboard is shown only while the session this browser holds is Active
+  /// in auth. ('Shall always' statements are invariants, not requirements —
+  /// Apalache proves them across all reachable states.)
   /// @criticality critical
   /// @proof inductive
   val guardedDashboard: bool =
@@ -165,26 +234,63 @@ module authUi {
   /// @refs UI-002
   run signInLands = init
     .then(click_sign_in)
-    .then(submit_success)
+    .then(submit_success("alice", "s1"))
     .expect(current == Dashboard and authenticated)
 
   run happyPathFlow = init
     .then(click_sign_in)
-    .then(submit_success)
+    .then(submit_success("alice", "s1"))
     .then(click_logout)
     .expect(current == Home and not(authenticated))
 
   /// @example EX-003
-  /// A locked account gets the locked notice
+  /// Five bad passwords lock the account; the next submit shows the locked
+  /// notice
   /// @refs UI-003
   run lockedFlow = init
     .then(click_sign_in)
-    .then(submit_locked)
-    .expect(current == LockedNotice)
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_locked("bob"))
+    .expect(current == LockedNotice and form == ErrorLocked)
+
+  /// @example EX-004
+  /// An idle session on the Dashboard expires back to the login form
+  /// @refs UI-004
+  run expiryReturnsToLogin = init
+    .then(click_sign_in)
+    .then(submit_success("alice", "s1"))
+    .then(time_passes)
+    .then(time_passes)
+    .then(time_passes)
+    .then(time_passes)
+    .then(session_expired)
+    .expect(current == Login and not(authenticated))
+
+  // The "Sign in" journey (specs/journeys/sign-in.journey.json), end to
+  // end: alice signs in and out; bob mistypes his password five times,
+  // which locks his account (auth's REQ-003), and his next submit lands on
+  // the locked notice. Each UI step here IS the auth step it causes, so
+  // this one run walks the journey's auth steps and its UI steps alike.
+  run signInJourney = init
+    .then(click_sign_in)
+    .then(submit_success("alice", "s1"))
+    .then(click_logout)
+    .then(click_sign_in)
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_invalid("bob"))
+    .then(submit_locked("bob"))
+    .expect(current == LockedNotice and accountLocked("bob"))
 
   // ----------------------------------------------------------
-  // REQUIREMENTS — witness predicates, constants and transition
-  // properties whose records live on them (spec_source.py)
+  // REQUIREMENTS — witness predicates, each with the screen the step
+  // had to start from
   // ----------------------------------------------------------
 
   /// @req UI-001
@@ -195,6 +301,7 @@ module authUi {
   /// @when the user clicks 'Sign in'
   /// @shall navigate to Login
   /// @via click_sign_in
+  /// @pre _prevCurrent == Home
   val shall_UI_001: bool =
     current == Login
 
@@ -206,8 +313,9 @@ module authUi {
   /// @when the user submits valid credentials
   /// @shall navigate to Dashboard
   /// @via submit_success
-  val shall_UI_002: bool =
-    current == Dashboard
+  /// @pre _prevCurrent == Login
+  def shall_UI_002(_lastS: SessionId): bool =
+    current == Dashboard and authenticated and mySession == _lastS
 
   /// @req UI-003
   /// If the user submits credentials for a Locked account, then the system
@@ -218,6 +326,19 @@ module authUi {
   /// @unwanted
   /// @shall navigate to LockedNotice
   /// @via submit_locked
-  val shall_UI_003: bool =
-    current == LockedNotice
+  /// @pre _prevCurrent == Login
+  def shall_UI_003(_lastU: UserId): bool =
+    current == LockedNotice and form == ErrorLocked and accountLocked(_lastU)
+
+  /// @req UI-004
+  /// While on Dashboard, when the session expires, the system shall return
+  /// to Login.
+  /// @status specified
+  /// @while the user is on Dashboard
+  /// @when the session expires
+  /// @shall return to Login
+  /// @via session_expired
+  /// @pre _prevCurrent == Dashboard
+  val shall_UI_004: bool =
+    current == Login and not(authenticated)
 }

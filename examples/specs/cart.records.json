@@ -13,6 +13,24 @@
         "Q-003",
         "Q-004"
       ]
+    },
+    "matrix": {
+      "ran_at": "2026-10-10T14:45:13+00:00",
+      "cells": 4,
+      "covered": 1,
+      "triaged": 3,
+      "uncovered": 0,
+      "orphans": 1,
+      "gaps": [
+        "Q-005"
+      ]
+    },
+    "outcomes": {
+      "ran_at": "2026-10-10T14:45:19+00:00",
+      "cells": 3,
+      "covered": 3,
+      "triaged": 0,
+      "uncovered": 0
     }
   },
   "traceability": [
@@ -230,6 +248,30 @@
       "verdict": "OUT-OF-SCOPE",
       "scope_ref": "pricing",
       "reason": "total() sums quantities as a stand-in for an amount; anything money-shaped belongs to billing."
+    }
+  ],
+  "matrix_triage": [
+    {
+      "entity": "Cart",
+      "state": "Open",
+      "event": "add_item",
+      "verdict": "NO-OP",
+      "reason": "add_item changes the cart's lines (REQ-001 merges a known SKU, REQ-002 appends a new one), never its status: the Cart stays Open."
+    },
+    {
+      "entity": "Cart",
+      "state": "CheckedOut",
+      "event": "add_item",
+      "verdict": "NO-OP",
+      "reason": "REQ-003: adding to a CheckedOut cart is refused and nothing changes (cart.js:22-24 throws). EX-002 shows it; INV-001 is the model-side proof."
+    },
+    {
+      "entity": "Cart",
+      "state": "CheckedOut",
+      "event": "checkout",
+      "verdict": "GAP",
+      "reason": "checkout never reads the cart's status (cart.js:44-60): a CheckedOut cart is charged again and stays CheckedOut. No requirement says whether that is meant.",
+      "question": "Q-005"
     }
   ],
   "by_id": {

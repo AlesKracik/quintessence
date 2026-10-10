@@ -3881,9 +3881,10 @@ def test_the_ir_separates_a_mutation_from_an_identity_assignment():
     preservation look like a model that ignores the variable."""
     qnt = TOOLS.parent / "examples" / "specs" / "subscription.qnt"
     ir = quint_ir.parse_qnt(qnt, engine="regex")
-    assert ir["action_mutations"]["cancel_times_out"] == ["lastBillingResult"]
-    assert "status" in ir["action_preserves"]["cancel_times_out"]
-    assert "status" not in ir["action_mutations"]["cancel_times_out"]
+    assert sorted(ir["action_mutations"]["cancel_unanswered"]) == [
+        "lastBillingResult", "unansweredTries"]
+    assert "status" in ir["action_preserves"]["cancel_unanswered"]
+    assert "status" not in ir["action_mutations"]["cancel_unanswered"]
 
 
 def test_the_ir_maps_a_declared_state_to_the_var_that_holds_it():

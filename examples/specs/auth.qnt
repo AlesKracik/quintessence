@@ -36,9 +36,12 @@ module auth {
   /// @pairs INV-004
   pure val MAX_FAILED_ATTEMPTS: int = 5    // CON-001, paired with INV-004
   /// @con CON-002
-  /// Modeled as a step counter for bounded checking.
-  /// @unit step-units
-  pure val MAX_SESSION_AGE: int = 24       // CON-002
+  /// How long a session may sit idle before it expires, in ticks of the
+  /// model's clock. Kept small so the checker reaches an expiry within its
+  /// step bound; the production timeout is this many clock units.
+  /// @unit ticks
+  /// @pairs INV-005
+  pure val MAX_SESSION_AGE: int = 3        // CON-002, paired with INV-005
 
   // -- State --------------------------------------------------------
 
@@ -47,6 +50,7 @@ module auth {
   var accountStatus:     UserId -> AccountStatus      // REQ-003
   var failedAttempts:    UserId -> int                // REQ-003, CON-001
   var userActiveSession: UserId -> Set[SessionId]     // INV-001
+  var idleFor:           SessionId -> int             // REQ-004, CON-002
 
   // -- Helpers ------------------------------------------------------
 
@@ -65,6 +69,9 @@ module auth {
   def activeSessionsOf(uid: UserId): Set[SessionId] =
     if (userActiveSession.keys().contains(uid)) userActiveSession.get(uid) else Set()
 
+  def idleOf(sid: SessionId): int =
+    if (idleFor.keys().contains(sid)) idleFor.get(sid) else 0
+
   // -- Init ---------------------------------------------------------
 
   action init = all {
@@ -73,6 +80,7 @@ module auth {
     accountStatus'     = Map(),
     failedAttempts'    = Map(),
     userActiveSession' = Map(),
+    idleFor'           = Map(),
   }
 
   // -- Actions ------------------------------------------------------
@@ -103,6 +111,7 @@ module auth {
       uid,
       activeSessionsOf(uid).union(Set(sid))
     ),
+    idleFor'           = idleFor.put(sid, 0),
   }
 
   // REQ-002: A user with an Active session can log out.
@@ -119,6 +128,7 @@ module auth {
         uid,
         activeSessionsOf(uid).exclude(Set(sid))
       ),
+      idleFor'           = idleFor,
     }
   }
 
@@ -143,15 +153,18 @@ module auth {
       userActiveSession' = if (locking)
                              userActiveSession.put(uid, Set())
                            else userActiveSession,
+      idleFor'           = idleFor,
     }
   }
 
-  // REQ-004: An Active session expires after inactivity.
+  // REQ-004: An Active session expires once it has been idle longer than
+  // MAX_SESSION_AGE ticks — the rule the sentence states, read here.
   action expire_session(sid: SessionId): bool = {
     val uid = if (sessionOwner.keys().contains(sid)) sessionOwner.get(sid) else ""
     all {
       sessions.keys().contains(sid),
       isActive(sid),
+      idleOf(sid) > MAX_SESSION_AGE,
       sessions'          = sessions.put(sid, Expired),
       sessionOwner'      = sessionOwner,
       accountStatus'     = accountStatus,
@@ -160,6 +173,7 @@ module auth {
         uid,
         activeSessionsOf(uid).exclude(Set(sid))
       ),
+      idleFor'           = idleFor,
     }
   }
 
@@ -171,6 +185,21 @@ module auth {
     accountStatus'     = accountStatus.put(uid, Unlocked),
     failedAttempts'    = failedAttempts.put(uid, 0),
     userActiveSession' = userActiveSession,
+    idleFor'           = idleFor,
+  }
+
+  // The model's clock: every Active session gets one tick older. Expiry
+  // (REQ-004) reads that age, so the session timeout is a rule the model
+  // enforces rather than a number in a sentence.
+  action tick: bool = all {
+    sessions.keys().exists(sid => isActive(sid)),
+    sessions'          = sessions,
+    sessionOwner'      = sessionOwner,
+    accountStatus'     = accountStatus,
+    failedAttempts'    = failedAttempts,
+    userActiveSession' = userActiveSession,
+    idleFor'           = idleFor.keys().mapBy(sid =>
+                           if (isActive(sid)) idleFor.get(sid) + 1 else idleFor.get(sid)),
   }
 
   // -- Step ---------------------------------------------------------
@@ -184,6 +213,7 @@ module auth {
       login_failed(uid),
       expire_session(sid),
       unlock_account(uid),
+      tick,
     }
   }
 
@@ -234,6 +264,17 @@ module auth {
       (attemptsOf(uid) < MAX_FAILED_ATTEMPTS) implies not(isLocked(uid))
     )
 
+  // INV-005: paired with CON-002 (MAX_SESSION_AGE). The witness for REQ-004
+  // proves a session CAN expire; this is the other side of the boundary:
+  // nothing expires before it has been idle longer than MAX_SESSION_AGE.
+  /// @inv INV-005
+  /// No session expires before it has been idle longer than MAX_SESSION_AGE.
+  /// @criticality high
+  val noEarlyExpiry: bool =
+    sessions.keys().forall(sid =>
+      (statusOf(sessions, sid) == Expired) implies idleOf(sid) > MAX_SESSION_AGE
+    )
+
   // -- Examples -----------------------------------------------------
   // Each run is an example: `quint test` executes it, the readback shows it
   // as a Given / When / Then row (derived from the run, never typed beside
@@ -278,12 +319,29 @@ module auth {
     .expect(not(isLocked("bob")))
 
   /// @example EX-005
-  /// An Active session expires
+  /// A session idle for four ticks expires
   /// @refs REQ-004
   run sessionExpiry = init
     .then(login("alice", "s1"))
+    .then(tick)
+    .then(tick)
+    .then(tick)
+    .then(tick)
     .then(expire_session("s1"))
-    .expect(not(isActive("s1")))
+    .expect(statusOf(sessions, "s1") == Expired)
+
+  // The boundary from the other side: idle for exactly MAX_SESSION_AGE
+  // ticks, the session cannot expire yet.
+  /// @example EX-007
+  /// Three idle ticks are not enough to expire
+  /// @refs REQ-004, INV-005
+  run notExpiredYet = init
+    .then(login("alice", "s1"))
+    .then(tick)
+    .then(tick)
+    .then(tick)
+    .expect(isActive("s1") and idleOf("s1") == 3)
+    .then(expire_session("s1").fail())
 
   // A refusal is shown, not asserted: drive the model into the blocking
   // state, assert it, and END with the call `.fail()` — the run fails if
@@ -301,19 +359,6 @@ module auth {
     .then(login_failed("bob"))
     .expect(isLocked("bob") and attemptsOf("bob") == 5)
     .then(login("bob", "s2").fail())
-
-  // The "Sign in" journey (specs/journeys/sign-in.journey.json) walked end
-  // to end over this area's steps: alice signs in (REQ-001), then bob's
-  // failed attempts lock his account (REQ-003). Its UI steps live in
-  // auth-ui, whose model does not import this one yet.
-  run signInJourney = init
-    .then(login("alice", "s1"))
-    .then(login_failed("bob"))
-    .then(login_failed("bob"))
-    .then(login_failed("bob"))
-    .then(login_failed("bob"))
-    .then(login_failed("bob"))
-    .expect(isActive("s1") and isLocked("bob"))
 
   // ----------------------------------------------------------
   // REQUIREMENTS — witness predicates, constants and transition

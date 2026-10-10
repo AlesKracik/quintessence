@@ -2,16 +2,16 @@
   "$schema": "../schemas/records.schema.json",
   "area": "auth",
   "brief": {
-    "written_against": "976d3f776808a3ffb17a70ef6402f1fcc3b0c28150d736a9b63d28a71c2fa4a2"
+    "written_against": "7391396e56861c01b19d97c938a9d2e526c78553e9dba92245602cdc9f7f1a97"
   },
   "check_results": {
     "matrix": {
-      "ran_at": "2026-06-12T17:44:50+00:00",
-      "cells": 13,
-      "covered": 4,
-      "triaged": 9,
+      "ran_at": "2026-10-10T14:45:13+00:00",
+      "cells": 18,
+      "covered": 5,
+      "triaged": 13,
       "uncovered": 0,
-      "orphans": 0,
+      "orphans": 1,
       "gaps": [
         "Q-003"
       ]
@@ -83,6 +83,34 @@
       "verdict": "GAP",
       "reason": "REQ-003 covers Unlocked only — spec is silent on failed attempts against a Locked account",
       "question": "Q-003"
+    },
+    {
+      "entity": "Session",
+      "state": "Expired",
+      "event": "login_failed",
+      "verdict": "NO-OP",
+      "reason": "Locking ends only the user's ACTIVE sessions (login_failed folds over activeSessionsOf); an Expired session is left as it is."
+    },
+    {
+      "entity": "Session",
+      "state": "LoggedOut",
+      "event": "login_failed",
+      "verdict": "NO-OP",
+      "reason": "Locking ends only the user's ACTIVE sessions (login_failed folds over activeSessionsOf); a LoggedOut session is left as it is."
+    },
+    {
+      "entity": "Account",
+      "state": "Unlocked",
+      "event": "login",
+      "verdict": "NO-OP",
+      "reason": "A successful login leaves the account Unlocked (it resets failedAttempts, REQ-001); the session it creates belongs to the Session machine, as a lifecycle action."
+    },
+    {
+      "entity": "Account",
+      "state": "Locked",
+      "event": "login",
+      "verdict": "NO-OP",
+      "reason": "REQ-005: a login on a Locked account is refused and nothing changes. EX-006 shows the refusal; INV-002 is the model-side proof."
     }
   ],
   "by_id": {

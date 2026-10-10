@@ -764,7 +764,12 @@ def run_calls(decls, run_name, _stack=None):
         elif code[end:end + 2] == "::":
             continue  # the module half of a qualified name
         if start and code[start - 1] == ".":
-            continue  # a method: .then .expect .fail .reps
+            # A method: .then .expect .fail .reps. A mid-run `.expect(..)` is
+            # a claim, not steps — skip its argument, or a qualified helper
+            # it reads (`auth::isLocked("bob")`) would read as a call.
+            if name == "expect" and code[end:end + 1] == "(":
+                pos = _balanced(body, end)
+            continue
         if name in runs and not qualifier:
             steps.extend(run_calls(decls, name, _stack))
             continue
@@ -918,6 +923,46 @@ def _qualifiers(area, view):
     return {area, Path(rel).stem, area.replace("-", "_")}
 
 
+def action_reach(decls, name, resolve=None, _stack=None):
+    """{(qualifier, action)} one call of `name` performs: itself, and every
+    action its body calls — the module's own (qualifier None) and an
+    imported module's (`auth::login(..)` -> ("auth", "login")), through
+    helpers and nested actions. A UI action that signs the user in by
+    calling `auth::login` performs auth's login too, and that is what lets
+    a journey step in auth be covered by a run of the UI model.
+
+    `resolve(qualifier)` returns the imported module's declarations, when
+    known: a qualified name then counts only if it is an ACTION there, so
+    reading `auth::sessions` is not taken for a call. Without it, every
+    qualified name that is not an assignment target is kept."""
+    _stack = (_stack or set()) | {name}
+    out = {(None, name)}
+    host = decls.get(name)
+    if not host or not host.get("body"):
+        return out
+    params = {p for p, _ in host.get("params") or []}
+    code = _code_only(host["body"])
+    for m in IDENT_TOKEN.finditer(code):
+        tok, start, end = m.group(0), m.start(), m.end()
+        if start and code[start - 1] == ".":
+            continue
+        if start >= 2 and code[start - 2:start] == "::":
+            q = re.search(r"([A-Za-z_][A-Za-z0-9_]*)::$", code[:start])
+            # A primed name is an assignment target (`auth::x' = ..`), not
+            # a call.
+            if not q or code[end:end + 1] == "'":
+                continue
+            other = resolve(q.group(1)) if resolve else None
+            if other is None or (other.get(tok) or {}).get("kind") == "action":
+                out.add((q.group(1), tok))
+            continue
+        if code[end:end + 2] == "::" or tok in params or tok in _stack:
+            continue
+        if (decls.get(tok) or {}).get("kind") in ("action", "def", "val"):
+            out |= action_reach(decls, tok, resolve, _stack)
+    return out
+
+
 def journey_run(journey, views, decls_for):
     """What the journey's run proves about the journey.
 
@@ -928,7 +973,14 @@ def journey_run(journey, views, decls_for):
       outside        step refs in an area the run never calls
       order_error    (step number, ref, action) of the first step whose action
                      the run does not call after the previous step's, or None
-    `decls_for(area)` returns that area's declarations (or None)."""
+    `decls_for(area)` returns that area's declarations (or None).
+
+    A step is matched by a call that performs its action, directly or
+    through the actions it calls (`action_reach`). One call may cover
+    several consecutive steps — a cancel that stops billing (REQ-001) and
+    keeps access (REQ-002) is one call and two steps — so the search for a
+    step starts AT the previous step's call, not after it. The same
+    requirement twice in a row is two calls."""
     ref = journey.get("run")
     if not ref or "." not in ref:
         return None
@@ -940,7 +992,20 @@ def journey_run(journey, views, decls_for):
         return res
     res["found"] = True
     calls = run_calls(decls, rname)
-    idx = 0
+
+    def resolve(qualifier):
+        for a, view in views.items():
+            if a != rarea and qualifier in _qualifiers(a, view):
+                return decls_for(a)
+        return None
+
+    reach = []
+    for c in calls:
+        if c["qualifier"]:
+            reach.append({(c["qualifier"], c["action"])})
+        else:
+            reach.append(action_reach(decls, c["action"], resolve))
+    idx, prev = 0, None
     steps = [s for s in journey.get("steps") or [] if "." in (s.get("ref") or "")]
     for n, step in enumerate(steps, 1):
         a, rid = step["ref"].split(".", 1)
@@ -949,19 +1014,25 @@ def journey_run(journey, views, decls_for):
             quals = {None}
         else:
             quals = _qualifiers(a, views.get(a))
-            if not any(c["qualifier"] in quals for c in calls):
+            if not any(q in quals for r in reach for q, _ in r):
                 res["outside"].append(step["ref"])
                 continue
         if not action:
             res["outside"].append(step["ref"])
             continue
-        k = next((i for i in range(idx, len(calls))
-                  if calls[i]["action"] == action and calls[i]["qualifier"] in quals), None)
+        if prev is None:
+            start = 0
+        elif step["ref"] == prev:
+            start = idx + 1
+        else:
+            start = idx
+        k = next((i for i in range(start, len(calls))
+                  if any(q in quals and act == action for q, act in reach[i])), None)
         if k is None:
             res["order_error"] = (n, step["ref"], action)
             break
         res["covered"].append(step["ref"])
-        idx = k + 1
+        idx, prev = k, step["ref"]
     return res
 
 

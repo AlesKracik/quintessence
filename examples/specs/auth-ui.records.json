@@ -21,6 +21,11 @@
       "witness": {
         "status": "not-run"
       }
+    },
+    "UI-004": {
+      "witness": {
+        "status": "not-run"
+      }
     }
   }
 }

@@ -61,7 +61,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import spec_source  # noqa: E402
 from itf_tools import (area_json_path, ghost_for_param,  # noqa: E402
                        ghost_for_var, probe_name, outcome_probe_name,
-                       skip_discharge, is_computed)
+                       reach_name, skip_discharge, is_computed)
 from quint_ir import parse_qnt, zero_value as _ir_zero  # noqa: E402
 
 def fail(msg):
@@ -318,13 +318,15 @@ def build(area, area_name, ir, quint_rel):
     a("//")
     a("// Each probe carries up to THREE conjuncts, and each closes a")
     a("// different way a witness can prove less than the requirement claims:")
-    a("//   1. PREDICATE, bound to the param ghosts.")
-    a("//   2. PATH CONSTRAINT (_lastAction == quint_ref) — the trace must")
+    a("//   1. PATH CONSTRAINT (_lastAction == quint_ref) — the trace must")
     a("//      arrive via the requirement's own action.")
-    a("//   3. DELTA over the _prev* ghosts — the pre-state the step had to")
+    a("//   2. DELTA over the _prev* ghosts — the pre-state the step had to")
     a("//      start from. Without it a predicate already true at init")
     a("//      witnesses green over nothing; spec-record refuses that trace")
     a("//      as HOLLOW.")
+    a("//   3. PREDICATE, bound to the param ghosts.")
+    a("// The path comes first so that at init — no action yet, every ghost")
+    a("// still its zero — evaluation stops before reading a ghost as a key.")
     a("// " + "=" * 58)
     a("")
     a(f"module {module}_probes {{")
@@ -398,14 +400,29 @@ def build(area, area_name, ir, quint_rel):
         label = f"{rid}" + (f" / {outcome}" if outcome else "")
         a("")
         a(f"  /// Witness probe for {label}: {desc}")
-        conjuncts = [predicate.strip()]
+        # Path, then pre-state, then the predicate: the order the header
+        # explains. At init `_lastC` is "" and `_prevStatus` is Map(), and a
+        # `get` on either is an error in the simulator; `and` stops at the
+        # first false conjunct, and the path is false until an action runs.
+        conjuncts = []
         qref = req.get("quint_ref")
         if qref:
             conjuncts.append(f'_lastAction == "{qref}"')
         if delta_pre:
             conjuncts.append(delta_pre.strip())
+        conjuncts.append(predicate.strip())
         a(f"  val {name}: bool =")
         a("    not(" + ("\n        and ".join(conjuncts)) + ")")
+    if probes:
+        a("")
+        a("  // -- The same probes, the right way up ----------------------")
+        a("  // For the simulator. `quint run --witnesses=<name>` counts the")
+        a("  // runs in which a formula held at least once, and each probe above")
+        a("  // is a negation, which holds at init. These count the runs that")
+        a("  // reached each behavior: the vacuity pre-screen spec-record runs")
+        a("  // before the model checker, and the example gate in CI.")
+        for _req, name, _p, _d, _o in probes:
+            a(f"  val {reach_name(name)}: bool = not({name})")
     a("")
     # Requirements that owe no probe are named, not silently absent: an
     # unexplained gap in this file is indistinguishable from the omission

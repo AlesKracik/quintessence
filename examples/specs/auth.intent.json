@@ -72,7 +72,8 @@
       "logout",
       "login_failed",
       "expire_session",
-      "unlock_account"
+      "unlock_account",
+      "tick"
     ]
   },
   "state_machines": [
@@ -209,7 +210,11 @@
   },
   "formal_model": {
     "quint_file": "auth.qnt",
-    "probes_file": "auth.probes.qnt"
+    "probes_file": "auth.probes.qnt",
+    "probe_domains": {
+      "UserId": "Set(\"alice\", \"bob\")",
+      "SessionId": "Set(\"s1\", \"s2\")"
+    }
   },
   "open_questions": [
     {

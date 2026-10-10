@@ -53,9 +53,11 @@
     ],
     "verbs": [
       "cancel_subscription",
+      "cancel_declined",
+      "cancel_unanswered",
       "cancel_again",
-      "cancel_times_out",
-      "expire_period"
+      "expire_period",
+      "request_refund"
     ]
   },
   "externals": [
@@ -179,6 +181,12 @@
     }
   ],
   "formal_model": {
-    "quint_file": "subscription.qnt"
+    "quint_file": "subscription.qnt",
+    "probes_file": "subscription.probes.qnt",
+    "probe_domains": {
+      "CustomerId": "Set(\"alice\", \"bob\")",
+      "Notice": "Set(Email, InApp)",
+      "bool": "Set(true, false)"
+    }
   }
 }

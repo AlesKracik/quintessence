@@ -15,9 +15,13 @@
     ],
     "verbs": [
       "click_sign_in",
-      "submit_credentials",
+      "submit_success",
+      "submit_invalid",
+      "submit_locked",
       "click_logout",
-      "go_home"
+      "session_expired",
+      "go_home",
+      "time_passes"
     ]
   },
   "ui_components": [
@@ -63,7 +67,12 @@
     }
   },
   "formal_model": {
-    "quint_file": "auth-ui.qnt"
+    "quint_file": "auth-ui.qnt",
+    "probes_file": "auth-ui.probes.qnt",
+    "probe_domains": {
+      "UserId": "Set(\"alice\", \"bob\")",
+      "SessionId": "Set(\"s1\", \"s2\")"
+    }
   },
   "open_questions": []
 }

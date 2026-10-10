@@ -69,7 +69,11 @@ module {{MODULE_NAME}}_probes {
 
   // ----------------------------------------------------------
   // WITNESS PROBES — one per requirement, THREE conjuncts each.
-  // Negation of (predicate AND _lastAction == quint_ref AND delta).
+  // Negation of (_lastAction == quint_ref AND delta AND predicate),
+  // in that order: at init no action has run and every ghost is its
+  // zero (`_lastSid` is "", `_prevSessions` is Map()), so the path
+  // conjunct is false and evaluation stops before a ghost is read
+  // as a map key — which the simulator would report as an error.
   //
   // 1. PREDICATE, BOUND to the param ghosts. Binding is what makes
   //    the witness about this call: `_lastAction == login` pins
@@ -98,9 +102,15 @@ module {{MODULE_NAME}}_probes {
   // /// Witness probe for {{REQ_ID}}: <requirement description>
   // /// predicate: <witness.predicate verbatim>
   // val witness_{{REQ_ID}}: bool =
-  //   not(({{WITNESS_PREDICATE}})
-  //       and _lastAction == "{{QUINT_REF}}"
-  //       and ({{WITNESS_DELTA_PRE}}))
+  //   not(_lastAction == "{{QUINT_REF}}"
+  //       and ({{WITNESS_DELTA_PRE}})
+  //       and ({{WITNESS_PREDICATE}}))
+  //
+  // and, after all the probes, the same probe the right way up — what
+  // `quint run --witnesses` counts (the runs in which a formula held
+  // at least once; the probe itself is a negation, true at init):
+  //
+  // val reached_{{REQ_ID}}: bool = not(witness_{{REQ_ID}})
   //
   // A rejection requirement gets NO probe: a prohibition has no
   // reachable state to witness. Its model-side proof is the
