@@ -651,18 +651,22 @@ class Quint:
             self._help[sub] = self._run([sub, "--help"])[1]
         return flag in self._help[sub]
 
+    # The file goes right after the subcommand: an array option such as
+    # --invariants swallows the positional arguments that follow it.
+
     def test(self, file, match):
-        args = ["test", "--match", match]
+        args = ["test", file, "--match", match]
         if self.supports("test", "--max-samples"):
             args.append("--max-samples=1")
-        code, out = self._run(args + [file])
+        code, out = self._run(args)
         return code, out, parse_test_output(out)
 
     def simulate(self, file, invariants, samples, steps, seed):
-        args = ["run", f"--max-samples={samples}", f"--max-steps={steps}", f"--seed={seed}"]
+        args = ["run", file, f"--max-samples={samples}", f"--max-steps={steps}",
+                f"--seed={seed}"]
         for inv in invariants:
             args.append(f"--invariants={inv}")
-        code, out = self._run(args + [file])
+        code, out = self._run(args)
         if code == 0:
             return "ok", out, []
         if "[violation]" in out:
@@ -675,15 +679,16 @@ class Quint:
         --n-traces."""
         outdir = Path(outdir)
         outdir.mkdir(parents=True, exist_ok=True)
-        base = ["run", "--mbt", f"--max-steps={steps}"]
+        base = ["run", file, "--mbt", f"--max-steps={steps}"]
         if self.supports("run", "--n-traces"):
-            self._run(base + [f"--max-samples={samples}", f"--n-traces={samples}",
-                              f"--seed={seed}",
-                              f"--out-itf={outdir}/t_{{seq}}.itf.json", file])
+            code, out = self._run(base + [f"--max-samples={samples}",
+                                          f"--n-traces={samples}", f"--seed={seed}",
+                                          f"--out-itf={outdir}/t_{{seq}}.itf.json"])
         else:
             for i in range(samples):
-                self._run(base + ["--max-samples=1", f"--seed={seed + i}",
-                                  f"--out-itf={outdir}/t_{i}.itf.json", file])
+                code, out = self._run(base + ["--max-samples=1", f"--seed={seed + i}",
+                                              f"--out-itf={outdir}/t_{i}.itf.json"])
+        self.last_traces_output = out
         out = []
         for p in sorted(outdir.glob("*.itf.json")):
             try:
@@ -852,6 +857,14 @@ def run_area(root, area_name, args):
                 steps = trace_steps(tr, nondets, templates)
                 if steps:
                     out.append((i, steps))
+            if prefix == "qr":
+                report["traces_read"], report["traces_rebuilt"] = len(raw), len(out)
+                if not out:
+                    # Said, not swallowed: with no replay every survivor reads
+                    # as "no difference found".
+                    why = (getattr(q, "last_traces_output", "") or "")[-800:]
+                    print(f"WARNING: no replayable trace of the model ({len(raw)} read)."
+                          f"\n{why}", file=sys.stderr)
             return out
 
         # The model's own traces, replayed on the model itself: a run that
@@ -861,6 +874,10 @@ def run_area(root, area_name, args):
         if base:
             code, out, res = q.test(write(with_runs(text, replay_runs("qr", base))), "^qr_")
             bad = {n for n, s in res.items() if s != "passed"}
+            if bad:
+                print(f"WARNING: {len(bad)} replay run(s) fail on the model itself and "
+                      f"their traces are dropped, e.g. {sorted(bad)[:3]}:\n{out[-800:]}",
+                      file=sys.stderr)
             if not res and code != 0:
                 print(f"WARNING: the model's own replay did not run:\n{out[-800:]}",
                       file=sys.stderr)
