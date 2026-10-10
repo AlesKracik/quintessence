@@ -459,7 +459,7 @@ def shown(v):
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, str):
-        return v
+        return v if v else '""'
     if isinstance(v, dict):
         if "#bigint" in v:
             return str(int(v["#bigint"]))
@@ -772,6 +772,7 @@ def question(kind, prefix_calls, call, model_facts, refs, area_name, key):
     answers it."""
     given, chain = _given(prefix_calls), "init" + "".join(
         f".then({c})" for c in prefix_calls)
+    after = f"After {given}, " if prefix_calls else "From the start, "
     shown_facts = " and ".join(t for _c, t in model_facts)
     cond = " and ".join(c for c, _t in model_facts)
     name = f"q_{key}"
@@ -782,17 +783,17 @@ def question(kind, prefix_calls, call, model_facts, refs, area_name, key):
         when = "—"
     elif kind == "refused":
         when = _when(call)
-        text = (f"After {given}, should {when} be refused? The model refuses it; a "
+        text = (f"{after}should {when} be refused? The model refuses it; a "
                 f"model that allows it passes every example too.")
         run = f"run {name} = {chain}.then({call}.fail())"
     elif kind == "allowed":
         when = _when(call)
-        text = (f"After {given}, can {when} happen? The model allows it; a model "
+        text = (f"{after}can {when} happen? The model allows it; a model "
                 f"that refuses it passes every example too.")
         run = f"run {name} = {chain}.then({call})" + (f".expect({cond})" if cond else "")
     else:
         when = _when(call)
-        text = (f"After {given}, when {when}: should {shown_facts} hold? The model "
+        text = (f"{after}when {when}: should {shown_facts} hold? The model "
                 f"says so; a model where it does not passes every example too.")
         run = f"run {name} = {chain}.then({call}).expect({cond})"
     return {"kind": kind, "given": given, "when": when,

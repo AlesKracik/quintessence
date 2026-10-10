@@ -1494,7 +1494,7 @@ A question reads like this, in the readback's **Questions the Examples Leave Ope
 >
 > After cancel_unanswered(alice, true), when cancel_declined(alice): should unansweredTries[alice] = 0 hold? The model says so; a model where it does not passes every example too.
 
-with the run that answers it as the model does. **Yes** adds that run as an example, and the change dies on the next run. **No** is a model bug found before any code exists. The **spec mutation score** — examples' kills over behavior-changing mutants — is the share of the model's behavior a person actually approved. It is reported, never gated: a low score says how much is the agent's choice, which may be fine; the questions say which choices.
+with the run that answers it as the model does — shortened to the calls the difference needs, since a random run drags along whatever else happened on the way. **Yes** adds that run as an example, and the change dies on the next run. **No** is a model bug found before any code exists. The **spec mutation score** — examples' kills over behavior-changing mutants — is the share of the model's behavior a person actually approved. It is reported, never gated: a low score says how much is the agent's choice, which may be fine; the questions say which choices.
 
 ### spec-mutate — would any of this notice?
 
@@ -1740,7 +1740,7 @@ Lint grades these the way every other precision lint is graded: WARN while autho
 
 ### spec-questions
 
-`tools/spec-questions.py <area>` mutates the model and turns each survivor into a question (see "Mutation and Separation"). `--dry-run` lists the mutants without quint; `--ops cmp,guard,effect,variant,const` selects operators; `--limit` (default 40) caps the run, spread across operators; `--seed`, `--steps`, `--traces` and `--samples` bound the replays and the invariant simulation; `--record` writes `check_results.mutation` (counts, score, questions, one row per mutant, and the `model_sha` measured — the readback flags results for an older model). Exit 0 whenever it ran: survivors are findings, not failures.
+`tools/spec-questions.py <area>` mutates the model and turns each survivor into a question (see "Mutation and Separation"). `--dry-run` lists the mutants without quint; `--ops cmp,guard,effect,variant,const` selects operators; `--limit` (default 40) caps the run, spread across operators; `--jobs` sets how many mutants run at once (default: one per CPU); `--seed`, `--steps`, `--traces` and `--samples` bound the replays and the invariant simulation; `--summary FILE` appends the score and questions as Markdown (the nightly `spec-mutation.yml` workflow points it at the run's summary page); `--record` writes `check_results.mutation` (counts, score, questions, one row per mutant, and the `model_sha` measured — the readback flags results for an older model). Exit 0 whenever it ran: survivors are findings, not failures.
 
 ### spec-mutate
 

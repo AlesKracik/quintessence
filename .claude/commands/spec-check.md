@@ -222,7 +222,7 @@ An unhandled TIMEOUT is the single most common real-world semantic hole; this pa
 
 ### Step 4c — What the examples leave open (model mutation)
 
-Run `tools/spec-questions.py <target> --record` once the checks above are clean and the area has examples. It needs quint; it is slow (minutes), so run it when the model or its examples changed, not on every fix-and-recheck loop. The template repo's CI runs it over the examples.
+Run `tools/spec-questions.py <target> --record` once the checks above are clean and the area has examples. It needs quint and takes minutes (mutants run in parallel, one per CPU), so run it when the model or its examples changed, not on every fix-and-recheck loop. `.github/workflows/spec-mutation.yml` also runs it nightly and on every PR that changes a model, and writes the questions to the run's summary page.
 
 What it does: it changes the model one small step at a time (a comparison at its boundary, a dropped guard, a dropped effect, a state written as another variant, a constant moved by one) and runs every `run` and invariant against each change. A change something turns red on is pinned. A change nothing notices is a behavior the model decided and nobody approved, and the tool finds the first step where the model and the changed model part. It records each one as a question in `check_results.mutation.questions`: Given / When, a yes/no question, and the example run that answers it as the model does.
 

@@ -164,6 +164,7 @@ def test_itf_values_render_as_quint_literals():
     assert sq.literal({"#map": [["alice", V]]}) == 'Map("alice" -> Active)'
     assert sq.literal({"#set": []}) == "Set()"
     assert sq.literal({"#bigint": "-3"}) == "-3"
+    assert sq.shown("") == '""' and sq.shown("s1") == "s1"
     assert sq.literal({"a": 1, "b": "x"}) == '{ a: 1, b: "x" }'
     assert sq.literal({"tag": "Some", "value": 5}) == "Some(5)"
     with pytest.raises(sq.Unrenderable):
@@ -284,7 +285,8 @@ def test_a_survivor_reads_as_a_scenario_and_a_yes_no_question():
     assert r["question"].startswith("After close, should add be refused?")
     assert r["example"] == "run q_k = init.then(close).then(add.fail())"
     a = sq.question("allowed", [], "add", [("count == 1", "count = 1")], [], "shop", "k")
-    assert a["given"] == "the initial state" and "can add happen?" in a["question"]
+    assert a["given"] == "the initial state"
+    assert a["question"].startswith("From the start, can add happen?")
     i = sq.question("initial", [], None, [("count == 0", "count = 0")], [], "shop", "k")
     assert i["example"] == "run q_k = init.expect(count == 0)"
 
