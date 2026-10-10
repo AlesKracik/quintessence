@@ -302,3 +302,21 @@ jobs:
       - name: Tool tests with the Quint CLI present
         if: steps.tpl.outputs.ok == 'true'
         run: '"$RUNNER_TEMP/annotate.sh" "tool tests (quint present)" python -m pytest tests/ -q -rs'
+
+  # TEMPORARY — language experiments for the example rework; removed before merge.
+  quint-scratch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g @informalsystems/quint
+      - name: experiments
+        working-directory: .ci-scratch
+        run: |
+          for f in b.qnt c.qnt; do
+            out=$( (quint typecheck "$f" && quint test --match '.*' "$f") 2>&1 | tail -n 60 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::notice title=scratch $f::$out"
+          done
+
