@@ -179,6 +179,7 @@ no-witness, error, timeout, or failed replay/tests; 2 = setup problem
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -1875,6 +1876,16 @@ def resolve_code_root(root, area_name, project, override=None):
     return Path(root), entry
 
 
+def run_traces_status(root, area_name, area):
+    """[(run, label, status)] for the area's example and journey run traces —
+    tools/spec-runs.py's own reading of them, so the two cannot disagree."""
+    spec = importlib.util.spec_from_file_location(
+        "spec_runs", Path(__file__).parent / "spec-runs.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.status(root, area_name, area)
+
+
 def cmd_verify(args):
     root = Path(args.root)
     area_path = records_path(root, args.area)
@@ -1914,6 +1925,23 @@ def cmd_verify(args):
         print(f"PREFLIGHT: {len(unshown)} rejection requirement(s) shown by no "
               f"example — " + ", ".join(unshown))
 
+    # ── 1c. Run-trace preflight ──────────────────────────────────────────
+    # Every example and journey run is replayed too (tools/spec-runs.py
+    # writes them under traces/runs/, labelled like witness traces, a refused
+    # call marked `_refused`). A trace made from an older model replays an
+    # older spec, so — like a stale witness — it blocks the replay.
+    run_rows = run_traces_status(root, args.area, area)
+    off = [(r, s) for r, _l, s in run_rows if s != "current"]
+    if off:
+        bad += 1
+        preflight_ok = False
+        notes.append(f"run-trace preflight: {len(off)} of {len(run_rows)} example/journey "
+                     f"run trace(s) missing or stale")
+        print(f"PREFLIGHT: {len(off)} example/journey run trace(s) not current ("
+              + ", ".join(f"{r} {s}" for r, s in off[:6])
+              + (" …" if len(off) > 6 else "")
+              + f") — conformance replay refused. Run tools/spec-runs.py {args.area}.")
+
     # ── 2. Conformance replay ────────────────────────────────────────────
     conf_result = None  # None = not run
     traces_replayed = 0
@@ -1924,7 +1952,7 @@ def cmd_verify(args):
     elif preflight_ok:
         traces_dir = root / "specs" / (conformance.get("traces_dir") or f"{args.area}/traces")
         traces_replayed = len([
-            p for p in (traces_dir.glob("*.itf.json") if traces_dir.exists() else [])
+            p for p in (traces_dir.glob("**/*.itf.json") if traces_dir.exists() else [])
             if not p.name.startswith("_selftest.") and ".cex." not in p.name
         ])
         code, tail = run_shell(conformance["command"], repo_root, args.timeout or 1800)

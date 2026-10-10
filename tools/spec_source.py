@@ -887,6 +887,24 @@ def model_declarations(root, name, view):
     return declarations(text) if has_model(text) else None
 
 
+IMPORT_RE = re.compile(r'^\s*import\s+([A-Za-z_]\w*)(?:\.\*)?\s+from\s+"([^"]+)"', re.M)
+
+
+def imported_declarations(root, text):
+    """alias -> declarations of each module a model imports (`import auth
+    from "./auth"` -> "auth"); {} for a file that is not there."""
+    out = {}
+    for alias, rel in IMPORT_RE.findall(text or ""):
+        path = specs_dir(root) / (rel[2:] if rel.startswith("./") else rel)
+        if not path.suffix:
+            path = path.with_suffix(".qnt")
+        try:
+            out[alias] = declarations(path.read_text(encoding="utf-8"))
+        except OSError:
+            out[alias] = {}
+    return out
+
+
 def step_action(view, rid):
     """The action a journey step is realized by: a requirement's quint_ref,
     or a navigation edge's action."""

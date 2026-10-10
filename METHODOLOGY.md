@@ -176,6 +176,8 @@ Every command runs inside the **active change**, and can be narrowed to one **ar
     ├── spec-extract-audit.py      ← code→spec coverage: every decision site accounted for
     ├── spec-route.py              ← which /spec beat a target enters, and why
     ├── spec-mutate.py             ← mutate the implementation; check the gates turn red
+    ├── spec-runs.py               ← every example and journey run as a labelled trace the
+    │                                code's replay harness runs (refusals marked _refused)
     ├── spec-questions.py          ← mutate the MODEL; what survives every example becomes
     │                                a yes/no question (check_results.mutation)
     ├── spec-separation.py         ← refuse commits that move claims and code together
@@ -616,7 +618,7 @@ One bounds the threshold from above (it fires), the other from below (it does no
 
 1. `/spec-code-generate` generates a **conformance adapter** (one method per Quint action calling the real API; one getter per Quint var returning the abstracted observable code state; a `reset()`) and a **replay harness**. It also generates **tampered self-test traces — one per observable Quint var** (`_selftest.tampered.<var>.itf.json`), each a copy of a witness trace with that var's final value deliberately corrupted; the harness must FAIL on every one. One tamper would only prove the harness catches divergence on the single var it flipped — a getter echoing expectations on a *different* var would slip through. A harness that passes any tampered trace has a broken adapter (getters echoing expectations, `reset()` not resetting) and all its green results are void.
 2. `/spec-code-verify` replays every witness trace (refusing stale ones): drive the code step-by-step with the trace's actions and ghost-recorded parameters, after each step assert the code state equals the trace's model state under the adapter mapping.
-   It replays the **example and journey runs** the same way: `quint test --out-itf=<dir>/{test}.itf.json` writes each run's trace, and a `.fail()` step is replayed as a call the implementation must refuse with no observable var moving. That is where refusals and end-to-end flows get their code-side evidence.
+   It replays the **example and journey runs** the same way. `tools/spec-runs.py <area>` runs each one under `quint test`, keeps its trace, and labels every step the way a witness trace is labelled (`_lastAction`, the `_last<Param>` ghosts), so the harness needs nothing new — except for a call the run expects to be refused (`A(args).fail()`): it becomes a state of its own, a copy of the state before it marked `_refused: true`, which the harness replays as a call the implementation must refuse with no observable var moving. The traces are stamped with the model_sha they came from; `spec-record verify` refuses to replay a missing or stale one, like a stale witness. That is where refusals and end-to-end flows get their code-side evidence — and where an example a person approved stops being a claim about the model only.
 3. **A requirement is `verified` if and only if its witness trace replays green against the implementation.**
 
 Wire `conformance.command` into the **code repo's own CI** as well — the harness is an ordinary test file, so code changes that break model conformance fail on the code PR with no spec tooling installed.
@@ -1737,6 +1739,10 @@ Lint grades these the way every other precision lint is graded: WARN while autho
 ### spec-record equiv
 
 `tools/spec-record.py equiv <area>` runs the differential comparator: the original implementation and the regenerated one, driven through identical sequences, diffed at `boundary.observable_state`. Preflight refuses a verdict without an observation boundary, without a comparator command, or when `parallel_path` sits inside the original's code path. Writes `check_results.differential` mechanically, always with the sequence count.
+
+### spec-runs
+
+`tools/spec-runs.py <area>` writes `specs/<area>/traces/runs/<run>.itf.json` for every `@example` run and every journey `run` of the area: the run's `quint test` trace, each step labelled with `_lastAction` and its `_last<Param>` ghosts, each refused call (`.fail()`) a copy of the state before it marked `_refused: true`, the whole stamped with the model_sha. Arguments must be literals (strings, numbers, booleans, variants, `Set`/`Map`/tuples/records, or a `pure val` constant by name). `--check` needs no quint and exits 1 while any trace is missing or older than the model; `spec-record verify` applies the same check before it replays.
 
 ### spec-questions
 

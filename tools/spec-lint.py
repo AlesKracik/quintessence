@@ -1878,6 +1878,27 @@ def check_refusal_examples(area_data, area_name, findings):
                 f"and ends with the call `.fail()`.", ref=rid)
 
 
+def check_run_traces(root, area_data, area_name, findings):
+    """Once an area has a conformance harness, its example and journey runs
+    are replayed against the code from traces tools/spec-runs.py writes. A
+    trace older than the model replays an older spec; verify refuses it, and
+    this says so before anyone gets that far."""
+    if not (area_data.get("conformance") or {}).get("command"):
+        return
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "spec_runs_lint", Path(__file__).parent / "spec-runs.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    off = [(r, s) for r, _l, s in mod.status(root, area_name, area_data) if s != "current"]
+    if off:
+        add(findings, WARN, "conformance", "run-traces-not-current", area_name,
+            f"{len(off)} example/journey run trace(s) missing or older than the model ("
+            + ", ".join(f"{r}: {s}" for r, s in off[:5]) + (" …" if len(off) > 5 else "")
+            + f"). spec-record verify will refuse to replay; run tools/spec-runs.py "
+              f"{area_name}.")
+
+
 def check_provenance(area_data, area_name, findings):
     """Has the spec's MEANING moved since the code was generated from it?
 
@@ -3034,6 +3055,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_transition_invariant_names(area_data, sidecar, info, area_name, findings)
     check_paired_invariants(root, area_data, sidecar, area_name, findings)
     check_refusal_examples(area_data, area_name, findings)
+    check_run_traces(root, area_data, area_name, findings)
     check_boundary(area_data, area_name, findings)
     check_extraction_ledger(area_data, area_name, findings)
     check_extraction_provenance(root, area_data, area_name, findings)
