@@ -241,6 +241,27 @@ jobs:
           quint --version
           pip install pytest jsonschema
 
+      # Each gate below runs through `annotate`: on failure the tail of its
+      # output is also emitted as an error annotation, so the reason shows on
+      # the PR's checks page (and through the API) without opening raw logs.
+      - name: Define the failure annotator
+        if: steps.tpl.outputs.ok == 'true'
+        run: |
+          cat > "$RUNNER_TEMP/annotate.sh" <<'SH'
+          #!/usr/bin/env bash
+          # usage: annotate.sh <title> <command...>
+          title="$1"; shift
+          out="$RUNNER_TEMP/annotate.out"
+          "$@" > "$out" 2>&1; code=$?
+          cat "$out"
+          if [ $code -ne 0 ]; then
+            msg=$(tail -n 150 "$out" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=$title::$msg"
+          fi
+          exit $code
+          SH
+          chmod +x "$RUNNER_TEMP/annotate.sh"
+
       - name: Quint typecheck (example models + probe modules)
         if: steps.tpl.outputs.ok == 'true'
         working-directory: examples
@@ -248,7 +269,7 @@ jobs:
           set -e
           for f in specs/*.qnt; do
             echo "── typecheck: $f"
-            quint typecheck "$f"
+            "$RUNNER_TEMP/annotate.sh" "quint typecheck $f" quint typecheck "$f"
           done
 
       - name: Quint test (every run in the example models)
@@ -260,20 +281,24 @@ jobs:
           if quint test --help 2>&1 | grep -q -- "--backend"; then
             backend="--backend=${QUINT_EVAL_BACKEND:-rust}"
           fi
+          status=0
           for f in specs/*.qnt; do
             case "$f" in *.probes.qnt) continue;; esac
             runs=$(python ../tools/quint_ir.py "$f" --json | python -c "import json,sys; print('|'.join(json.load(sys.stdin).get('runs') or []))")
             if [ -z "$runs" ]; then echo "── test: $f (no runs)"; continue; fi
             echo "── test: $f ($runs)"
-            quint test $backend --match "^($runs)\$" "$f"
+            # Every model is tested even after one fails: the annotations
+            # then name every broken run in one CI round, not one per push.
+            "$RUNNER_TEMP/annotate.sh" "quint test $f" quint test $backend --match "^($runs)\$" "$f" || status=1
           done
+          exit $status
 
       - name: spec-lint over the examples (Quint's typed IR, no FAIL allowed)
         if: steps.tpl.outputs.ok == 'true'
         env:
           QUINT_IR_ENGINE: cli
-        run: python tools/spec-lint.py --root examples --no-color
+        run: '"$RUNNER_TEMP/annotate.sh" "spec-lint examples" python tools/spec-lint.py --root examples --no-color'
 
       - name: Tool tests with the Quint CLI present
         if: steps.tpl.outputs.ok == 'true'
-        run: python -m pytest tests/ -q -rs
+        run: '"$RUNNER_TEMP/annotate.sh" "tool tests (quint present)" python -m pytest tests/ -q -rs'
