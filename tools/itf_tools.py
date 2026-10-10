@@ -179,9 +179,9 @@ def is_rejection(req):
 
     Shared so lint, spec-record and the readback cannot disagree about which
     requirements owe a refusal EXAMPLE — an @example whose @refs names the
-    requirement and whose run attempts the refused call (`.fail()` in a
-    guard-style model, a recorded refusal result in a total-action one) and
-    asserts nothing moved. Two forms count:
+    requirement and whose run reaches the blocking state and ends with the
+    refused call (`.fail()` in a guard-style model, a recorded refusal
+    result in a total-action one). Two forms count:
 
       - modality "forbidden" (the typed form), or
       - an `@unwanted` requirement whose witness is deliberately SKIPPED with

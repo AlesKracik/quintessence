@@ -807,29 +807,55 @@ def collapse_calls(steps):
     return [t if n == 1 else f"{t} × {n}" for t, n in out]
 
 
+def _expect_before_refusal(body):
+    """The condition of the last `.expect(..)` before a run's refused call,
+    or None — the blocking state the refused call was attempted in."""
+    body = body or ""
+    k = body.rfind(".fail(")
+    if k < 0:
+        return None
+    e = body.rfind(".expect(", 0, k)
+    if e < 0:
+        return None
+    start = e + len(".expect")
+    end = _balanced(body, start)
+    return " ".join(body[start + 1:end - 1].split())
+
+
 def example_row(example, decls):
     """One example as a (given, when, then) row of plain strings — DERIVED
     from the run it sits on, never written beside it, so the row a reviewer
     reads is the run `quint test` executes.
 
     A run's last call is When, everything before it is Given (from `init`),
-    its trailing `.expect(..)` is Then. An example hosted on an action reads
-    its @given / @when / @expect JSON instead. Returns None when there is
-    nothing to show."""
+    its trailing `.expect(..)` is Then. A run that ENDS in a refused call
+    (`.then(login("bob", "s2").fail())`) shows the refusal: When is the call
+    marked refused, Then is that nothing changes, and the `.expect(..)` just
+    before the refused call — the blocking state it was refused in — rides
+    with Given. An example hosted on an action reads its @given / @when /
+    @expect JSON instead. Returns None when there is nothing to show."""
     def kv(d):
         return ", ".join(f"{k} = {json.dumps(v) if not isinstance(v, str) else v}"
                          for k, v in (d or {}).items())
     run = example.get("quint_run")
     if run and run in decls:
         steps = run_calls(decls, run)
+        if steps and steps[-1].get("fails"):
+            given = "; then ".join(collapse_calls(steps[:-1])) or "the initial state"
+            cond = _expect_before_refusal(decls[run].get("body"))
+            if cond:
+                given += f", so `{cond}`"
+            return {"given": given, "when": render_call(steps[-1]),
+                    "then": "refused — nothing changes", "then_is_code": False}
         if steps:
             given = collapse_calls(steps[:-1])
             then = _run_expectation(decls[run].get("body")) or kv(
                 {k: v for k, v in (example.get("expect") or {}).items()
                  if k != RUN_EXPECT_KEY})
+            cond = _run_expectation(decls[run].get("body"))
             return {"given": "; then ".join(given) if given else "the initial state",
                     "when": render_call(steps[-1]),
-                    "then": then or "—"}
+                    "then": then or "—", "then_is_code": bool(cond)}
     when = example.get("when") or {}
     if not when.get("action"):
         return None
@@ -839,7 +865,8 @@ def example_row(example, decls):
     expect = {k: v for k, v in (example.get("expect") or {}).items() if k != RUN_EXPECT_KEY}
     return {"given": kv(example.get("given")) or "the initial state",
             "when": f"{when['action']}({shown})",
-            "then": kv(expect) or (example.get("expect") or {}).get(RUN_EXPECT_KEY) or "—"}
+            "then": kv(expect) or (example.get("expect") or {}).get(RUN_EXPECT_KEY) or "—",
+            "then_is_code": False}
 
 
 # ── Journeys: steps, their example rows, and the run that walks them ───────
@@ -1108,6 +1135,7 @@ def _run_last_action(body, actions):
 
 
 RUN_EXPECT_KEY = "run.expect"
+RUN_REFUSES_KEY = "run.refuses"
 
 
 def _run_expectation(body):
@@ -1278,6 +1306,11 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
                 cond = _run_expectation(host.get("body"))
                 if cond and not item.get("expect"):
                     item["expect"] = {RUN_EXPECT_KEY: cond}
+                last = (run_calls(decls, hn) or [None])[-1] if hn in decls else None
+                if last and last.get("fails") and not item.get("expect"):
+                    # Ending in `A.fail()` IS the run's claim: quint test fails
+                    # the run when the call goes through.
+                    item["expect"] = {RUN_REFUSES_KEY: render_call(last)}
                 if "when" not in item:
                     # The run's own last step, zero-argument actions
                     # (`.then(click_sign_in)`) included.

@@ -91,7 +91,7 @@ flowchart LR
 
 <details><summary>Quint action `login`, witness predicate + trace</summary>
 
-`specs/auth.qnt:L94-L106` · model `ab7c4452731e`
+`specs/auth.qnt:L94-L106` · model `79bf44d11f27`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -111,7 +111,7 @@ flowchart LR
 
 **Witness predicate:** `sessions.keys().contains(_lastSid) and statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:322` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:323` — the doc comment this requirement is read from.
 
 </details>
 
@@ -134,7 +134,7 @@ flowchart LR
 
 <details><summary>Quint action `login_failed`, witness predicate + trace</summary>
 
-`specs/auth.qnt:L131-L147` · model `ab7c4452731e`
+`specs/auth.qnt:L131-L147` · model `79bf44d11f27`
 
 ```quint
   action login_failed(uid: UserId): bool = {
@@ -158,7 +158,7 @@ flowchart LR
 
 **Witness predicate:** `accountStatus.keys().contains(_lastUid) and accountStatus.get(_lastUid) == Locked` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:347` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:348` — the doc comment this requirement is read from.
 
 </details>
 
@@ -182,7 +182,7 @@ flowchart LR
 
 <details><summary>Quint action `logout`, witness predicate + trace</summary>
 
-`specs/auth.qnt:L109-L123` · model `ab7c4452731e`
+`specs/auth.qnt:L109-L123` · model `79bf44d11f27`
 
 ```quint
   action logout(sid: SessionId): bool = {
@@ -204,7 +204,7 @@ flowchart LR
 
 **Witness predicate:** `statusOf(sessions, _lastSid) == LoggedOut` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:334` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:335` — the doc comment this requirement is read from.
 
 </details>
 
@@ -220,7 +220,7 @@ flowchart LR
 
 <details><summary>Quint action `expire_session`, witness predicate + trace</summary>
 
-`specs/auth.qnt:L150-L164` · model `ab7c4452731e`
+`specs/auth.qnt:L150-L164` · model `79bf44d11f27`
 
 ```quint
   action expire_session(sid: SessionId): bool = {
@@ -242,7 +242,7 @@ flowchart LR
 
 **Witness predicate:** `statusOf(sessions, _lastSid) == Expired` — true exactly when the behavior has happened.
 
-**Record:** `specs/auth.qnt:366` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:367` — the doc comment this requirement is read from.
 
 </details>
 
@@ -254,7 +254,7 @@ flowchart LR
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-006 — A locked account cannot sign in, and nothing moves | login_failed(bob) × 5 | login(bob, s2) — refused | `isLocked("bob") and attemptsOf("bob") == 5 and not(sessions.keys().contains("s2"))` |
+| EX-006 — A locked account cannot sign in | login_failed(bob) × 5, so `isLocked("bob") and attemptsOf("bob") == 5` | login(bob, s2) — refused | refused — nothing changes |
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ⏳ · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ⏳ · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ⏳ · [INV-004](#what-must-always-be-true) `noEarlyLockout` ⏳
 
@@ -262,7 +262,7 @@ flowchart LR
 
 <details><summary>Quint action `login`</summary>
 
-`specs/auth.qnt:L94-L106` · model `ab7c4452731e`
+`specs/auth.qnt:L94-L106` · model `79bf44d11f27`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -304,7 +304,7 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 | EX-003 — The fifth failure locks the account | login_failed(bob) × 4 | login_failed(bob) | `isLocked("bob")` | REQ-003 |
 | EX-004 — Four failures do not lock it | login_failed(bob) × 3 | login_failed(bob) | `not(isLocked("bob"))` | REQ-003, INV-004 |
 | EX-005 — An Active session expires | login(alice, s1) | expire_session(s1) | `not(isActive("s1"))` | REQ-004 |
-| EX-006 — A locked account cannot sign in, and nothing moves | login_failed(bob) × 5 | login(bob, s2) — refused | `isLocked("bob") and attemptsOf("bob") == 5 and not(sessions.keys().contains("s2"))` | REQ-005 |
+| EX-006 — A locked account cannot sign in | login_failed(bob) × 5, so `isLocked("bob") and attemptsOf("bob") == 5` | login(bob, s2) — refused | refused — nothing changes | REQ-005 |
 
 ## Limits and Bounds
 

@@ -157,15 +157,17 @@ module {{MODULE_NAME}} {
   // }
   //
   // ...and an EXAMPLE shows the refusal: reach the blocking state,
-  // attempt the call with .fail(), assert nothing moved.
+  // assert it, and END with the call .fail(). Nothing can follow .fail():
+  // Quint assigns no state after it (a refused step changes nothing in the
+  // model; replay checks the code changes nothing either).
   //
   // /// @example EX-NNN
   // /// <the refused case, in the user's words>
   // /// @refs REQ-NNN
   // run {{REFUSAL_RUN}} = init
   //   .then({{REACH_BLOCKING_STATE}})
+  //   .expect({{BLOCKING_STATE_HOLDS}})
   //   .then({{ACTION_NAME}}({{ARGS}}).fail())
-  //   .expect({{NOTHING_MOVED}})
   //
   // With a local binding:
   //

@@ -236,10 +236,10 @@ module auth {
     .expect(statusOf(sessions, "s1") == LoggedOut)
 
   /// @example EX-002
-  /// A locked account cannot sign in, and nothing moves
+  /// A locked account cannot sign in
   /// @refs REQ-005
-  run lockedLoginRefused = lockedBob.then(login("bob", "s2").fail())
-    .expect(not(sessions.keys().contains("s2")))
+  run lockedLoginRefused = lockedBob.expect(isLocked("bob"))
+    .then(login("bob", "s2").fail())
 }
 ```
 
@@ -642,20 +642,19 @@ Gap (1) is **narrower than it used to be, and will never close.** No tool can de
 
 A rejection produces no state change, so it correctly has **no witness trace** — and witness replay only replays witness traces. Left there, **the requirement class most likely to be wrong in the implementation has zero code-side evidence**: a `login()` written with no locked-account check replays every happy-path trace green, passes every tampered self-test, and `/spec-code-verify` reports pass.
 
-The evidence is an **example** — a run that drives the model into the blocking state, attempts the call with `.fail()`, and asserts that nothing moved:
+The evidence is an **example** — a run that drives the model into the blocking state, asserts it, and **ends** with the refused call:
 
 ```quint
   /// @example EX-006
-  /// A locked account cannot sign in, and nothing moves
+  /// A locked account cannot sign in
   /// @refs REQ-005
   run lockedLoginRefused = init
     .then(login_failed("bob")) … ×5
+    .expect(isLocked("bob") and attemptsOf("bob") == 5)
     .then(login("bob", "s2").fail())
-    .expect(isLocked("bob") and attemptsOf("bob") == 5
-            and not(sessions.keys().contains("s2")))
 ```
 
-`quint test` fails the run if the call goes through, so the model side is checked; the code repo's conformance harness replays the run, so the code side is too — the `.fail()` step must be refused by the implementation, and the `.expect` asserts both halves: refused, **and** no observable var moved. A rejection that throws after incrementing the counter is not a rejection. The readback shows it as a row: `login_failed(bob) × 5 | login(bob, s2) — refused | isLocked("bob") and …`.
+`quint test` fails the run if the call goes through, so the model side is checked. The refused call must be the run's **last** step: a refused step leaves the model's state exactly as it was, and Quint assigns nothing after `A.fail()`, so nothing can be asserted after it — there is nothing to assert, either. What *can* move is the code, and that is replay's job: the conformance harness drives the implementation to the same blocking state, makes the call, and asserts it is refused **and** that no observable var moved. A rejection that throws after incrementing the counter is not a rejection. The readback shows the example as a row: `login_failed(bob) × 5, so isLocked("bob") and … | login(bob, s2) — refused | refused — nothing changes`.
 
 In a **total-action** model — every action always fires and records a result (`Refused`, `Conflict`, …) instead of being disabled by its guard — a refusal is an ordinary step whose recorded result is the refusal, and the same example shape applies without `.fail()`.
 

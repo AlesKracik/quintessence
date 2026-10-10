@@ -1871,9 +1871,9 @@ def cmd_verify(args):
 
     # ── 1b. Refusal preflight ────────────────────────────────────────────
     # A rejection produces no state change, so it has no witness trace. Its
-    # evidence is an example: a run that reaches the blocking state, attempts
-    # the call (`.fail()`), and asserts nothing moved — replayed against the
-    # code by the conformance harness like any other run.
+    # evidence is an example: a run that reaches the blocking state and ends
+    # with the refused call (`.fail()`) — replayed against the code by the
+    # conformance harness, which asserts the code refuses and nothing moves.
     rejections = [r for r in (area.get("requirements") or []) if is_rejection(r)]
     shown = {ref.split(".", 1)[-1] for ex in (area.get("examples") or [])
              for ref in (ex.get("refs") or [])}
