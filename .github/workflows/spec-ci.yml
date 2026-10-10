@@ -390,19 +390,32 @@ jobs:
         if: steps.tpl.outputs.ok == 'true'
         run: |
           area="${{ matrix.area }}"
+          # Annotations are cut at 4 KB: post long text as numbered parts.
+          cat > "$RUNNER_TEMP/parts.py" <<'PY'
+          import sys
+          path, title, level = sys.argv[1:4]
+          text = open(path, encoding="utf-8").read()
+          parts = [text[i:i + 3800] for i in range(0, len(text), 3800)] or [""]
+          for i, c in enumerate(parts[:9], 1):
+              msg = c.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::{level} title={title} ({i}/{len(parts)})::{msg}")
+          PY
           start=$(date +%s)
           # The step shell runs with -e: capture the exit code instead of dying on it.
           code=0
           python tools/spec-questions.py "$area" --root examples --record > "$RUNNER_TEMP/report.txt" 2>&1 || code=$?
-          cat "$RUNNER_TEMP/report.txt"
           echo "took $(( $(date +%s) - start ))s" >> "$RUNNER_TEMP/report.txt"
-          msg=$(tail -c 50000 "$RUNNER_TEMP/report.txt" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
+          cat "$RUNNER_TEMP/report.txt"
+          if [ $code -eq 0 ]; then level=notice; else level=error; fi
+          python "$RUNNER_TEMP/parts.py" "$RUNNER_TEMP/report.txt" "mutation $area" "$level"
           if [ $code -eq 0 ]; then
-            echo "::notice title=mutation $area::$msg"
-            rec=$(python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['check_results'].get('mutation', {}), separators=(',', ':'), ensure_ascii=False))" "examples/specs/$area.records.json" | sed 's/%/%25/g')
-            echo "::notice title=mutation record $area::$rec"
-          else
-            echo "::error title=mutation $area::$msg"
+            python -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]))['check_results'].get('mutation', {}), separators=(',', ':'), ensure_ascii=False))" "examples/specs/$area.records.json" > "$RUNNER_TEMP/record.json"
+            echo "$RUNNER_TEMP/record.json" > "$RUNNER_TEMP/record.path"
           fi
           exit $code
 
+      - name: Post the recorded block (${{ matrix.area }})
+        if: steps.tpl.outputs.ok == 'true'
+        run: |
+          [ -f "$RUNNER_TEMP/record.json" ] || exit 0
+          python "$RUNNER_TEMP/parts.py" "$RUNNER_TEMP/record.json" "mutation record ${{ matrix.area }}" notice

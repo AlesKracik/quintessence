@@ -478,28 +478,44 @@ def state_vars(state):
             if not k.startswith("#") and not k.startswith("mbt::") and k not in MBT_KEYS}
 
 
-def facts(state):
-    """[(quint condition, reader text)] — one per state var, one per key of a
-    map-valued var, so a difference can be named down to the entry."""
-    out = []
-    for var, v in sorted(state_vars(state).items()):
-        if isinstance(v, dict) and "#map" in v and v["#map"]:
-            for k, x in v["#map"]:
-                out.append((f"{var}.get({literal(k)}) == {literal(x)}",
-                            f"{var.split('::')[-1]}[{shown(k)}] = {shown(x)}"))
-        else:
-            out.append((f"{var} == {literal(v)}", f"{var.split('::')[-1]} = {shown(v)}"))
+def var_names(decls, imported):
+    """ITF var name -> how the model refers to it. A trace names an imported
+    module's variables bare (`sessions`); inside a model that imports that
+    module qualified they are `auth::sessions`."""
+    own = {n for n, h in decls.items() if h.get("kind") == "var"}
+    out = {}
+    for alias, other in (imported or {}).items():
+        for n, h in other.items():
+            if h.get("kind") == "var" and n not in own:
+                out.setdefault(n, f"{alias}::{n}")
     return out
 
 
-def state_expr(state):
-    return " and ".join(f"{var} == {literal(v)}"
+def facts(state, names=None):
+    """[(quint condition, reader text)] — one per state var, one per key of a
+    map-valued var, so a difference can be named down to the entry."""
+    names = names or {}
+    out = []
+    for var, v in sorted(state_vars(state).items()):
+        ref = names.get(var, var)
+        if isinstance(v, dict) and "#map" in v and v["#map"]:
+            for k, x in v["#map"]:
+                out.append((f"{ref}.get({literal(k)}) == {literal(x)}",
+                            f"{var}[{shown(k)}] = {shown(x)}"))
+        else:
+            out.append((f"{ref} == {literal(v)}", f"{var} = {shown(v)}"))
+    return out
+
+
+def state_expr(state, names=None):
+    names = names or {}
+    return " and ".join(f"{names.get(var, var)} == {literal(v)}"
                         for var, v in sorted(state_vars(state).items())) or "true"
 
 
-def changed_facts(before, after):
-    old = dict(facts(before))
-    return [(c, t) for c, t in facts(after) if c not in old]
+def changed_facts(before, after, names=None):
+    old = dict(facts(before, names))
+    return [(c, t) for c, t in facts(after, names) if c not in old]
 
 
 # ── The step relation: how a trace's actions are called ────────────────────
@@ -569,7 +585,7 @@ def trace_steps(trace, nondets, templates):
     return steps
 
 
-def replay_runs(prefix, traces):
+def replay_runs(prefix, traces, names=None):
     """Runs replaying each trace step by step, state asserted after every
     step, chained so each run is one step longer than the last:
 
@@ -581,11 +597,12 @@ def replay_runs(prefix, traces):
     from the one the trace came from."""
     lines = []
     for t, steps in traces:
-        lines.append(f"  run {prefix}_{t}_0_s = init.expect({state_expr(steps[0]['state'])})")
+        lines.append(f"  run {prefix}_{t}_0_s = "
+                     f"init.expect({state_expr(steps[0]['state'], names)})")
         for k, st in enumerate(steps[1:], 1):
             lines.append(f"  run {prefix}_{t}_{k}_a = {prefix}_{t}_{k - 1}_s.then({st['call']})")
             lines.append(f"  run {prefix}_{t}_{k}_s = {prefix}_{t}_{k}_a"
-                         f".expect({state_expr(st['state'])})")
+                         f".expect({state_expr(st['state'], names)})")
     return lines
 
 
@@ -786,6 +803,7 @@ def run_area(root, area_name, args):
     decls = spec_source.declarations(text)
     ir = parse_qnt(model_path, engine="regex") or {}
     imported = imported_decls(root, text)
+    names = var_names(decls, imported)
     ops = tuple(o.strip() for o in (args.ops or ",".join(OPS)).split(",") if o.strip())
     sites = mutation_sites(text, decls, ir, imported, ops)
     mutants = select(sites, args.limit)
@@ -872,14 +890,15 @@ def run_area(root, area_name, args):
         # is dropped before any mutant sees it.
         base = suite("qr", text, args.seed)
         if base:
-            code, out, res = q.test(write(with_runs(text, replay_runs("qr", base))), "^qr_")
+            code, out, res = q.test(write(with_runs(text, replay_runs("qr", base, names))),
+                                    "^qr_")
             bad = {n for n, s in res.items() if s != "passed"}
             if bad:
                 print(f"WARNING: {len(bad)} replay run(s) fail on the model itself and "
                       f"their traces are dropped, e.g. {sorted(bad)[:3]}:\n{out[-800:]}",
                       file=sys.stderr)
             if not res and code != 0:
-                print(f"WARNING: the model's own replay did not run:\n{out[-800:]}",
+                print(f"WARNING: the model's own replay did not run:\n{out[:1500]}",
                       file=sys.stderr)
                 base = []
             else:
@@ -921,7 +940,8 @@ def run_area(root, area_name, args):
 
             found = None
             if base:
-                code, out, res = q.test(write(with_runs(mt, replay_runs("qr", base))), "^qr_")
+                code, out, res = q.test(write(with_runs(mt, replay_runs("qr", base, names))),
+                                        "^qr_")
                 failed = {n for n, s in res.items() if s == "failed"}
                 hit = first_divergence("qr", base, failed)
                 if hit:
@@ -931,14 +951,15 @@ def run_area(root, area_name, args):
                     call = steps[k]["call"] if k else None
                     if kind == "refused":
                         found = ("allowed", prefix_calls, call,
-                                 changed_facts(steps[k - 1]["state"], steps[k]["state"]))
+                                 changed_facts(steps[k - 1]["state"], steps[k]["state"],
+                                               names))
                     else:
                         # Which entries differ: one run per fact at that step.
-                        cands = facts(steps[k]["state"])
+                        cands = facts(steps[k]["state"], names)
                         head = f"qr_{t}_{k - 1}_s.then({call})" if k else "init"
                         lines = [f"  run qd_{i} = {head}.expect({c})"
                                  for i, (c, _t) in enumerate(cands)]
-                        lines = replay_runs("qr", [(t, steps[:max(k, 1)])]) + lines
+                        lines = replay_runs("qr", [(t, steps[:max(k, 1)])], names) + lines
                         _c, _o, dres = q.test(write(with_runs(mt, lines)), "^qd_")
                         diff = [cands[i] for i in range(len(cands))
                                 if dres.get(f"qd_{i}") == "failed"]
@@ -949,7 +970,8 @@ def run_area(root, area_name, args):
                 # refuses never shows up in the model's own traces.
                 other = suite("qb", mt, args.seed + 1)
                 if other:
-                    code, out, res = q.test(write(with_runs(text, replay_runs("qb", other))),
+                    code, out, res = q.test(write(with_runs(text, replay_runs("qb", other,
+                                                                               names))),
                                             "^qb_")
                     failed = {n for n, s in res.items() if s == "failed"}
                     hit = first_divergence("qb", other, failed)
@@ -999,30 +1021,32 @@ def run_area(root, area_name, args):
 
 
 def print_report(report):
-    print(f"spec-questions {report['area']} — {report['model']}: "
-          f"{len(report['planned'])} mutant(s) of {report['candidates']} candidate(s)")
+    planned = report["planned"]
+    print(f"spec-questions {report['area']} — {report['model']}: {len(planned)} of "
+          f"{report['candidates']} candidate mutant(s)")
     if "results" not in report:
-        for m in report["planned"]:
+        for m in planned:
             print(f"  {m['id']} {m['op']:<8} {m['decl']}:{m['line']}  {m['label']}")
         return
+    score = report.get("score")
+    print(f"score {'n/a' if score is None else f'{score:.0%}'} · killed by examples "
+          f"{report['killed_by_examples']} · otherwise {report['killed_otherwise']} · "
+          f"survived {report['survived']} · no difference {report['no_difference']} · "
+          f"stillborn {report['stillborn']} · {report.get('replay_traces', 0)} replay "
+          f"trace(s) · {report.get('quint_calls', 0)} quint call(s)")
     for r in report["results"]:
         what = r.get("outcome", "?")
         if what == "killed":
-            what += " by " + ", ".join(r.get("killed_by") or [])
+            by = r.get("killed_by") or []
+            what = "killed: " + ", ".join(by[:2]) + (f" +{len(by) - 2}" if len(by) > 2 else "")
         elif what == "survived":
-            what += f" -> question {r.get('question')}"
-        print(f"  {r['id']} {r['op']:<8} {r['decl']}:{r['line']}  {r['label']}\n"
-              f"      {what}")
-    score = report.get("score")
-    print(f"\nkilled by examples {report['killed_by_examples']}, otherwise "
-          f"{report['killed_otherwise']}, survived {report['survived']}, no difference "
-          f"found {report['no_difference']}, stillborn {report['stillborn']} — spec "
-          f"mutation score {'n/a' if score is None else f'{score:.0%}'} "
-          f"({report.get('replay_traces', 0)} replay trace(s), "
-          f"{report.get('quint_calls', 0)} quint call(s))")
+            what = f"question {r.get('question')}"
+        elif what == "stillborn" and r.get("detail"):
+            what += f" ({r['detail'][:80]})"
+        print(f"  {r['id']} {r['op']:<7} {r['decl']}:{r['line']}  {r['label']}  — {what}")
     for qn in report.get("questions") or []:
         print(f"\nQ {qn['key']} ({qn['kind']}; {', '.join(qn['refs']) or 'no requirement'})\n"
-              f"  {qn['question']}\n  change: {qn['change']}\n  answer yes -> {qn['example']}")
+              f"  {qn['question']}\n  change: {qn['change']}\n  yes -> {qn['example']}")
 
 
 def main(argv=None):
