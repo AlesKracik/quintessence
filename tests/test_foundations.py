@@ -1,7 +1,6 @@
 """Tests for the foundations of the triangulated design.
 
-  - removed features: @meaning, refusal artifacts and the wording lint are
-    gone, named as removed, and pruned by one command;
+  - the readback leads with the rendered EARS sentence;
   - encoding checks: a claim the model does not encode is reported (a cited
     constant its action never reads, an unread constant, an error outcome the
     model never produces, a `spans` without an import);
@@ -128,67 +127,11 @@ def _codes(findings):
     return [(f.severity, f.check) for f in findings]
 
 
-# ── Removed features ────────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("tag", ["meaning", "meaning-author", "refusal", "blocking",
-                                 "unchanged"])
-def test_a_removed_tag_is_named_as_removed_not_unknown(tag):
-    qnt = (f"module m {{\n  var x: int\n  /// @req REQ-001\n  /// @when asked\n"
-           f"  /// @shall go\n  /// @{tag} something\n  action go: bool = x' = 1\n}}\n")
-    problems = []
-    spec_source.derive_records(qnt, "m.qnt", problems=problems)
-    assert len(problems) == 1
-    assert f"@{tag} was removed" in problems[0] and "unknown tag" not in problems[0]
-
-
-def test_prune_drops_removed_tags_with_their_continuations_only():
-    qnt = ("module m {\n"
-           "  /// @req REQ-001\n"
-           "  /// @when asked\n"
-           "  /// @meaning A plain summary that runs\n"
-           "  ///   over two lines.\n"
-           "  /// @meaning-author agent\n"
-           "  /// @shall go\n"
-           "  /// @refusal t.test.ts\n"
-           "  ///\n"
-           "  /// trailing description stays\n"
-           "  action go: bool = true\n}\n")
-    text, n = spec_source.prune_removed_text(qnt)
-    assert n == 3
-    assert "@meaning" not in text and "over two lines" not in text and "@refusal" not in text
-    for kept in ("/// @when asked", "/// @shall go", "trailing description stays",
-                 "action go"):
-        assert kept in text
-
-
-def test_prune_drops_removed_ledger_fields():
-    recs = {"by_id": {"REQ-001": {"meaning": {"written_against": "e" * 64}},
-                      "REQ-002": {"refusal": {"status": "passing"},
-                                  "witness": {"status": "witnessed"}}}}
-    out, n = spec_source.prune_removed_records(recs)
-    assert n == 2
-    assert out["by_id"] == {"REQ-002": {"witness": {"status": "witnessed"}}}
-    assert "meaning" in recs["by_id"]["REQ-001"], "the input is not mutated"
-
-
-def test_the_shipped_examples_carry_no_removed_tags():
-    for qnt in (EXAMPLES / "specs").glob("*.qnt"):
-        assert spec_source.prune_removed_text(qnt.read_text(encoding="utf-8"))[1] == 0, qnt
-    for rec in (EXAMPLES / "specs").glob("*.records.json"):
-        data = json.loads(rec.read_text(encoding="utf-8"))
-        assert spec_source.prune_removed_records(data)[1] == 0, rec
-
-
-def test_the_ambiguity_and_meaning_lints_are_gone():
-    assert not hasattr(lint, "check_ambiguity")
-    assert not hasattr(lint, "check_meaning")
-    assert not hasattr(lint, "check_refusal_artifacts")
-
+# ── What a reviewer reads ───────────────────────────────────────────────────
 
 def test_the_readback_leads_with_the_rendered_ears_sentence():
     req = {"id": "REQ-001", "ears": {"trigger": "a customer orders",
-                                     "response": "take at most LIMIT items"},
-           "meaning": {"text": "ignored prose"}}
+                                     "response": "take at most LIMIT items"}}
     cons = [{"id": "CON-001", "name": "LIMIT", "value": 3}]
     assert readback.req_sentence(req, cons) == (
         "When a customer orders, the system shall take at most LIMIT "

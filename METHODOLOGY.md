@@ -449,7 +449,7 @@ Why this works as the precision mechanism:
 
 The readback leads every requirement with its **EARS sentence, rendered from the fields** — never with prose written beside it. Under the sentence come its **example rows**: Given / When / Then, each derived from a Quint `run` (see "Examples"). A reviewer who bounces off `NonMatchingTopologyException` reads `update(policy = gold) — refused | policy == silver` instead, and that row is exactly what `quint test` executes.
 
-This replaced an authored plain-words `meaning` per requirement. The meaning was pinned against the requirement it restated, but a pin proves prose was not edited since, not that it is right — and it was the sentence reviewers read first. What humans agree to now is either rendered from the model (the sentence, the rows, the guarding invariants) or a concrete case they can check by hand. The one authored prose section left is the area's brief.
+Nothing a reviewer reads about a requirement is prose written beside the model: what they agree to is either rendered from the model (the sentence, the rows, the guarding invariants) or a concrete case they can check by hand. A paraphrase can be pinned against the requirement it restates, but a pin proves only that the prose was not edited since, not that it is right. The one authored prose section is the area's brief.
 
 ### Modality: MUST, MAY, FORBIDDEN
 
@@ -658,8 +658,6 @@ The evidence is an **example** — a run that drives the model into the blocking
 `quint test` fails the run if the call goes through, so the model side is checked; the code repo's conformance harness replays the run, so the code side is too — the `.fail()` step must be refused by the implementation, and the `.expect` asserts both halves: refused, **and** no observable var moved. A rejection that throws after incrementing the counter is not a rejection. The readback shows it as a row: `login_failed(bob) × 5 | login(bob, s2) — refused | isLocked("bob") and …`.
 
 In a **total-action** model — every action always fires and records a result (`Refused`, `Conflict`, …) instead of being disabled by its guard — a refusal is an ordinary step whose recorded result is the refusal, and the same example shape applies without `.fail()`.
-
-This replaced a separate refusal *artifact* (a hand-written test file named by `@refusal`, with `@blocking` and `@unchanged` tags): a second, unchecked description of what the example now states and runs.
 
 **Keyed on a deliberately skipped witness, not on `ears.unwanted` alone.** Much unwanted-behavior handling *does* change state — a timeout that moves the order to `PENDING` is witnessable and already covered by replay. The distinguishing property of a refusal is that there is nothing to witness. `is_rejection()` lives in `itf_tools.py` so lint, `spec-record` and the readback cannot drift apart about which requirements owe a refusal example.
 

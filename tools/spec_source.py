@@ -148,9 +148,6 @@ Usage:
                         # derive back, diff against the legacy JSON
   tools/spec_source.py schemas [--write]               # intent/records schemas,
                         # carved out of schemas/area.schema.json
-  tools/spec_source.py prune-removed [<area>] [--root .] [--write]
-                        # drop the tags and ledger fields of removed
-                        # features (@meaning, @refusal, ...)
 """
 
 import argparse
@@ -273,24 +270,6 @@ TAGS = {
 }
 SPECIAL_TAGS = {"requirements": ("fit", "error", "error-note", "witness"),
                 "examples": ("when",)}
-# Tags that used to exist. Each is reported by name with what replaced it,
-# instead of as an unknown tag: an author who meets "unknown tag @meaning"
-# cannot tell a typo from a removal.
-REMOVED_TAGS = {
-    "meaning": "agent-written plain-words summaries are gone: the readback "
-               "leads with the EARS sentence and the example rows. Delete the "
-               "tag (and its continuation lines)",
-    "meaning-author": "removed together with @meaning. Delete it",
-    "refusal": "refusal artifacts are gone: a refusal is shown by an "
-               "@example whose @refs names this requirement and whose run "
-               "attempts the call with `.fail()`. Delete the tag",
-    "blocking": "removed together with @refusal; the example's run reaches the "
-                "blocking state. Delete it",
-    "unchanged": "removed together with @refusal; the example's `.expect(...)` "
-                 "asserts what did not move. Delete it",
-}
-# Requirement fields of removed features; migrate drops them.
-REMOVED_FIELDS = ("meaning", "refusal")
 # The order migrate emits tags in (and so the order a reader meets them).
 EMIT_ORDER = {
     "requirements": ("type", "status", "modality", "determinism", "source",
@@ -1115,9 +1094,6 @@ def _apply_tags(rec, kind, item, problems):
                     args = _json_value(m.group(2), rec, problems)
                     if args is not _BAD:
                         item["when"]["args"] = args
-        elif name in REMOVED_TAGS:
-            problems.append(f"{_where(rec)}: {rec['id']}: @{name} was removed — "
-                            f"{REMOVED_TAGS[name]}.")
         else:
             problems.append(f"{_where(rec)}: {rec['id']}: unknown tag @{name} on "
                             f"{'an' if rec['tag'][0] in 'aeiou' else 'a'} @{rec['tag']} record")
@@ -1842,13 +1818,6 @@ def migrate_area(legacy, model_text, als_text=None, ir=None):
     records). Lossless: a field it cannot place raises SpecSourceError."""
     name = legacy.get("area")
     ir = ir or {}
-    # Fields of removed features (agent-written meanings, refusal artifacts)
-    # have no tag any more. They are dropped, not refused: they never claimed
-    # anything the model or an example does not now say better.
-    legacy = copy.deepcopy(legacy)
-    for req in legacy.get("requirements") or []:
-        for gone in REMOVED_FIELDS:
-            req.pop(gone, None)
     intent = {"$schema": "../schemas/intent.schema.json"}
     for k, v in legacy.items():
         if k in MODEL_KEYS or k in UI_KEYS or k in RECORD_KEYS or k == "$schema":
@@ -2328,83 +2297,6 @@ def _cmd_roundtrip(args):
     return 1 if diffs else 0
 
 
-def prune_removed_text(text):
-    """A model's text with every removed tag (REMOVED_TAGS) dropped, together
-    with its continuation lines. Returns (text, number of tags dropped)."""
-    out, dropping, dropped = [], False, 0
-    for line in (text or "").splitlines(keepends=True):
-        m = DOC_RE.match(line)
-        if not m:
-            dropping = False
-            out.append(line)
-            continue
-        body = m.group(1).strip()
-        tm = TAG_RE.match(body)
-        if tm:
-            dropping = tm.group(1) in REMOVED_TAGS
-            dropped += dropping
-            if dropping:
-                continue
-        elif not body:
-            dropping = False
-        elif dropping:
-            continue
-        out.append(line)
-    return "".join(out), dropped
-
-
-def prune_removed_records(records):
-    """The ledger without removed per-id fields. Returns (records, count)."""
-    records = copy.deepcopy(records or {})
-    n = 0
-    for entry in (records.get("by_id") or {}).values():
-        for gone in REMOVED_FIELDS:
-            if isinstance(entry, dict) and gone in entry:
-                del entry[gone]
-                n += 1
-    for rid in [k for k, v in (records.get("by_id") or {}).items() if v == {}]:
-        del records["by_id"][rid]
-    return records, n
-
-
-def _cmd_prune_removed(args):
-    """Drop the tags and ledger fields of removed features from an area's
-    files — @meaning, @meaning-author, @refusal, @blocking, @unchanged and
-    their `meaning` / `refusal` ledger entries. Dry run unless --write."""
-    root = Path(args.root)
-    names = [args.area] if args.area else list_areas(root)
-    total = 0
-    for name in names:
-        intent = json.loads(intent_path(root, name).read_text(encoding="utf-8"))
-        changes = []
-        for rel in (model_file(intent, name), alloy_file(intent)):
-            if not rel:
-                continue
-            path = specs_dir(root) / rel
-            if not path.exists():
-                continue
-            text, n = prune_removed_text(path.read_text(encoding="utf-8"))
-            if n:
-                changes.append(f"{rel}: {n} tag(s)")
-                if args.write:
-                    path.write_text(text, encoding="utf-8")
-        rpath = records_path(root, name)
-        if rpath.exists():
-            recs, n = prune_removed_records(json.loads(rpath.read_text(encoding="utf-8")))
-            if n:
-                changes.append(f"{rpath.name}: {n} ledger field(s)")
-                if args.write:
-                    write_records(root, name, recs)
-        total += len(changes)
-        for c in changes:
-            print(f"{name}: {c}")
-    if not total:
-        print("nothing to prune")
-    elif not args.write:
-        print("(dry run — pass --write to apply)")
-    return 0
-
-
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -2418,16 +2310,9 @@ def main(argv=None):
     sp = sub.add_parser("schemas", help="(re)generate intent/records schemas")
     sp.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
     sp.add_argument("--write", action="store_true")
-    sp = sub.add_parser("prune-removed",
-                        help="drop tags and ledger fields of removed features "
-                             "(@meaning, @refusal, ...)")
-    sp.add_argument("area", nargs="?", help="default: every area")
-    sp.add_argument("--root", default=".")
-    sp.add_argument("--write", action="store_true")
     args = p.parse_args(argv)
     return {"derive": _cmd_derive, "migrate": _cmd_migrate,
-            "roundtrip": _cmd_roundtrip, "schemas": _cmd_schemas,
-            "prune-removed": _cmd_prune_removed}[args.cmd](args)
+            "roundtrip": _cmd_roundtrip, "schemas": _cmd_schemas}[args.cmd](args)
 
 
 if __name__ == "__main__":
