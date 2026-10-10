@@ -228,6 +228,23 @@ def test_replay_runs_chain_one_step_at_a_time_and_land_inside_the_module():
     assert spec_source.declarations(text)["qr_0_2_a"]["kind"] == "run"
 
 
+def test_a_whole_trace_is_one_run_when_nothing_needs_locating():
+    nondets, templates = sq.step_templates(spec_source.declarations(STEPPED))
+    steps = sq.trace_steps(TRACE, nondets, templates)
+    (line,) = sq.whole_runs("qr", [(4, steps)], {"count": "shop::count"})
+    assert line.startswith("  run qr_4 = init.expect(shop::count == 0 and status == Open)"
+                           ".then(add).expect(shop::count == 1")
+    assert line.count(".then(") == 3 and line.count(".expect(") == 4
+
+
+def test_an_imported_var_is_named_through_its_module():
+    decls = spec_source.declarations("module ui {\n  var screen: str\n}\n")
+    imported = {"auth": spec_source.declarations(
+        "module auth {\n  var sessions: int\n  var screen: int\n}\n"),
+                "util": {}}
+    assert sq.var_names(decls, imported) == {"sessions": "auth::sessions"}
+
+
 def test_the_first_parting_is_the_earliest_failing_run_of_any_trace():
     traces = [(0, [None] * 5), (1, [None] * 5)]
     assert sq.first_divergence("qr", traces, set()) is None
@@ -298,7 +315,8 @@ class FakeQuint:
         if which == "killed-by-example" and "twoAdds" in names:
             failed.add("twoAdds")
         if which == "survivor" and match == "^qr_":
-            failed |= {n for n in names if n.startswith("qr_0_3_s")}
+            # Round one: the whole trace fails; round two: from step 3 on.
+            failed |= {n for n in names if n == "qr_0" or n.startswith("qr_0_3_s")}
         if which == "survivor" and match == "^qd_":
             failed |= {"qd_1"}
         res = {n: ("failed" if n in failed else "passed") for n in names}

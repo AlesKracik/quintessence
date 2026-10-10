@@ -59,11 +59,14 @@ Exit codes: 0 = ran (survivors are findings, not failures), 2 = setup problem
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -606,6 +609,20 @@ def replay_runs(prefix, traces, names=None):
     return lines
 
 
+def whole_runs(prefix, traces, names=None):
+    """One run per trace, the state asserted after every step:
+    `{prefix}_{t} = init.expect(s0).then(c1).expect(s1)…`. A trace the model
+    under test agrees with passes; which step it parts at is found only for
+    the traces that fail (replay_runs)."""
+    lines = []
+    for t, steps in traces:
+        chain = f"init.expect({state_expr(steps[0]['state'], names)})"
+        for st in steps[1:]:
+            chain += f".then({st['call']}).expect({state_expr(st['state'], names)})"
+        lines.append(f"  run {prefix}_{t} = {chain}")
+    return lines
+
+
 def with_runs(text, lines):
     """The model text with `lines` added inside its (last) module."""
     close = text.rstrip().rfind("}")
@@ -652,6 +669,8 @@ class Quint:
     def __init__(self, exe, cwd, timeout):
         self.exe, self.cwd, self.timeout = exe, cwd, timeout
         self.calls = 0
+        self.last_read = 0
+        self.last_traces_output = ""
         self._help = {}
 
     def _run(self, args):
@@ -790,6 +809,149 @@ def run_label(name, area, journeys):
     return None
 
 
+class Workers:
+    """One scratch copy of the specs and one quint wrapper per thread: a
+    mutant is written over the model file, so two at once need two places."""
+
+    def __init__(self, tmp, specs, target, exe, timeout):
+        self.tmp, self.specs, self.target = tmp, specs, target
+        self.exe, self.timeout = exe, timeout
+        self.local = threading.local()
+        self.all = []
+        self.lock = threading.Lock()
+
+    def get(self):
+        if not hasattr(self.local, "q"):
+            with self.lock:
+                work = self.tmp / f"w{len(self.all)}"
+                work.mkdir()
+                for p in self.specs.glob("*.qnt"):
+                    shutil.copy(p, work / p.name)
+                q = Quint(self.exe, str(work), self.timeout)
+                self.all.append(q)
+
+            def write(text, name=None, _work=work):
+                path = _work / (name or self.target)
+                path.write_text(text, encoding="utf-8")
+                return path.name
+            self.local.q, self.local.write = q, write
+        return self.local.q, self.local.write
+
+    def calls(self):
+        return sum(q.calls for q in self.all)
+
+
+def suite(ctx, q, write, prefix, source_text, seed):
+    """Random traces of `source_text`, rebuilt as calls and states."""
+    args = ctx["args"]
+    nondets, templates = ctx["steps_of"]
+    outdir = Path(q.cwd) / f"itf_{prefix}"
+    raw = q.traces(write(source_text, f"_src_{prefix}.qnt"), args.traces, args.steps,
+                   seed, outdir)
+    shutil.rmtree(outdir, ignore_errors=True)
+    q.last_read = len(raw)
+    out = []
+    for i, tr in enumerate(raw):
+        steps = trace_steps(tr, nondets, templates)
+        if steps:
+            out.append((i, steps))
+    return out
+
+
+def locate(ctx, q, write, model_text, prefix, traces):
+    """First parting of `traces` replayed on `model_text`: (trace, k, kind)
+    or None. Two rounds, so a mutant that agrees with every trace costs one
+    quint call: each trace as one run, then — only for the traces that
+    failed, shortest first — one run per step."""
+    names = ctx["names"]
+    code, out, res = q.test(write(with_runs(model_text, whole_runs(prefix, traces, names))),
+                            f"^{prefix}_")
+    bad = sorted(((t, st) for t, st in traces if res.get(f"{prefix}_{t}") == "failed"),
+                 key=lambda x: len(x[1]))[:4]
+    if not bad:
+        return None, None
+    code, out, res = q.test(write(with_runs(model_text, replay_runs(prefix, bad, names))),
+                            f"^{prefix}_")
+    failed = {n for n, s in res.items() if s == "failed"}
+    return first_divergence(prefix, bad, failed), dict(bad)
+
+
+def evaluate(m, ctx, q, write):
+    """(result row, question or None) for one mutant."""
+    args, text, names = ctx["args"], ctx["text"], ctx["names"]
+    area, journeys = ctx["area"], ctx["journeys"]
+    mt = apply(text, m)
+    row = {"id": m["id"], "key": m["key"], "op": m["op"], "decl": m["decl"],
+           "line": m["line"], "label": m["label"]}
+    if ctx["match_runs"]:
+        code, out, res = q.test(write(mt), ctx["match_runs"])
+        if code != 0 and not res:
+            row["outcome"] = "stillborn"
+            row["detail"] = " ".join(out.strip().splitlines()[-3:])[:300]
+            return row, None
+        failed = sorted(n for n, s in res.items() if s == "failed")
+        if code != 0 and failed:
+            row["outcome"] = "killed"
+            row["killed_by"] = [run_label(n, area, journeys) or f"run {n}" for n in failed]
+            row["by_example"] = any(n in ctx["approved"] for n in failed)
+            return row, None
+    if ctx["invariants"]:
+        res, out, falsified = q.simulate(write(mt), ctx["invariants"], args.samples,
+                                         args.steps, args.seed)
+        if res == "violation":
+            row["outcome"] = "killed"
+            row["killed_by"] = falsified or ["an invariant"]
+            row["by_example"] = False
+            return row, None
+        if res == "error":
+            row["outcome"] = "stillborn"
+            row["detail"] = " ".join(out.strip().splitlines()[-3:])[:300]
+            return row, None
+
+    found = None
+    if ctx["base"]:
+        hit, steps_by = locate(ctx, q, write, mt, "qr", ctx["base"])
+        if hit:
+            t, k, kind = hit
+            steps = steps_by[t]
+            prefix_calls = [s["call"] for s in steps[1:k]]
+            call = steps[k]["call"] if k else None
+            if kind == "refused":
+                found = ("allowed", prefix_calls, call,
+                         changed_facts(steps[k - 1]["state"], steps[k]["state"], names))
+            else:
+                # Which entries differ: one run per fact at that step.
+                cands = facts(steps[k]["state"], names)
+                head = f"qr_{t}_{k - 1}_s.then({call})" if k else "init"
+                lines = replay_runs("qr", [(t, steps[:max(k, 1)])], names) + [
+                    f"  run qd_{i} = {head}.expect({c})" for i, (c, _t) in enumerate(cands)]
+                _c, _o, dres = q.test(write(with_runs(mt, lines)), "^qd_")
+                diff = [cands[i] for i in range(len(cands))
+                        if dres.get(f"qd_{i}") == "failed"]
+                found = ("initial" if k == 0 else "outcome", prefix_calls, call,
+                         diff or cands)
+    if not found:
+        # The other way round: what the mutant allows and the model refuses
+        # never shows up in the model's own traces.
+        other = suite(ctx, q, write, "qb", mt, args.seed + 1)
+        if other:
+            hit, steps_by = locate(ctx, q, write, text, "qb", other)
+            if hit and hit[2] == "refused":
+                t, k, _ = hit
+                steps = steps_by[t]
+                found = ("refused", [s["call"] for s in steps[1:k]], steps[k]["call"], [])
+    if not found:
+        row["outcome"] = "no-difference"
+        return row, None
+    kind, prefix_calls, call, fs = found
+    row["outcome"] = "survived"
+    qn = question(kind, prefix_calls, call, fs, refs_for(area, call), ctx["area_name"],
+                  m["key"])
+    qn["mutants"] = [m["key"]]
+    qn["change"] = f"{m['decl']}: {m['label']}"
+    return row, qn
+
+
 def run_area(root, area_name, args):
     area = spec_source.load_area(root, area_name)
     if area is None:
@@ -833,17 +995,15 @@ def run_area(root, area_name, args):
     approved = {n for n in runs if run_label(n, area, journeys)}
     match_runs = "^(" + "|".join(map(re.escape, runs)) + ")$" if runs else None
 
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp)
-        for p in spec_source.specs_dir(root).glob("*.qnt"):
-            shutil.copy(p, work / p.name)
-        target = work / Path(rel).name
-        q = Quint(exe, str(work), args.timeout)
+    ctx = {"text": text, "rel": rel, "area": area, "area_name": area_name,
+           "journeys": journeys, "match_runs": match_runs, "approved": approved,
+           "invariants": invariants, "names": names, "args": args,
+           "steps_of": step_templates(decls), "base": []}
 
-        def write(t, name=None):
-            path = work / (name or target.name)
-            path.write_text(t, encoding="utf-8")
-            return path.name
+    with tempfile.TemporaryDirectory() as tmp:
+        workers = Workers(Path(tmp), spec_source.specs_dir(root), Path(rel).name, exe,
+                          args.timeout)
+        q, write = workers.get()
 
         # Baseline: the model has to pass what it is measured with.
         if match_runs:
@@ -863,142 +1023,46 @@ def run_area(root, area_name, args):
                 fail_setup(f"the simulator reports `{res}` on {rel} itself; fix that "
                            f"first.\n{out[-1500:]}")
 
-        nondets, templates = step_templates(decls)
-
-        def suite(prefix, source_text, seed):
-            """Random traces of `source_text`, rebuilt as calls and states."""
-            raw = q.traces(write(source_text, f"_src_{prefix}.qnt"), args.traces,
-                           args.steps, seed, work / f"itf_{prefix}")
-            shutil.rmtree(work / f"itf_{prefix}", ignore_errors=True)
-            out = []
-            for i, tr in enumerate(raw):
-                steps = trace_steps(tr, nondets, templates)
-                if steps:
-                    out.append((i, steps))
-            if prefix == "qr":
-                report["traces_read"], report["traces_rebuilt"] = len(raw), len(out)
-                if not out:
-                    # Said, not swallowed: with no replay every survivor reads
-                    # as "no difference found".
-                    why = (getattr(q, "last_traces_output", "") or "")[-800:]
-                    print(f"WARNING: no replayable trace of the model ({len(raw)} read)."
-                          f"\n{why}", file=sys.stderr)
-            return out
-
-        # The model's own traces, replayed on the model itself: a run that
-        # fails here is a rendering problem, not a difference, and its trace
-        # is dropped before any mutant sees it.
-        base = suite("qr", text, args.seed)
-        if base:
-            code, out, res = q.test(write(with_runs(text, replay_runs("qr", base, names))),
+        # The model's own traces, replayed on the model itself: a trace that
+        # fails here is a rendering problem, not a difference, and it is
+        # dropped before any mutant sees it.
+        raw = suite(ctx, q, write, "qr", text, args.seed)
+        report["traces_read"], report["traces_rebuilt"] = q.last_read, len(raw)
+        if not raw:
+            why = (q.last_traces_output or "")[-800:]
+            print(f"WARNING: no replayable trace of the model ({q.last_read} read)."
+                  f"\n{why}", file=sys.stderr)
+        base = []
+        if raw:
+            code, out, res = q.test(write(with_runs(text, whole_runs("qr", raw, names))),
                                     "^qr_")
-            bad = {n for n, s in res.items() if s != "passed"}
-            if bad:
-                print(f"WARNING: {len(bad)} replay run(s) fail on the model itself and "
-                      f"their traces are dropped, e.g. {sorted(bad)[:3]}:\n{out[-800:]}",
-                      file=sys.stderr)
-            if not res and code != 0:
-                print(f"WARNING: the model's own replay did not run:\n{out[:1500]}",
-                      file=sys.stderr)
-                base = []
-            else:
-                base = [(t, st) for t, st in base
-                        if not any(n.startswith(f"qr_{t}_") for n in bad)]
+            base = [(t, st) for t, st in raw if res.get(f"qr_{t}") == "passed"]
+            if len(base) < len(raw):
+                print(f"WARNING: {len(raw) - len(base)} of {len(raw)} replay(s) fail on "
+                      f"the model itself and are dropped:\n{out[:1500]}", file=sys.stderr)
+        ctx["base"] = base
         report["replay_traces"] = len(base)
 
-        results, questions = [], []
-        for m in mutants:
-            mt = apply(text, m)
-            row = {"id": m["id"], "key": m["key"], "op": m["op"], "decl": m["decl"],
-                   "line": m["line"], "label": m["label"]}
-            results.append(row)
-            if match_runs:
-                code, out, res = q.test(write(mt), match_runs)
-                if code != 0 and not res:
-                    row["outcome"] = "stillborn"
-                    row["detail"] = " ".join(out.strip().splitlines()[-3:])[:300]
-                    continue
-                failed = sorted(n for n, s in res.items() if s == "failed")
-                if code != 0 and failed:
-                    row["outcome"] = "killed"
-                    row["killed_by"] = [run_label(n, area, journeys) or f"run {n}"
-                                        for n in failed]
-                    row["by_example"] = any(n in approved for n in failed)
-                    continue
-            if invariants:
-                res, out, falsified = q.simulate(write(mt), invariants, args.samples,
-                                                 args.steps, args.seed)
-                if res == "violation":
-                    row["outcome"] = "killed"
-                    row["killed_by"] = falsified or ["an invariant"]
-                    row["by_example"] = False
-                    continue
-                if res == "error":
-                    row["outcome"] = "stillborn"
-                    row["detail"] = " ".join(out.strip().splitlines()[-3:])[:300]
-                    continue
+        jobs = max(1, getattr(args, "jobs", 0) or os.cpu_count() or 1)
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            evaluated = list(pool.map(lambda m: evaluate(m, ctx, *workers.get()), mutants))
+        report["quint_calls"] = workers.calls()
+        report["jobs"] = jobs
 
-            found = None
-            if base:
-                code, out, res = q.test(write(with_runs(mt, replay_runs("qr", base, names))),
-                                        "^qr_")
-                failed = {n for n, s in res.items() if s == "failed"}
-                hit = first_divergence("qr", base, failed)
-                if hit:
-                    t, k, kind = hit
-                    steps = dict(base)[t]
-                    prefix_calls = [s["call"] for s in steps[1:k]]
-                    call = steps[k]["call"] if k else None
-                    if kind == "refused":
-                        found = ("allowed", prefix_calls, call,
-                                 changed_facts(steps[k - 1]["state"], steps[k]["state"],
-                                               names))
-                    else:
-                        # Which entries differ: one run per fact at that step.
-                        cands = facts(steps[k]["state"], names)
-                        head = f"qr_{t}_{k - 1}_s.then({call})" if k else "init"
-                        lines = [f"  run qd_{i} = {head}.expect({c})"
-                                 for i, (c, _t) in enumerate(cands)]
-                        lines = replay_runs("qr", [(t, steps[:max(k, 1)])], names) + lines
-                        _c, _o, dres = q.test(write(with_runs(mt, lines)), "^qd_")
-                        diff = [cands[i] for i in range(len(cands))
-                                if dres.get(f"qd_{i}") == "failed"]
-                        found = ("initial" if k == 0 else "outcome", prefix_calls, call,
-                                 diff or cands)
-            if not found:
-                # The other way round: what the mutant allows and the model
-                # refuses never shows up in the model's own traces.
-                other = suite("qb", mt, args.seed + 1)
-                if other:
-                    code, out, res = q.test(write(with_runs(text, replay_runs("qb", other,
-                                                                               names))),
-                                            "^qb_")
-                    failed = {n for n, s in res.items() if s == "failed"}
-                    hit = first_divergence("qb", other, failed)
-                    if hit and hit[2] == "refused":
-                        t, k, _ = hit
-                        steps = dict(other)[t]
-                        found = ("refused", [s["call"] for s in steps[1:k]],
-                                 steps[k]["call"], [])
-            if not found:
-                row["outcome"] = "no-difference"
-                continue
-            kind, prefix_calls, call, fs = found
-            row["outcome"] = "survived"
-            qn = question(kind, prefix_calls, call, fs, refs_for(area, call), area_name,
-                          m["key"])
-            qn["mutants"] = [m["key"]]
-            qn["change"] = f"{m['decl']}: {m['label']}"
-            dup = next((x for x in questions if (x["kind"], x["given"], x["when"], x["model"])
-                        == (qn["kind"], qn["given"], qn["when"], qn["model"])), None)
-            if dup:
-                dup["mutants"].append(m["key"])
-                row["question"] = dup["key"]
-            else:
-                qn["key"] = m["key"]
-                questions.append(qn)
-                row["question"] = m["key"]
-        report["quint_calls"] = q.calls
+    results, questions = [], []
+    for m, (row, qn) in zip(mutants, evaluated):
+        results.append(row)
+        if qn is None:
+            continue
+        dup = next((x for x in questions if (x["kind"], x["given"], x["when"], x["model"])
+                    == (qn["kind"], qn["given"], qn["when"], qn["model"])), None)
+        if dup:
+            dup["mutants"].append(m["key"])
+            row["question"] = dup["key"]
+        else:
+            qn["key"] = m["key"]
+            questions.append(qn)
+            row["question"] = m["key"]
 
     counts = {o: sum(1 for r in results if r.get("outcome") == o)
               for o in ("stillborn", "killed", "survived", "no-difference")}
@@ -1059,7 +1123,9 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--steps", type=int, default=10,
                     help="step bound for replay traces and the invariant simulation")
-    ap.add_argument("--traces", type=int, default=30,
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="mutants evaluated at once (default: one per CPU)")
+    ap.add_argument("--traces", type=int, default=20,
                     help="random traces replayed on each survivor")
     ap.add_argument("--samples", type=int, default=2000,
                     help="simulator samples for the invariant check")
