@@ -129,6 +129,9 @@ def test_quint_writing_a_state_for_the_refused_step_reads_the_same():
     """`quint test` writes the unchanged state again for a `.fail()` step."""
     with_refusal = dict(RAW, states=RAW["states"] + [_st(3, CLOSED, 2)])
     assert _labelled(with_refusal)["states"] == _labelled()["states"]
+    # What quint actually writes there: a state with nothing assigned.
+    unassigned = dict(RAW, states=RAW["states"] + [{"#meta": {"index": 3}}])
+    assert _labelled(unassigned)["states"] == _labelled()["states"]
     moved = dict(RAW, states=RAW["states"] + [_st(3, OPEN, 2)])
     with pytest.raises(ValueError, match="moved on `add`"):
         _labelled(moved)

@@ -248,8 +248,9 @@ def labelled(trace, steps, params_of, variants, consts, meta):
     it calls."""
     states = [dict(s) for s in trace.get("states") or []]
     moving = [s for s in steps if not s.get("fails")]
-    # quint writes a state for a refused step too (the same state again);
-    # a trace without one is read the same way.
+    # quint writes a state for a refused step too — with nothing assigned in
+    # it, since the refused action assigned nothing. A trace without one is
+    # read the same way.
     per_step = len(states) == len(steps) + 1
     if not per_step and len(states) != len(moving) + 1:
         raise ValueError(f"the trace has {len(states)} states; the run makes "
@@ -291,9 +292,10 @@ def labelled(trace, steps, params_of, variants, consts, meta):
                      if k not in ghosts and k not in (ACTION_VAR, REFUSED_VAR)}
             if per_step:
                 written = {k: v for k, v in states[i].items() if k != "#meta"}
-                if written != model:
-                    diff = sorted(k for k in set(written) | set(model)
-                                  if written.get(k) != model.get(k))
+                # Unassigned is fine (that is what quint writes); a value that
+                # differs from the state before is not.
+                diff = sorted(k for k in written if written[k] != model.get(k))
+                if diff:
                     raise ValueError(
                         f"the model's state moved on `{name}`, a call the run expects "
                         f"refused: " + "; ".join(
