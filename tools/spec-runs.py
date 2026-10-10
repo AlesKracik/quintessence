@@ -292,8 +292,13 @@ def labelled(trace, steps, params_of, variants, consts, meta):
             if per_step:
                 written = {k: v for k, v in states[i].items() if k != "#meta"}
                 if written != model:
-                    raise ValueError(f"the model's state moved on `{name}`, a call "
-                                     f"the run expects refused")
+                    diff = sorted(k for k in set(written) | set(model)
+                                  if written.get(k) != model.get(k))
+                    raise ValueError(
+                        f"the model's state moved on `{name}`, a call the run expects "
+                        f"refused: " + "; ".join(
+                            f"{k}: {json.dumps(model.get(k))[:120]} -> "
+                            f"{json.dumps(written.get(k))[:120]}" for k in diff[:3]))
                 i += 1
         else:
             model = {k: v for k, v in states[i].items() if k != "#meta"}
@@ -373,7 +378,7 @@ def generate(root, area_name, jobs=4, timeout=180):
                                    timeout=timeout)
             if p.returncode != 0 or not raw.exists():
                 tail = " ".join(((p.stdout or "") + (p.stderr or "")).split())[-400:]
-                return run, label, f"quint test did not produce a trace: {tail}"
+                return run, label, False, f"quint test did not produce a trace: {tail}"
             try:
                 trace = json.loads(raw.read_text(encoding="utf-8"))
                 out = labelled(trace, spec_source.run_calls(decls, run), params_of,
@@ -381,19 +386,18 @@ def generate(root, area_name, jobs=4, timeout=180):
                                {"source": f"{rel} run {run} (tools/spec-runs.py)",
                                 "run": run, "label": label, "model_sha": sha})
             except (ValueError, KeyError) as e:
-                return run, label, str(e)
+                return run, label, False, str(e)
             trace_path(root, area_name, run).write_text(
                 json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             refusals = sum(1 for s in out["states"] if s.get(REFUSED_VAR))
-            return run, label, (f"{len(out['states']) - 1} step(s)"
-                                + (f", {refusals} refused" if refusals else ""))
+            return run, label, True, (f"{len(out['states']) - 1} step(s)"
+                                      + (f", {refusals} refused" if refusals else ""))
 
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
             results = list(pool.map(one, runs))
 
     bad = 0
-    for run, label, what in results:
-        ok = what.endswith(("step(s)", "refused"))
+    for run, label, ok, what in results:
         bad += not ok
         print(f"{'ok ' if ok else 'ERR'} {run:<28} {label:<28} {what}")
     keep = {f"{r}.itf.json" for r, _l in runs}
