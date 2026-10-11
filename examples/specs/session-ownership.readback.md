@@ -6,7 +6,7 @@
 
 **✓ READY** — all requirements verified against code, all invariants hold (bounded, in scope, or proven), no open questions — NOTE: no scope declared, so 'complete' has no boundary to be complete against.
 
-**Status:** formalized  |  **Requirements:** 0/0 verified, 0/0 witnessed  |  **Invariants:** 0 proven + 0 bounded + 2 in-scope / 2  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Mutation:** not run  |  **Open questions:** 0  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/0 verified, 0/0 witnessed  |  **Invariants:** 0 proven + 0 bounded + 2 in-scope / 2  |  **Coverage:** no actions to check  |  **Extraction:** n/a (no code)  |  **Mutation:** not run  |  **Open questions:** 0  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ nothing to witness (a forbidden step, whose proof is its obligation, or a computed value, checked by the unit test it names) · ∀ checked on every reachable step, ∀✗ a step that breaks it was found*
 
@@ -34,9 +34,10 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Dimension | | Obligations |
 |---|---|---|
 | Data model | — | no entities declared |
-| State space | — | matrix not run |
+| Coverage | — | no action needs a coverage check |
+| Explanation | — | no change needs an explanation check |
 | Operations | — | no requirements |
-| Failure behavior | — | 0 unwanted-path requirement(s); no external outcome matrix — unmeasured |
+| Failure behavior | — | 0 unwanted-path requirement(s); no external outcomes declared — unmeasured |
 | External systems | — | none declared — if the area calls anything, this is a gap |
 | Assumptions | — | none recorded |
 | Temporal behavior | — | none declared |

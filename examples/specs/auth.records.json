@@ -2,20 +2,9 @@
   "$schema": "../schemas/records.schema.json",
   "area": "auth",
   "brief": {
-    "written_against": "4fbaee94d26ce31fc896829be759e3b45e1d3a1d8c4c349fa3b7b9ffc7517ea9"
+    "written_against": "9f655086599abf892fac168f9b8872b96f6e5704de176a292ebf13ef2803ecbe"
   },
   "check_results": {
-    "matrix": {
-      "ran_at": "2026-10-10T14:45:13+00:00",
-      "cells": 18,
-      "covered": 5,
-      "triaged": 13,
-      "uncovered": 0,
-      "orphans": 1,
-      "gaps": [
-        "Q-003"
-      ]
-    },
     "mutation": {
       "ran_at": "2026-10-10T16:30:47+00:00",
       "model_sha": "ca0993f4795f7d904756f6601754a92fab957639813b5431780e2920aacfe2d9",
@@ -644,98 +633,198 @@
         "kind": "invariant",
         "quint_name": "atMostOneActiveSession",
         "result": "verified",
-        "duration_s": 12.6,
+        "duration_s": 27.7,
         "steps": 4,
-        "batched": true,
-        "note": "deep pass at 8 steps returned timeout: timed out after 300s"
+        "batched": true
       },
       {
         "id": "INV-002",
         "kind": "invariant",
         "quint_name": "noSessionWhileLocked",
         "result": "verified",
-        "duration_s": 12.6,
+        "duration_s": 27.7,
         "steps": 4,
-        "batched": true,
-        "note": "deep pass at 8 steps returned timeout: timed out after 300s"
+        "batched": true
       },
       {
         "id": "INV-003",
         "kind": "invariant",
         "quint_name": "noAccessWithInvalidToken",
         "result": "verified",
-        "duration_s": 12.6,
+        "duration_s": 27.7,
         "steps": 4,
-        "batched": true,
-        "note": "deep pass skipped: the run budget of 900s was spent, so this verdict is the shallow pass's ≤4 steps, not the configured 8"
+        "batched": true
       },
       {
         "id": "INV-004",
         "kind": "invariant",
         "quint_name": "noEarlyLockout",
         "result": "verified",
-        "duration_s": 12.6,
+        "duration_s": 27.7,
         "steps": 4,
-        "batched": true,
-        "note": "deep pass skipped: the run budget of 900s was spent, so this verdict is the shallow pass's ≤4 steps, not the configured 8"
+        "batched": true
       },
       {
         "id": "INV-005",
         "kind": "invariant",
         "quint_name": "noEarlyExpiry",
         "result": "verified",
-        "duration_s": 12.6,
+        "duration_s": 27.7,
         "steps": 4,
-        "batched": true,
-        "note": "deep pass skipped: the run budget of 900s was spent, so this verdict is the shallow pass's ≤4 steps, not the configured 8"
+        "batched": true
       },
       {
         "id": "REQ-001",
         "kind": "obligation",
         "quint_name": "oblig_REQ_001",
         "result": "verified",
-        "duration_s": 12.8,
+        "duration_s": 27.7,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
       },
       {
         "id": "REQ-002",
         "kind": "obligation",
         "quint_name": "oblig_REQ_002",
         "result": "verified",
-        "duration_s": 12.9,
+        "duration_s": 27.7,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
       },
       {
         "id": "REQ-003",
         "kind": "obligation",
         "quint_name": "oblig_REQ_003",
         "result": "verified",
-        "duration_s": 12.5,
+        "duration_s": 27.7,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
       },
       {
         "id": "REQ-004",
         "kind": "obligation",
         "quint_name": "oblig_REQ_004",
         "result": "verified",
-        "duration_s": 12.8,
+        "duration_s": 27.7,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
       },
       {
         "id": "REQ-005",
         "kind": "obligation",
         "quint_name": "oblig_REQ_005",
         "result": "verified",
-        "duration_s": 12.3,
+        "duration_s": 27.7,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "REQ-006",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_006",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-logout",
+        "kind": "coverage",
+        "quint_name": "cover_logout",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-logout-sessions",
+        "kind": "explanation",
+        "quint_name": "explain_logout_sessions",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-login_failed",
+        "kind": "coverage",
+        "quint_name": "cover_login_failed",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-login_failed-sessions",
+        "kind": "explanation",
+        "quint_name": "explain_login_failed_sessions",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-login_failed-accountStatus",
+        "kind": "explanation",
+        "quint_name": "explain_login_failed_accountStatus",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-login_failed-failedAttempts",
+        "kind": "explanation",
+        "quint_name": "explain_login_failed_failedAttempts",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-expire_session",
+        "kind": "coverage",
+        "quint_name": "cover_expire_session",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-expire_session-sessions",
+        "kind": "explanation",
+        "quint_name": "explain_expire_session_sessions",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "verdict-tick-1",
+        "kind": "verdict",
+        "quint_name": "verdict_tick_1",
+        "result": "verified",
+        "duration_s": 27.7,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
       }
     ],
-    "max_steps": 8,
+    "max_steps": 10,
     "simulation": {
       "ran_at": "2026-10-11T12:04:48+00:00",
       "max_samples": 10000,
@@ -752,104 +841,10 @@
         "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
       }
     },
-    "ran_at": "2026-10-11T12:21:52+00:00"
+    "ran_at": "2026-10-11T16:14:39+00:00"
   },
   "verification_log": [],
   "traceability": [],
-  "matrix_triage": [
-    {
-      "entity": "Session",
-      "state": "Active",
-      "event": "login",
-      "verdict": "IMPOSSIBLE",
-      "reason": "login creates a NEW Session (lifecycle action); concurrent-login semantics are enforced by INV-001 atMostOneActiveSession — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
-    },
-    {
-      "entity": "Session",
-      "state": "Expired",
-      "event": "login",
-      "verdict": "IMPOSSIBLE",
-      "reason": "login creates a new Session; it never transitions an existing Expired one — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
-    },
-    {
-      "entity": "Session",
-      "state": "Expired",
-      "event": "logout",
-      "verdict": "IMPOSSIBLE",
-      "reason": "Expired is terminal; logout's guard requires the session to be Active"
-    },
-    {
-      "entity": "Session",
-      "state": "Expired",
-      "event": "expire_session",
-      "verdict": "IMPOSSIBLE",
-      "reason": "already Expired; expire_session's guard requires Active"
-    },
-    {
-      "entity": "Session",
-      "state": "LoggedOut",
-      "event": "login",
-      "verdict": "IMPOSSIBLE",
-      "reason": "login creates a new Session; it never transitions an existing LoggedOut one — login is a lifecycle action on Account, never a transition of an existing Session, so this cell cannot occur"
-    },
-    {
-      "entity": "Session",
-      "state": "LoggedOut",
-      "event": "logout",
-      "verdict": "IMPOSSIBLE",
-      "reason": "LoggedOut is terminal; logout's guard requires Active"
-    },
-    {
-      "entity": "Session",
-      "state": "LoggedOut",
-      "event": "expire_session",
-      "verdict": "IMPOSSIBLE",
-      "reason": "LoggedOut is terminal; expire_session's guard requires Active"
-    },
-    {
-      "entity": "Account",
-      "state": "Unlocked",
-      "event": "unlock_account",
-      "verdict": "IMPOSSIBLE",
-      "reason": "unlock_account's guard requires the account to be Locked"
-    },
-    {
-      "entity": "Account",
-      "state": "Locked",
-      "event": "login_failed",
-      "verdict": "GAP",
-      "reason": "REQ-003 covers Unlocked only — spec is silent on failed attempts against a Locked account",
-      "question": "Q-003"
-    },
-    {
-      "entity": "Session",
-      "state": "Expired",
-      "event": "login_failed",
-      "verdict": "NO-OP",
-      "reason": "Locking ends only the user's ACTIVE sessions (login_failed folds over activeSessionsOf); an Expired session is left as it is."
-    },
-    {
-      "entity": "Session",
-      "state": "LoggedOut",
-      "event": "login_failed",
-      "verdict": "NO-OP",
-      "reason": "Locking ends only the user's ACTIVE sessions (login_failed folds over activeSessionsOf); a LoggedOut session is left as it is."
-    },
-    {
-      "entity": "Account",
-      "state": "Unlocked",
-      "event": "login",
-      "verdict": "NO-OP",
-      "reason": "A successful login leaves the account Unlocked (it resets failedAttempts, REQ-001); the session it creates belongs to the Session machine, as a lifecycle action."
-    },
-    {
-      "entity": "Account",
-      "state": "Locked",
-      "event": "login",
-      "verdict": "NO-OP",
-      "reason": "REQ-005: a login on a Locked account is refused and nothing changes. EX-006 shows the refusal; INV-002 is the model-side proof."
-    }
-  ],
   "by_id": {
     "INV-001": {
       "formal_status": "verified"
@@ -870,60 +865,60 @@
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-001.itf.json",
-        "checked_at": "2026-10-11T11:52:00+00:00",
-        "steps": 2,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "checked_at": "2026-10-11T16:09:32+00:00",
+        "steps": 3,
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:50:59+00:00",
+        "checked_at": "2026-10-11T16:09:21+00:00",
         "steps": 4,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       }
     },
     "REQ-002": {
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-002.itf.json",
-        "checked_at": "2026-10-11T11:52:11+00:00",
-        "steps": 2,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "checked_at": "2026-10-11T16:09:44+00:00",
+        "steps": 3,
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:51:12+00:00",
+        "checked_at": "2026-10-11T16:09:21+00:00",
         "steps": 4,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       }
     },
     "REQ-003": {
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-003.itf.json",
-        "checked_at": "2026-10-11T11:52:22+00:00",
-        "steps": 2,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "checked_at": "2026-10-11T16:09:55+00:00",
+        "steps": 3,
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:51:25+00:00",
+        "checked_at": "2026-10-11T16:09:21+00:00",
         "steps": 4,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       }
     },
     "REQ-004": {
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-004.itf.json",
-        "checked_at": "2026-10-11T12:21:52+00:00",
-        "steps": 8,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "checked_at": "2026-10-11T16:14:39+00:00",
+        "steps": 10,
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:51:37+00:00",
+        "checked_at": "2026-10-11T16:09:21+00:00",
         "steps": 4,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       }
     },
     "REQ-005": {
@@ -932,9 +927,24 @@
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:51:50+00:00",
+        "checked_at": "2026-10-11T16:09:21+00:00",
         "steps": 4,
-        "model_sha": "13b6da910e01130223092c987712c3e937c9f649543bbf08d8f5e74ab6fc9184"
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+      }
+    },
+    "REQ-006": {
+      "witness": {
+        "status": "witnessed",
+        "trace": "auth/traces/REQ-006.itf.json",
+        "checked_at": "2026-10-11T16:10:19+00:00",
+        "steps": 3,
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T16:09:21+00:00",
+        "steps": 4,
+        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
       }
     }
   }

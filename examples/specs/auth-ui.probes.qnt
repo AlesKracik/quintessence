@@ -30,16 +30,22 @@ module authUi_probes {
   var _pre_UI_002: bool
   var _pre_UI_003: bool
   var _pre_UI_004: bool
+  var _pre_UI_005: bool
+  var _pre_UI_006: bool
+  var _pre_UI_007: bool
+  var _prevCurrent: Screen
+  var _prevForm: FormState
+  var _prevMySession: SessionId
 
   // -- What each requirement says, over its action's parameters --
   val pre_UI_001: bool =
     current == Home
   val post_UI_001: bool =
-    current == Login
+    current == Login and form == Idle
   def pre_UI_002(u: UserId, s: SessionId): bool =
     current == Login
   def post_UI_002(u: UserId, s: SessionId): bool =
-    current == Dashboard and authenticated and mySession == s
+    current == Dashboard and form == Idle and authenticated and mySession == s
   def pre_UI_003(u: UserId): bool =
     current == Login
   def post_UI_003(u: UserId): bool =
@@ -47,7 +53,19 @@ module authUi_probes {
   val pre_UI_004: bool =
     current == Dashboard
   val post_UI_004: bool =
-    current == Login and not(authenticated)
+    current == Login and form == Idle and not(authenticated)
+  def pre_UI_005(u: UserId): bool =
+    current == Login
+  def post_UI_005(u: UserId): bool =
+    current == Login and form == ErrorBadCreds
+  val pre_UI_006: bool =
+    current == Dashboard
+  val post_UI_006: bool =
+    current == Home and form == Idle and mySession == ""
+  val pre_UI_007: bool =
+    current == LockedNotice
+  val post_UI_007: bool =
+    current == Home and form == Idle
 
   action initP = all {
     init,
@@ -58,6 +76,12 @@ module authUi_probes {
     _pre_UI_002' = false,
     _pre_UI_003' = false,
     _pre_UI_004' = false,
+    _pre_UI_005' = false,
+    _pre_UI_006' = false,
+    _pre_UI_007' = false,
+    _prevCurrent' = Home,
+    _prevForm' = Idle,
+    _prevMySession' = "",
   }
 
   action stepP = {
@@ -72,6 +96,12 @@ module authUi_probes {
             _pre_UI_002' = false,
             _pre_UI_003' = false,
             _pre_UI_004' = false,
+            _pre_UI_005' = false,
+            _pre_UI_006' = false,
+            _pre_UI_007' = false,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
       all { submit_success(u, s),
             _lastAction' = "submit_success",
@@ -81,6 +111,12 @@ module authUi_probes {
             _pre_UI_002' = pre_UI_002(u, s),
             _pre_UI_003' = false,
             _pre_UI_004' = false,
+            _pre_UI_005' = false,
+            _pre_UI_006' = false,
+            _pre_UI_007' = false,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
       all { submit_invalid(u),
             _lastAction' = "submit_invalid",
@@ -90,6 +126,12 @@ module authUi_probes {
             _pre_UI_002' = false,
             _pre_UI_003' = false,
             _pre_UI_004' = false,
+            _pre_UI_005' = pre_UI_005(u),
+            _pre_UI_006' = false,
+            _pre_UI_007' = false,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
       all { submit_locked(u),
             _lastAction' = "submit_locked",
@@ -99,6 +141,12 @@ module authUi_probes {
             _pre_UI_002' = false,
             _pre_UI_003' = pre_UI_003(u),
             _pre_UI_004' = false,
+            _pre_UI_005' = false,
+            _pre_UI_006' = false,
+            _pre_UI_007' = false,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
       all { click_logout,
             _lastAction' = "click_logout",
@@ -108,6 +156,12 @@ module authUi_probes {
             _pre_UI_002' = false,
             _pre_UI_003' = false,
             _pre_UI_004' = false,
+            _pre_UI_005' = false,
+            _pre_UI_006' = pre_UI_006,
+            _pre_UI_007' = false,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
       all { session_expired,
             _lastAction' = "session_expired",
@@ -117,6 +171,12 @@ module authUi_probes {
             _pre_UI_002' = false,
             _pre_UI_003' = false,
             _pre_UI_004' = pre_UI_004,
+            _pre_UI_005' = false,
+            _pre_UI_006' = false,
+            _pre_UI_007' = false,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
       all { go_home,
             _lastAction' = "go_home",
@@ -126,6 +186,12 @@ module authUi_probes {
             _pre_UI_002' = false,
             _pre_UI_003' = false,
             _pre_UI_004' = false,
+            _pre_UI_005' = false,
+            _pre_UI_006' = false,
+            _pre_UI_007' = pre_UI_007,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
       all { time_passes,
             _lastAction' = "time_passes",
@@ -135,6 +201,12 @@ module authUi_probes {
             _pre_UI_002' = false,
             _pre_UI_003' = false,
             _pre_UI_004' = false,
+            _pre_UI_005' = false,
+            _pre_UI_006' = false,
+            _pre_UI_007' = false,
+            _prevCurrent' = current,
+            _prevForm' = form,
+            _prevMySession' = mySession,
       },
     }
   }
@@ -160,6 +232,148 @@ module authUi_probes {
   val oblig_UI_004: bool =
     not(_lastAction == "session_expired" and _pre_UI_004)
       or post_UI_004
+
+  /// UI-005: If the user submits invalid credentials, then the system shall stay on Login and show the bad-credentials error.
+  val oblig_UI_005: bool =
+    not(_lastAction == "submit_invalid" and _pre_UI_005)
+      or post_UI_005(_lastU)
+
+  /// UI-006: While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
+  val oblig_UI_006: bool =
+    not(_lastAction == "click_logout" and _pre_UI_006)
+      or post_UI_006
+
+  /// UI-007: While on LockedNotice, when the user goes back, the system shall show Home with the form cleared.
+  val oblig_UI_007: bool =
+    not(_lastAction == "go_home" and _pre_UI_007)
+      or post_UI_007
+
+  // -- Completeness: every step is one a requirement speaks to --
+
+  /// Coverage of click_sign_in: every step is under UI-001
+  val cover_click_sign_in: bool =
+    _lastAction != "click_sign_in"
+      or _pre_UI_001
+
+  /// Explanation of current on click_sign_in: changed only where UI-001 applied
+  val explain_click_sign_in_current: bool =
+    not(_lastAction == "click_sign_in" and current != _prevCurrent)
+      or _pre_UI_001
+
+  /// Explanation of form on click_sign_in: changed only where UI-001 applied
+  val explain_click_sign_in_form: bool =
+    not(_lastAction == "click_sign_in" and form != _prevForm)
+      or _pre_UI_001
+
+  /// Coverage of submit_success: every step is under UI-002
+  val cover_submit_success: bool =
+    _lastAction != "submit_success"
+      or _pre_UI_002
+
+  /// Explanation of current on submit_success: changed only where UI-002 applied
+  val explain_submit_success_current: bool =
+    not(_lastAction == "submit_success" and current != _prevCurrent)
+      or _pre_UI_002
+
+  /// Explanation of form on submit_success: changed only where UI-002 applied
+  val explain_submit_success_form: bool =
+    not(_lastAction == "submit_success" and form != _prevForm)
+      or _pre_UI_002
+
+  /// Explanation of mySession on submit_success: changed only where UI-002 applied
+  val explain_submit_success_mySession: bool =
+    not(_lastAction == "submit_success" and mySession != _prevMySession)
+      or _pre_UI_002
+
+  /// Coverage of submit_invalid: every step is under UI-005
+  val cover_submit_invalid: bool =
+    _lastAction != "submit_invalid"
+      or _pre_UI_005
+
+  /// Explanation of current on submit_invalid: changed only where UI-005 applied
+  val explain_submit_invalid_current: bool =
+    not(_lastAction == "submit_invalid" and current != _prevCurrent)
+      or _pre_UI_005
+
+  /// Explanation of form on submit_invalid: changed only where UI-005 applied
+  val explain_submit_invalid_form: bool =
+    not(_lastAction == "submit_invalid" and form != _prevForm)
+      or _pre_UI_005
+
+  /// Coverage of submit_locked: every step is under UI-003
+  val cover_submit_locked: bool =
+    _lastAction != "submit_locked"
+      or _pre_UI_003
+
+  /// Explanation of current on submit_locked: changed only where UI-003 applied
+  val explain_submit_locked_current: bool =
+    not(_lastAction == "submit_locked" and current != _prevCurrent)
+      or _pre_UI_003
+
+  /// Explanation of form on submit_locked: changed only where UI-003 applied
+  val explain_submit_locked_form: bool =
+    not(_lastAction == "submit_locked" and form != _prevForm)
+      or _pre_UI_003
+
+  /// Coverage of click_logout: every step is under UI-006
+  val cover_click_logout: bool =
+    _lastAction != "click_logout"
+      or _pre_UI_006
+
+  /// Explanation of current on click_logout: changed only where UI-006 applied
+  val explain_click_logout_current: bool =
+    not(_lastAction == "click_logout" and current != _prevCurrent)
+      or _pre_UI_006
+
+  /// Explanation of form on click_logout: changed only where UI-006 applied
+  val explain_click_logout_form: bool =
+    not(_lastAction == "click_logout" and form != _prevForm)
+      or _pre_UI_006
+
+  /// Explanation of mySession on click_logout: changed only where UI-006 applied
+  val explain_click_logout_mySession: bool =
+    not(_lastAction == "click_logout" and mySession != _prevMySession)
+      or _pre_UI_006
+
+  /// Coverage of session_expired: every step is under UI-004
+  val cover_session_expired: bool =
+    _lastAction != "session_expired"
+      or _pre_UI_004
+
+  /// Explanation of current on session_expired: changed only where UI-004 applied
+  val explain_session_expired_current: bool =
+    not(_lastAction == "session_expired" and current != _prevCurrent)
+      or _pre_UI_004
+
+  /// Explanation of form on session_expired: changed only where UI-004 applied
+  val explain_session_expired_form: bool =
+    not(_lastAction == "session_expired" and form != _prevForm)
+      or _pre_UI_004
+
+  /// Explanation of mySession on session_expired: changed only where UI-004 applied
+  val explain_session_expired_mySession: bool =
+    not(_lastAction == "session_expired" and mySession != _prevMySession)
+      or _pre_UI_004
+
+  /// Coverage of go_home: every step is under UI-007
+  val cover_go_home: bool =
+    _lastAction != "go_home"
+      or _pre_UI_007
+
+  /// Explanation of current on go_home: changed only where UI-007 applied
+  val explain_go_home_current: bool =
+    not(_lastAction == "go_home" and current != _prevCurrent)
+      or _pre_UI_007
+
+  /// Explanation of form on go_home: changed only where UI-007 applied
+  val explain_go_home_form: bool =
+    not(_lastAction == "go_home" and form != _prevForm)
+      or _pre_UI_007
+
+  /// Verdict time_passes #1 NO-OP: Time passing changes nothing on screen; auth's clock is auth's business.
+  val verdict_time_passes_1: bool =
+    not(_lastAction == "time_passes")
+      or true
 
   // -- Witnesses: the step can happen -------------------------
 
@@ -187,6 +401,24 @@ module authUi_probes {
         and _pre_UI_004
         and post_UI_004)
 
+  /// Witness for UI-005: If the user submits invalid credentials, then the system shall stay on Login and show the bad-credentials error.
+  val witness_UI_005: bool =
+    not(_lastAction == "submit_invalid"
+        and _pre_UI_005
+        and post_UI_005(_lastU))
+
+  /// Witness for UI-006: While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
+  val witness_UI_006: bool =
+    not(_lastAction == "click_logout"
+        and _pre_UI_006
+        and post_UI_006)
+
+  /// Witness for UI-007: While on LockedNotice, when the user goes back, the system shall show Home with the form cleared.
+  val witness_UI_007: bool =
+    not(_lastAction == "go_home"
+        and _pre_UI_007
+        and post_UI_007)
+
   // -- The same probes, the right way up ----------------------
   // For the simulator. `quint run --witnesses=<name>` counts the
   // runs in which a formula held at least once, and each probe above
@@ -197,5 +429,8 @@ module authUi_probes {
   val reached_UI_002: bool = not(witness_UI_002)
   val reached_UI_003: bool = not(witness_UI_003)
   val reached_UI_004: bool = not(witness_UI_004)
+  val reached_UI_005: bool = not(witness_UI_005)
+  val reached_UI_006: bool = not(witness_UI_006)
+  val reached_UI_007: bool = not(witness_UI_007)
 
 }

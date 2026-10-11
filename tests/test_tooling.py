@@ -7,8 +7,8 @@ Covers the deterministic, quint-free logic touched by the robustness pass:
   - the witness-predicate FAIL gate past draft (spec-lint vagueness gate)
   - the opt-in Alloy structural backend (scope-honest rendering, the lint
     gate on proof: "structural", and the receipt.json verdict reader)
-  - declared scope and the anchoring of OUT-OF-SCOPE triage
-  - externals, their outcome-coverage matrix, and assumption annotations
+  - declared scope and the anchoring of OUT-OF-SCOPE verdicts
+  - externals, the handling of every outcome, and assumption annotations
   - closed-world entities checked against the sidecar's variant type
   - modality: a witness per permitted outcome, an invariant per prohibition
   - the semantic diff (spec-diff) and the completeness dimension grid
@@ -53,7 +53,6 @@ def _load(modname, filename):
 readback = _load("spec_readback", "spec-readback.py")
 record = _load("spec_record", "spec-record.py")
 lint = _load("spec_lint", "spec-lint.py")
-matrix = _load("spec_matrix", "spec-matrix.py")
 diff = _load("spec_diff", "spec-diff.py")
 quint_ir = _load("quint_ir_mod", "quint_ir.py")
 probes = _load("spec_probes", "spec-probes.py")
@@ -722,7 +721,7 @@ def test_cmd_check_records_structural_counterexample(tmp_path, monkeypatch):
         "session-ownership/gen/alloy/noSharedSessions/noSharedSessions-solution-0.xml")
 
 
-# ── Gap A: scope, and the anchoring of OUT-OF-SCOPE triage ──────────────────
+# ── Gap A: scope, and the anchoring of OUT-OF-SCOPE verdicts ──────────────────
 
 def _scope_codes(area):
     findings = []
@@ -733,8 +732,7 @@ def _scope_codes(area):
 def test_out_of_scope_without_ref_warns_while_authoring():
     codes = _scope_codes({
         "status": "formalized",
-        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
-                           "verdict": "OUT-OF-SCOPE", "reason": "because"}]})
+        "verdicts": [{"action": "a", "index": 1, "verdict": "OUT-OF-SCOPE", "reason": "because"}]})
     assert (lint.WARN, "out-of-scope-unanchored") in codes
 
 
@@ -742,8 +740,7 @@ def test_out_of_scope_without_ref_warns_while_authoring():
 def test_out_of_scope_without_ref_fails_at_review(status):
     codes = _scope_codes({
         "status": status,
-        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
-                           "verdict": "OUT-OF-SCOPE"}]})
+        "verdicts": [{"action": "a", "index": 1, "verdict": "OUT-OF-SCOPE"}]})
     assert (lint.FAIL, "out-of-scope-unanchored") in codes
 
 
@@ -751,8 +748,7 @@ def test_scope_ref_must_resolve():
     codes = _scope_codes({
         "status": "formalized",
         "scope": {"excluded": [{"item": "refunds", "reason": "policy"}]},
-        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
-                           "verdict": "OUT-OF-SCOPE", "scope_ref": "proration"}]})
+        "verdicts": [{"action": "a", "index": 1, "verdict": "OUT-OF-SCOPE", "scope_ref": "proration"}]})
     assert (lint.FAIL, "scope-ref-dangling") in codes
 
 
@@ -760,22 +756,19 @@ def test_anchored_out_of_scope_is_clean():
     assert _scope_codes({
         "status": "approved",
         "scope": {"excluded": [{"item": "refunds", "reason": "policy"}]},
-        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
-                           "verdict": "OUT-OF-SCOPE", "scope_ref": "refunds"}]}) == []
+        "verdicts": [{"action": "a", "index": 1, "verdict": "OUT-OF-SCOPE", "scope_ref": "refunds"}]}) == []
 
 
 def test_no_op_needs_a_reason():
     # A deliberate no-op is a decision; without the reason it is
-    # indistinguishable from an oversight, which is the whole point of triage.
+    # indistinguishable from an oversight, which is the whole point of a verdict.
     codes = _scope_codes({
         "status": "formalized",
-        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
-                           "verdict": "NO-OP"}]})
-    assert (lint.FAIL, "no-op-without-reason") in codes
+        "verdicts": [{"action": "a", "index": 1, "verdict": "NO-OP"}]})
+    assert (lint.FAIL, "verdict-without-reason") in codes
     assert _scope_codes({
         "status": "formalized",
-        "matrix_triage": [{"entity": "S", "state": "A", "event": "e",
-                           "verdict": "NO-OP", "reason": "REQ-003 decided this"}]}) == []
+        "verdicts": [{"action": "a", "index": 1, "verdict": "NO-OP", "reason": "REQ-003 decided this"}]}) == []
 
 
 def test_verdict_names_the_scope_it_is_relative_to():
@@ -840,12 +833,13 @@ def test_error_outcomes_without_any_external_fail():
     assert (lint.FAIL, "error-outcome-without-external") in _ext_codes(area)
 
 
-def test_open_gap_triage_blocks_approval():
+def test_open_gap_verdict_blocks_approval():
     area = {"status": "approved", "externals": _EXT,
             "requirements": [{"id": "REQ-001", "error_outcomes": [
                 {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "x"}]}],
-            "outcome_triage": [{"external": "BillingProvider", "outcome": "TIMEOUT",
-                                "verdict": "GAP", "reason": "unknown"}]}
+            "verdicts": [{"action": "cancel", "index": 1, "verdict": "GAP",
+                          "reason": "unknown", "error_outcomes": [
+                              {"external": "BillingProvider", "outcome": "TIMEOUT"}]}]}
     assert (lint.FAIL, "outcome-open-gap") in _ext_codes(area)
 
 
@@ -897,37 +891,6 @@ def test_assumptions_never_qualify_a_failure():
     assert readback.under_assumptions("✗", ["ASM-001"]) == "✗"
     assert readback.under_assumptions("⏳", ["ASM-001"]) == "⏳"
     assert readback.under_assumptions("✓ proven", []) == "✓ proven"
-
-
-# ── Gap B/E: the external × outcome matrix axis ─────────────────────────────
-
-def test_outcome_matrix_counts_coverage():
-    area = {"externals": _EXT, "requirements": [
-        {"id": "REQ-001", "error_outcomes": [
-            {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "Cancelled"}]}]}
-    rows = matrix.outcome_rows(area)
-    idx = matrix.outcome_coverage_index(area)
-    assert rows == [("BillingProvider", "SUCCESS"), ("BillingProvider", "TIMEOUT")]
-    assert idx == {("BillingProvider", "SUCCESS"): "REQ-001:Cancelled"}
-
-
-def test_outcome_matrix_emits_and_tallies(tmp_path):
-    area = {"externals": _EXT, "requirements": [
-        {"id": "REQ-001", "error_outcomes": [
-            {"external": "BillingProvider", "outcome": "SUCCESS", "effect": "Cancelled"}]}]}
-    buf = io.StringIO()
-    stats = matrix.emit_outcomes_csv(matrix.outcome_rows(area),
-                                     matrix.outcome_coverage_index(area), {}, buf)
-    assert stats == {"total": 2, "covered": 1, "uncovered": 1, "triaged": 0}
-    assert "REQ-001:Cancelled" in buf.getvalue()
-
-
-def test_outcome_matrix_counts_triage_as_answered():
-    area = {"externals": _EXT, "requirements": []}
-    triage = {("BillingProvider", "TIMEOUT"): ("IMPOSSIBLE", "never happens")}
-    buf = io.StringIO()
-    stats = matrix.emit_outcomes_csv(matrix.outcome_rows(area), {}, triage, buf)
-    assert stats["triaged"] == 1 and stats["uncovered"] == 1
 
 
 # ── Gap C: closed worlds ────────────────────────────────────────────────────
@@ -1135,8 +1098,8 @@ def _dim_row(area, name):
 
 
 def test_unmeasured_dimensions_are_dashes_not_ticks():
-    # The specific dishonesty this guards against: "no external outcome
-    # matrix" rendering as a discharged dimension.
+    # The specific dishonesty this guards against: "no external outcomes
+    # declared" rendering as a discharged dimension.
     area = {"requirements": [{"id": "R", "ears": {"unwanted": True}}]}
     assert "| — |" in _dim_row(area, "Failure behavior")
     assert "| — |" in _dim_row(area, "External systems")
@@ -1144,13 +1107,24 @@ def test_unmeasured_dimensions_are_dashes_not_ticks():
 
 
 def test_measured_dimensions_report_their_verdict():
-    area = {"check_results": {"outcomes": {"cells": 4, "covered": 4, "uncovered": 0},
-                              "matrix": {"cells": 12, "covered": 2, "triaged": 10,
-                                         "uncovered": 0}}}
+    area = {"externals": [{"name": "Bank", "outcomes": [{"name": "OK"},
+                                                        {"name": "TIMEOUT"}]}],
+            "requirements": [{"id": "R", "error_outcomes": [
+                {"external": "Bank", "outcome": "OK"}]}],
+            "verdicts": [{"action": "pay", "index": 1, "verdict": "NO-OP",
+                          "error_outcomes": [{"external": "Bank",
+                                              "outcome": "TIMEOUT"}]}],
+            "_completeness": {"actions": [], "unanswered": [], "gaps": [],
+                              "checks": {
+                "cover-pay": {"kind": "coverage", "result": "verified"},
+                "explain-pay-x": {"kind": "explanation", "result": "verified"}}}}
     assert "| ✓ |" in _dim_row(area, "Failure behavior")
-    assert "| ✓ |" in _dim_row(area, "State space")
-    area["check_results"]["outcomes"]["uncovered"] = 2
+    assert "| ✓ |" in _dim_row(area, "Coverage")
+    assert "| ✓ |" in _dim_row(area, "Explanation")
+    area["verdicts"] = []
     assert "| ! |" in _dim_row(area, "Failure behavior")
+    area["_completeness"]["checks"]["cover-pay"]["result"] = "counterexample"
+    assert "| ! |" in _dim_row(area, "Coverage")
 
 
 def test_open_world_is_not_a_defect_but_half_closed_is():
@@ -2698,8 +2672,8 @@ def test_prose_justification_still_discharges(tmp_path):
 # _parse_via_cli returned None, parse_sidecar turned that into
 # {"__no_module__": True}, and every check reading a sidecar returned early.
 # Verdicts were reported without being computed: quint_ref resolution went
-# quiet, and spec-matrix --strict — a CI gate — exited 0 over an empty event
-# axis, reporting complete because it found nothing to be complete about.
+# quiet, and a coverage gate exited 0 over an empty action list, reporting
+# complete because it found nothing to be complete about.
 
 def test_cli_available_reports_whether_the_binary_resolves(monkeypatch):
     monkeypatch.setattr(quint_ir, "_quint_bin", lambda: None)
@@ -2734,38 +2708,6 @@ def test_a_missing_sidecar_is_still_graded_by_status(status, severity):
     lint.check_formal_model_consistency(area, None, "auth", findings)
     assert [(f.check, f.severity) for f in findings] == [
         ("sidecar-missing-or-empty", severity)]
-
-
-def test_matrix_refuses_an_empty_event_axis_when_the_parse_fails(tmp_path,
-                                                                 monkeypatch):
-    """The gate must refuse rather than pass over nothing."""
-    (tmp_path / "specs").mkdir(parents=True)
-    qnt = tmp_path / "specs" / "auth.qnt"
-    qnt.write_text("module auth {\n  action step = all { true }\n}\n",
-                   encoding="utf-8")
-    monkeypatch.setattr(matrix, "parse_qnt", lambda *a, **k: None)
-    with pytest.raises(SystemExit) as excinfo:
-        matrix.discover_qnt_actions(tmp_path, {}, "auth")
-    assert "did not parse" in str(excinfo.value)
-
-
-def test_matrix_refuses_when_the_demanded_engine_is_absent(tmp_path,
-                                                           monkeypatch):
-    (tmp_path / "specs").mkdir(parents=True)
-    (tmp_path / "specs" / "auth.qnt").write_text("module auth { }\n",
-                                                 encoding="utf-8")
-    monkeypatch.setattr(matrix, "DEFAULT_ENGINE", "cli")
-    monkeypatch.setattr(matrix, "cli_available", lambda: False)
-    with pytest.raises(SystemExit) as excinfo:
-        matrix.discover_qnt_actions(tmp_path, {}, "auth")
-    assert "not on PATH" in str(excinfo.value)
-
-
-def test_matrix_still_returns_empty_for_an_area_with_no_sidecar(tmp_path):
-    """An absent sidecar is a stage, not a failure — the area is not
-    formalized yet, and that must not become a hard error."""
-    (tmp_path / "specs").mkdir(parents=True)
-    assert matrix.discover_qnt_actions(tmp_path, {}, "auth") == []
 
 
 # ── Documented slash commands must exist ────────────────────────────────────
@@ -2835,7 +2777,7 @@ def test_the_tier_table_commands_column_holds_only_commands():
 def test_no_script_names_leak_into_the_tier_commands_column():
     for row in _tier_rows():
         column = row.rstrip().rstrip("|").rsplit("|", 1)[-1]
-        for script in ("spec-lint", "spec-matrix", "spec-diff", "spec-record",
+        for script in ("spec-lint", "spec-probes", "spec-diff", "spec-record",
                        "spec-mutate", "spec-separation", "spec-extract-audit"):
             assert script not in column, f"{script} listed under Commands"
 
@@ -4027,12 +3969,148 @@ def test_ghosts_cover_the_parameters_and_the_preconditions_only(tmp_path):
     out = _gen(tmp_path, area)
     assert "var _lastUid: UserId" in out
     assert "var _pre_REQ_001: bool" in out
-    # No transition invariant reads a state var, so nothing is snapshotted:
-    # @while is evaluated before the step into one boolean instead.
-    assert "_prevAccounts" not in out and "_prevCount" not in out
+    # @while is evaluated before the step into one boolean: no requirement
+    # needs a snapshot for it. The snapshots here are the explanation
+    # checks', which compare each changed var with its value before the step.
+    assert "def pre_REQ_001(uid: UserId): bool" in out
+    assert "not(_lastAction == \"open_acct\" and count != _prevCount)" in out
     # Explicit initial values — before init there is no prior state to read.
     assert '_lastUid\' = ""' in out
     assert "_pre_REQ_001' = false" in out
+
+
+# ── Per-action completeness: coverage, explanation, verdicts ───────────────
+# Each action owes two proofs: every step it takes is under some
+# requirement's or verdict's @while (coverage), and every observable var it
+# changes is one a requirement in force reads (explanation). Where no
+# requirement speaks, a `/// @verdict` on the action says so, and the
+# IMPOSSIBLE / NO-OP ones are checked like requirements.
+
+def _comp_area(tmp_path, docs=None, reqs=None):
+    """The probe area with extra `///` lines put above a declaration:
+    docs = {"action close_acct": ["@verdict NO-OP", "..."]}."""
+    area = _probe_area(tmp_path, reqs=reqs, domains={"UserId": 'Set("u1")'})
+    qnt = tmp_path / "specs" / "a.qnt"
+    text = qnt.read_text(encoding="utf-8")
+    for decl, lines in (docs or {}).items():
+        m = re.search(rf"^(\s*){re.escape(decl)}\b", text, re.M)
+        assert m, decl
+        block = "".join(f"{m.group(1)}/// {l}\n" for l in lines)
+        text = text[:m.start()] + block + text[m.start():]
+    qnt.write_text(text, encoding="utf-8")
+    return area
+
+
+def _val_body(out, name):
+    i = out.index(f"val {name}: bool =")
+    return out[i:out.index("\n\n", i)].split("=", 1)[1]
+
+
+def _comp_codes(tmp_path, view=None):
+    view = view or spec_source.load_area(tmp_path, "a")
+    findings = []
+    lint.check_completeness(tmp_path, view, "a", findings)
+    return [(f.check, f.ref) for f in findings]
+
+
+def test_an_action_nothing_speaks_to_is_unspecified(tmp_path):
+    _comp_area(tmp_path)
+    codes = _comp_codes(tmp_path)
+    assert ("action-unspecified", "close_acct") in codes
+    assert ("action-unspecified", "open_acct") not in codes
+
+
+def test_a_change_no_requirement_reads_is_unexplained(tmp_path):
+    # REQ-001's @shall reads `accounts`; open_acct also bumps `count`.
+    _comp_area(tmp_path)
+    codes = _comp_codes(tmp_path)
+    assert ("change-unexplained", "open_acct.count") in codes
+    assert ("change-unexplained", "open_acct.accounts") not in codes
+
+
+def test_an_internal_var_owes_no_explanation(tmp_path):
+    area = _comp_area(tmp_path, docs={
+        "var count": ["@internal A tally only the model reads."]})
+    assert ("change-unexplained", "open_acct.count") not in _comp_codes(tmp_path)
+    out = _gen(tmp_path, area)
+    assert "explain_open_acct_count" not in out
+    assert "explain_open_acct_accounts" in out
+
+
+def test_coverage_is_the_disjunction_of_what_speaks_to_the_action(tmp_path):
+    area = _comp_area(tmp_path)
+    out = _gen(tmp_path, area)
+    body = _val_body(out, "cover_open_acct")
+    assert body.split() == ['_lastAction', '!=', '"open_acct"', 'or', '_pre_REQ_001']
+    # Nothing sits on close_acct: any step it takes is uncovered.
+    assert _val_body(out, "cover_close_acct").split() == [
+        "_lastAction", "!=", '"close_acct"']
+
+
+def test_verdicts_are_numbered_per_action_and_checked(tmp_path):
+    area = _comp_area(tmp_path, docs={"action close_acct": [
+        "@verdict NO-OP",
+        "Closing an unknown account changes nothing; REQ-001 decides opening.",
+        "@while not(accounts.keys().contains(uid))",
+        "@verdict IMPOSSIBLE",
+        "count never goes negative.",
+        "@while count < 0"]})
+    view = spec_source.load_area(tmp_path, "a")
+    assert [(v["action"], v["index"], v["verdict"]) for v in view["verdicts"]] == [
+        ("close_acct", 1, "NO-OP"), ("close_acct", 2, "IMPOSSIBLE")]
+    out = _gen(tmp_path, area)
+    assert "val verdict_close_acct_1: bool =" in out
+    assert "val verdict_close_acct_2: bool =" in out
+    assert "_pre_verdict_close_acct_1" in out
+    assert ("action-unspecified", "close_acct") not in _comp_codes(tmp_path, view)
+
+
+def test_gap_and_out_of_scope_count_but_are_not_checked(tmp_path):
+    area = _comp_area(tmp_path, docs={"action close_acct": [
+        "@verdict GAP", "Nobody has said what closing a busy account does.",
+        "@while count > 1", "@question Q-001"]})
+    out = _gen(tmp_path, area)
+    assert "val verdict_close_acct_1" not in out
+    assert "_pre_verdict_close_acct_1" in _val_body(out, "cover_close_acct")
+
+
+@pytest.mark.parametrize("decl,lines,msg", [
+    ("var count", ["@verdict NO-OP", "why"], "sits on the action"),
+    ("action close_acct", ["@verdict MAYBE", "why"], "takes one of"),
+    ("action close_acct", ["@internal no reason needed"], "sits on the `var`"),
+])
+def test_misplaced_or_unknown_completeness_records_are_refused(tmp_path, decl,
+                                                                lines, msg):
+    _comp_area(tmp_path, docs={decl: lines})
+    _view, info = spec_source.load_area(tmp_path, "a", with_info=True)
+    assert any(msg in p for p in info["problems"]), info["problems"]
+
+
+@pytest.mark.parametrize("kind,cid,code", [
+    ("coverage", "cover-close_acct", "coverage-gap"),
+    ("explanation", "explain-open_acct-count", "change-unexplained"),
+    ("verdict", "verdict-close_acct-1", "verdict-contradicted"),
+])
+def test_a_recorded_counterexample_fails_lint(tmp_path, kind, cid, code):
+    _comp_area(tmp_path, docs={"action close_acct": [
+        "@verdict NO-OP", "Closing a busy account changes nothing.",
+        "@while count > 3"]})
+    view = spec_source.load_area(tmp_path, "a")
+    view["check_results"] = {"checks": [{"id": cid, "kind": kind,
+                                         "result": "counterexample",
+                                         "trace": f"a/traces/{cid}.itf.json"}]}
+    findings = []
+    lint.check_completeness(tmp_path, view, "a", findings)
+    hits = [f for f in findings if f.check == code and f.ref == cid]
+    assert hits and hits[0].severity == lint.FAIL
+    assert f"a/traces/{cid}.itf.json" in hits[0].description
+
+
+def test_an_approved_area_owes_every_completeness_check(tmp_path):
+    _comp_area(tmp_path)
+    view = spec_source.load_area(tmp_path, "a")
+    view["status"] = "approved"
+    assert ("approved-unchecked", "cover-open_acct") in _comp_codes(tmp_path, view)
 
 
 def test_the_requirement_compiles_to_an_obligation_and_a_witness(tmp_path):
@@ -4550,27 +4628,6 @@ def test_readback_counts_a_checked_prohibition_as_discharged():
     assert readback.status_mark(req) == "✗"
 
 
-def test_matrix_stdout_survives_a_console_that_cannot_encode_arrows():
-    """Coverage cells carry an arrow. On a cp1252 console csv.writer raised
-    UnicodeEncodeError mid-file instead of degrading."""
-    area = {"kind": "area", "area": "x",
-            "concepts": {"entities": [{"name": "Cart", "states": ["Open", "Closed"]}],
-                         "verbs": ["checkout"]},
-            "state_machines": [{"entity": "Cart", "initial_state": "Open",
-                                "states": [{"name": "Open"}, {"name": "Closed"}],
-                                "transitions": [{"from": "Open", "to": "Closed",
-                                                 "trigger": "checkout"}]}]}
-    rows = matrix.collect_rows(area)
-    events = matrix.all_events(area, [])
-    scope = matrix.scope_events_per_entity(area, events)
-    idx = matrix.build_coverage_index(area)
-
-    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="")
-    itf.soften_stdout(out)
-    matrix.emit_csv(rows, scope, idx, out)      # must not raise
-    out.flush()
-
-
 # Identity, not equality: each tool is loaded by path here but imports the
 # real itf_tools off sys.path, so two tools holding the SAME object is proof
 # there is one definition. (`itf` above is a second, separately loaded copy of
@@ -4590,10 +4647,7 @@ def test_ghost_and_plumbing_conventions_are_shared():
     assert probes.obligation_name is itf.obligation_name or \
         probes.obligation_name.__module__ == "itf_tools"
     assert probes.ghost_for_var.__module__ == "itf_tools"
-    assert lint.PLUMBING_ACTIONS is matrix.PLUMBING_ACTIONS
     assert lint.soften_stdout.__module__ == "itf_tools"
-    assert matrix.soften_stdout is lint.soften_stdout
-    assert matrix.TRIAGE_VALUES == itf.TRIAGE_VALUES
 
 
 # ── journey rendering: who / story / route, and a marker per step ──────────
@@ -5230,8 +5284,6 @@ def _full_area():
              "source": "extracted-from-production", "trace": "a/traces/ex2.itf.json"},
         ],
         "check_results": {"ran_at": "2026-01-01T00:00:00+00:00"},
-        "matrix_triage": [{"entity": "E", "state": "Open", "event": "shut",
-                           "verdict": "NO-OP", "reason": "REQ-002"}],
         "traceability": [{"id": "REQ-001", "code": "a.js:1", "verified": True}],
     }
 
@@ -5400,7 +5452,7 @@ def test_the_quint_ir_documents_the_same_declarations_as_the_python_reader():
         own = quint_ir.parse_qnt(qnt, engine="regex")["module_name"]
         mod = next(m for m in ir["modules"] if m["name"] == own)
         recs = [r for r in spec_source.read_records(qnt.read_text(encoding="utf-8"))
-                if r["tag"] != "outcome-of"]
+                if r["tag"] not in ("outcome-of", "verdict", "internal")]
         # The IR hangs a type's doc on one of its constructors; credit the type.
         ctor_type = {v: (r["host"] or {})["name"] for r in recs
                      if (r["host"] or {}).get("kind") == "type"

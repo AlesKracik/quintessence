@@ -108,6 +108,8 @@ try:
     # cannot drift apart on what a probe or a ghost is called.
     from itf_tools import ghost_for_var as _ghost_for_var
     from itf_tools import probe_name, outcome_probe_name, PLUMBING_ACTIONS
+    from itf_tools import verdict_label
+    from completeness import area_completeness as _area_completeness
     from itf_tools import stream_encodes as _stream_encodes, soften_stdout
     from itf_tools import brief_status as _brief_status
     from itf_tools import compute_model_sha as _compute_model_sha
@@ -471,6 +473,72 @@ def check_shall_sanity(area_data, sidecar, sidecars, decls, area_name, findings)
                     ref=rid)
 
 
+def check_completeness(root, area_data, area_name, findings):
+    """No gaps, no invented behavior: per action `step` takes, every step is
+    under some requirement or verdict (coverage), and every observable var
+    it changes is one a requirement applying there names (explanation).
+
+    Two layers. The STATIC one reads the model: an action nothing speaks to,
+    or a var it assigns that no requirement on it reads, is reported before
+    any checker runs. The RECORDED one reads what /spec-check found: a
+    coverage, explanation or verdict check with a counterexample is a FAIL,
+    the trace naming the step."""
+    if not (area_data.get("formal_model") or {}).get("quint_file"):
+        return
+    try:
+        comp, checks = _area_completeness(root, area_data)
+    except Exception:  # noqa: BLE001 — a model that will not parse is
+        return         # reported by the parse checks, not twice here
+    review = at_review(area_data)
+    approved = area_data.get("status") == "approved"
+    for e in comp:
+        a = e["action"]
+        if not e["reqs"] and not e["verdicts"]:
+            add(findings, FAIL if review else WARN, "completeness", "action-unspecified",
+                area_name,
+                f"`{a}` is a step the model takes, but no formal requirement or "
+                f"verdict sits on it: nothing says what it should do. Write the "
+                f"requirement, or a `/// @verdict` (NO-OP, GAP, OUT-OF-SCOPE).",
+                ref=a)
+        for ch in e["changes"]:
+            if ch["explainers"] or e["open"]:
+                continue
+            add(findings, FAIL if review else WARN, "completeness", "change-unexplained",
+                area_name,
+                f"`{a}` changes `{ch['var']}`, but no requirement on it reads "
+                f"`{ch['var']}` in its @shall: behavior nobody asked for. Say it "
+                f"in a requirement, or mark the var `/// @internal` if it is "
+                f"bookkeeping.", ref=f"{a}.{ch['var']}")
+    recorded = {c.get("id"): c for c in
+                ((area_data.get("check_results") or {}).get("checks") or [])
+                if c.get("kind") in ("coverage", "explanation", "verdict")}
+    for name, c in checks.items():
+        r = recorded.get(c["id"])
+        if r is None:
+            if approved:
+                add(findings, FAIL, "completeness", "approved-unchecked", area_name,
+                    f"Area is approved but {c['id']} ({name}) was never checked. "
+                    f"Run /spec-check.", ref=c["id"])
+            continue
+        if r.get("result") != "counterexample":
+            continue
+        trace = f" (trace: specs/{r['trace']})" if r.get("trace") else ""
+        if c["kind"] == "coverage":
+            msg = (f"`{c['action']}` can take a step no requirement or verdict "
+                   f"covers{trace}: a gap. Say what it should do there.")
+            code = "coverage-gap"
+        elif c["kind"] == "explanation":
+            msg = (f"`{c['action']}` changes `{c['var']}` on a step where no "
+                   f"requirement naming it applied{trace}: behavior nobody "
+                   f"asked for.")
+            code = "change-unexplained"
+        else:
+            msg = (f"verdict #{c['index']} on `{c['action']}` is contradicted by "
+                   f"the model{trace}. Fix the verdict or the model.")
+            code = "verdict-contradicted"
+        add(findings, FAIL, "completeness", code, area_name, msg, ref=c["id"])
+
+
 def check_witnesses(root, area_data, area_name, findings):
     """Both halves of every formal requirement, as recorded by /spec-check:
     the WITNESS (its step can happen — the requirement is not vacuous) and
@@ -645,7 +713,7 @@ def check_unproducible_states(area_data, sidecar, area_name, findings):
     """A declared state no assignment in the model ever produces.
 
     The spec claims the system enters this state; nothing in the sidecar can
-    put it there. Every requirement, invariant and matrix cell mentioning it
+    put it there. Every requirement, invariant and verdict mentioning it
     is then vacuously satisfied — the failure mode witnesses exist to catch,
     one level up, at the state itself.
 
@@ -761,7 +829,7 @@ def check_error_outcomes_produced(area_data, sidecar, area_name, findings):
     """`@error BillingProvider.DECLINED: NO_CHANGE` says what happens when the
     dependency answers DECLINED. If no action ever produces that answer, the
     model never meets it: the effect is unchecked prose, and the
-    external x outcome matrix counts a cell covered that nothing exercises.
+    outcome counts as handled though nothing exercises it.
 
     The answer is found as a variant of some type (DECLINED, Declined and
     declined all match), and some action must build it."""
@@ -1065,53 +1133,61 @@ def at_review(area_data):
 
 
 def check_scope(area_data, area_name, findings):
-    """Gap A. Completeness is only meaningful relative to a declared boundary.
+    """Completeness is only meaningful relative to a declared boundary.
 
-    An OUT-OF-SCOPE triage verdict with nothing to point at is an assertion
-    that cannot be reviewed \u2014 the one escape hatch in the completeness gate
-    would otherwise absorb every awkward cell. Requiring a scope_ref turns it
-    into a reference to a boundary someone agreed to."""
+    An OUT-OF-SCOPE verdict with nothing to point at is an assertion that
+    cannot be reviewed — the one escape hatch in the coverage check would
+    otherwise absorb every awkward step. Requiring a scope_ref turns it into
+    a reference to a boundary someone agreed to."""
     scope = area_data.get("scope") or {}
     excluded = {e.get("item") for e in (scope.get("excluded") or []) if e.get("item")}
     review = at_review(area_data)
-
-    for list_name, label in (("matrix_triage", "state\u00d7event"),
-                             ("outcome_triage", "external\u00d7outcome")):
-        for cell in area_data.get(list_name, []) or []:
-            if cell.get("verdict") == "NO-OP" and not cell.get("reason"):
-                where = (f"{cell.get('entity')}/{cell.get('state')}/{cell.get('event')}"
-                         if list_name == "matrix_triage"
-                         else f"{cell.get('external')}/{cell.get('outcome')}")
-                add(findings, FAIL, "scope", "no-op-without-reason", area_name,
-                    f"{label} cell {where} is triaged NO-OP but gives no reason. A "
-                    f"deliberate no-op is a decision — say which requirement made it, "
-                    f"or it is indistinguishable from an oversight.", ref=where)
-            if cell.get("verdict") != "OUT-OF-SCOPE":
-                continue
-            where = (f"{cell.get('entity')}/{cell.get('state')}/{cell.get('event')}"
-                     if list_name == "matrix_triage"
-                     else f"{cell.get('external')}/{cell.get('outcome')}")
-            ref = cell.get("scope_ref")
+    questions = {q.get("id"): q for q in area_data.get("open_questions") or []
+                 if q.get("id")}
+    for v in area_data.get("verdicts", []) or []:
+        where = verdict_label(v)
+        kind = v.get("verdict")
+        if kind in ("NO-OP", "IMPOSSIBLE") and not v.get("reason"):
+            add(findings, FAIL, "scope", "verdict-without-reason", area_name,
+                f"{where} gives no reason. A deliberate {kind} is a decision — "
+                f"say what made it, or it is indistinguishable from an oversight.",
+                ref=where)
+        if kind == "GAP":
+            q = v.get("question")
+            if not q:
+                add(findings, FAIL if review else WARN, "scope", "gap-without-question",
+                    area_name,
+                    f"{where} names no question. A gap is tracked by an "
+                    f"open_questions[] entry: add `/// @question Q-NNN`.", ref=where)
+            elif q not in questions:
+                add(findings, FAIL, "scope", "gap-question-dangling", area_name,
+                    f"{where} cites {q}, which is not in open_questions[].", ref=where)
+            add(findings, FAIL if review else WARN, "scope", "open-gap", area_name,
+                f"{where}: an acknowledged hole in what the spec says"
+                + (f" ({q})" if q else "") + ". Resolve it before approval.",
+                ref=where)
+        if kind == "OUT-OF-SCOPE":
+            ref = v.get("scope_ref")
             if not ref:
                 add(findings, FAIL if review else WARN, "scope", "out-of-scope-unanchored",
                     area_name,
-                    f"{label} cell {where} is triaged OUT-OF-SCOPE but names no "
-                    f"scope_ref. Declare the boundary in scope.excluded[] and point at it.",
+                    f"{where} names no scope_ref. Declare the boundary in "
+                    f"scope.excluded[] and point at it with `/// @scope <item>`.",
                     ref=where)
             elif ref not in excluded:
                 add(findings, FAIL, "scope", "scope-ref-dangling", area_name,
-                    f"{label} cell {where} has scope_ref '{ref}', which is not in "
+                    f"{where} has scope_ref '{ref}', which is not in "
                     f"scope.excluded[] (declared: {', '.join(sorted(excluded)) or 'none'}).",
                     ref=where)
 
 
 def check_externals(area_data, area_name, findings):
     """Gaps B + E. An external system with declared outcomes creates one
-    obligation per outcome: some requirement says what happens, or triage says
-    why it cannot. Integration failure modes are where real-world semantics go
-    missing, so they get the same completeness treatment as state\u00d7event."""
+    obligation per outcome: some requirement says what happens (its @error),
+    or a verdict on the action that meets it does. Integration failure modes
+    are where real-world semantics go missing, so every one is answered."""
     externals = area_data.get("externals", []) or []
-    if not externals and not (area_data.get("outcome_triage") or []):
+    if not externals:
         for req in area_data.get("requirements", []) or []:
             if req.get("error_outcomes"):
                 add(findings, FAIL, "externals", "error-outcome-without-external",
@@ -1159,42 +1235,39 @@ def check_externals(area_data, area_name, findings):
                 continue
             covered.add((ext_name, outcome))
 
-    triaged = {}
-    for cell in area_data.get("outcome_triage", []) or []:
-        ext_name, outcome = cell.get("external"), cell.get("outcome")
-        if ext_name not in declared:
-            add(findings, FAIL, "externals", "triage-unknown-external", area_name,
-                f"outcome_triage references external '{ext_name}', which is not declared.",
-                ref=ext_name)
-            continue
-        if outcome not in declared[ext_name]:
-            add(findings, FAIL, "externals", "triage-unknown-outcome", area_name,
-                f"outcome_triage references '{ext_name}/{outcome}', which is not a declared "
-                f"outcome of that external.", ref=ext_name)
-            continue
-        triaged[(ext_name, outcome)] = cell.get("verdict")
+    answered = {}
+    for v in area_data.get("verdicts", []) or []:
+        for eo in v.get("error_outcomes") or []:
+            ext_name, outcome = eo.get("external"), eo.get("outcome")
+            if ext_name not in declared or outcome not in declared[ext_name]:
+                add(findings, FAIL, "externals", "verdict-unknown-outcome", area_name,
+                    f"{verdict_label(v)} answers '{ext_name}.{outcome}', which is "
+                    f"not a declared outcome of a declared external.",
+                    ref=verdict_label(v))
+                continue
+            answered[(ext_name, outcome)] = v.get("verdict")
 
-    # The completeness gate itself: every declared outcome is handled, triaged,
-    # or \u2014 while the area is still being authored \u2014 flagged as unfinished.
+    # Every declared outcome is answered — or, while the area is still
+    # being authored, flagged as unfinished.
     review = at_review(area_data)
     for ext_name, outcomes in declared.items():
         for outcome in outcomes:
             cell = (ext_name, outcome)
             if cell in covered:
                 continue
-            verdict = triaged.get(cell)
+            verdict = answered.get(cell)
             if verdict is None:
                 add(findings, FAIL if review else WARN, "externals", "outcome-unhandled",
                     area_name,
-                    f"{ext_name}/{outcome} is declared but no requirement handles it and "
-                    f"no outcome_triage entry explains why. What does the system do?",
+                    f"{ext_name}.{outcome} is declared but no requirement's @error "
+                    f"answers it, and no verdict does. What does the system do?",
                     ref=f"{ext_name}/{outcome}")
             elif verdict == "GAP":
                 add(findings, FAIL if review else WARN, "externals", "outcome-open-gap",
                     area_name,
-                    f"{ext_name}/{outcome} is triaged GAP \u2014 an acknowledged hole in the "
-                    f"failure behavior. Resolve it before approval.",
-                    ref=f"{ext_name}/{outcome}")
+                    f"{ext_name}.{outcome} is answered by a GAP verdict — an "
+                    f"acknowledged hole in the failure behavior. Resolve it before "
+                    f"approval.", ref=f"{ext_name}/{outcome}")
 
 
 def check_assumptions(area_data, all_areas, area_name, findings):
@@ -1629,7 +1702,7 @@ def check_extraction_coverage(area_data, area_name, findings):
     Distinct from the ledger check below, which only asks whether the rows
     that exist are coherent. A ledger can be perfectly coherent and cover a
     fraction of the code \u2014 which is how an area reaches full witnesses, full
-    invariants, zero untriaged matrix cells and zero lint failures with most
+    invariants, every action covered and zero lint failures with most
     of its implementation unaccounted for. Every other completeness number
     here measures the spec against itself; this is the only one that measures
     it against the code, so an absent one cannot read the same as a clean
@@ -2563,6 +2636,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_requirement_form(area_data, area_name, findings)
     check_fit_criteria(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
+    check_completeness(root, area_data, area_name, findings)
     decls = model_decls(root, area_data, area_name)
     check_shall_sanity(area_data, sidecar, sidecars, decls, area_name, findings)
     # The probe module, when the area has one: an invariant declared

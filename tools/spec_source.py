@@ -50,6 +50,12 @@ comment and are ignored.
                                                  is optional and makes it a
                                                  maps_to / @refs target;
                                                  From `*` = every screen)
+                     @verdict IMPOSSIBLE|NO-OP|GAP|OUT-OF-SCOPE
+                                                 (what an action does where no
+                                                 requirement says; on the
+                                                 action, no id)
+                     @internal <why>             (a `var` no requirement has
+                                                 to explain; on the var)
 
 Untagged lines right after the record tag are the record's DESCRIPTION
 (invariant statement, constant description, example title, a requirement's
@@ -100,6 +106,10 @@ tag's value. A blank `///` line ends a continuation.
         whose body ends in `.expect(<cond>)`, that condition IS the
         expectation, derived as expect = {"run.expect": "<cond>"})
   SCREEN  description = purpose  @auth-required  @components A, B
+  VERDICT description = the reason  @while <expr> (where on the action it
+        applies; absent = everywhere)  @question Q-ID (a GAP's open
+        question)  @scope <scope.excluded item> (an OUT-OF-SCOPE's anchor)
+        @error <External>.<OUTCOME> (an external outcome it answers)
   NAV     description = the trigger, in the user's words  @guard <text>
 
 Hosting — what the declaration under the block means for the record:
@@ -134,6 +144,16 @@ Hosting — what the declaration under the block means for the record:
                                    screen) only has to set it. Several edges may
                                    share an action.
   SCREEN / NAV on the `module`     a UI with no model yet (Tier 1).
+  VERDICT on `action <name>`       verdicts[].action = name, numbered per
+                                   action in source order. IMPOSSIBLE: no
+                                   step of it from @while happens. NO-OP:
+                                   every such step changes no var. Both are
+                                   checked (spec-probes). GAP and
+                                   OUT-OF-SCOPE are statements of intent:
+                                   they close the action's coverage there,
+                                   and a GAP blocks approval.
+  INTERNAL on `var <name>`         internal_vars[].var = name: the
+                                   explanation check skips it.
 
 Usage:
   tools/spec_source.py derive <area> [--root .]        # print the derived view
@@ -163,9 +183,14 @@ MODEL_KEYS = ("requirements", "invariants", "properties", "constraints",
 # that moves between two of them. They are keyed by name / position, not by
 # id, so they ride beside MODEL_KEYS rather than in it.
 UI_KEYS = ("screens", "navigation")
+# Completeness records on the model, also positional: a verdict says what an
+# action does where no requirement does (spec-probes compiles it into a
+# check), and an internal var is bookkeeping no requirement has to explain.
+ACTION_KEYS = ("verdicts", "internal_vars")
+POSITIONAL_KEYS = UI_KEYS + ACTION_KEYS
+VERDICTS = ("IMPOSSIBLE", "NO-OP", "GAP", "OUT-OF-SCOPE")
 RECORD_KEYS = ("check_results", "verification_log", "traceability",
-               "generated_from", "extracted_from", "extraction_triage",
-               "matrix_triage", "outcome_triage")
+               "generated_from", "extracted_from", "extraction_triage")
 # Everything else at the top level is intent.
 
 # Per-ID fields the tools write. Paths are dotted; `witness.outcomes[]`
@@ -188,7 +213,7 @@ MACHINE_PATHS = {
 
 ID_KIND = {"req": "requirements", "inv": "invariants", "prop": "properties",
            "con": "constraints", "example": "examples"}
-RECORD_TAGS = tuple(ID_KIND) + ("screen", "nav")
+RECORD_TAGS = tuple(ID_KIND) + ("screen", "nav", "verdict", "internal")
 
 # tag -> (dotted path, value kind). Kinds: text, flag, list, json.
 EXTRACTION_TAGS = {
@@ -253,9 +278,17 @@ TAGS = {
     "navigation": {
         "guard": ("guard", "text"),
     },
+    "verdicts": {
+        "while": ("while", "text"),
+        "question": ("question", "text"),
+        "scope": ("scope_ref", "text"),
+        # special: error
+    },
+    "internal_vars": {},
 }
 SPECIAL_TAGS = {"requirements": ("fit", "error", "error-note", "outcome", "old"),
-                "examples": ("when",)}
+                "examples": ("when",),
+                "verdicts": ("error",)}
 
 
 class SpecSourceError(Exception):
@@ -1156,6 +1189,17 @@ def _apply_tags(rec, kind, item, problems):
                                     f"'metric | target | measurement'")
                     continue
                 item["fit_criterion"] = dict(zip(("metric", "target", "measurement"), parts))
+            elif name == "error" and kind == "verdicts":
+                m = re.match(r"^([^.\s]+)\.([^\s:]+)\s*(?::\s*(.*))?$", value)
+                if not m:
+                    problems.append(f"{_where(rec)}: @verdict: @error takes "
+                                    f"'External.OUTCOME' (the outcome this "
+                                    f"verdict answers)")
+                    continue
+                eo = {"external": m.group(1), "outcome": m.group(2)}
+                if m.group(3):
+                    eo["effect"] = m.group(3).strip()
+                item.setdefault("error_outcomes", []).append(eo)
             elif name == "error":
                 m = ERROR_RE.match(value)
                 if not m:
@@ -1305,6 +1349,43 @@ def _derive_ui(rec, out, seen, problems):
     out["navigation"].append(item)
 
 
+def _derive_completeness(rec, out, counters, problems):
+    """One @verdict or @internal record -> a verdicts[] / internal_vars[]
+    entry, in source order. A verdict sits on the action it is about; it is
+    numbered per action (1, 2, ...) in source order, which is what its
+    generated check is named after (itf_tools.verdict_name)."""
+    host = rec["host"] or {}
+    desc = " ".join(rec["desc"]).strip()
+    if rec["tag"] == "internal":
+        reason = " ".join(x for x in (rec["id"], rec["extra"], desc) if x).strip()
+        if host.get("kind") != "var":
+            problems.append(f"{_where(rec)}: @internal sits on the `var` it marks "
+                            f"as bookkeeping, not on a {host.get('kind') or 'module'}")
+            return
+        if not reason:
+            problems.append(f"{_where(rec)}: @internal {host['name']}: say why no "
+                            f"requirement has to explain its changes")
+        out["internal_vars"].append({"var": host["name"], "reason": reason})
+        return
+    kind = rec["id"]
+    if kind not in VERDICTS or rec["extra"]:
+        problems.append(f"{_where(rec)}: @verdict takes one of "
+                        f"{', '.join(VERDICTS)}, got "
+                        f"{(kind + ' ' + rec['extra']).strip()!r}")
+        return
+    if host.get("kind") != "action":
+        problems.append(f"{_where(rec)}: @verdict {kind} sits on the action it is "
+                        f"about, not on a {host.get('kind') or 'module'}")
+        return
+    action = host["name"]
+    counters[action] = counters.get(action, 0) + 1
+    item = {"action": action, "index": counters[action], "verdict": kind}
+    if desc:
+        item["reason"] = desc
+    _apply_tags(dict(rec, id=f"@verdict on {action}"), "verdicts", item, problems)
+    out["verdicts"].append(item)
+
+
 def derive_records(model_text, model_name, als_text=None, als_name=None,
                    problems=None):
     """The model-owned part of the area view: requirements, invariants,
@@ -1318,11 +1399,14 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
         actions.add(m.group(1))
     decls = declarations(model_text) if model_text else {}
 
-    out = {k: [] for k in MODEL_KEYS + UI_KEYS}
-    by_id, origin, screens_seen = {}, {}, {}
+    out = {k: [] for k in MODEL_KEYS + POSITIONAL_KEYS}
+    by_id, origin, screens_seen, verdict_counts = {}, {}, {}, {}
     for rec in recs:
         if rec["tag"] in ("screen", "nav"):
             _derive_ui(rec, out, screens_seen, problems)
+            continue
+        if rec["tag"] in ("verdict", "internal"):
+            _derive_completeness(rec, out, verdict_counts, problems)
             continue
         kind = ID_KIND[rec["tag"]]
         rid = rec["id"]
@@ -1451,7 +1535,7 @@ def compose_area(intent, model_part, records):
         if k == "$schema":
             continue
         area[k] = copy.deepcopy(v)
-    for k in MODEL_KEYS + UI_KEYS:
+    for k in MODEL_KEYS + POSITIONAL_KEYS:
         if model_part.get(k):
             area[k] = copy.deepcopy(model_part[k])
     for k in RECORD_KEYS:
@@ -1752,7 +1836,7 @@ def source_schemas(area_schema):
         "properties": {},
     }
     for k, v in props.items():
-        if k in MODEL_KEYS or k in UI_KEYS or k in RECORD_KEYS:
+        if k in MODEL_KEYS or k in POSITIONAL_KEYS or k in RECORD_KEYS:
             continue
         v = copy.deepcopy(v)
         if k == "brief":

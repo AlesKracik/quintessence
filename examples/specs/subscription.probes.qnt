@@ -36,12 +36,17 @@ module subscription_probes {
   var _pre_REQ_008: bool
   var _old_REQ_003_billed: bool
   var _old_REQ_003_told: Notice
+  var _prevAccessUntilPeriodEnd: CustomerId -> bool
+  var _prevBillingEnabled: CustomerId -> bool
+  var _prevLastBillingResult: CustomerId -> BillingResult
+  var _prevNotice: CustomerId -> Notice
+  var _prevStatus: CustomerId -> SubStatus
 
   // -- What each requirement says, over its action's parameters --
   def pre_REQ_001(c: CustomerId, n: Notice): bool =
     status.get(c) == Active
   def post_REQ_001(c: CustomerId, n: Notice): bool =
-    status.get(c) == Cancelled and not(billingEnabled.get(c))
+    status.get(c) == Cancelled and not(billingEnabled.get(c)) and lastBillingResult.get(c) == Success
   def pre_REQ_002(c: CustomerId, n: Notice): bool =
     status.get(c) == Active
   def post_REQ_002(c: CustomerId, n: Notice): bool =
@@ -88,6 +93,11 @@ module subscription_probes {
     _pre_REQ_008' = false,
     _old_REQ_003_billed' = false,
     _old_REQ_003_told' = NoNotice,
+    _prevAccessUntilPeriodEnd' = Map(),
+    _prevBillingEnabled' = Map(),
+    _prevLastBillingResult' = Map(),
+    _prevNotice' = Map(),
+    _prevStatus' = Map(),
   }
 
   action stepP = {
@@ -109,6 +119,11 @@ module subscription_probes {
             _pre_REQ_008' = false,
             _old_REQ_003_billed' = _old_REQ_003_billed,
             _old_REQ_003_told' = _old_REQ_003_told,
+            _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
+            _prevBillingEnabled' = billingEnabled,
+            _prevLastBillingResult' = lastBillingResult,
+            _prevNotice' = notice,
+            _prevStatus' = status,
       },
       all { cancel_declined(c),
             _lastAction' = "cancel_declined",
@@ -124,6 +139,11 @@ module subscription_probes {
             _pre_REQ_008' = pre_REQ_008(c),
             _old_REQ_003_billed' = _old_REQ_003_billed,
             _old_REQ_003_told' = _old_REQ_003_told,
+            _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
+            _prevBillingEnabled' = billingEnabled,
+            _prevLastBillingResult' = lastBillingResult,
+            _prevNotice' = notice,
+            _prevStatus' = status,
       },
       all { cancel_unanswered(c, timedOut),
             _lastAction' = "cancel_unanswered",
@@ -139,6 +159,11 @@ module subscription_probes {
             _pre_REQ_008' = false,
             _old_REQ_003_billed' = _old_REQ_003_billed,
             _old_REQ_003_told' = _old_REQ_003_told,
+            _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
+            _prevBillingEnabled' = billingEnabled,
+            _prevLastBillingResult' = lastBillingResult,
+            _prevNotice' = notice,
+            _prevStatus' = status,
       },
       all { cancel_again(c),
             _lastAction' = "cancel_again",
@@ -154,6 +179,11 @@ module subscription_probes {
             _pre_REQ_008' = false,
             _old_REQ_003_billed' = old_REQ_003_billed(c),
             _old_REQ_003_told' = old_REQ_003_told(c),
+            _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
+            _prevBillingEnabled' = billingEnabled,
+            _prevLastBillingResult' = lastBillingResult,
+            _prevNotice' = notice,
+            _prevStatus' = status,
       },
       all { expire_period(c),
             _lastAction' = "expire_period",
@@ -169,6 +199,11 @@ module subscription_probes {
             _pre_REQ_008' = false,
             _old_REQ_003_billed' = _old_REQ_003_billed,
             _old_REQ_003_told' = _old_REQ_003_told,
+            _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
+            _prevBillingEnabled' = billingEnabled,
+            _prevLastBillingResult' = lastBillingResult,
+            _prevNotice' = notice,
+            _prevStatus' = status,
       },
       all { request_refund(c),
             _lastAction' = "request_refund",
@@ -184,6 +219,11 @@ module subscription_probes {
             _pre_REQ_008' = false,
             _old_REQ_003_billed' = _old_REQ_003_billed,
             _old_REQ_003_told' = _old_REQ_003_told,
+            _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
+            _prevBillingEnabled' = billingEnabled,
+            _prevLastBillingResult' = lastBillingResult,
+            _prevNotice' = notice,
+            _prevStatus' = status,
       },
     }
   }
@@ -228,6 +268,81 @@ module subscription_probes {
   val oblig_REQ_008: bool =
     not(_lastAction == "cancel_declined" and _pre_REQ_008)
       or post_REQ_008(_lastC)
+
+  // -- Completeness: every step is one a requirement speaks to --
+
+  /// Coverage of cancel_subscription: every step is under REQ-001, REQ-002, REQ-007
+  val cover_cancel_subscription: bool =
+    _lastAction != "cancel_subscription"
+      or _pre_REQ_001
+      or _pre_REQ_002
+      or _pre_REQ_007
+
+  /// Explanation of status on cancel_subscription: changed only where REQ-001, REQ-002 applied
+  val explain_cancel_subscription_status: bool =
+    not(_lastAction == "cancel_subscription" and status != _prevStatus)
+      or _pre_REQ_001
+      or _pre_REQ_002
+
+  /// Explanation of billingEnabled on cancel_subscription: changed only where REQ-001 applied
+  val explain_cancel_subscription_billingEnabled: bool =
+    not(_lastAction == "cancel_subscription" and billingEnabled != _prevBillingEnabled)
+      or _pre_REQ_001
+
+  /// Explanation of accessUntilPeriodEnd on cancel_subscription: changed only where REQ-002 applied
+  val explain_cancel_subscription_accessUntilPeriodEnd: bool =
+    not(_lastAction == "cancel_subscription" and accessUntilPeriodEnd != _prevAccessUntilPeriodEnd)
+      or _pre_REQ_002
+
+  /// Explanation of lastBillingResult on cancel_subscription: changed only where REQ-001 applied
+  val explain_cancel_subscription_lastBillingResult: bool =
+    not(_lastAction == "cancel_subscription" and lastBillingResult != _prevLastBillingResult)
+      or _pre_REQ_001
+
+  /// Explanation of notice on cancel_subscription: changed only where REQ-007 applied
+  val explain_cancel_subscription_notice: bool =
+    not(_lastAction == "cancel_subscription" and notice != _prevNotice)
+      or _pre_REQ_007
+
+  /// Coverage of cancel_declined: every step is under REQ-008
+  val cover_cancel_declined: bool =
+    _lastAction != "cancel_declined"
+      or _pre_REQ_008
+
+  /// Explanation of lastBillingResult on cancel_declined: changed only where REQ-008 applied
+  val explain_cancel_declined_lastBillingResult: bool =
+    not(_lastAction == "cancel_declined" and lastBillingResult != _prevLastBillingResult)
+      or _pre_REQ_008
+
+  /// Coverage of cancel_unanswered: every step is under REQ-004
+  val cover_cancel_unanswered: bool =
+    _lastAction != "cancel_unanswered"
+      or _pre_REQ_004
+
+  /// Explanation of lastBillingResult on cancel_unanswered: changed only where REQ-004 applied
+  val explain_cancel_unanswered_lastBillingResult: bool =
+    not(_lastAction == "cancel_unanswered" and lastBillingResult != _prevLastBillingResult)
+      or _pre_REQ_004
+
+  /// Coverage of cancel_again: every step is under REQ-003
+  val cover_cancel_again: bool =
+    _lastAction != "cancel_again"
+      or _pre_REQ_003
+
+  /// Coverage of expire_period: every step is under REQ-005
+  val cover_expire_period: bool =
+    _lastAction != "expire_period"
+      or _pre_REQ_005
+
+  /// Explanation of status on expire_period: changed only where REQ-005 applied
+  val explain_expire_period_status: bool =
+    not(_lastAction == "expire_period" and status != _prevStatus)
+      or _pre_REQ_005
+
+  /// Explanation of accessUntilPeriodEnd on expire_period: changed only where REQ-005 applied
+  val explain_expire_period_accessUntilPeriodEnd: bool =
+    not(_lastAction == "expire_period" and accessUntilPeriodEnd != _prevAccessUntilPeriodEnd)
+      or _pre_REQ_005
 
   // -- Witnesses: the step can happen -------------------------
 

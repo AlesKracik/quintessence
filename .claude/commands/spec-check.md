@@ -1,11 +1,11 @@
 # /spec-check — Apalache Model Checker + Witness Obligations + Reality-Gap Sweep
 
-Run Apalache on area's Quint sidecar, discharge every requirement (checked on every step of its action, and demonstrated reachable), then the state×event and external×outcome matrix passes. Adversarial red-team runs only with `--reality` — it's per-revision work, not per-run (you re-run check 5× while fixing a counterexample; don't regenerate 25 questions each time). Findings land in the area's ledger (`specs/<target>.records.json`); judgment you write (`@while` / `@shall`, invariants, triage) goes where it lives — the model's doc comments, the intent file, the triage ledgers. Cascade Apalache to every contract whose `spans` includes target area.
+Run Apalache on area's Quint sidecar, discharge every requirement (checked on every step of its action, and demonstrated reachable), then checks every action for coverage and explanation and every external outcome for a handler. Adversarial red-team runs only with `--reality` — it's per-revision work, not per-run (you re-run check 5× while fixing a counterexample; don't regenerate 25 questions each time). Findings land in the area's ledger (`specs/<target>.records.json`); judgment you write (`@while` / `@shall`, invariants, triage) goes where it lives — the model's doc comments, the intent file. Cascade Apalache to every contract whose `spans` includes target area.
 
 Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 1. **Invariants hold** — Apalache finds no counterexample.
 2. **Behaviors are reachable** — every REQ gets a machine-found, path-constrained *witness trace*. Action coverage falls out: a witnessed REQ proves its `quint_ref` fires; actions the model cannot reach — from `init`/`step` or from anything the area's records name — are spec-lint's `orphan-action` warning, not a checker run.
-3. **Coverage is total** — state×event matrix has no untriaged cells; red-team gaps surfaced.
+3. **Coverage is total** — every action step is under a requirement or verdict, every observable change is explained; red-team gaps surfaced.
 
 ## Usage
 ```
@@ -27,7 +27,7 @@ You are the **Checker**. The division of labor is strict — mechanism over trus
 
 - **`tools/spec-record.py check <target>`** runs `quint verify` for every invariant, property, and witness probe, parses outcomes, saves traces, and writes `check_results`, `formal_status`, and the `witness` verdicts (status/trace/checked_at/model_sha) into `specs/<target>.records.json` **mechanically** — through `spec_source.save_area`, which refuses to change anything authored. You never hand-edit those fields.
 - **Structural invariants route to Alloy instead**, when an invariant carries `proof: "structural"` and the area declares `formal_model.alloy_file` (see METHODOLOGY.md → "The Structural Backend: Alloy"). Same runner, same rule that you never write the verdict: it runs `alloy exec -c <alloy_command>` and reads the outcome from the run's `receipt.json`. A pass is `verified-in-scope` — bounded by the scope declared in the `.als`, not by `max_steps` — and renders as `✓ (scope: …)`, never a bare ✓. Off entirely unless an area opts in; if no `alloy_file` is declared, nothing about this command changes.
-- **You** do the judgment work it can't: formalize requirements still missing `@while` / `@shall`, regenerate the probes module, translate counterexamples into plain language (filling `counterexample.nl_explanation` — the one free-text field), triage the matrix, run the red-team.
+- **You** do the judgment work it can't: formalize requirements still missing `@while` / `@shall`, regenerate the probes module, translate counterexamples into plain language (filling `counterexample.nl_explanation` — the one free-text field), close completeness findings with requirements or verdicts, run the red-team.
 
 ### Step 1 — Resolve target and load context
 
@@ -167,64 +167,38 @@ For each counterexample found, translate the trace into natural language:
 
 Translate each counterexample with this level of clarity. Don't paste raw Apalache JSON; write for a human.
 
-### Step 4a — State × event matrix completeness
+### Step 4a — Per-action completeness
 
-Always runs (mechanical, fast). Apalache proves invariants hold in modeled transitions. It does NOT catch transitions that were never modeled. This pass finds those silent gaps. Coverage is transition-precise: only a declared `state_machines[]` transition for exactly (state, event) covers a cell — a requirement merely mentioning the event does not.
+Apalache proves what the requirements say. It does NOT catch what an action does where no requirement speaks. `spec-probes` generates two checks per action for that, and `spec-record check` (Step 2a) already ran them with the obligations:
 
-**Build matrix (mechanical).** Run:
+- `cover-<action>` — every step of the action is under some requirement's or verdict's `@while`. A counterexample is a state where the action fires and nobody said what should happen.
+- `explain-<action>-<var>` — every step that changes an observable var is under a requirement that reads it, or an open GAP / OUT-OF-SCOPE verdict. A counterexample is an unstated side effect.
+- `verdict-<action>-<n>` — an IMPOSSIBLE verdict's action never fires under its `@while`; a NO-OP verdict's action changes nothing observable there.
 
-```bash
-tools/spec-matrix.py <target> --record
-```
+Lint names what is missing: `coverage-gap`, `change-unexplained`, `verdict-contradicted`, `action-unspecified` (an action with no requirement and no verdict).
 
-(`--record` writes the coverage counts into the ledger's `check_results.matrix` — that's how readbacks surface completeness; the CSV itself is gitignored.)
+**Close each finding (LLM).** Read the trace, then decide which one holds:
+1. **The spec is silent and the behavior matters** — write the requirement (in conversation with the user when the answer is theirs), or put `/// @verdict GAP` on the action with `@while` narrowing it to the uncovered case and `@question Q-NNN`, and append that `Q-NNN` to `open_questions[]` with `source: "coverage"` (or `"explanation"` for an unexplained change).
+2. **It cannot happen** — `/// @verdict IMPOSSIBLE` with the `@while` it cannot happen under and the argument as its description. The checker then proves it.
+3. **It happens and deliberately changes nothing** — `/// @verdict NO-OP`, naming the deciding requirement in the description. Proven the same way.
+4. **Outside the boundary** — `/// @verdict OUT-OF-SCOPE` with `@scope <scope.excluded item>`.
+5. **The var is bookkeeping no requirement should talk about** (a clock, an index) — `/// @internal <why>` on its `var`.
 
-This enumerates (entity, state) × event cells. **Events are scoped per entity** — not a full cartesian. For each entity, scope = triggers in that entity's `state_machines[].transitions[]` plus verbs whose `requirements[]` description text mentions the entity name. This avoids trivial IMPOSSIBLE-by-construction noise like `expire_session` on Account.
+Then regenerate probes (`tools/spec-probes.py <target>`) and re-run `spec-record check`. Surface ambiguous cases to the user instead of guessing; a verdict is a claim about intent.
 
-The script writes into `specs/<target>/gen/` (gitignored — regenerable):
-- `specs/<target>/gen/matrix.csv` — columns `entity,state,event,covered_by,behavior`. Cells with no covering transition/REQ are marked `?`.
-- `specs/<target>/gen/matrix-orphans.txt` — events declared in `concepts.verbs[]` or the Quint sidecar but **not scoped to any entity** (no transition references them and no REQ description mentions any entity for them). These are candidates for missing entity↔event links.
-
-Stderr prints `entities=… state_rows=… events=… orphans=… cells=… covered=… triaged=… uncovered=…`. The script makes no judgement — enumeration only. **Triage decisions live in `matrix_triage[]` in `specs/<target>.records.json`** (committed — the CSV is gitignored scratch; a decision recorded only there would vanish on a fresh clone and break the CI gate). `tools/spec-matrix.py <target> --strict` exits 1 while any `?` remains — that's the CI completeness gate.
-
-**Triage `?` cells (LLM).** Read every CSV row where `covered_by == "?"`. Classify each into one of three buckets and append an entry to `matrix_triage[]` in `specs/<target>.records.json` (`{entity, state, event, verdict, reason}`), then re-run `spec-matrix --record` to refresh the CSV and stats:
-1. **Real gap** — behavior matters, spec is silent → `verdict: GAP`, `reason` = the unanswered question, `question: Q-NNN` AND append that `Q-NNN` to `open_questions[]` with `source: "matrix"`.
-2. **Impossible transition** — state/event combination cannot occur (e.g. event guarded by other state) → `verdict: IMPOSSIBLE`, `reason` = the impossibility argument.
-3. **Intentionally out of scope** — covered elsewhere or explicitly excluded → `verdict: OUT-OF-SCOPE`, `reason` = pointer (e.g. `see contract X` or `lifecycle action, not a transition`).
-
-**Triage orphans (LLM).** Read `specs/<target>/gen/matrix-orphans.txt`. For each orphan event, decide:
-- **Missing link** — event genuinely applies to some entity but neither a transition nor a REQ wires it → append `Q-NNN` with `source: "matrix-orphan"` asking which entity owns this event and what state transitions it should trigger.
-- **Cross-cutting** — event belongs to a contract / spans multiple areas → note as out-of-scope; leave for contract spec.
-- **Stale verb** — verb declared but never used → flag to user as candidate for removal from `concepts.verbs[]`.
-
-Don't generate a question for every blank — most uncovered cells in a large matrix are trivially impossible. Surface ambiguous cells to the user instead of guessing.
-
-Format gap question:
-```json
-{
-  "id": "Q-NNN",
-  "question": "State×event gap: when <entity>=<state> and <event> fires, spec is silent. Should this be <option-A> or <option-B>?",
-  "source": "matrix",
-  "status": "open"
-}
-```
+A guard can hide a gap: when an action refuses to fire in some state, no check sees that state. When a refused case matters ("what happens on a failed login to a locked account?"), it belongs in `open_questions[]`.
 
 ### Step 4a-ter — Code → spec coverage
 
 Run `tools/spec-extract-audit.py <target> --record` whenever the area has code (`traceability[]` entries, a triage ledger, or requirements carrying `extraction.evidence`). Skip it only for an area with no implementation yet, and say so rather than passing over it silently.
 
-Why it belongs in `/spec-check` and not only in extraction: every other completeness pass measures the spec against itself — the matrix against its own state machine, the outcome pass against its own `externals[]`, the witnesses against the model. This is the only one that measures the spec against the **implementation**, which makes it the only one that can find behavior the spec never mentions. Running it once during extraction leaves the number resting on whoever last remembered the flag; running it every check keeps it true.
+Why it belongs in `/spec-check` and not only in extraction: every other completeness pass measures the spec against itself — coverage against its own requirements and verdicts, the outcome pass against its own `externals[]`, the witnesses against the model. This is the only one that measures the spec against the **implementation**, which makes it the only one that can find behavior the spec never mentions. Running it once during extraction leaves the number resting on whoever last remembered the flag; running it every check keeps it true.
 
 Read a **rising** unclaimed count as drift: the code grew behavior the spec has not caught up with. Report the number either way — `spec-lint` FAILs `extraction-sites-unclaimed` from `in-review` on, and the ship verdict carries it (`⚠ NOT READY — … 270 of 341 code site(s) unaccounted`), so a silent pass here is not available to you.
 
 ### Step 4a-bis — External × outcome completeness
 
-Run `tools/spec-matrix.py <target> --outcomes --record` whenever the area declares `externals[]`. Every declared outcome must be handled by some requirement's `error_outcomes[]` or triaged in `outcome_triage[]`. Triage the uncovered cells with the same four verdicts as the state×event pass:
-
-- `IMPOSSIBLE` — the outcome cannot reach this area (say why).
-- `NO-OP` — it happens and deliberately changes nothing. Name the requirement that decided that; a NO-OP without a reason FAILs lint.
-- `OUT-OF-SCOPE` — cite the `scope.excluded[]` item covering it (`scope_ref`).
-- `GAP` — a real hole. File a `Q-NNN` and link it.
+Whenever the area declares `externals[]`, every declared outcome must be handled: by a requirement's `@error Ext.OUTCOME`, or by a `@verdict` on the action that calls the external carrying `@error Ext.OUTCOME` (IMPOSSIBLE: it cannot reach this area; NO-OP: it changes nothing, name the deciding requirement; OUT-OF-SCOPE: `@scope`; GAP: `@question Q-NNN`). Lint FAILs `outcome-unhandled` and, from approval, `outcome-open-gap`.
 
 An unhandled TIMEOUT is the single most common real-world semantic hole; this pass exists to make it impossible to ship one silently.
 
@@ -261,8 +235,7 @@ De-dupe against existing `open_questions[]` by semantic similarity before append
 
 `spec-record` already wrote `check_results`, `formal_status`, and the `witness` blocks. Two things remain yours:
 
-1. For each `result: "counterexample"` entry in `check_results.checks[]`, write `counterexample.nl_explanation` — the Step 4 translation, condensed to a paragraph. (The runner carries an existing explanation over when the result is unchanged; write it once per new counterexample.)
-2. If matrix triage filed `Q-NNN` gap questions, list their ids in `check_results.matrix.gaps`.
+For each `result: "counterexample"` entry in `check_results.checks[]`, write `counterexample.nl_explanation` — the Step 4 translation, condensed to a paragraph. (The runner carries an existing explanation over when the result is unchanged; write it once per new counterexample.)
 
 For each unresolved counterexample, append a new `Q-NNN` entry to `open_questions[]`:
 
@@ -298,7 +271,8 @@ Witness obligations:
   ✗ REQ-004 expiry reachable       NO WITNESS — expire_session unreachable from init. Guard impossible?
 
 Reality-gap results:
-  matrix:    2 entities, 5 state rows, 5 events (per-entity scoped) = 12 cells; 4 covered (transitions), 6 triaged, 2 GAP (→ Q-008, Q-009); 2 orphan events → specs/auth/gen/matrix-orphans.txt
+  coverage:  5 actions; 4 covered, 1 uncovered (unlock_account → GAP verdict, Q-008)
+  explained: 9 var changes; 8 explained, 1 unexplained (logout changes failedAttempts)
   red-team:  (not run — pass --reality after material spec changes)
 
 Counterexamples translated above. 12 new open questions (Q-007..Q-019).
@@ -317,6 +291,6 @@ git add specs/<target>.qnt specs/<target>.intent.json specs/<target>.records.jso
 git commit -m "spec(<target>): check — <summary>"
 ```
 
-(`specs/<target>/gen/` is gitignored — matrix, orphans, and red-team backlog are regenerable; omit probes/traces if `--no-witness` was passed)
+(`specs/<target>/gen/` is gitignored — the red-team backlog is regenerable; omit probes/traces if `--no-witness` was passed)
 
 Show the commit message; wait for confirmation.

@@ -205,7 +205,7 @@ def diff_states(old, new, out):
             })
             for st in added:
                 out["obligations"].append(
-                    f"{ent}.{st}: new state — every event needs a matrix verdict for it")
+                    f"{ent}.{st}: new state — every action that can reach it needs a requirement or verdict there")
         if oc != nc:
             out["boundary"].append({
                 "id": ent, "kind": "changed",
@@ -244,7 +244,7 @@ def diff_scope(old, new, out):
     for item in sorted(oe - ne):
         out["boundary"].append({
             "id": item, "kind": "removed", "was": f"excluded: {item}",
-            "note": "exclusion lifted — cells triaged OUT-OF-SCOPE against it are now unanchored",
+            "note": "exclusion lifted — OUT-OF-SCOPE verdicts citing it are now unanchored",
         })
 
 
@@ -263,7 +263,7 @@ def diff_externals(old, new, out):
                               "now": f"{ext} can now return {oc}",
                               "note": "a new way the outside world can behave"})
         out["obligations"].append(
-            f"{ext}/{oc}: needs an error_outcomes entry or a triage verdict")
+            f"{ext}/{oc}: needs a requirement's or a verdict's @error")
     for ext, oc in sorted(o - n):
         out["domain"].append({"id": f"{ext}/{oc}", "kind": "removed",
                               "was": f"{ext} could return {oc}",
@@ -340,25 +340,27 @@ def diff_evidence(old, new, out):
             })
 
 
-def diff_triage(old, new, out):
-    def cells(area, key, fields):
-        return {tuple(c.get(f) for f in fields): c.get("verdict")
-                for c in (area.get(key) or [])}
+def diff_verdicts(old, new, out):
+    """A verdict is keyed by (action, its @while): numbering shifts when one
+    is inserted above another, and the region it covers is what a reader
+    cares about. One that disappeared leaves its region to coverage again;
+    one whose kind changed (GAP -> NO-OP, say) is a decision."""
+    def keyed(area):
+        return {(v.get("action"), (v.get("while") or "").strip()): v.get("verdict")
+                for v in (area.get("verdicts") or [])}
 
-    for key, fields, label in (
-            ("matrix_triage", ("entity", "state", "event"), "state×event"),
-            ("outcome_triage", ("external", "outcome"), "external×outcome")):
-        o, n = cells(old, key, fields), cells(new, key, fields)
-        for cell in sorted(set(o) - set(n), key=str):
-            out["obligations"].append(
-                f"{label} {'/'.join(str(x) for x in cell)}: triage verdict '{o[cell]}' "
-                f"disappeared — the cell needs coverage or a new verdict")
-        for cell in sorted(set(o) & set(n), key=str):
-            if o[cell] != n[cell]:
-                out["boundary"].append({
-                    "id": "/".join(str(x) for x in cell), "kind": "changed",
-                    "was": o[cell], "now": n[cell], "note": f"{label} triage",
-                })
+    o, n = keyed(old), keyed(new)
+    for cell in sorted(set(o) - set(n), key=str):
+        where = cell[0] + (f" where {cell[1]}" if cell[1] else "")
+        out["obligations"].append(
+            f"{where}: verdict '{o[cell]}' disappeared — those steps need a "
+            f"requirement or a new verdict, or coverage fails")
+    for cell in sorted(set(o) & set(n), key=str):
+        if o[cell] != n[cell]:
+            out["boundary"].append({
+                "id": cell[0] + (f" [{cell[1]}]" if cell[1] else ""),
+                "kind": "changed", "was": o[cell], "now": n[cell],
+                "note": "verdict"})
 
 
 def diff_decisions(old, new, out, moved_ids):
@@ -415,7 +417,7 @@ def diff_area(old, new):
     diff_externals(old, new, out)
     diff_assumptions(old, new, out)
     diff_evidence(old, new, out)
-    diff_triage(old, new, out)
+    diff_verdicts(old, new, out)
     diff_examples(old, new, out)
     moved = {e["id"] for section in ("behavior", "domain", "evidence")
              for e in out[section] if e.get("id")}

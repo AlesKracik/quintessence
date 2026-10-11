@@ -49,7 +49,12 @@ module auth {
   var sessionOwner:      SessionId -> UserId          // REQ-001
   var accountStatus:     UserId -> AccountStatus      // REQ-003
   var failedAttempts:    UserId -> int                // REQ-003, CON-001
+  /// @internal An index of each user's Active sessions, kept in step with
+  ///   `sessions` so INV-001 can be stated per user. It says nothing
+  ///   `sessions` does not.
   var userActiveSession: UserId -> Set[SessionId]     // INV-001
+  /// @internal The model's clock, per session. REQ-004 reads it to decide
+  ///   when a session may expire; no requirement promises its value.
   var idleFor:           SessionId -> int             // REQ-004, CON-002
 
   // -- Helpers ------------------------------------------------------
@@ -93,7 +98,7 @@ module auth {
   /// @status specified
   /// @when a registered user submits valid credentials
   /// @shall isActive(sid) and sessionOwner.get(sid) == uid
-  ///   and activeSessionsOf(uid).contains(sid)
+  ///   and activeSessionsOf(uid).contains(sid) and attemptsOf(uid) == 0
   ///
   /// @req REQ-005
   /// While the account is Locked, if the user submits valid credentials,
@@ -164,6 +169,17 @@ module auth {
   /// @old before: int = attemptsOf(uid)
   /// @shall attemptsOf(uid) == before + 1
   ///   and (isLocked(uid) iff attemptsOf(uid) >= MAX_FAILED_ATTEMPTS)
+  ///
+  /// @req REQ-006
+  /// If a failed login locks the account, then the system shall end the
+  /// user's Active sessions.
+  /// @status specified
+  /// @unwanted
+  /// @when a failed login locks the account
+  /// @while not(isLocked(uid))
+  /// @shall isLocked(uid) implies sessions.keys().forall(s =>
+  ///   sessionOwner.get(s) != uid or not(isActive(s)))
+  /// @refs INV-002
   action login_failed(uid: UserId): bool = {
     val nextCount = attemptsOf(uid) + 1
     val locking = nextCount >= MAX_FAILED_ATTEMPTS
@@ -211,6 +227,10 @@ module auth {
   }
 
   // Admin recovery action (not in requirements yet; see Q-001).
+  /// @verdict GAP
+  /// An admin can unlock a Locked account, but no requirement says who may
+  /// or what the unlock resets.
+  /// @question Q-001
   action unlock_account(uid: UserId): bool = all {
     isLocked(uid),
     sessions'          = sessions,
@@ -224,6 +244,9 @@ module auth {
   // The model's clock: every Active session gets one tick older. Expiry
   // (REQ-004) reads that age, so the session timeout is a rule the model
   // enforces rather than a number in a sentence.
+  /// @verdict NO-OP
+  /// Time passing changes nothing a user can see: it only ages sessions,
+  /// and the clock is internal (REQ-004 reads it).
   action tick: bool = all {
     sessions.keys().exists(sid => isActive(sid)),
     sessions'          = sessions,

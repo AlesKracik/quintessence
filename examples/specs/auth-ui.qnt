@@ -105,7 +105,7 @@ module authUi {
   /// @status specified
   /// @when the user clicks 'Sign in'
   /// @while current == Home
-  /// @shall current == Login
+  /// @shall current == Login and form == Idle
   action click_sign_in: bool = all {
     current == Home,
     current'   = Login,
@@ -127,7 +127,8 @@ module authUi {
   /// @status specified
   /// @when the user submits valid credentials
   /// @while current == Login
-  /// @shall current == Dashboard and authenticated and mySession == s
+  /// @shall current == Dashboard and form == Idle and authenticated
+  ///   and mySession == s
   action submit_success(u: UserId, s: SessionId): bool = all {
     current == Login,
     auth::login(u, s),
@@ -140,6 +141,15 @@ module authUi {
   // fifth one locks the account.
   /// @nav Login -> Login
   /// submit invalid credentials (stays, shows error)
+  ///
+  /// @req UI-005
+  /// If the user submits invalid credentials, then the system shall stay
+  /// on Login and show the bad-credentials error.
+  /// @status specified
+  /// @unwanted
+  /// @when the user submits invalid credentials
+  /// @while current == Login
+  /// @shall current == Login and form == ErrorBadCreds
   action submit_invalid(u: UserId): bool = all {
     current == Login,
     auth::login_failed(u),
@@ -174,6 +184,14 @@ module authUi {
   /// @nav Dashboard -> Home
   /// click logout
   /// @guard auth::logout succeeds
+  ///
+  /// @req UI-006
+  /// While on Dashboard, when the user clicks logout, the system shall sign
+  /// the user out and return to Home.
+  /// @status specified
+  /// @when the user clicks logout
+  /// @while current == Dashboard
+  /// @shall current == Home and form == Idle and mySession == ""
   action click_logout: bool = all {
     current == Dashboard,
     auth::logout(mySession),
@@ -194,7 +212,7 @@ module authUi {
   /// @status specified
   /// @when the session expires
   /// @while current == Dashboard
-  /// @shall current == Login and not(authenticated)
+  /// @shall current == Login and form == Idle and not(authenticated)
   action session_expired: bool = all {
     current == Dashboard,
     auth::expire_session(mySession),
@@ -205,6 +223,14 @@ module authUi {
 
   /// @nav LockedNotice -> Home
   /// back to Home
+  ///
+  /// @req UI-007
+  /// While on LockedNotice, when the user goes back, the system shall show
+  /// Home with the form cleared.
+  /// @status specified
+  /// @when the user goes back to Home
+  /// @while current == LockedNotice
+  /// @shall current == Home and form == Idle
   action go_home: bool = all {
     current == LockedNotice,
     current'   = Home,
@@ -215,6 +241,9 @@ module authUi {
 
   // Time passes on whatever screen is showing: auth's clock ticks, and an
   // idle session gets older.
+  /// @verdict NO-OP
+  /// Time passing changes nothing on screen; auth's clock is auth's
+  /// business.
   action time_passes: bool = all {
     auth::tick,
     current'   = current,

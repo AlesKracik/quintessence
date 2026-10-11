@@ -55,6 +55,9 @@ module subscription {
   var billingEnabled: CustomerId -> bool
   var accessUntilPeriodEnd: CustomerId -> bool
   var lastBillingResult: CustomerId -> BillingResult
+  /// @internal The retry budget's counter. It exists so the model can hold
+  ///   ASM-001 (the provider answers within MAX_CANCEL_RETRIES tries); no
+  ///   customer sees it, so no requirement has to say how it moves.
   var unansweredTries: CustomerId -> int
   var notice: CustomerId -> Notice
 
@@ -85,6 +88,7 @@ module subscription {
   /// @when the customer cancels and the provider accepts
   /// @while status.get(c) == Active
   /// @shall status.get(c) == Cancelled and not(billingEnabled.get(c))
+  ///   and lastBillingResult.get(c) == Success
   /// @error BillingProvider.SUCCESS idempotent: Cancelled
   ///
   /// @req REQ-002

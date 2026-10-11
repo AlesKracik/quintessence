@@ -689,48 +689,332 @@
         "kind": "invariant",
         "quint_name": "guardedDashboard",
         "result": "error",
-        "duration_s": 13.4,
+        "duration_s": 11.0,
         "proof": "inductive",
-        "error": "> [1/2] Checking whether the inductive invariant 'guardedDashboard' holds in the initial state(s) defined by 'init'...\n> [2/2] Checking whether 'step' preserves the inductive invariant 'guardedDashboard'...\nerror: current is used before it is assigned. You need to have either `current == <expr>` or `current.in(<set>)` before doing anything else with `current` in your predicate."
+        "error": "Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=34101 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=\nOct 11, 2026 4:10:39 PM com.google.protobuf.GeneratedMessage warnPre22Gencode\nWARNING: Vulnerable protobuf generated type in use: io.grpc.reflection.v1alpha.ServerReflectionRequest\nAs of 2022/09/29 (release 21.7) makeExtensionsImmutable should not be called from protobuf gencode. If you are seeing this message, your gencode is vulnerable to a denial of service attack. You should regenerate your code using protobuf 25.6 or later. Use the latest version that meets your needs. However, if you understand the risks and wish to continue with vulnerable gencode, you can set the system property `-Dcom.google.protobuf.use_unsafe_pre22_gencode` on the command line to silence this warning. You also can set `-Dcom.google.protobuf.error_on_unsafe_pre22_gencode` to throw an error instead. See security vulnerability: https://github.com/protocolbuffers/protobuf/security/advisories/GHSA-h4h5-3hr4-j3g2\nerror: current is used before it is assigned. You need to have either `current == <expr>` or `current.in(<set>)` before doing anything else with `current` in your predicate."
       },
       {
         "id": "UI-001",
         "kind": "obligation",
         "quint_name": "oblig_UI_001",
         "result": "verified",
-        "duration_s": 13.7,
+        "duration_s": 15.5,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
       },
       {
         "id": "UI-002",
         "kind": "obligation",
         "quint_name": "oblig_UI_002",
         "result": "verified",
-        "duration_s": 15.0,
+        "duration_s": 15.5,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
       },
       {
         "id": "UI-003",
         "kind": "obligation",
         "quint_name": "oblig_UI_003",
         "result": "verified",
-        "duration_s": 12.8,
+        "duration_s": 15.5,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
       },
       {
         "id": "UI-004",
         "kind": "obligation",
         "quint_name": "oblig_UI_004",
         "result": "verified",
-        "duration_s": 13.0,
+        "duration_s": 15.5,
         "steps": 4,
-        "over": "probes"
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "UI-005",
+        "kind": "obligation",
+        "quint_name": "oblig_UI_005",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "UI-006",
+        "kind": "obligation",
+        "quint_name": "oblig_UI_006",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "UI-007",
+        "kind": "obligation",
+        "quint_name": "oblig_UI_007",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-click_sign_in",
+        "kind": "coverage",
+        "quint_name": "cover_click_sign_in",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-click_sign_in-current",
+        "kind": "explanation",
+        "quint_name": "explain_click_sign_in_current",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-click_sign_in-form",
+        "kind": "explanation",
+        "quint_name": "explain_click_sign_in_form",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-submit_success",
+        "kind": "coverage",
+        "quint_name": "cover_submit_success",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-submit_success-current",
+        "kind": "explanation",
+        "quint_name": "explain_submit_success_current",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-submit_success-form",
+        "kind": "explanation",
+        "quint_name": "explain_submit_success_form",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-submit_success-mySession",
+        "kind": "explanation",
+        "quint_name": "explain_submit_success_mySession",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-submit_invalid",
+        "kind": "coverage",
+        "quint_name": "cover_submit_invalid",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-submit_invalid-current",
+        "kind": "explanation",
+        "quint_name": "explain_submit_invalid_current",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-submit_invalid-form",
+        "kind": "explanation",
+        "quint_name": "explain_submit_invalid_form",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-submit_locked",
+        "kind": "coverage",
+        "quint_name": "cover_submit_locked",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-submit_locked-current",
+        "kind": "explanation",
+        "quint_name": "explain_submit_locked_current",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-submit_locked-form",
+        "kind": "explanation",
+        "quint_name": "explain_submit_locked_form",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-click_logout",
+        "kind": "coverage",
+        "quint_name": "cover_click_logout",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-click_logout-current",
+        "kind": "explanation",
+        "quint_name": "explain_click_logout_current",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-click_logout-form",
+        "kind": "explanation",
+        "quint_name": "explain_click_logout_form",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-click_logout-mySession",
+        "kind": "explanation",
+        "quint_name": "explain_click_logout_mySession",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-session_expired",
+        "kind": "coverage",
+        "quint_name": "cover_session_expired",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-session_expired-current",
+        "kind": "explanation",
+        "quint_name": "explain_session_expired_current",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-session_expired-form",
+        "kind": "explanation",
+        "quint_name": "explain_session_expired_form",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-session_expired-mySession",
+        "kind": "explanation",
+        "quint_name": "explain_session_expired_mySession",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "cover-go_home",
+        "kind": "coverage",
+        "quint_name": "cover_go_home",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-go_home-current",
+        "kind": "explanation",
+        "quint_name": "explain_go_home_current",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "explain-go_home-form",
+        "kind": "explanation",
+        "quint_name": "explain_go_home_form",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
+      },
+      {
+        "id": "verdict-time_passes-1",
+        "kind": "verdict",
+        "quint_name": "verdict_time_passes_1",
+        "result": "verified",
+        "duration_s": 15.5,
+        "steps": 4,
+        "over": "probes",
+        "batched": true
       }
     ],
-    "max_steps": 8,
+    "max_steps": 10,
     "simulation": {
       "ran_at": "2026-10-11T12:20:16+00:00",
       "max_samples": 10000,
@@ -747,7 +1031,7 @@
         "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
       }
     },
-    "ran_at": "2026-10-11T12:21:20+00:00"
+    "ran_at": "2026-10-11T16:17:24+00:00"
   },
   "verification_log": [],
   "traceability": [],
@@ -759,60 +1043,105 @@
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-001.itf.json",
-        "checked_at": "2026-10-11T11:55:04+00:00",
-        "steps": 2,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "checked_at": "2026-10-11T16:11:29+00:00",
+        "steps": 3,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:54:11+00:00",
+        "checked_at": "2026-10-11T16:11:16+00:00",
         "steps": 4,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       }
     },
     "UI-002": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-002.itf.json",
-        "checked_at": "2026-10-11T11:55:16+00:00",
-        "steps": 2,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "checked_at": "2026-10-11T16:11:42+00:00",
+        "steps": 3,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:54:26+00:00",
+        "checked_at": "2026-10-11T16:11:16+00:00",
         "steps": 4,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       }
     },
     "UI-003": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-003.itf.json",
-        "checked_at": "2026-10-11T12:21:00+00:00",
-        "steps": 8,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "checked_at": "2026-10-11T16:15:47+00:00",
+        "steps": 10,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:54:39+00:00",
+        "checked_at": "2026-10-11T16:11:16+00:00",
         "steps": 4,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       }
     },
     "UI-004": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-004.itf.json",
-        "checked_at": "2026-10-11T12:21:20+00:00",
-        "steps": 8,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "checked_at": "2026-10-11T16:16:14+00:00",
+        "steps": 10,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T11:54:52+00:00",
+        "checked_at": "2026-10-11T16:11:16+00:00",
         "steps": 4,
-        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+      }
+    },
+    "UI-005": {
+      "witness": {
+        "status": "witnessed",
+        "trace": "auth-ui/traces/UI-005.itf.json",
+        "checked_at": "2026-10-11T16:12:23+00:00",
+        "steps": 3,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T16:11:16+00:00",
+        "steps": 4,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+      }
+    },
+    "UI-006": {
+      "witness": {
+        "status": "witnessed",
+        "trace": "auth-ui/traces/UI-006.itf.json",
+        "checked_at": "2026-10-11T16:12:36+00:00",
+        "steps": 3,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T16:11:16+00:00",
+        "steps": 4,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+      }
+    },
+    "UI-007": {
+      "witness": {
+        "status": "witnessed",
+        "trace": "auth-ui/traces/UI-007.itf.json",
+        "checked_at": "2026-10-11T16:17:24+00:00",
+        "steps": 10,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T16:11:16+00:00",
+        "steps": 4,
+        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
       }
     }
   }

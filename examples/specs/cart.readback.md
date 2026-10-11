@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 4 of 4 requirement(s) not verified against code; 2 of 2 invariant(s) not holding; 5 open question(s).
 
-**Status:** structured  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 2  |  **Coverage:** 4 cells, 1 covered, 3 triaged, 0 untriaged  |  **Extraction:** 18/18 sites accounted  |  **Mutation:** not run  |  **Open questions:** 5  |  **Last verified:** never
+**Status:** structured  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 2  |  **Coverage:** no actions to check  |  **Extraction:** 18/18 sites accounted  |  **Mutation:** not run  |  **Open questions:** 5  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ nothing to witness (a forbidden step, whose proof is its obligation, or a computed value, checked by the unit test it names) · ∀ checked on every reachable step, ∀✗ a step that breaks it was found*
 
@@ -23,7 +23,7 @@ flowchart LR
     AREA --> X_PaymentGateway
 ```
 
-*Rounded nodes are outside systems this area depends on; each declared outcome is a cell the coverage matrix requires an answer for.*
+*Rounded nodes are outside systems this area depends on; each declared outcome needs an answer: a requirement's or a verdict's @error.*
 
 ## Scope
 
@@ -59,12 +59,11 @@ flowchart LR
 - **Requirement not formal yet** — REQ-002: When a shopper adds a new SKU, the system shall …. _(no formal @shall / @outcome yet — nothing to check)_
 - **Requirement not formal yet** — REQ-003: If a shopper adds an item, then the system shall …. _(no formal @shall / @outcome yet — nothing to check)_
 - **Requirement not formal yet** — REQ-004: If the payment gateway throws during checkout, then the system shall …. _(no formal @shall / @outcome yet — nothing to check)_
-- **Open coverage GAPs** — Q-005 (spec is silent on triaged-real cells).
 - **Open question** — Q-001: What should adding an item to a full cart do — throw as today, or return a result the UI can render? The code throws, which no requirement describes. _(source: extraction)_
 - **Open question** — Q-002: Retry after a thrown charge assumes the money did not move (ASM-001). Should checkout send an idempotency key before we rely on that? _(source: extraction)_
 - **Open question** — Q-003: Checkout of an empty cart THROWS while declined and unavailable RETURN ok:false. Is the inconsistency intentional? _(source: extraction)_
 - **Open question** — Q-004: clear() is implemented and unspecified. Is it product behavior, or a leftover from an admin tool? _(source: extraction)_
-- **Open question** — Q-005: State×event gap: checkout never reads the cart's status, so a CheckedOut cart is charged a second time. Should checkout refuse a CheckedOut cart (as add_item does), or is the second charge intended? _(source: matrix)_
+- **Open question** — Q-005: Coverage gap: checkout never reads the cart's status, so a CheckedOut cart is charged a second time. Should checkout refuse a CheckedOut cart (as add_item does), or is the second charge intended? _(source: coverage)_
 
 ## At a Glance
 
@@ -227,9 +226,10 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Dimension | | Obligations |
 |---|---|---|
 | Data model | ✓ | 1 entities, 1 stateful, 1 closed |
-| State space | ✓ | 1/4 cells covered, 3 triaged, 0 untriaged |
+| Coverage | — | no action needs a coverage check |
+| Explanation | — | no change needs an explanation check |
 | Operations | ! | 0/4 requirements with a discharged witness |
-| Failure behavior | ✓ | 3/3 external outcomes handled, 0 unspecified |
+| Failure behavior | ✓ | 3/3 external outcomes answered |
 | External systems | ✓ | 1 declared, 3 outcomes |
 | Assumptions | ✓ | 1 recorded, 0 open |
 | Temporal behavior | — | none declared |

@@ -130,8 +130,8 @@
     },
     {
       "id": "Q-005",
-      "question": "State×event gap: checkout never reads the cart's status, so a CheckedOut cart is charged a second time. Should checkout refuse a CheckedOut cart (as add_item does), or is the second charge intended?",
-      "source": "matrix",
+      "question": "Coverage gap: checkout never reads the cart's status, so a CheckedOut cart is charged a second time. Should checkout refuse a CheckedOut cart (as add_item does), or is the second charge intended?",
+      "source": "coverage",
       "status": "open"
     }
   ],

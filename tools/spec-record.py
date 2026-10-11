@@ -15,7 +15,8 @@ unverified step the framework is built to eliminate. With this tool the
 agent's job in /spec-check shrinks to judgment work only: drafting
 predicates, regenerating the probe module, translating counterexamples
 into natural language (the one free-text field this tool never touches:
-counterexample.nl_explanation), and triaging matrix gaps.
+counterexample.nl_explanation), and writing a verdict where an action
+runs uncovered.
 
 Subcommands:
   check  <area> [--root .] [--steps N] [--shallow-steps N] [--timeout S]
@@ -121,7 +122,7 @@ What `check` does, in order:
      reachable \u2014 exactly how a permission silently narrows into a
      requirement. The requirement counts as witnessed only when every
      declared outcome has its own trace.
-  3. Writes check_results (preserving the matrix block and carrying over
+  3. Writes check_results (carrying over
      nl_explanation for counterexamples whose result didn't change),
      formal_status per invariant/property, and each witness block.
      INCREMENTALLY: every verdict is merged into the ledger and saved the
@@ -210,6 +211,7 @@ from spec_source import (load_area, save_area as save_records,  # noqa: E402
 import spec_source  # noqa: E402
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
+from completeness import area_completeness  # noqa: E402
 
 
 def now_iso():
@@ -569,7 +571,7 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
 
 
 def run_verify_batch(quint, qnt_file, names, max_steps, timeout,
-                     no_server=False):
+                     no_server=False, init=None, step=None):
     """Check every name in `names` in ONE `quint verify`. Returns
     (result, detail, duration_s) for the BATCH — result ∈
     verified | not-verified | timeout | error — never a per-name verdict.
@@ -592,6 +594,8 @@ def run_verify_batch(quint, qnt_file, names, max_steps, timeout,
            + [f"--invariants={n}" for n in names]
            + [f"--max-steps={max_steps}"]
            + (["--server=false"] if no_server else [])
+           + ([f"--init={init}"] if init else [])
+           + ([f"--step={step}"] if step else [])
            + [str(qnt_file)])
     started = datetime.now(timezone.utc)
     try:
@@ -906,10 +910,16 @@ def cmd_check(args):
     batch_enabled = quint_cfg.get("batch_invariants", True)
     temporal_backend = quint_cfg.get("temporal_backend", "tlc")
 
+    # The completeness checks (coverage, explanation, verdicts), keyed by
+    # the probe val that states each one — completeness.py is the one
+    # source of what exists and what it is called.
+    _comp, comp_checks = (area_completeness(root, area)
+                          if qnt_file.exists() else ([], {}))
+
     only = None
     if args.only:
         only = {t.strip() for t in args.only.split(",") if t.strip()}
-        known = set()
+        known = {c["id"] for c in comp_checks.values()}
         for ln in ("invariants", "properties", "requirements"):
             known.update(i.get("id") for i in area.get(ln, []) or [] if i.get("id"))
         unknown = only - known
@@ -990,6 +1000,9 @@ def cmd_check(args):
                       for r in area.get("requirements") or []
                       if r.get("id") and selected(r) and owes_obligation(r)
                       and obligation_name(r["id"]) in probe_vals]
+        # And the completeness checks, which are transition properties too.
+        sim_trans += [name for name, c in comp_checks.items()
+                      if name in probe_vals and selected(c)]
         sim_probes = []
         for r in area.get("requirements") or []:
             if not (r.get("id") and selected(r)):
@@ -1108,12 +1121,16 @@ def cmd_check(args):
         cr = area.setdefault("check_results", {})
         new_by_id = {c["id"]: c for c in checks}
         merged = []
+        comp_ids = {c["id"] for c in comp_checks.values()}
         for prior in (cr.get("checks") or []):
             pid = prior.get("id")
+            if (prior.get("kind") in ("coverage", "explanation", "verdict")
+                    and pid not in comp_ids):
+                continue   # the action, var or verdict it checked is gone
             merged.append(new_by_id.pop(pid) if pid in new_by_id else prior)
         merged.extend(new_by_id[cid] for cid in [c["id"] for c in checks]
                       if cid in new_by_id)
-        cr["checks"] = merged  # matrix block (spec-matrix --record) is preserved
+        cr["checks"] = merged
         # The CONFIGURED ceiling. The depth each check actually reached is
         # checks[].steps — with a ladder one global number cannot describe it.
         cr["max_steps"] = max_steps
@@ -1159,6 +1176,8 @@ def cmd_check(args):
         }
         if over == "probes":
             entry["over"] = "probes"
+        if job.get("kind"):
+            entry["kind"] = job["kind"]
         if job.get("obligation"):
             entry["kind"] = "obligation"
             item["checked_at"] = now_iso()
@@ -1371,6 +1390,30 @@ def cmd_check(args):
                 "seq": len(ladder), "obligation": True,
             })
 
+    # ── 1c. Completeness: coverage, explanation, verdicts ────────────────
+    # Every step of every action is under some requirement or verdict; every
+    # observable change is one a requirement asked for; every IMPOSSIBLE /
+    # NO-OP verdict is true of the model. All three are invariants of the
+    # probe module, so they ride the ladder too. Their verdicts live in
+    # check_results.checks only: a gap belongs to the action, not to any
+    # one requirement.
+    if not args.no_witness:
+        for name, c in comp_checks.items():
+            if not selected(c):
+                continue
+            if not probes_file or name not in probe_vals:
+                print(f"{c['id']:<12} {'missing':<26} ('{name}' is not in the "
+                      f"probe module — regenerate it with tools/spec-probes.py)")
+                bad += 1
+                continue
+            cex_rel = f"{args.area}/traces/{c['id']}.cex.itf.json"
+            ladder.append({
+                "item": {}, "id": c["id"], "quint_name": name, "over": "probes",
+                "target": probes_file, "init": "initP", "step": "stepP",
+                "cex_rel": cex_rel, "cex_path": root / "specs" / cex_rel,
+                "seq": len(ladder), "kind": c["kind"],
+            })
+
     # ── 1-ladder. Two passes over the bounded invariants ─────────────────
     # Pass 1 is ordered by the only information the run already holds: an
     # invariant the simulator falsified WILL produce a counterexample and
@@ -1381,44 +1424,53 @@ def cmd_check(args):
                                j["seq"]))
 
     def batch_pass(jobs, steps):
-        """Try every model-module job in ONE batched run at `steps`. Returns
-        (clean_ids, duration); an empty set means every job takes the per-id
-        path, which is exactly the path it took before batching existed — so
-        this can never turn a red result green or mis-attribute one."""
-        if not (batch_enabled and qnt_file.exists()):
-            return set(), 0.0
-        # Model-module invariants only. A probe-module invariant runs against
-        # a different file with a different init/step, so it cannot share a
-        # batch — and quietly batching it would check it against the wrong
-        # module.
-        batchable = [j for j in jobs if j["over"] == "model"]
-        if len(batchable) < 2:
-            return set(), 0.0
-        quint = need_quint()
-        if not quint_supports(quint, "verify", "--invariants"):
-            return set(), 0.0
-        res, _, dur = run_verify_batch(
-            quint, qnt_file, [j["quint_name"] for j in batchable], steps,
-            timeout, no_server=server_off())
-        if res == "timeout":
-            server_state["dirty"] = True
-        if res == "verified":
-            label = f"verified (≤{steps} steps)"
-            print(f"{'batch':<12} {label:<26} ({dur:.1f}s, "
-                  f"{len(batchable)} invariants in one run)")
-            return {j["id"] for j in batchable}, dur
-        print(f"{'batch':<12} {res + ' — per-id below':<26} ({dur:.1f}s)")
-        return set(), dur
+        """Try the jobs in ONE batched run per module at `steps`. Returns
+        ({clean id: its batch's duration}, total duration); a job not in the
+        map takes the per-id path, which is exactly the path it took before
+        batching existed — so this can never turn a red result green or
+        mis-attribute one."""
+        if not batch_enabled:
+            return {}, 0.0
+        # One batch per module: a probe-module check runs against a
+        # different file with a different init/step, so it cannot share a
+        # run with the model's invariants — batched with them it would be
+        # checked against the wrong module.
+        groups = {}
+        for j in jobs:
+            groups.setdefault((str(j["target"]), j["init"], j["step"]), []).append(j)
+        clean, total = {}, 0.0
+        for (target, init, step), batchable in groups.items():
+            if len(batchable) < 2 or not Path(target).exists():
+                continue
+            quint = need_quint()
+            if not quint_supports(quint, "verify", "--invariants"):
+                return {}, 0.0
+            res, _, dur = run_verify_batch(
+                quint, target, [j["quint_name"] for j in batchable], steps,
+                timeout, no_server=server_off(), init=init, step=step)
+            total += dur
+            if res == "timeout":
+                server_state["dirty"] = True
+            where = "probes" if init else "model"
+            if res == "verified":
+                label = f"verified (≤{steps} steps)"
+                print(f"{'batch':<12} {label:<26} ({dur:.1f}s, "
+                      f"{len(batchable)} {where} checks in one run)")
+                clean.update({j["id"]: dur for j in batchable})
+            else:
+                print(f"{'batch':<12} {res + ' — per-id below':<26} "
+                      f"({dur:.1f}s, {where})")
+        return clean, total
 
     # Pass 1 (shallow). Never budget-gated: it is the cheap half AND the half
     # that carries the findings, so every selected check gets at least a
     # shallow verdict even when the budget is already spent.
     deep_queue = []
     if ladder:
-        clean_ids, batch_dur = batch_pass(ladder, shallow_steps)
+        clean_ids, _total = batch_pass(ladder, shallow_steps)
         for job in ladder:
             if job["id"] in clean_ids:
-                job["shallow"] = ("verified", "", batch_dur, True)
+                job["shallow"] = ("verified", "", clean_ids[job["id"]], True)
             else:
                 r, d, dur = bounded_verify(job, shallow_steps)
                 job["shallow"] = (r, d, dur, False)
@@ -1449,12 +1501,12 @@ def cmd_check(args):
                 record_bounded(job, r, d, dur, shallow_steps, batched=wb,
                                note=budget_note())
         else:
-            clean_ids, batch_dur = batch_pass(deep_queue, max_steps)
+            clean_ids, _total = batch_pass(deep_queue, max_steps)
             stopped = 0
             for job in deep_queue:
                 sr, sd, sdur, swb = job["shallow"]
                 if job["id"] in clean_ids:
-                    record_bounded(job, "verified", "", batch_dur, max_steps,
+                    record_bounded(job, "verified", "", clean_ids[job["id"]], max_steps,
                                    batched=True)
                     continue
                 if budget_left() <= 0:

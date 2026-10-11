@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 8 of 8 requirement(s) not verified against code; 1 of 4 invariant(s) not holding; 1 open question(s).
 
-**Status:** formalized  |  **Requirements:** 0/8 verified, 7/8 witnessed  |  **Invariants:** 0 proven + 3 bounded (≤4) / 4  |  **Coverage:** 18 cells, 2 covered, 16 triaged, 0 untriaged  |  **Extraction:** n/a (no code)  |  **Mutation:** 68% pinned by examples, 6 question(s) open  |  **Open questions:** 1  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/8 verified, 7/8 witnessed  |  **Invariants:** 0 proven + 3 bounded (≤4) / 4  |  **Coverage:** 5/5 actions covered, 9/9 changes explained  |  **Extraction:** n/a (no code)  |  **Mutation:** 68% pinned by examples, 6 question(s) open  |  **Open questions:** 1  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ nothing to witness (a forbidden step, whose proof is its obligation, or a computed value, checked by the unit test it names) · ∀ checked on every reachable step, ∀✗ a step that breaks it was found*
 
@@ -23,7 +23,7 @@ flowchart LR
     AREA --> X_BillingProvider
 ```
 
-*Rounded nodes are outside systems this area depends on; each declared outcome is a cell the coverage matrix requires an answer for.*
+*Rounded nodes are outside systems this area depends on; each declared outcome needs an answer: a requirement's or a verdict's @error.*
 
 ## Scope
 
@@ -38,8 +38,8 @@ flowchart LR
 
 ## ⚠ Needs Your Attention
 
-- **Check error** — INV-001 (`noBillingAfterCancel`): Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=43025 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
-Oct 11, 2026 11:43:33 AM com.google.protobuf.GeneratedMessage warnPre22Gencode
+- **Check error** — INV-001 (`noBillingAfterCancel`): Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=34101 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+Oct 11, 2026 4:05:22 PM com.google.protobuf.GeneratedMessage warnPre22Gencode
 WARNING: Vulnerable protobuf generated type in use: io.grpc.reflection.v1alpha.ServerReflectionRequest
 As of 2022/09/29 (release 21.7) makeExtensionsImmutable should not be called from protobuf gencode. If you are seeing this message, your gencode is vulnerable to a denial of service attack. You should regenerate your code using protobuf 25.6 or later. Use the latest version that meets your needs. However, if you understand the risks and wish to continue with vulnerable gencode, you can set the system property `-Dcom.google.protobuf.use_unsafe_pre22_gencode` on the command line to silence this warning. You also can set `-Dcom.google.protobuf.error_on_unsafe_pre22_gencode` to throw an error instead. See security vulnerability: https://github.com/protocolbuffers/protobuf/security/advisories/GHSA-h4h5-3hr4-j3g2
 error: status is used before it is assigned. You need to have either `status == <expr>` or `status.in(<set>)` before doing anything else with `status` in your predicate.
@@ -186,7 +186,7 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 
 **As specified (EARS):** While `status.get(c) == Active`, if the billing provider does not answer the cancellation, then the system shall make `(lastBillingResult.get(c) == Timeout or lastBillingResult.get(c) == NetworkError) and status.get(c) == Active and billingEnabled.get(c)` hold.
 
-`specs/subscription.qnt:L166-L175` · model `e681597c8377`
+`specs/subscription.qnt:L170-L179` · model `95405445fb61`
 
 ```quint
   action cancel_unanswered(c: CustomerId, timedOut: bool): bool = all {
@@ -205,7 +205,7 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 - **while** `status.get(c) == Active`
 - **shall** `(lastBillingResult.get(c) == Timeout or lastBillingResult.get(c) == NetworkError) and status.get(c) == Active and billingEnabled.get(c)`
 
-**Record:** `specs/subscription.qnt:151` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:155` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -235,15 +235,15 @@ sequenceDiagram
 
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
-> **Witness:** 2 steps: cancel_subscription(false, alice, InApp({tag: "UNIT"})) → billingEnabled = {"alice": false, "bob": true}; notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}; status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}
+> **Witness:** 2 steps: cancel_subscription(false, alice, InApp({tag: "UNIT"})) → status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}; billingEnabled = {"alice": false, "bob": true}; notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}
 
 > **∀ Every step:** checked on every reachable step (≤4 steps).
 
 <details><summary>EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
 
-**As specified (EARS):** While `status.get(c) == Active`, when the customer cancels and the provider accepts, the system shall make `status.get(c) == Cancelled and not(billingEnabled.get(c))` hold.
+**As specified (EARS):** While `status.get(c) == Active`, when the customer cancels and the provider accepts, the system shall make `status.get(c) == Cancelled and not(billingEnabled.get(c)) and lastBillingResult.get(c) == Success` hold.
 
-`specs/subscription.qnt:L110-L119` · model `e681597c8377`
+`specs/subscription.qnt:L114-L123` · model `95405445fb61`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -260,9 +260,9 @@ sequenceDiagram
 
 **Formal claim** (pre-state for while/old, post-state for shall):
 - **while** `status.get(c) == Active`
-- **shall** `status.get(c) == Cancelled and not(billingEnabled.get(c))`
+- **shall** `status.get(c) == Cancelled and not(billingEnabled.get(c)) and lastBillingResult.get(c) == Success`
 
-**Record:** `specs/subscription.qnt:79` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:82` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -270,10 +270,10 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: cancel_subscription
-    Note over S: billingEnabled = {"alice": false, "bob": true}
-    Note over S: notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({t…
     Note over S: status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active(…
     Note over S: accessUntilPeriodEnd = {"alice": true, "bob": false}
+    Note over S: billingEnabled = {"alice": false, "bob": true}
+    Note over S: notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({t…
 ```
 
 </details>
@@ -294,7 +294,7 @@ sequenceDiagram
 
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
-> **Witness:** 2 steps: cancel_subscription(false, alice, InApp({tag: "UNIT"})) → billingEnabled = {"alice": false, "bob": true}; notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}; status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}
+> **Witness:** 2 steps: cancel_subscription(false, alice, InApp({tag: "UNIT"})) → status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}; billingEnabled = {"alice": false, "bob": true}; notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}
 
 > **∀ Every step:** checked on every reachable step (≤4 steps).
 
@@ -302,7 +302,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Active`, when the customer cancels and the provider accepts, the system shall make `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c)` hold.
 
-`specs/subscription.qnt:L110-L119` · model `e681597c8377`
+`specs/subscription.qnt:L114-L123` · model `95405445fb61`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -321,7 +321,7 @@ sequenceDiagram
 - **while** `status.get(c) == Active`
 - **shall** `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c)`
 
-**Record:** `specs/subscription.qnt:90` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:94` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -329,10 +329,10 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: cancel_subscription
-    Note over S: billingEnabled = {"alice": false, "bob": true}
-    Note over S: notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({t…
     Note over S: status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active(…
     Note over S: accessUntilPeriodEnd = {"alice": true, "bob": false}
+    Note over S: billingEnabled = {"alice": false, "bob": true}
+    Note over S: notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({t…
 ```
 
 </details>
@@ -349,7 +349,7 @@ sequenceDiagram
 
 > **Left open** · [909c2265](#909c2265) cancel_again(alice) — the model decides, no example does
 
-> **Witness:** 3 steps: cancel_subscription(false, bob, Email({tag: "UNIT"})) → cancel_again(false, bob, Email({tag: "UNIT"}))
+> **Witness:** 3 steps: cancel_subscription(false, alice, Email({tag: "UNIT"})) → cancel_again(false, alice, Email({tag: "UNIT"}))
 
 > **∀ Every step:** checked on every reachable step (≤4 steps).
 
@@ -357,7 +357,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Cancelled`, when the customer cancels again, the system shall make `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c) and billingEnabled.get(c) == billed and notice.get(c) == told` hold.
 
-`specs/subscription.qnt:L191-L199` · model `e681597c8377`
+`specs/subscription.qnt:L195-L203` · model `95405445fb61`
 
 ```quint
   action cancel_again(c: CustomerId): bool = all {
@@ -377,7 +377,7 @@ sequenceDiagram
 - **while** `status.get(c) == Cancelled`
 - **shall** `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c) and billingEnabled.get(c) == billed and notice.get(c) == told`
 
-**Record:** `specs/subscription.qnt:179` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:183` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -385,10 +385,10 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: cancel_subscription
-    Note over S: billingEnabled = {"alice": true, "bob": false}
-    Note over S: notice = {"alice": NoNotice({tag: "UNIT"}), "bob": Email({t…
-    Note over S: status = {"alice": Active({tag: "UNIT"}), "bob": Cancelled(…
-    Note over S: accessUntilPeriodEnd = {"alice": false, "bob": true}
+    Note over S: status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active(…
+    Note over S: accessUntilPeriodEnd = {"alice": true, "bob": false}
+    Note over S: billingEnabled = {"alice": false, "bob": true}
+    Note over S: notice = {"alice": Email({tag: "UNIT"}), "bob": NoNotice({t…
     E->>S: cancel_again
 ```
 
@@ -406,7 +406,7 @@ sequenceDiagram
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤4 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ (≤4 steps) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤4 steps)
 
-> **Witness:** 3 steps: cancel_subscription(false, bob, Email({tag: "UNIT"})) → expire_period(false, bob, Email({tag: "UNIT"})) → status = {"alice": Active({tag: "UNIT"}), "bob": Expired({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": false, "bob": false}
+> **Witness:** 3 steps: cancel_subscription(false, alice, Email({tag: "UNIT"})) → expire_period(false, alice, Email({tag: "UNIT"})) → status = {"alice": Expired({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": false, "bob": false}
 
 > **∀ Every step:** checked on every reachable step (≤4 steps).
 
@@ -414,7 +414,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Cancelled`, when the paid period ends, the system shall make `status.get(c) == Expired and not(accessUntilPeriodEnd.get(c))` hold.
 
-`specs/subscription.qnt:L210-L218` · model `e681597c8377`
+`specs/subscription.qnt:L214-L222` · model `95405445fb61`
 
 ```quint
   action expire_period(c: CustomerId): bool = all {
@@ -432,7 +432,7 @@ sequenceDiagram
 - **while** `status.get(c) == Cancelled`
 - **shall** `status.get(c) == Expired and not(accessUntilPeriodEnd.get(c))`
 
-**Record:** `specs/subscription.qnt:202` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:206` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -440,12 +440,12 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: cancel_subscription
-    Note over S: billingEnabled = {"alice": true, "bob": false}
-    Note over S: notice = {"alice": NoNotice({tag: "UNIT"}), "bob": Email({t…
-    Note over S: status = {"alice": Active({tag: "UNIT"}), "bob": Cancelled(…
-    Note over S: accessUntilPeriodEnd = {"alice": false, "bob": true}
+    Note over S: status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active(…
+    Note over S: accessUntilPeriodEnd = {"alice": true, "bob": false}
+    Note over S: billingEnabled = {"alice": false, "bob": true}
+    Note over S: notice = {"alice": Email({tag: "UNIT"}), "bob": NoNotice({t…
     E->>S: expire_period
-    Note over S: status = {"alice": Active({tag: "UNIT"}), "bob": Expired({t…
+    Note over S: status = {"alice": Expired({tag: "UNIT"}), "bob": Active({t…
     Note over S: accessUntilPeriodEnd = {"alice": false, "bob": false}
 ```
 
@@ -471,7 +471,7 @@ sequenceDiagram
 
 **As specified (EARS):** If the customer asks for a refund, then the system shall never let it happen.
 
-`specs/subscription.qnt:L231-L239` · model `e681597c8377`
+`specs/subscription.qnt:L235-L243` · model `95405445fb61`
 
 ```quint
   action request_refund(c: CustomerId): bool = all {
@@ -485,7 +485,7 @@ sequenceDiagram
   }
 ```
 
-**Record:** `specs/subscription.qnt:224` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:228` — the doc comment this requirement is read from.
 
 </details>
 
@@ -494,8 +494,8 @@ sequenceDiagram
 ◐ ∀ When a cancellation succeeds, the system shall confirm it to the customer by email or by an in-app notice.
 
 > **Permitted, not required** — the system MAY do any of the following, and the choice is not this spec's to make. Each needs its own witness, found with the other outcomes false, or the permission has quietly become a rule:
->   - ◐ **email**: `notice.get(c) == Email` — 2 steps: cancel_subscription(false, alice, Email({tag: "UNIT"})) → billingEnabled = {"alice": false, "bob": true}; notice = {"alice": Email({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}; status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}
->   - ◐ **in-app**: `notice.get(c) == InApp` — 2 steps: cancel_subscription(false, alice, InApp({tag: "UNIT"})) → billingEnabled = {"alice": false, "bob": true}; notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}; status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}
+>   - ◐ **email**: `notice.get(c) == Email` — 2 steps: cancel_subscription(false, alice, Email({tag: "UNIT"})) → status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}; billingEnabled = {"alice": false, "bob": true}; notice = {"alice": Email({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}
+>   - ◐ **in-app**: `notice.get(c) == InApp` — 2 steps: cancel_subscription(false, alice, InApp({tag: "UNIT"})) → status = {"alice": Cancelled({tag: "UNIT"}), "bob": Active({tag: "UNIT"})}; accessUntilPeriodEnd = {"alice": true, "bob": false}; billingEnabled = {"alice": false, "bob": true}; notice = {"alice": InApp({tag: "UNIT"}), "bob": NoNotice({tag: "UNIT"})}
 
 | Example | Given | When | Then |
 |---|---|---|---|
@@ -512,7 +512,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `notice.get(c) == NoNotice`, when the customer cancels and the provider accepts, the system shall end in one of: `notice.get(c) == Email`; `notice.get(c) == InApp`.
 
-`specs/subscription.qnt:L110-L119` · model `e681597c8377`
+`specs/subscription.qnt:L114-L123` · model `95405445fb61`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -532,7 +532,7 @@ sequenceDiagram
 - **outcome email** `notice.get(c) == Email`
 - **outcome in-app** `notice.get(c) == InApp`
 
-**Record:** `specs/subscription.qnt:100` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:104` — the doc comment this requirement is read from.
 
 </details>
 
@@ -557,7 +557,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Active`, if the billing provider declines the cancellation, then the system shall make `lastBillingResult.get(c) == Declined and status.get(c) == Active and billingEnabled.get(c)` hold.
 
-`specs/subscription.qnt:L136-L144` · model `e681597c8377`
+`specs/subscription.qnt:L140-L148` · model `95405445fb61`
 
 ```quint
   action cancel_declined(c: CustomerId): bool = all {
@@ -575,7 +575,7 @@ sequenceDiagram
 - **while** `status.get(c) == Active`
 - **shall** `lastBillingResult.get(c) == Declined and status.get(c) == Active and billingEnabled.get(c)`
 
-**Record:** `specs/subscription.qnt:123` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:127` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -587,6 +587,64 @@ sequenceDiagram
 ```
 
 </details>
+
+## What Each Action Does
+
+_One table per step the model can take. Each row is a requirement or verdict on it, with the condition it applies under; each column is a variable the step can change, and the cell is what the row says about it. A step no row covers is a gap; a change no row names is behavior nobody asked for. /spec-check proves both (coverage, explanation)._
+
+### `cancel_subscription`
+
+| Row | Applies when | `status` | `billingEnabled` | `accessUntilPeriodEnd` | `lastBillingResult` | `notice` |
+|---|---|---|---|---|---|---|
+| REQ-001 | `status.get(c) == Active` | `status.get(c) == Cancelled` | `not(billingEnabled.get(c))` |  | `lastBillingResult.get(c) == Success` |  |
+| REQ-002 | `status.get(c) == Active` | `status.get(c) == Cancelled` |  | `accessUntilPeriodEnd.get(c)` |  |  |
+| REQ-007 | `notice.get(c) == NoNotice` |  |  |  |  | `notice.get(c) == Email` _or_ `notice.get(c) == InApp` |
+
+_✓ coverage (≤4) · ✓ `status` explained (≤4) · ✓ `billingEnabled` explained (≤4) · ✓ `accessUntilPeriodEnd` explained (≤4) · ✓ `lastBillingResult` explained (≤4) · ✓ `notice` explained (≤4)_
+
+### `cancel_declined`
+
+| Row | Applies when | `lastBillingResult` |
+|---|---|---|
+| REQ-008 | `status.get(c) == Active` | `lastBillingResult.get(c) == Declined` |
+
+_✓ coverage (≤4) · ✓ `lastBillingResult` explained (≤4)_
+
+### `cancel_unanswered`
+
+| Row | Applies when | `lastBillingResult` |
+|---|---|---|
+| REQ-004 | `status.get(c) == Active` | `(lastBillingResult.get(c) == Timeout or lastBillingResult.get(c) == NetworkError)` |
+
+_✓ coverage (≤4) · ✓ `lastBillingResult` explained (≤4)_
+
+### `cancel_again`
+
+| Row | Applies when |
+|---|---|
+| REQ-003 | `status.get(c) == Cancelled` |  |
+
+_✓ coverage (≤4)_
+
+### `expire_period`
+
+| Row | Applies when | `status` | `accessUntilPeriodEnd` |
+|---|---|---|---|
+| REQ-005 | `status.get(c) == Cancelled` | `status.get(c) == Expired` | `not(accessUntilPeriodEnd.get(c))` |
+
+_✓ coverage (≤4) · ✓ `status` explained (≤4) · ✓ `accessUntilPeriodEnd` explained (≤4)_
+
+### `request_refund`
+
+| Row | Applies when |
+|---|---|
+| REQ-006 | always |  |
+
+_✓ coverage: REQ-006 applies to every step_
+
+**Bookkeeping, not behavior** (`@internal`, not explained):
+
+- `unansweredTries` — The retry budget's counter. It exists so the model can hold ASM-001 (the provider answers within MAX_CANCEL_RETRIES tries); no customer sees it, so no requirement has to say how it moves.
 
 ## What Must Always Be True
 
@@ -654,9 +712,10 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Dimension | | Obligations |
 |---|---|---|
 | Data model | ✓ | 1 entities, 1 stateful, 1 closed |
-| State space | ✓ | 2/18 cells covered, 16 triaged, 0 untriaged |
+| Coverage | ✓ | 5/5 action(s) proven covered |
+| Explanation | ✓ | 9/9 change(s) proven explained by a requirement |
 | Operations | ✓ | 8/8 requirements with a discharged witness |
-| Failure behavior | ✓ | 4/4 external outcomes handled, 0 unspecified |
+| Failure behavior | ✓ | 4/4 external outcomes answered |
 | External systems | ✓ | 1 declared, 4 outcomes |
 | Assumptions | ✓ | 2 recorded, 0 open |
 | Temporal behavior | — | none declared |

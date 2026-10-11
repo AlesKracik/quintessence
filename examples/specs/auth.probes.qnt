@@ -30,11 +30,15 @@ module auth_probes {
   var _pre_REQ_003: bool
   var _pre_REQ_004: bool
   var _pre_REQ_005: bool
+  var _pre_REQ_006: bool
   var _old_REQ_003_before: int
+  var _prevAccountStatus: UserId -> AccountStatus
+  var _prevFailedAttempts: UserId -> int
+  var _prevSessions: SessionId -> SessionStatus
 
   // -- What each requirement says, over its action's parameters --
   def post_REQ_001(uid: UserId, sid: SessionId): bool =
-    isActive(sid) and sessionOwner.get(sid) == uid and activeSessionsOf(uid).contains(sid)
+    isActive(sid) and sessionOwner.get(sid) == uid and activeSessionsOf(uid).contains(sid) and attemptsOf(uid) == 0
   def pre_REQ_002(sid: SessionId): bool =
     isActive(sid)
   def post_REQ_002(sid: SessionId): bool =
@@ -51,6 +55,10 @@ module auth_probes {
     statusOf(sessions, sid) == Expired
   def pre_REQ_005(uid: UserId, sid: SessionId): bool =
     isLocked(uid)
+  def pre_REQ_006(uid: UserId): bool =
+    not(isLocked(uid))
+  def post_REQ_006(uid: UserId): bool =
+    isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))
 
   action initP = all {
     init,
@@ -61,7 +69,11 @@ module auth_probes {
     _pre_REQ_003' = false,
     _pre_REQ_004' = false,
     _pre_REQ_005' = false,
+    _pre_REQ_006' = false,
     _old_REQ_003_before' = 0,
+    _prevAccountStatus' = Map(),
+    _prevFailedAttempts' = Map(),
+    _prevSessions' = Map(),
   }
 
   action stepP = {
@@ -76,7 +88,11 @@ module auth_probes {
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
             _pre_REQ_005' = pre_REQ_005(uid, sid),
+            _pre_REQ_006' = false,
             _old_REQ_003_before' = _old_REQ_003_before,
+            _prevAccountStatus' = accountStatus,
+            _prevFailedAttempts' = failedAttempts,
+            _prevSessions' = sessions,
       },
       all { logout(sid),
             _lastAction' = "logout",
@@ -86,7 +102,11 @@ module auth_probes {
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
+            _pre_REQ_006' = false,
             _old_REQ_003_before' = _old_REQ_003_before,
+            _prevAccountStatus' = accountStatus,
+            _prevFailedAttempts' = failedAttempts,
+            _prevSessions' = sessions,
       },
       all { login_failed(uid),
             _lastAction' = "login_failed",
@@ -96,7 +116,11 @@ module auth_probes {
             _pre_REQ_003' = pre_REQ_003(uid),
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
+            _pre_REQ_006' = pre_REQ_006(uid),
             _old_REQ_003_before' = old_REQ_003_before(uid),
+            _prevAccountStatus' = accountStatus,
+            _prevFailedAttempts' = failedAttempts,
+            _prevSessions' = sessions,
       },
       all { expire_session(sid),
             _lastAction' = "expire_session",
@@ -106,7 +130,11 @@ module auth_probes {
             _pre_REQ_003' = false,
             _pre_REQ_004' = pre_REQ_004(sid),
             _pre_REQ_005' = false,
+            _pre_REQ_006' = false,
             _old_REQ_003_before' = _old_REQ_003_before,
+            _prevAccountStatus' = accountStatus,
+            _prevFailedAttempts' = failedAttempts,
+            _prevSessions' = sessions,
       },
       all { unlock_account(uid),
             _lastAction' = "unlock_account",
@@ -116,7 +144,11 @@ module auth_probes {
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
+            _pre_REQ_006' = false,
             _old_REQ_003_before' = _old_REQ_003_before,
+            _prevAccountStatus' = accountStatus,
+            _prevFailedAttempts' = failedAttempts,
+            _prevSessions' = sessions,
       },
       all { tick,
             _lastAction' = "tick",
@@ -126,7 +158,11 @@ module auth_probes {
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
+            _pre_REQ_006' = false,
             _old_REQ_003_before' = _old_REQ_003_before,
+            _prevAccountStatus' = accountStatus,
+            _prevFailedAttempts' = failedAttempts,
+            _prevSessions' = sessions,
       },
     }
   }
@@ -157,6 +193,60 @@ module auth_probes {
   val oblig_REQ_005: bool =
     not(_lastAction == "login" and _pre_REQ_005)
 
+  /// REQ-006: If a failed login locks the account, then the system shall end the user's Active sessions.
+  val oblig_REQ_006: bool =
+    not(_lastAction == "login_failed" and _pre_REQ_006)
+      or post_REQ_006(_lastUid)
+
+  // -- Completeness: every step is one a requirement speaks to --
+
+  /// Coverage of logout: every step is under REQ-002
+  val cover_logout: bool =
+    _lastAction != "logout"
+      or _pre_REQ_002
+
+  /// Explanation of sessions on logout: changed only where REQ-002 applied
+  val explain_logout_sessions: bool =
+    not(_lastAction == "logout" and sessions != _prevSessions)
+      or _pre_REQ_002
+
+  /// Coverage of login_failed: every step is under REQ-003, REQ-006
+  val cover_login_failed: bool =
+    _lastAction != "login_failed"
+      or _pre_REQ_003
+      or _pre_REQ_006
+
+  /// Explanation of sessions on login_failed: changed only where REQ-006 applied
+  val explain_login_failed_sessions: bool =
+    not(_lastAction == "login_failed" and sessions != _prevSessions)
+      or _pre_REQ_006
+
+  /// Explanation of accountStatus on login_failed: changed only where REQ-003, REQ-006 applied
+  val explain_login_failed_accountStatus: bool =
+    not(_lastAction == "login_failed" and accountStatus != _prevAccountStatus)
+      or _pre_REQ_003
+      or _pre_REQ_006
+
+  /// Explanation of failedAttempts on login_failed: changed only where REQ-003 applied
+  val explain_login_failed_failedAttempts: bool =
+    not(_lastAction == "login_failed" and failedAttempts != _prevFailedAttempts)
+      or _pre_REQ_003
+
+  /// Coverage of expire_session: every step is under REQ-004
+  val cover_expire_session: bool =
+    _lastAction != "expire_session"
+      or _pre_REQ_004
+
+  /// Explanation of sessions on expire_session: changed only where REQ-004 applied
+  val explain_expire_session_sessions: bool =
+    not(_lastAction == "expire_session" and sessions != _prevSessions)
+      or _pre_REQ_004
+
+  /// Verdict tick #1 NO-OP: Time passing changes nothing a user can see: it only ages sessions, and the clock is internal (REQ-004 reads it).
+  val verdict_tick_1: bool =
+    not(_lastAction == "tick")
+      or true
+
   // -- Witnesses: the step can happen -------------------------
 
   /// Witness for REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
@@ -182,6 +272,12 @@ module auth_probes {
         and _pre_REQ_004
         and post_REQ_004(_lastSid))
 
+  /// Witness for REQ-006: If a failed login locks the account, then the system shall end the user's Active sessions.
+  val witness_REQ_006: bool =
+    not(_lastAction == "login_failed"
+        and _pre_REQ_006
+        and post_REQ_006(_lastUid))
+
   // -- The same probes, the right way up ----------------------
   // For the simulator. `quint run --witnesses=<name>` counts the
   // runs in which a formula held at least once, and each probe above
@@ -192,6 +288,7 @@ module auth_probes {
   val reached_REQ_002: bool = not(witness_REQ_002)
   val reached_REQ_003: bool = not(witness_REQ_003)
   val reached_REQ_004: bool = not(witness_REQ_004)
+  val reached_REQ_006: bool = not(witness_REQ_006)
 
   // Not checked here, or checked without a witness:
   //   REQ-005: no witness — forbidden — its obligation is that the step never happens
