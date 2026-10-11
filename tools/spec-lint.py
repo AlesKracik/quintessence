@@ -4,18 +4,13 @@ spec-lint.py — Consistency checker for the spec project.
 
 Reads .spec/project.json + each area — derived by tools/spec_source.py from
 specs/<area>.qnt (records as `///` doc comments), specs/<area>.intent.json and
-specs/<area>.records.json — and
-checks cross-file consistency: ID format, broken references, drift between the
-the records and the model they sit on, missing patterns/protocols, topology orphans,
+specs/<area>.records.json — and checks cross-file consistency: ID format,
+broken references, drift between the records and the model they sit on, missing patterns/protocols, topology orphans,
 unverified critical invariants, unresolved questions, EARS requirement
 structure, witness-trace obligations (every requirement must be
 demonstrably reachable in the model — see METHODOLOGY.md), change
 manifests (specs/changes/*.change.json — targets and ids must resolve), and
 journeys (specs/journeys/*.journey.json — cross-area step refs must resolve).
-
-This is much smaller than the per-file lint of the previous methodology because
-the new methodology has fewer files: one JSON per area, one sidecar, one project
-config, two catalogs.
 
 Usage:
   tools/spec-lint.py                       # lint every area in .spec/project.json
