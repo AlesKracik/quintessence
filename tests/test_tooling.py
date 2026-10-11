@@ -639,14 +639,25 @@ def test_alloy_declared_but_unused_warns(tmp_path):
     assert (lint.WARN, "alloy-file-unused") in codes
 
 
-def test_alloy_critical_in_scope_passes_approval_gate():
+@pytest.mark.parametrize("formal_status", ["verified-in-scope", "verified-smt"])
+def test_critical_verified_by_any_backend_passes_approval_gate(formal_status):
     findings = []
     lint.check_critical_invariants(
         {"status": "approved",
          "invariants": [{"id": "INV-CONTRACT-001", "criticality": "critical",
-                         "formal_status": "verified-in-scope"}]},
+                         "formal_status": formal_status}]},
         "user-permission", findings)
     assert findings == []
+
+
+def test_critical_not_checkable_blocks_approval():
+    findings = []
+    lint.check_critical_invariants(
+        {"status": "approved",
+         "invariants": [{"id": "INV-001", "criticality": "critical",
+                         "formal_status": "not-checkable"}]},
+        "a", findings)
+    assert [f.check for f in findings] == ["critical-not-verified"]
 
 
 # ── read_alloy_receipt: the runner's verdict, from the CLI's own DTO ────────
