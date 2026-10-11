@@ -2365,7 +2365,7 @@ def check_critical_invariants(area_data, area_name, findings):
     if area_data.get("status") != "approved":
         return
     for inv in area_data.get("invariants", []) or []:
-        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "verified-inductive", "verified-in-scope", "accepted-risk"):
+        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "verified-inductive", "verified-in-scope", "verified-smt", "accepted-risk"):
             add(findings, FAIL, "invariants", "critical-not-verified", area_name,
                 f"Critical invariant {inv.get('id')} has formal_status '{inv.get('formal_status')}' — must be verified before approval.",
                 ref=inv.get("id"))
