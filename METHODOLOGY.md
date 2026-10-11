@@ -44,7 +44,7 @@ A **spec area** is three files, each the only source of what it holds (see "Wher
 
 - `specs/<name>.qnt` — the Quint model, **and** every requirement, invariant, property, constant and example as a `///` doc comment on the declaration that realizes it;
 - `specs/<name>.intent.json` — what a model cannot say (kind, purpose, scope, decisions, assumptions, …);
-- `specs/<name>.records.json` — the ledger: tool-written (verdicts, traces, pins, logs), except the triage verdicts and `nl_explanation`, which are agent judgment.
+- `specs/<name>.records.json` — the ledger: tool-written (verdicts, traces, pins, logs), except the extraction triage and `nl_explanation`, which are agent judgment.
 
 No tool reads those files directly: `tools/spec_source.py` derives one **area view** from them (shape: `schemas/area.schema.json`). An area's `kind` is `area` or `contract`; an interactive surface is an ordinary `area`. See "The Two Kinds of Area".
 
@@ -106,7 +106,7 @@ Every command runs inside the **active change** and can be narrowed to one **are
 │   └── auth/
 │       ├── traces/         ← ITF witness traces (committed)
 │       │   └── runs/       ← example and journey runs as traces (spec-runs)
-│       └── gen/            ← regenerable views: matrix CSVs, red-team backlog (gitignored)
+│       └── gen/            ← regenerable views: red-team backlog (gitignored)
 ├── schemas/                ← area.schema.json (the view); intent/records schemas generated from it
 ├── templates/              ← spec.qnt, probes.qnt (reference), contract.als
 ├── .github/workflows/      ← spec-ci.yml (cheap gates), spec-mutation.yml (nightly)
@@ -186,11 +186,11 @@ module auth {
 |---|---|---|
 | `<area>.qnt` doc comments | requirements (EARS fields with formal `@while` / `@shall` / `@old` / `@outcome`, modality, determinism, fit criterion, `@error` outcomes, extraction evidence), invariants, properties, constants, examples, screens and navigation edges | each is checkable against a declaration, and the reviewer reads claim and formula in one diff |
 | `<area>.intent.json` | kind, spans, version, status, purpose, brief, scope, boundary, concepts, externals, assumptions, decisions, open questions, state machines, architecture, `ui_components`, `formal_model`, `conformance` | not about one declaration; some (a closed state list, a state machine) must stay independent of the model's text to catch it drifting |
-| `<area>.records.json` | `check_results`, witness, outcome and obligation verdicts, `formal_status`, the brief's freshness pin, `verification_log`, `traceability`, `generated_from` / `extracted_from`, the three triage ledgers | machine-written and high-churn (exceptions: the triage verdicts — `extraction_triage`, `matrix_triage` — and `counterexample.nl_explanation` are agent judgment, written by hand); in the model, every check would rewrite the file it just hashed |
+| `<area>.records.json` | `check_results`, witness, outcome and obligation verdicts, `formal_status`, the brief's freshness pin, `verification_log`, `traceability`, `generated_from` / `extracted_from`, the extraction triage ledger | machine-written and high-churn (exceptions: `extraction_triage` and `counterexample.nl_explanation` are agent judgment, written by hand); in the model, every check would rewrite the file it just hashed |
 
 The table is code: `MODEL_KEYS`, `UI_KEYS`, `RECORD_KEYS`, `MACHINE_PATHS` in `tools/spec_source.py`. Choices worth stating:
 
-- **Error outcomes are `@error` tags on the requirement** — the external×outcome matrix covers a cell only through a requirement.
+- **Error outcomes are `@error` tags on the requirement** — or on a `@verdict` of the action that calls the external; an outcome neither handles FAILs lint.
 - **A refusal is shown by an example**, not declared by a tag (see "Refusal Examples").
 - **Triage ledgers and freshness pins are in `records.json`** — keyed by fingerprint or hash, never in the file they describe.
 - **Screens and navigation edges are records on the model**; `ui_components` stays in the intent file (no declaration to sit on).
@@ -321,7 +321,9 @@ How the generator makes both sound without the author writing a ghost: in `stepP
 | Every REQ can happen via its own action | path-constrained witness | `no-witness`: unreachable as specified |
 | Every verdict fresh | `model_sha` matches | stale |
 | Every action fires somewhere | witnesses + `orphan-action` | dead action |
-| Every matrix cell triaged | `spec-matrix --strict` | silent state×event gap |
+| Every action covered | `cover_<action>`: each step of the action is under some requirement's or verdict's `@while` | the action does something in a state no one specified |
+| Every observable change explained | `explain_<action>_<var>`: a step that changes the var is under a requirement that reads it, or an open GAP / OUT-OF-SCOPE | an unstated side effect |
+| Every IMPOSSIBLE / NO-OP verdict true | `verdict_<action>_<n>` | the verdict is wrong; the trace shows the step |
 | Every numeric bound two-sided | `paired_invariant`, or a `@shall` that states both sides (`isLocked(uid) iff attemptsOf(uid) >= MAX`) | the threshold could fire early unnoticed |
 | Every rejection shown by an example | `refusal-without-example` + verify preflight | nothing shows the call refused |
 
@@ -414,7 +416,7 @@ The ship verdict names the scope it is relative to (or says none is declared). *
   "outcomes": [{ "name": "SUCCESS" }, { "name": "DECLINED" }, { "name": "TIMEOUT" }, { "name": "NETWORK_ERROR" }] }]
 ```
 
-**Error outcomes are the second completeness axis.** Each outcome is a cell of the external × outcome matrix, covered only when a requirement says what happens (`@error BillingProvider.TIMEOUT idempotent: NO_CHANGE — retry`), else triaged in `outcome_triage[]` with the same verdicts as state × event. `tools/spec-matrix.py <area> --outcomes --strict` is the gate. `idempotent` answers "is a retry safe?". The encoding checks require the model to produce each named outcome (see "Encoding checks").
+**Error outcomes are the second completeness axis.** Each declared outcome must be handled: by a requirement that says what happens (`@error BillingProvider.TIMEOUT idempotent: NO_CHANGE — retry`), or by a `@verdict` on the action that calls the external, carrying `@error BillingProvider.TIMEOUT` (see "Completeness"). Lint FAILs an unhandled outcome (`outcome-unhandled`) and blocks approval on one handled only by a GAP (`outcome-open-gap`). `idempotent` answers "is a retry safe?". The encoding checks require the model to produce each named outcome (see "Encoding checks").
 
 **Assumptions** state what the spec relies on but does not establish:
 
@@ -463,14 +465,27 @@ An example hosted on an **action** (before a model exists, or brownfield capture
 
 **Closed worlds.** `"closed": true` on an entity makes its state list exhaustive: the model's variant type must match it **exactly**, or lint FAILs with both lists. It stops a generated model from inventing `Paused` or `PendingCancellation`. Leave it off for a genuinely open set; the completeness grid flags only the half-pinned case.
 
-**Four triage verdicts**, for the state × event matrix (`tools/spec-matrix.py --strict`) and the outcome matrix:
+**Completeness is checked per action, on the model.** Two questions are asked of every action, and both are model checks, not tables to fill in:
 
-| Verdict | Means |
-|---|---|
-| `GAP` | a real hole, tracked by a `Q-NNN`; blocks approval |
-| `IMPOSSIBLE` | cannot occur — a guard forbids it |
-| `NO-OP` | can occur and deliberately changes nothing; must give a `reason` naming the deciding requirement, or lint FAILs |
-| `OUT-OF-SCOPE` | outside the boundary; must cite `scope_ref` |
+- **Coverage** (`cover_<action>`): on every step the action takes, some requirement's or verdict's `@while` held. A step outside all of them is behavior nobody specified.
+- **Explanation** (`explain_<action>_<var>`, one per observable variable the action assigns): on every step where the variable changes, a requirement that reads it was in force, or an open GAP / OUT-OF-SCOPE verdict covers the step. A change nobody explains is an unstated side effect. A variable no requirement has to explain (a clock, an index kept in step with another) carries `/// @internal <why>` on its `var`, which takes it out of this check.
+
+Where no requirement speaks, the action carries a **verdict**, a `///` record on the action itself:
+
+```quint
+  /// @verdict NO-OP
+  /// Time passing changes nothing a user can see; the clock is internal.
+  action tick: bool = all { ... }
+```
+
+| Verdict | Means | Checked |
+|---|---|---|
+| `IMPOSSIBLE` | under its `@while`, the action cannot fire — a guard forbids it | `not(fired and while)` |
+| `NO-OP` | it fires and deliberately changes nothing observable; the description names the deciding requirement | every observable var unchanged |
+| `GAP` | a real hole, tracked by `@question Q-NNN`; blocks approval | counts toward coverage, not checked |
+| `OUT-OF-SCOPE` | outside the boundary; `@scope` names the `scope.excluded[]` item | counts toward coverage, not checked |
+
+`@while` narrows a verdict to some states (none means wherever the action fires); `@error Ext.OUTCOME` makes it the answer for an external's outcome. `spec-record check` runs the coverage, explanation and verdict checks with the obligations, and lint FAILs one that is missing or failed (`coverage-gap`, `change-unexplained`, `verdict-contradicted`, `approved-unchecked`). A guard can still hide a gap: a case the action refuses to fire in is covered by no check, so a missing transition belongs in an open question.
 
 UI areas: the navigation graph plays the same role (endpoints declared, isolated screens flagged).
 
@@ -716,7 +731,7 @@ No branch model is imposed. Suggested:
 
 - Spec changes live in PRs beside code changes.
 - Tag spec versions if you want audit points: `git tag specs/auth/v1.0.0`.
-- **Wire `conformance.command` into the code repo's CI.** Full `/spec-code-verify` runs are agent-driven (before merge or scheduled); `spec-ci.yml` carries only the cheap deterministic gates — lint, matrix, probes and run traces current, typecheck, `quint test`.
+- **Wire `conformance.command` into the code repo's CI.** Full `/spec-code-verify` runs are agent-driven (before merge or scheduled); `spec-ci.yml` carries only the cheap deterministic gates — lint, probes and run traces current, typecheck, `quint test`.
 
 ---
 
@@ -755,7 +770,7 @@ area.status:          raw → structured → formalized → in-review → approv
                       (approval blocked while any requirement is unwitnessed)
 ```
 
-**`approved` is blocked by** an unwitnessed requirement, an open `Q-NNN` (`open-questions-on-approved`), an open assumption (`assumption-open-on-approved`), a `GAP` triage verdict, or a `@criticality critical` invariant not verified by any backend or `accepted-risk` (`critical-not-verified`). `deferred` requirements are out of every gate.
+**`approved` is blocked by** an unwitnessed requirement, an open `Q-NNN` (`open-questions-on-approved`), an open assumption (`assumption-open-on-approved`), an open `GAP` verdict, or a `@criticality critical` invariant not verified by any backend or `accepted-risk` (`critical-not-verified`). `deferred` requirements are out of every gate.
 
 **`verified` is bounded, not proven**: no counterexample within N steps, N recorded per check (`check_results.checks[].steps`) and rendered `✓ (≤N steps)`. `spec-record` runs a **two-pass ladder**: every bounded check at `apalache.shallow_steps` (default 3), then the clean ones at `apalache.max_steps` (default 10) while `apalache.budget_seconds` (default 900) lasts; a check the budget stopped keeps its shallow verdict and says why. For an unbounded proof mark the invariant `proof: "inductive"` (`quint verify --inductive-invariant`, rendered `✓ proven`); it must be constrained enough or quint errors — an honest non-proof. Upgrade the load-bearing invariants. A shallow pass is never silently upgraded: `check_results.max_steps` is the ceiling, not a claim. When TLC explodes on liveness, fall back to a witnessed `run` plus a fairness note.
 
@@ -794,7 +809,6 @@ Each tool's docstring (`--help`) is its manual. What each is for, and the rules 
 | `spec-record.py` | The only writer of verdicts: `check` (simulator pre-gate, batched then per-id `quint verify`, `--temporal`, probes, Alloy/z3), `verify` (preflights, replay, tests, drift, `verification_log`), `stamp`, `changed`, `equiv`. |
 | `spec-probes.py` | Generates the probe module; `--check` gates staleness. |
 | `spec-runs.py` | Example and journey runs as replayable traces; `--check` needs no quint. |
-| `spec-matrix.py` | State×event and (`--outcomes`) external×outcome matrices; `--strict` gates, `--record` stamps stats. |
 | `spec-questions.py` | Model mutation and its questions; `--record`, `--summary`. |
 | `spec-mutate.py` | Implementation mutation against the gates. |
 | `spec-separation.py` | Refuses commits that move claims and code together. |
@@ -808,7 +822,7 @@ Each tool's docstring (`--help`) is its manual. What each is for, and the rules 
 
 Rules that live in the tools:
 
-- **Lint** says when it is partial: with no `jsonschema` it prints a PARTIAL banner (`"partial": true` in `--json`) instead of skipping schema validation silently. With `QUINT_IR_ENGINE=cli` and no Quint CLI it FAILs `quint/engine-unavailable`, and `spec-matrix` and `spec-record` refuse to run — otherwise every model parses as "no module" and checks pass over nothing. A model file that yields no module FAILs `sidecar-unparseable` at any status.
+- **Lint** says when it is partial: with no `jsonschema` it prints a PARTIAL banner (`"partial": true` in `--json`) instead of skipping schema validation silently. With `QUINT_IR_ENGINE=cli` and no Quint CLI it FAILs `quint/engine-unavailable`, and `spec-record` refuses to run — otherwise every model parses as "no module" and checks pass over nothing. A model file that yields no module FAILs `sidecar-unparseable` at any status.
 - **spec-record check** starts with an advisory **simulator pre-gate** (`quint run`): invariants, transition invariants in the probe module, and a witness pre-screen counting each probe's positive form `reached_<ID>` (a probe is a negation, true at init). It writes `check_results.simulation`, **never** a verdict; `--only-simulate` runs just this and leaves `ran_at` alone, `--strict` fails on a violation, a run that did not start, or a probe no run reached; `--no-simulate` skips it. `--only <ids>` merges into the prior ledger. Bounded invariants run batched first; a batch that is not clean falls back to per-id with identical results. Flags newer quint releases added are probed via `--help`.
 - **spec-record verify** refuses replay on any undischarged witness, any rejection no example shows, or any missing or stale run trace, and flips `verified` only on a green replay. The log keeps the newest 50 entries.
 - **spec-probes** refuses a requirement on an action `step` does not call, mirrors every action `step` calls or fails; shared logic is a `def`, never a helper action. Parameter domains are a scope decision declared in `formal_model.probe_domains`, keyed by type or `param:<name>` (give each value domain its own alias, `type Role = str`). Ghost initial values are synthesized from types; `formal_model.ghost_zeros` covers what cannot be (lint: `ghost-zero-unsynthesizable`). Regenerating the module stales every witness and obligation.

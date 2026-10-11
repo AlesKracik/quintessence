@@ -74,8 +74,12 @@ import spec_source  # noqa: E402
 from itf_tools import (area_json_path, ghost_for_param,  # noqa: E402
                        ghost_for_var, probe_name, outcome_probe_name,
                        reach_name, obligation_name, pre_ghost, old_ghost,
-                       witness_exempt, owes_obligation, is_computed)
+                       witness_exempt, is_computed, verdict_ghost,
+                       verdict_label)
 from quint_ir import parse_qnt, zero_value as _ir_zero  # noqa: E402
+from completeness import (mirrored_actions, requirement_checks,  # noqa: E402
+                          completeness, completeness_vals,
+                          explained_everywhere)
 
 def fail(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
@@ -85,21 +89,6 @@ def fail(msg):
 def ghost_zeros(area):
     """formal_model.ghost_zeros: explicit initial values, keyed by type."""
     return ((area.get("formal_model") or {}).get("ghost_zeros")) or {}
-
-
-def mirrored_actions(ir):
-    """The actions stepP mirrors: the ones `step` calls, in its order.
-
-    Not every declared action. A helper action shared by route actions —
-    `action refuse(r: Result, ...)`, `action commit(s1: State, ...)` — is
-    never a step of its own, and mirroring it put a ghost on each of its
-    parameters: name clashes between helpers, and ghosts of function type
-    that no literal can initialize. Only when `step` names no action (or
-    does not exist) does this fall back to every action but init/step."""
-    actions = [a for a in (ir.get("actions") or []) if a not in ("init", "step")]
-    called = [a for a in (ir.get("action_calls") or {}).get("step") or []
-              if a in actions]
-    return called or actions
 
 
 def domain_for(name, type_str, domains):
@@ -176,30 +165,6 @@ def def_name(prefix, rid, suffix=None):
     return base
 
 
-def requirement_checks(area):
-    """One entry per requirement the model must prove, in declaration order:
-    {req, rid, form, action, while, shall, outcomes, modality}. Skipped:
-    deferred and non-functional requirements (no behavior in this model),
-    computed ones (their proof is a unit test), and anything not yet formal
-    (spec-lint FAILs that past `raw` — an empty check here would hide it)."""
-    out = []
-    for req in area.get("requirements") or []:
-        rid = req.get("id")
-        if not rid or not owes_obligation(req):
-            continue
-        ears = req.get("ears") or {}
-        outs = [oc for oc in (req.get("witness") or {}).get("outcomes") or []
-                if oc.get("predicate")]
-        out.append({"req": req, "rid": rid, "form": req.get("form"),
-                    "action": req.get("quint_ref"),
-                    "while": (ears.get("state") or "").strip() or None,
-                    "shall": (ears.get("response") or "").strip() or None,
-                    "outcomes": outs if req.get("modality") == "may" else [],
-                    "old": req.get("old") or [],
-                    "modality": req.get("modality") or "must"})
-    return out
-
-
 def probe_requirements(area):
     """(req, probe_name, outcome_name) per witness probe this module emits —
     what spec-record looks up. A requirement whose witness is exempt by what
@@ -255,6 +220,27 @@ def build(area, area_name, ir, quint_rel):
              + ", ".join(actions) + "). Put the requirement on the route-level "
                "action the helper is called from, or call it from step.")
 
+    stray = sorted({(verdict_label(v), v.get("action"))
+                    for v in area.get("verdicts") or []
+                    if v.get("action") not in actions})
+    if stray:
+        fail("verdict on an action step never calls: "
+             + ", ".join(lbl for lbl, _a in stray)
+             + ". A verdict says what a step does; put it on an action `step` "
+               "takes (" + ", ".join(actions) + ").")
+    comp = completeness(area, ir, actions, checks)
+    # The state vars the completeness checks compare across a step: every
+    # var an explanation check watches, and every var a NO-OP verdict says
+    # stays put. They share the _prev ghosts transition invariants use.
+    comp_vars = set()
+    for entry in comp:
+        for ch in entry["changes"]:
+            if not explained_everywhere(entry, ch):
+                comp_vars.add(ch["var"])
+        for v in entry["verdicts"]:
+            if v.get("verdict") == "NO-OP":
+                comp_vars.update(ch["var"] for ch in entry["changes"])
+
     missing_domains = sorted({t for n, t in params.items()
                               if domain_for(n, t, domains) is None})
     if missing_domains:
@@ -273,7 +259,8 @@ def build(area, area_name, ir, quint_rel):
     for name, type_str in params.items():
         if zero(type_str) is None:
             missing_zero[name] = type_str
-    delta_vars = collect_delta_vars(area, ir.get("vars") or [])
+    delta_vars = sorted(set(collect_delta_vars(area, ir.get("vars") or []))
+                        | comp_vars)
     for var in delta_vars:
         if zero(var_type_strs.get(var, "")) is None:
             missing_zero[ghost_for_var(var)] = var_type_strs.get(var, "?")
@@ -309,6 +296,8 @@ def build(area, area_name, ir, quint_rel):
     # Requirements whose @while needs a _pre ghost: those on an action. A
     # state requirement's @while is read in the same state as its @shall.
     pre_reqs = [c for c in checks if c["form"] == "event" and c["while"]]
+    verdict_pres = [v for e in comp for v in e["verdicts"]
+                    if (v.get("while") or "").strip()]
     old_vals = [(c, o) for c in checks if c["form"] == "event" for o in c["old"]]
     for c, o in old_vals:
         if zero(o["type"]) is None:
@@ -371,6 +360,8 @@ def build(area, area_name, ir, quint_rel):
         a(f"  var {pre_ghost(c['rid'])}: bool")
     for c, o in old_vals:
         a(f"  var {old_ghost(c['rid'], o['name'])}: {o['type']}")
+    for v in verdict_pres:
+        a(f"  var {verdict_ghost(v['action'], v['index'])}: bool")
     for var in delta_vars:
         a(f"  var {ghost_for_var(var)}: {var_type_strs.get(var, 'int')}")
     if checks:
@@ -392,6 +383,9 @@ def build(area, area_name, ir, quint_rel):
         for oc in c["outcomes"]:
             a(head(def_name("outcome", rid, oc.get("name")), at, olds))
             a(f"    {oc['predicate'].strip()}")
+    for v in verdict_pres:
+        a(head(verdict_ghost(v["action"], v["index"])[1:], v["action"]))
+        a(f"    {v['while'].strip()}")
     a("")
     a("  action initP = all {")
     a("    init,")
@@ -402,6 +396,8 @@ def build(area, area_name, ir, quint_rel):
         a(f"    {pre_ghost(c['rid'])}' = false,")
     for c, o in old_vals:
         a(f"    {old_ghost(c['rid'], o['name'])}' = {zero(o['type'])},")
+    for v in verdict_pres:
+        a(f"    {verdict_ghost(v['action'], v['index'])}' = false,")
     for var in delta_vars:
         a(f"    {ghost_for_var(var)}' = "
           f"{zero(var_type_strs.get(var, ''))},")
@@ -433,6 +429,11 @@ def build(area, area_name, ir, quint_rel):
             value = (call(def_name("old", c["rid"], o["name"]), ", ".join(args))
                      if c["action"] == action else g)
             a(f"            {g}' = {value},")
+        for v in verdict_pres:
+            g = verdict_ghost(v["action"], v["index"])
+            value = (call(g[1:], ", ".join(args)) if v["action"] == action
+                     else "false")
+            a(f"            {g}' = {value},")
         for var in delta_vars:
             a(f"            {ghost_for_var(var)}' = {var},")
         a("      },")
@@ -447,6 +448,7 @@ def build(area, area_name, ir, quint_rel):
         a("  // counterexample to one of these is a VIOLATION, not a witness.")
         generated = ({probe_name(c["rid"]) for c in checks}
                      | {obligation_name(c["rid"]) for c in checks}
+                     | {n for _k, n, *_r in completeness_vals(comp)}
                      | {outcome_probe_name(c["rid"], o.get("name"))
                         for c in checks for o in c["outcomes"]})
         for inv, name, predicate in transitions:
@@ -505,6 +507,17 @@ def build(area, area_name, ir, quint_rel):
         a("")
         a(f"  /// {rid}: {desc}")
         a(f"  val {obligation_name(rid)}: bool =")
+        a(f"    {body}")
+
+    a("")
+    a("  // -- Completeness: every step is one a requirement speaks to --")
+    vals = completeness_vals(comp)
+    if not vals:
+        a("  // No action here has anything to check.")
+    for _kind, name, comment, body in vals:
+        a("")
+        a(f"  /// {comment}")
+        a(f"  val {name}: bool =")
         a(f"    {body}")
 
     a("")

@@ -47,6 +47,7 @@ from itf_tools import (  # noqa: E402
 )
 from quint_ir import _strip_noise  # noqa: E402
 import spec_source  # noqa: E402
+from completeness import area_completeness  # noqa: E402
 
 MAX_DIAGRAM_STEPS = 12
 CHANGED_HINT = " — `spec-record changed <area>` says what has moved since."
@@ -431,6 +432,160 @@ def load_journeys(root):
     return out
 
 
+# ── Completeness: coverage, explanation, verdicts ──────────────────────────
+
+def completeness_summary(root, area):
+    """What the readback says about completeness, computed once per area:
+    the per-action picture (completeness.py) joined with what /spec-check
+    recorded for each check, plus the declared external outcomes no
+    requirement or verdict answers. Stashed on the area as `_completeness`
+    so every section reads the same numbers."""
+    try:
+        comp, checks = area_completeness(root, area)
+    except Exception:  # noqa: BLE001 — a model that will not parse has
+        comp, checks = [], {}  # no completeness to report; lint says why
+    recorded = {c.get("id"): c for c in
+                ((area.get("check_results") or {}).get("checks") or [])}
+    results = {}
+    for name, c in checks.items():
+        r = recorded.get(c["id"]) or {}
+        results[c["id"]] = dict(c, name=name, result=r.get("result"),
+                                steps=r.get("steps"), trace=r.get("trace"))
+    unanswered = unanswered_outcomes(area)
+    gaps = [v for v in area.get("verdicts") or [] if v.get("verdict") == "GAP"]
+    return {"actions": comp, "checks": results, "unanswered": unanswered,
+            "gaps": gaps}
+
+
+def unanswered_outcomes(area):
+    """Declared (external, outcome) pairs no requirement's or verdict's
+    @error answers."""
+    answered = set()
+    for item in (area.get("requirements") or []) + (area.get("verdicts") or []):
+        for eo in item.get("error_outcomes") or []:
+            answered.add((eo.get("external"), eo.get("outcome")))
+    return [(x.get("name"), oc.get("name"))
+            for x in area.get("externals") or []
+            for oc in x.get("outcomes") or []
+            if (x.get("name"), oc.get("name")) not in answered]
+
+
+def _completeness(area):
+    return area.get("_completeness") or {"actions": [], "checks": {},
+                                         "unanswered": [], "gaps": []}
+
+
+def completeness_counts(area):
+    """{kind: (ok, total, bad)} for coverage / explanation / verdict, where
+    bad lists the failing check dicts. A check never run is in total but
+    neither ok nor bad."""
+    out = {}
+    for kind in ("coverage", "explanation", "verdict"):
+        cs = [c for c in _completeness(area)["checks"].values() if c["kind"] == kind]
+        out[kind] = (sum(1 for c in cs if c["result"] == "verified"), len(cs),
+                     [c for c in cs if c["result"] == "counterexample"])
+    return out
+
+
+def _top_and(expr):
+    """Split a Quint boolean at its top-level `and`s, so a decision table
+    can show each var the conjunct that speaks about it."""
+    parts, depth, cur, i = [], 0, [], 0
+    s = " ".join((expr or "").split())
+    while i < len(s):
+        c = s[i]
+        depth += c in "([{"
+        depth -= c in ")]}"
+        if depth == 0 and s.startswith(" and ", i):
+            parts.append("".join(cur).strip())
+            cur, i = [], i + 5
+            continue
+        cur.append(c)
+        i += 1
+    if "".join(cur).strip():
+        parts.append("".join(cur).strip())
+    return parts
+
+
+def decision_tables_section(root, area):
+    """One table per action: a row per requirement or verdict on it, a
+    column per observable var it changes. A row's cell is the part of its
+    @shall that speaks about that var (helpers resolved), so a reviewer sees
+    gaps as missing rows and conflicts as rows whose conditions overlap —
+    the Parnas tabular form. The coverage / explanation verdicts recorded
+    by /spec-check sit under each table."""
+    actions = _completeness(area)["actions"]
+    if not actions:
+        return []
+    try:
+        text = (Path(root) / "specs" / ((area.get("formal_model") or {})
+                .get("quint_file") or "")).read_text(encoding="utf-8")
+        decls = spec_source.declarations(text)
+    except OSError:
+        decls = {}
+    checks = _completeness(area)["checks"]
+    lines = ["## What Each Action Does", "",
+             "_One table per step the model can take. Each row is a requirement "
+             "or verdict on it, with the condition it applies under; each column "
+             "is a variable the step can change, and the cell is what the row "
+             "says about it. A step no row covers is a gap; a change no row "
+             "names is behavior nobody asked for. /spec-check proves both "
+             "(coverage, explanation)._", ""]
+    for e in actions:
+        a = e["action"]
+        vars_ = [ch["var"] for ch in e["changes"]]
+        head = ["Row", "Applies when"] + [f"`{v}`" for v in vars_]
+        lines += [f"### `{a}`", "", "| " + " | ".join(head) + " |",
+                  "|" + "---|" * len(head)]
+        for c in e["reqs"]:
+            shall = c["shall"] or ""
+            parts = _top_and(shall)
+            if c["outcomes"]:
+                parts += [o.get("predicate") or "" for o in c["outcomes"]]
+            cells = []
+            for v in vars_:
+                said = [p for p in parts
+                        if v in spec_source.name_closure(
+                            decls, set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", p)))]
+                if c["modality"] == "forbidden":
+                    cells.append("_never happens_")
+                elif c["outcomes"] and said:
+                    cells.append(" _or_ ".join(f"`{_cell(p)}`" for p in said))
+                else:
+                    cells.append(" ∧ ".join(f"`{_cell(p)}`" for p in said) or "")
+            when = f"`{_cell(c['while'])}`" if c["while"] else "always"
+            lines.append(f"| {c['rid']} | {when} | " + " | ".join(cells) + " |")
+        for v in e["verdicts"]:
+            kind = v.get("verdict")
+            cell = {"NO-OP": "unchanged", "IMPOSSIBLE": "_cannot happen_",
+                    "GAP": f"_unspecified ({v.get('question') or 'no question'})_",
+                    "OUT-OF-SCOPE": f"_out of scope ({v.get('scope_ref') or '?'})_"}[kind]
+            when = f"`{_cell(v['while'])}`" if (v.get("while") or "").strip() else "always"
+            lines.append(f"| {kind} #{v.get('index')} | {when} | "
+                         + " | ".join(cell for _ in vars_) + " |")
+        if not e["reqs"] and not e["verdicts"]:
+            lines.append("| **⚠ nothing** | — | " + " | ".join("" for _ in vars_) + " |")
+        own = [c for c in checks.values() if c["action"] == a]
+        notes = []
+        for c in own:
+            mark = {"verified": "✓", "counterexample": "✗"}.get(c["result"], "?")
+            what = {"coverage": "coverage",
+                    "explanation": f"`{c.get('var')}` explained",
+                    "verdict": f"verdict #{c.get('index')}"}[c["kind"]]
+            tail = f" (≤{c['steps']})" if c["result"] == "verified" and c.get("steps") else ""
+            trace = f" — [trace](./{c['trace']})" if c["result"] == "counterexample" and c.get("trace") else ""
+            notes.append(f"{mark} {what}{tail}{trace}")
+        if e["everywhere"]:
+            notes.insert(0, f"✓ coverage: {e['everywhere']} applies to every step")
+        lines += ["", "_" + " · ".join(notes) + "_" if notes else "", ""]
+    internal = area.get("internal_vars") or []
+    if internal:
+        lines += ["**Bookkeeping, not behavior** (`@internal`, not explained):", ""]
+        lines += [f"- `{i.get('var')}` — {i.get('reason', '')}" for i in internal]
+        lines.append("")
+    return lines
+
+
 def attention_items(root, area_name, area):
     """The Needs-Your-Attention list — every entry derived from a field."""
     items = []
@@ -479,23 +634,37 @@ def attention_items(root, area_name, area):
             items.append(f"**Refusal shown by no example** — {req.get('id')}: "
                          f"{req_sentence(req, constraints)} Add an example whose run "
                          f"reaches the blocking state and ends with the call `.fail()`.")
-    matrix = cr.get("matrix")
-    if matrix:
-        if matrix.get("uncovered", 0) > 0:
-            items.append(f"**Coverage gaps** — {matrix['uncovered']} untriaged state×event "
-                         f"cell(s); run /spec-check to triage.")
-        if matrix.get("gaps"):
-            items.append(f"**Open coverage GAPs** — {', '.join(matrix['gaps'])} "
-                         f"(spec is silent on triaged-real cells).")
-    elif area.get("state_machines"):
-        items.append("**Coverage unknown** — state machines declared but the "
-                     "state×event matrix has never been recorded (run "
-                     "`tools/spec-matrix.py` with `--record`).")
-    outcomes = (area.get("check_results") or {}).get("outcomes") or {}
-    if outcomes.get("uncovered"):
-        items.append(f"**Unhandled failure behavior** — {outcomes['uncovered']} declared "
-                     f"external outcome(s) have no requirement saying what happens and no "
-                     f"triage saying why not. Run `tools/spec-matrix.py <area> --outcomes`.")
+    comp = _completeness(area)
+    for e in comp["actions"]:
+        if not e["reqs"] and not e["verdicts"]:
+            items.append(f"**Nothing says what `{e['action']}` does** — the model takes "
+                         f"this step, but no requirement or verdict sits on it.")
+    for c in comp["checks"].values():
+        if c["result"] != "counterexample":
+            continue
+        trace = f" ([trace](./{c['trace']}))" if c.get("trace") else ""
+        if c["kind"] == "coverage":
+            items.append(f"**Gap** — `{c['action']}` can take a step no requirement "
+                         f"or verdict covers{trace}.")
+        elif c["kind"] == "explanation":
+            items.append(f"**Unexplained change** — `{c['action']}` changes "
+                         f"`{c['var']}` where no requirement naming it applied{trace}.")
+        else:
+            items.append(f"**Verdict contradicted** — verdict #{c['index']} on "
+                         f"`{c['action']}` is false of the model{trace}.")
+    unchecked = [c for c in comp["checks"].values() if c["result"] is None]
+    if unchecked:
+        items.append(f"**Completeness not checked** — {len(unchecked)} coverage / "
+                     f"explanation / verdict check(s) never run. Run /spec-check.")
+    for v in comp["gaps"]:
+        items.append(f"**Open GAP** — `{v.get('action')}`"
+                     + (f" where `{v['while']}`" if v.get("while") else "")
+                     + f": {v.get('reason', '')}"
+                     + (f" ({v['question']})" if v.get("question") else ""))
+    if comp["unanswered"]:
+        items.append("**Unhandled failure behavior** — "
+                     + ", ".join(f"{x}.{o}" for x, o in comp["unanswered"])
+                     + ": no requirement's @error or verdict says what happens.")
     extraction = (area.get("check_results") or {}).get("extraction") or {}
     if extraction_state(area)[0] == "unaudited":
         items.append(
@@ -683,10 +852,16 @@ def ship_verdict(area):
     elif ex_state == "unaudited":
         blockers.append("code never audited against the spec "
                         "(`spec-extract-audit --record`)")
-    outcomes = (area.get("check_results") or {}).get("outcomes") or {}
-    if outcomes.get("uncovered"):
-        blockers.append(f"{outcomes['uncovered']} external outcome(s) with no "
+    comp = _completeness(area)
+    if comp["unanswered"]:
+        blockers.append(f"{len(comp['unanswered'])} external outcome(s) with no "
                         f"declared behavior")
+    counts = completeness_counts(area)
+    bad = sum(len(b) for _ok, _n, b in counts.values())
+    if bad:
+        blockers.append(f"{bad} completeness check(s) failing")
+    if comp["gaps"]:
+        blockers.append(f"{len(comp['gaps'])} open GAP verdict(s)")
     if blockers:
         return "**⚠ NOT READY** — " + "; ".join(blockers) + "."
     # "Closed" is only ever closed relative to a boundary. Saying which one
@@ -716,12 +891,12 @@ def header_bar(area, area_name):
     n_inv_bounded = sum(1 for i in invs if i.get("formal_status") == "verified")
     n_inv_scoped = sum(1 for i in invs if i.get("formal_status") == "verified-in-scope")
     bound = check_bound(area)
-    matrix = (area.get("check_results") or {}).get("matrix")
-    if matrix:
-        cov = (f"{matrix.get('cells', 0)} cells, {matrix.get('covered', 0)} covered, "
-               f"{matrix.get('triaged', 0)} triaged, {matrix.get('uncovered', 0)} untriaged")
+    counts = completeness_counts(area)
+    if counts["coverage"][1] or counts["explanation"][1]:
+        cov = (f"{counts['coverage'][0]}/{counts['coverage'][1]} actions covered, "
+               f"{counts['explanation'][0]}/{counts['explanation'][1]} changes explained")
     else:
-        cov = "matrix not run"
+        cov = "no actions to check"
     n_q = sum(1 for q in area.get("open_questions", []) or []
               if q.get("status", "open") == "open")
     log = area.get("verification_log") or []
@@ -1612,8 +1787,8 @@ def shape_diagram(area):
     lines += ["```", ""]
     if externals:
         lines += ["*Rounded nodes are outside systems this area depends on; "
-                  "each declared outcome is a cell the coverage matrix requires "
-                  "an answer for.*", ""]
+                  "each declared outcome needs an answer: a requirement's or a "
+                  "verdict's @error.*", ""]
     return lines
 
 
@@ -1762,8 +1937,10 @@ def externals_section(area):
             for eo in req.get("error_outcomes", []) or []:
                 handled.setdefault((eo.get("external"), eo.get("outcome")), []).append(
                     (req.get("id"), eo.get("effect"), eo.get("idempotent")))
-        triage = {(t.get("external"), t.get("outcome")): t
-                  for t in area.get("outcome_triage", []) or []}
+        by_verdict = {}
+        for v in area.get("verdicts") or []:
+            for eo in v.get("error_outcomes") or []:
+                by_verdict[(eo.get("external"), eo.get("outcome"))] = v
         lines += ["| Dependency | Outcome | What we do | Where |", "|---|---|---|---|"]
         for ext in externals:
             for oc in ext.get("outcomes", []) or []:
@@ -1773,10 +1950,11 @@ def externals_section(area):
                     effect = "; ".join(
                         f"{eff}{' (retry-safe)' if idem else ''}" for _, eff, idem in rows)
                     where = ", ".join(rid for rid, _, _ in rows)
-                elif key in triage:
-                    t = triage[key]
-                    effect = f"_{t.get('verdict')}_ — {t.get('reason', '')}"
-                    where = t.get("question") or t.get("scope_ref") or "—"
+                elif key in by_verdict:
+                    v = by_verdict[key]
+                    effect = f"_{v.get('verdict')}_ — {v.get('reason', '')}"
+                    where = (f"`{v.get('action')}`"
+                             + (f", {v['question']}" if v.get("question") else ""))
                 else:
                     effect = "**⚠ nothing specified**"
                     where = "—"
@@ -1835,7 +2013,9 @@ def dimensions_section(area):
     reqs = [r for r in area.get("requirements", []) or [] if r.get("status") != "deferred"]
     invs = area.get("invariants", []) or []
     cr = area.get("check_results") or {}
-    matrix, outcomes = cr.get("matrix") or {}, cr.get("outcomes") or {}
+    counts = completeness_counts(area)
+    unanswered = unanswered_outcomes(area)
+    n_outcomes = sum(len(e.get("outcomes") or []) for e in (area.get("externals") or []))
     extraction = cr.get("extraction") or {}
     differential = cr.get("differential") or {}
     entities = ((area.get("concepts") or {}).get("entities") or [])
@@ -1880,24 +2060,30 @@ def dimensions_section(area):
         row("Data model", data_model,
             f"{len(entities)} entities, {len(stateful)} stateful, {len(closed)} closed"
             if entities else "no entities declared"),
-        row("State space",
-            (matrix.get("uncovered") == 0) if matrix else None,
-            f"{matrix.get('covered', 0)}/{matrix.get('cells', 0)} cells covered, "
-            f"{matrix.get('triaged', 0)} triaged, {matrix.get('uncovered', 0)} untriaged"
-            if matrix else "matrix not run"),
+        # Every step is one some requirement or verdict speaks to, and every
+        # change one some requirement asked for: proven, per action.
+        row("Coverage",
+            (counts["coverage"][0] == counts["coverage"][1]) if counts["coverage"][1] else None,
+            f"{counts['coverage'][0]}/{counts['coverage'][1]} action(s) proven covered"
+            if counts["coverage"][1] else "no action needs a coverage check"),
+        row("Explanation",
+            (counts["explanation"][0] == counts["explanation"][1])
+            if counts["explanation"][1] else None,
+            f"{counts['explanation'][0]}/{counts['explanation'][1]} change(s) proven "
+            f"explained by a requirement"
+            if counts["explanation"][1] else "no change needs an explanation check"),
         row("Operations",
             (len(witnessed) == len(reqs)) if reqs else None,
             f"{len(witnessed)}/{len(reqs)} requirements with a discharged witness"
             if reqs else "no requirements"),
         # Unwanted-path requirements are evidence somebody thought about
-        # failure, not evidence the failure space is covered. Without the
-        # outcome matrix this dimension is unmeasured, never discharged.
+        # failure, not evidence the failure space is covered. Without
+        # declared external outcomes this dimension is unmeasured.
         row("Failure behavior",
-            (outcomes.get("uncovered") == 0) if outcomes else None,
-            f"{outcomes.get('covered', 0)}/{outcomes.get('cells', 0)} external outcomes "
-            f"handled, {outcomes.get('uncovered', 0)} unspecified"
-            if outcomes else f"{len(unwanted)} unwanted-path requirement(s); no external "
-                             f"outcome matrix \u2014 unmeasured"),
+            (not unanswered) if n_outcomes else None,
+            f"{n_outcomes - len(unanswered)}/{n_outcomes} external outcomes answered"
+            if n_outcomes else f"{len(unwanted)} unwanted-path requirement(s); no "
+                               f"external outcomes declared \u2014 unmeasured"),
         row("External systems",
             bool(externals) or None,
             f"{len(externals)} declared, "
@@ -1960,6 +2146,7 @@ def emit_area(root, area_name):
     area = load_area(root, area_name)
     if area is None:
         sys.exit(f"ERROR: specs/{area_name}.intent.json not found")
+    area["_completeness"] = completeness_summary(root, area)
     project = load_json(Path(root) / ".spec" / "project.json") or {}
     journeys = load_journeys(root)
 
@@ -1998,6 +2185,7 @@ def emit_area(root, area_name):
     lines += ui_sections(area)
     lines += at_a_glance(area)
     lines += what_the_system_does(root, area_name, area, journeys)
+    lines += decision_tables_section(root, area)
     lines += invariants_section(area)
     lines += externals_section(area)
     lines += examples_section(root, area_name, area)

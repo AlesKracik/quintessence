@@ -64,13 +64,10 @@ NONDET_PICKS_VAR = "mbt::nondetPicks"
 #   specs/changes/<slug>.change.json
 #   specs/journeys/<slug>.journey.json
 
-# Model plumbing, never domain events. Shared so the matrix and the
-# orphan-action lint cannot disagree about which actions are bookkeeping.
+# Model plumbing, never domain events. Shared so the completeness checks and
+# the orphan-action lint cannot disagree about which actions are bookkeeping.
 PLUMBING_ACTIONS = {"init", "step", "initP", "stepP"}
 
-# The verdicts a triaged (state, event) or (external, outcome) cell may carry.
-# Shared so the matrix generator and the schema-backed lint stay in step.
-TRIAGE_VALUES = {"GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"}
 
 
 # ── Console encoding ──────────────────────────────────────────────────────────
@@ -78,8 +75,7 @@ TRIAGE_VALUES = {"GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"}
 # console reports cp1252, which cannot encode the arrows, em dashes and status
 # marks these tools emit, and print()/csv.writer raise UnicodeEncodeError
 # rather than degrading. Shared here because every tool that writes to stdout
-# needs the same guard — spec-matrix did not have it and died mid-CSV on the
-# first "→" of a coverage cell.
+# needs the same guard — a tool without it dies mid-output on the first "→".
 
 def stream_encodes(stream, probe):
     enc = getattr(stream, "encoding", None)
@@ -177,6 +173,48 @@ def pre_ghost(req_id):
     the state BEFORE the step (stepP assigns it from the unprimed state, so
     no snapshot of the whole pre-state is needed)."""
     return "_pre_" + req_id.replace("-", "_")
+
+
+def coverage_name(action):
+    """The probe-module `val` that says every step of `action` falls under
+    some requirement's @while or some verdict: no step the model can take is
+    one nothing says anything about. A counterexample is a gap."""
+    return f"cover_{action}"
+
+
+def explanation_name(action, var):
+    """The probe-module `val` that says every step of `action` that changes
+    `var` is one where a requirement naming `var` applied. A counterexample
+    is behavior the model invented and no requirement asked for."""
+    return f"explain_{action}_{var}"
+
+
+def verdict_name(action, index):
+    """The probe-module `val` that checks the index-th verdict on `action`
+    (IMPOSSIBLE or NO-OP; GAP and OUT-OF-SCOPE have nothing to check)."""
+    return f"verdict_{action}_{index}"
+
+
+def verdict_ghost(action, index):
+    """The boolean ghost recording whether the verdict's @while held in the
+    state before the step, like pre_ghost for a requirement."""
+    return f"_pre_verdict_{action}_{index}"
+
+
+def verdict_label(v):
+    """How a verdict is named to a person: `<action> #<n> <VERDICT>`."""
+    return f"{v.get('action')} #{v.get('index')} {v.get('verdict')}"
+
+
+def completeness_check_id(kind, action, var=None, index=None):
+    """The check_results.checks[] id of a completeness check: file-name safe
+    (it names the counterexample trace) and distinct from requirement and
+    invariant ids."""
+    if kind == "coverage":
+        return f"cover-{action}"
+    if kind == "explanation":
+        return f"explain-{action}-{var}"
+    return f"verdict-{action}-{index}"
 
 
 def old_ghost(req_id, name):

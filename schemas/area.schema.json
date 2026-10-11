@@ -89,7 +89,7 @@
 
     "scope": {
       "type": "object",
-      "description": "The declared semantic boundary. Completeness is only meaningful relative to a boundary: without one, 'closed' is an unbounded claim nobody can check, and every OUT-OF-SCOPE triage verdict is an unfalsifiable assertion. Declaring it turns both into checkable statements — the readback's ship verdict reads 'READY relative to this scope', and spec-lint requires an OUT-OF-SCOPE cell to name the exclusion that covers it.",
+      "description": "The declared semantic boundary. Completeness is only meaningful relative to a boundary: without one, 'closed' is an unbounded claim nobody can check, and every OUT-OF-SCOPE verdict is an unfalsifiable assertion. Declaring it turns both into checkable statements — the readback's ship verdict reads 'READY relative to this scope', and spec-lint requires an OUT-OF-SCOPE verdict to name the exclusion that covers it.",
       "additionalProperties": false,
       "properties": {
         "included": {
@@ -105,7 +105,7 @@
             "required": ["item", "reason"],
             "additionalProperties": false,
             "properties": {
-              "item":     { "type": "string", "description": "Referenced by matrix_triage[].scope_ref and outcome_triage[].scope_ref." },
+              "item":     { "type": "string", "description": "Referenced by an OUT-OF-SCOPE verdict's scope_ref." },
               "reason":   { "type": "string", "description": "Why it is out: owned by another area, deferred, or genuinely not this product's job." },
               "owner":    { "type": "string", "description": "The area or team that owns it instead, when there is one." },
               "pass":     { "type": "integer", "minimum": 2, "description": "Brownfield: this slice of the area's code is DEFERRED to that extraction pass, not excluded for good. spec-extract-audit lists every deferred exclusion with the sites triaged OUT-OF-SCOPE against it, so the next pass starts from them. A reason starting 'Deferred to pass N' reads the same." }
@@ -150,7 +150,7 @@
 
     "externals": {
       "type": "array",
-      "description": "External systems this area depends on, with the FULL set of outcomes each can produce. Declaring them turns 'what if the payment provider times out?' from a question nobody asked into a matrix cell that must be covered or triaged. An external with no declared outcomes is an idealized dependency — the most common place real-world semantics go missing.",
+      "description": "External systems this area depends on, with the FULL set of outcomes each can produce. Declaring them turns 'what if the payment provider times out?' from a question nobody asked into an outcome some requirement (or verdict) must answer. An external with no declared outcomes is an idealized dependency — the most common place real-world semantics go missing.",
       "items": {
         "type": "object",
         "required": ["name", "outcomes"],
@@ -162,7 +162,7 @@
           "outcomes": {
             "type": "array",
             "minItems": 1,
-            "description": "Every outcome the dependency can produce, INCLUDING the unhappy ones (DECLINED, TIMEOUT, NETWORK_ERROR, DUPLICATE). Each becomes a row in the external×outcome completeness matrix.",
+            "description": "Every outcome the dependency can produce, INCLUDING the unhappy ones (DECLINED, TIMEOUT, NETWORK_ERROR, DUPLICATE). Each must be answered by a requirement's or a verdict's @error.",
             "items": {
               "type": "object",
               "required": ["name"],
@@ -219,24 +219,6 @@
           "maps_to":   { "type": "array", "items": { "type": "string" }, "description": "Required for MAPPED: the spec ids this site realizes (REQ/INV/CON/...)." },
           "reason":    { "type": "string", "description": "Required for every verdict except MAPPED." },
           "scope_ref": { "type": "string", "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item covering it." },
-          "question":  { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For GAP verdicts: the open_questions[] entry tracking it." }
-        }
-      }
-    },
-
-    "outcome_triage": {
-      "type": "array",
-      "description": "COMMITTED triage for external×outcome cells no requirement handles — the failure-behavior twin of matrix_triage. Same verdicts, same durability rationale: the generated view under specs/<area>/gen/ is gitignored scratch, this is the reviewable home.",
-      "items": {
-        "type": "object",
-        "required": ["external", "outcome", "verdict"],
-        "additionalProperties": false,
-        "properties": {
-          "external":  { "type": "string" },
-          "outcome":   { "type": "string" },
-          "verdict":   { "type": "string", "enum": ["GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"], "description": "GAP: a real hole, tracked by a question. IMPOSSIBLE: the cell cannot occur (a guard forbids it). NO-OP: the event CAN occur here and deliberately changes nothing — the third answer a closed specification needs, and the one most often left implicit; name the requirement that decided it in `reason`. OUT-OF-SCOPE: outside the declared boundary, and must cite the scope.excluded[] entry that covers it." },
-          "reason":    { "type": "string", "description": "Why: the impossibility argument, the covering artifact, or (for GAP) the unanswered question." },
-          "scope_ref": { "type": "string", "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item that covers this cell." },
           "question":  { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For GAP verdicts: the open_questions[] entry tracking it." }
         }
       }
@@ -321,7 +303,7 @@
           },
           "error_outcomes": {
             "type": "array",
-            "description": "How this requirement responds to each external outcome it can meet. This is what makes the external×outcome matrix computable: a cell is covered when some requirement names it here. Failure behavior stops being an afterthought precisely when it has to be written down per outcome.",
+            "description": "How this requirement responds to each external outcome it can meet. An outcome is answered when some requirement (or verdict) names it here. Failure behavior stops being an afterthought precisely when it has to be written down per outcome.",
             "items": {
               "type": "object",
               "required": ["external", "outcome", "effect"],
@@ -806,7 +788,7 @@
         "properties": {
           "id":         { "type": "string", "pattern": "^Q-\\d{3}$" },
           "question":   { "type": "string" },
-          "source":     { "type": "string", "description": "Where the question came from: matrix, matrix-orphan, red-team:critical, red-team:important, counterexample, elicitation, …" },
+          "source":     { "type": "string", "description": "Where the question came from: coverage, explanation, red-team:critical, red-team:important, counterexample, elicitation, …" },
           "status":     { "type": "string", "enum": ["open", "deferred", "resolved"], "default": "open" },
           "resolution": { "type": "string" },
           "resolved_at":{ "type": "string", "format": "date-time" }
@@ -814,26 +796,55 @@
       }
     },
 
-    "matrix_triage": {
+    "verdicts": {
       "type": "array",
-      "description": "COMMITTED triage decisions for uncovered state×event cells. The matrix CSV under specs/<area>/gen/ is gitignored scratch — decisions recorded only there would vanish on a fresh clone and the --strict CI gate would fail. This section is the durable home; spec-matrix reads it when regenerating and the CSV merely mirrors it.",
+      "description": "What an action does where no requirement says, derived from `/// @verdict <KIND>` records on the action (spec_source.py) and numbered per action in source order. Each closes the action's coverage where its @while holds. IMPOSSIBLE and NO-OP are claims about the model and are CHECKED (tools/spec-probes.py writes `verdict_<action>_<n>`); GAP and OUT-OF-SCOPE are statements of intent: a GAP blocks approval until its question is answered, an OUT-OF-SCOPE cites the scope.excluded[] entry that covers it.",
       "items": {
         "type": "object",
-        "required": ["entity", "state", "event", "verdict"],
+        "required": ["action", "index", "verdict"],
         "additionalProperties": false,
         "properties": {
-          "entity":  { "type": "string" },
-          "state":   { "type": "string" },
-          "event":   { "type": "string" },
-          "verdict": { "type": "string", "enum": ["GAP", "IMPOSSIBLE", "NO-OP", "OUT-OF-SCOPE"], "description": "GAP: a real hole, tracked by a question. IMPOSSIBLE: the cell cannot occur (a guard forbids it). NO-OP: the event CAN occur here and deliberately changes nothing — the third answer a closed specification needs, and the one most often left implicit; name the requirement that decided it in `reason`. OUT-OF-SCOPE: outside the declared boundary, and must cite the scope.excluded[] entry that covers it." },
-          "reason":  { "type": "string", "description": "Why: the impossibility argument, the covering artifact, or (for GAP) the unanswered question." },
-          "scope_ref": { "type": "string", "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item that covers this cell. Without it, 'out of scope' is an assertion; with it, it is a reference to a boundary someone reviewed." },
-          "question": { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For GAP verdicts: the open_questions[] entry tracking it." }
+          "action":    { "type": "string", "description": "The action the record sits on." },
+          "index":     { "type": "integer", "minimum": 1, "description": "Its position among the verdicts on that action, from 1." },
+          "verdict":   { "type": "string", "enum": ["IMPOSSIBLE", "NO-OP", "GAP", "OUT-OF-SCOPE"], "description": "IMPOSSIBLE: no step of the action from @while happens. NO-OP: every such step changes no observable var. GAP: a known hole, tracked by a question. OUT-OF-SCOPE: outside the declared boundary." },
+          "while":     { "type": "string", "description": "Quint boolean over the state before the step, which may read the action's parameters: where on the action the verdict applies. Absent: everywhere." },
+          "reason":    { "type": "string", "description": "Why: the record's description. A NO-OP or IMPOSSIBLE without one is indistinguishable from an oversight." },
+          "question":  { "type": "string", "pattern": "^Q-\\d{3}$", "description": "For a GAP: the open_questions[] entry tracking it." },
+          "scope_ref": { "type": "string", "description": "For an OUT-OF-SCOPE: the scope.excluded[].item that covers it." },
+          "error_outcomes": {
+            "type": "array",
+            "description": "External outcomes this verdict answers (`@error <External>.<OUTCOME>`), so an outcome no requirement handles is still accounted for.",
+            "items": {
+              "type": "object",
+              "required": ["external", "outcome"],
+              "additionalProperties": false,
+              "properties": {
+                "external": { "type": "string" },
+                "outcome":  { "type": "string" },
+                "effect":   { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "internal_vars": {
+      "type": "array",
+      "description": "State vars that are bookkeeping, not behavior, derived from `/// @internal <why>` on the `var`. The explanation check skips them: no requirement has to say how they move.",
+      "items": {
+        "type": "object",
+        "required": ["var"],
+        "additionalProperties": false,
+        "properties": {
+          "var":    { "type": "string" },
+          "reason": { "type": "string" }
         }
       }
     },
 
     "screens": {
+
       "type": "array",
       "description": "Optional on any area. Each screen is a top-level navigable view, derived from a `/// @screen <Name>` record on the model's screen sum type (one record per variant). Declaring screens[] + navigation[] makes the area an interactive surface: navigation lint, navigation-graph readback, and component codegen activate.",
       "items": {
@@ -1020,35 +1031,6 @@
           }
         },
 
-        "outcomes": {
-          "type": "object",
-          "description": "External×outcome coverage stats from the last spec-matrix --outcomes run. The failure-behavior twin of `matrix`: same shape, same purpose — make the completeness of the unhappy paths visible in the readback instead of leaving it to memory.",
-          "additionalProperties": false,
-          "properties": {
-            "ran_at":    { "type": "string", "format": "date-time" },
-            "cells":     { "type": "integer", "minimum": 0 },
-            "covered":   { "type": "integer", "minimum": 0 },
-            "triaged":   { "type": "integer", "minimum": 0 },
-            "uncovered": { "type": "integer", "minimum": 0 },
-            "gaps":      { "type": "array", "items": { "type": "string" }, "description": "Q-NNN ids of open GAP cells, if any were filed." }
-          }
-        },
-
-        "matrix": {
-          "type": "object",
-          "description": "State×event coverage stats from the last spec-matrix run (written by spec-matrix --record). Surfaces completeness in readbacks — the gitignored gen/ CSV is the working file, these counts are the reviewable summary.",
-          "additionalProperties": false,
-          "properties": {
-            "ran_at":    { "type": "string", "format": "date-time" },
-            "cells":     { "type": "integer", "minimum": 0 },
-            "covered":   { "type": "integer", "minimum": 0 },
-            "triaged":   { "type": "integer", "minimum": 0 },
-            "uncovered": { "type": "integer", "minimum": 0 },
-            "gaps":      { "type": "array", "items": { "type": "string" }, "description": "Q-NNN ids of open GAP cells, if any were filed." },
-            "orphans":   { "type": "integer", "minimum": 0 }
-          }
-        },
-
         "mutation": {
           "type": "object",
           "description": "Model mutation (tools/spec-questions.py --record): how much of the model's behavior the examples pin, and the questions for what they leave open. Each mutant is one small change to the model's behavior (a comparison, a guard, an effect, a variant, a constant); a mutant a run or invariant turns red on is killed, one nothing notices is a behavior nobody approved. Bounded and random — `no_difference` is not `equivalent` — and never a verdict.",
@@ -1116,8 +1098,8 @@
             "required": ["id", "result"],
             "additionalProperties": false,
             "properties": {
-              "id":              { "type": "string", "description": "INV-NNN, PROP-NNN, or the REQ id of an obligation. Witness results live in requirements[].witness, not here." },
-              "kind":            { "type": "string", "enum": ["invariant", "property", "obligation"], "default": "invariant" },
+              "id":              { "type": "string", "description": "INV-NNN, PROP-NNN, the REQ id of an obligation, or a completeness check's id (cover-…, explain-…, verdict-…). Witness results live in requirements[].witness, not here." },
+              "kind":            { "type": "string", "enum": ["invariant", "property", "obligation", "coverage", "explanation", "verdict"], "default": "invariant", "description": "coverage / explanation / verdict: a completeness check from the probe module (completeness.py), id cover-<action>, explain-<action>-<var> or verdict-<action>-<n>." },
               "quint_name":      { "type": "string" },
               "over":            { "type": "string", "enum": ["model", "probes"], "default": "model", "description": "Which module produced this result \u2014 echoed from the invariant's `over`. A verdict from the probe module was checked against initP/stepP rather than the sidecar's own init/step, and a reader comparing two \u2713 marks should be able to see that." },
               "proof":           { "type": "string", "enum": ["bounded", "inductive", "structural", "smt"], "default": "bounded", "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps; 'structural' results come from the Alloy backend and are valid only within this entry's `scope`." },

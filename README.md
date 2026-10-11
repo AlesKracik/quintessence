@@ -255,7 +255,7 @@ PR reviewers see the navigation graph render in GitHub and the auth-guard invari
 
 - **[Claude Code](https://claude.com/claude-code)** — to run the `/spec-*` commands.
 - **[Apalache](https://apalache-mc.org/)** — symbolic model checker for Quint. Used by `/spec-check`. Requires Java 17+. See the [JVM install guide](https://apalache-mc.org/docs/apalache/installation/jvm.html) or run `tools/check-tooling.sh` for platform-specific install hints.
-- **Python 3** — for the `tools/` scripts (lint, matrix, ITF trace tooling).
+- **Python 3** — for the `tools/` scripts (lint, probes, ITF trace tooling).
 - **[Alloy](https://alloytools.org/) 6.2+** — *optional*. Only needed for invariants marked `proof: "structural"`. Uses the same Java 17+ as Apalache, so the only new artifact is `org.alloytools.alloy.dist.jar`; point `ALLOY_JAR` (or `alloy.jar_path` in `.spec/project.json`) at it. 6.2 is the floor because that release introduced the command-line interface.
 - **Git** — but no branch ceremony; use git however your team uses git.
 
@@ -270,8 +270,8 @@ spec-template/
 ├── .claude/commands/          ← the 5 /spec-* commands
 ├── schemas/                   ← JSON schemas: the area view, intent + records (generated from it), change, journey, project, pattern, protocol
 ├── templates/                 ← spec.qnt.template, probes.qnt.template, contract.als.template
-├── .github/workflows/         ← spec-ci.yml (lint → matrix → typecheck → quint test; skips pre-bootstrap)
-├── tools/                     ← spec-lint, spec-record, spec-readback, spec-matrix, spec-questions, spec-route, quint_ir, itf_tools, bootstrap.sh (self-removes)
+├── .github/workflows/         ← spec-ci.yml (lint → probes → typecheck → quint test; skips pre-bootstrap)
+├── tools/                     ← spec-lint, spec-record, spec-readback, spec-questions, spec-route, quint_ir, itf_tools, bootstrap.sh (self-removes)
 └── examples/                  ← sample auth area + auth-ui area (stripped by bootstrap)
 ```
 

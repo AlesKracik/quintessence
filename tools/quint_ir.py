@@ -3,7 +3,7 @@
 quint_ir.py — Structured access to Quint sidecar files.
 
 Single entry point for every tool that needs to know what's inside a .qnt
-file (spec-lint, spec-matrix, /spec-check probe generation, readback).
+file (spec-lint, spec-probes, /spec-check probe generation, readback).
 Replaces ad-hoc regex scraping with the Quint compiler's own typed JSON IR
 when the `quint` CLI is available, falling back to the legacy regex parser
 when it isn't (so pre-commit hooks keep working on machines without Node).

@@ -223,78 +223,6 @@
             }
           }
         },
-        "outcomes": {
-          "type": "object",
-          "description": "External×outcome coverage stats from the last spec-matrix --outcomes run. The failure-behavior twin of `matrix`: same shape, same purpose — make the completeness of the unhappy paths visible in the readback instead of leaving it to memory.",
-          "additionalProperties": false,
-          "properties": {
-            "ran_at": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "cells": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "covered": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "triaged": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "uncovered": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "gaps": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Q-NNN ids of open GAP cells, if any were filed."
-            }
-          }
-        },
-        "matrix": {
-          "type": "object",
-          "description": "State×event coverage stats from the last spec-matrix run (written by spec-matrix --record). Surfaces completeness in readbacks — the gitignored gen/ CSV is the working file, these counts are the reviewable summary.",
-          "additionalProperties": false,
-          "properties": {
-            "ran_at": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "cells": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "covered": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "triaged": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "uncovered": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "gaps": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Q-NNN ids of open GAP cells, if any were filed."
-            },
-            "orphans": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        },
         "mutation": {
           "type": "object",
           "description": "Model mutation (tools/spec-questions.py --record): how much of the model's behavior the examples pin, and the questions for what they leave open. Each mutant is one small change to the model's behavior (a comparison, a guard, an effect, a variant, a constant); a mutant a run or invariant turns red on is killed, one nothing notices is a behavior nobody approved. Bounded and random — `no_difference` is not `equivalent` — and never a verdict.",
@@ -496,16 +424,20 @@
             "properties": {
               "id": {
                 "type": "string",
-                "description": "INV-NNN, PROP-NNN, or the REQ id of an obligation. Witness results live in requirements[].witness, not here."
+                "description": "INV-NNN, PROP-NNN, the REQ id of an obligation, or a completeness check's id (cover-…, explain-…, verdict-…). Witness results live in requirements[].witness, not here."
               },
               "kind": {
                 "type": "string",
                 "enum": [
                   "invariant",
                   "property",
-                  "obligation"
+                  "obligation",
+                  "coverage",
+                  "explanation",
+                  "verdict"
                 ],
-                "default": "invariant"
+                "default": "invariant",
+                "description": "coverage / explanation / verdict: a completeness check from the probe module (completeness.py), id cover-<action>, explain-<action>-<var> or verdict-<action>-<n>."
               },
               "quint_name": {
                 "type": "string"
@@ -848,98 +780,6 @@
           "scope_ref": {
             "type": "string",
             "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item covering it."
-          },
-          "question": {
-            "type": "string",
-            "pattern": "^Q-\\d{3}$",
-            "description": "For GAP verdicts: the open_questions[] entry tracking it."
-          }
-        }
-      }
-    },
-    "matrix_triage": {
-      "type": "array",
-      "description": "COMMITTED triage decisions for uncovered state×event cells. The matrix CSV under specs/<area>/gen/ is gitignored scratch — decisions recorded only there would vanish on a fresh clone and the --strict CI gate would fail. This section is the durable home; spec-matrix reads it when regenerating and the CSV merely mirrors it.",
-      "items": {
-        "type": "object",
-        "required": [
-          "entity",
-          "state",
-          "event",
-          "verdict"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "entity": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string"
-          },
-          "event": {
-            "type": "string"
-          },
-          "verdict": {
-            "type": "string",
-            "enum": [
-              "GAP",
-              "IMPOSSIBLE",
-              "NO-OP",
-              "OUT-OF-SCOPE"
-            ],
-            "description": "GAP: a real hole, tracked by a question. IMPOSSIBLE: the cell cannot occur (a guard forbids it). NO-OP: the event CAN occur here and deliberately changes nothing — the third answer a closed specification needs, and the one most often left implicit; name the requirement that decided it in `reason`. OUT-OF-SCOPE: outside the declared boundary, and must cite the scope.excluded[] entry that covers it."
-          },
-          "reason": {
-            "type": "string",
-            "description": "Why: the impossibility argument, the covering artifact, or (for GAP) the unanswered question."
-          },
-          "scope_ref": {
-            "type": "string",
-            "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item that covers this cell. Without it, 'out of scope' is an assertion; with it, it is a reference to a boundary someone reviewed."
-          },
-          "question": {
-            "type": "string",
-            "pattern": "^Q-\\d{3}$",
-            "description": "For GAP verdicts: the open_questions[] entry tracking it."
-          }
-        }
-      }
-    },
-    "outcome_triage": {
-      "type": "array",
-      "description": "COMMITTED triage for external×outcome cells no requirement handles — the failure-behavior twin of matrix_triage. Same verdicts, same durability rationale: the generated view under specs/<area>/gen/ is gitignored scratch, this is the reviewable home.",
-      "items": {
-        "type": "object",
-        "required": [
-          "external",
-          "outcome",
-          "verdict"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "external": {
-            "type": "string"
-          },
-          "outcome": {
-            "type": "string"
-          },
-          "verdict": {
-            "type": "string",
-            "enum": [
-              "GAP",
-              "IMPOSSIBLE",
-              "NO-OP",
-              "OUT-OF-SCOPE"
-            ],
-            "description": "GAP: a real hole, tracked by a question. IMPOSSIBLE: the cell cannot occur (a guard forbids it). NO-OP: the event CAN occur here and deliberately changes nothing — the third answer a closed specification needs, and the one most often left implicit; name the requirement that decided it in `reason`. OUT-OF-SCOPE: outside the declared boundary, and must cite the scope.excluded[] entry that covers it."
-          },
-          "reason": {
-            "type": "string",
-            "description": "Why: the impossibility argument, the covering artifact, or (for GAP) the unanswered question."
-          },
-          "scope_ref": {
-            "type": "string",
-            "description": "Required for OUT-OF-SCOPE: the scope.excluded[].item that covers this cell."
           },
           "question": {
             "type": "string",

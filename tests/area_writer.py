@@ -179,7 +179,7 @@ def write_area(view, model_text, als_text=None, ir=None):
     ir = ir or {}
     intent = {"$schema": "../schemas/intent.schema.json"}
     for k, v in view.items():
-        if k in ss.MODEL_KEYS or k in ss.UI_KEYS or k in ss.RECORD_KEYS or k == "$schema":
+        if k in ss.MODEL_KEYS or k in ss.POSITIONAL_KEYS or k in ss.RECORD_KEYS or k == "$schema":
             continue
         intent[k] = copy.deepcopy(v)
     if isinstance(intent.get("brief"), dict):

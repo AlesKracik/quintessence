@@ -158,5 +158,5 @@ Show the commit message; wait for confirmation.
 The split (rationale: METHODOLOGY → Git Conventions):
 
 - **Code repo CI**: wire `conformance.command` into the standard test run — the replay harness is just a test file, so a code change that breaks model conformance fails immediately on the code PR, with no spec tooling installed.
-- **Spec repo CI** (`spec-ci.yml`): the cheap deterministic gates only — lint, matrix `--strict`, quint typecheck/test.
+- **Spec repo CI** (`spec-ci.yml`): the cheap deterministic gates only — lint, probes `--check`, quint typecheck/test.
 - **Full `/spec-code-verify`** (traceability validation, drift detection, verification log) is agent-driven: run it before merge or on a schedule; it is not part of the shipped CI workflow.

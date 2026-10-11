@@ -13,7 +13,7 @@
 #                want to add /spec to an existing codebase.
 #
 # Either mode self-removes tools/bootstrap.sh on success; tools/ itself stays
-# (spec-lint, spec-record, spec-readback, spec-matrix, quint_ir, itf_tools, hooks installer live there).
+# (spec-lint, spec-record, spec-readback, quint_ir, itf_tools, hooks installer live there).
 
 set -euo pipefail
 
@@ -183,7 +183,7 @@ See [METHODOLOGY.md](METHODOLOGY.md) for the complete reference.
 
 - [Claude Code](https://claude.com/claude-code)
 - [Apalache](https://apalache-mc.org/) — for \`/spec-check\`. Requires Java 17+. Install: see [JVM guide](https://apalache-mc.org/docs/apalache/installation/jvm.html), or run \`tools/check-tooling.sh\` for platform-specific hints.
-- Python 3 — for the \`tools/\` scripts (lint, matrix, ITF tooling)
+- Python 3 — for the \`tools/\` scripts (lint, probes, ITF tooling)
 - Git
 EOF
 echo "  wrote project README.md"

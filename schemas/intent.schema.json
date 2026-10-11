@@ -167,7 +167,7 @@
     },
     "scope": {
       "type": "object",
-      "description": "The declared semantic boundary. Completeness is only meaningful relative to a boundary: without one, 'closed' is an unbounded claim nobody can check, and every OUT-OF-SCOPE triage verdict is an unfalsifiable assertion. Declaring it turns both into checkable statements — the readback's ship verdict reads 'READY relative to this scope', and spec-lint requires an OUT-OF-SCOPE cell to name the exclusion that covers it.",
+      "description": "The declared semantic boundary. Completeness is only meaningful relative to a boundary: without one, 'closed' is an unbounded claim nobody can check, and every OUT-OF-SCOPE verdict is an unfalsifiable assertion. Declaring it turns both into checkable statements — the readback's ship verdict reads 'READY relative to this scope', and spec-lint requires an OUT-OF-SCOPE verdict to name the exclusion that covers it.",
       "additionalProperties": false,
       "properties": {
         "included": {
@@ -190,7 +190,7 @@
             "properties": {
               "item": {
                 "type": "string",
-                "description": "Referenced by matrix_triage[].scope_ref and outcome_triage[].scope_ref."
+                "description": "Referenced by an OUT-OF-SCOPE verdict's scope_ref."
               },
               "reason": {
                 "type": "string",
@@ -266,7 +266,7 @@
     },
     "externals": {
       "type": "array",
-      "description": "External systems this area depends on, with the FULL set of outcomes each can produce. Declaring them turns 'what if the payment provider times out?' from a question nobody asked into a matrix cell that must be covered or triaged. An external with no declared outcomes is an idealized dependency — the most common place real-world semantics go missing.",
+      "description": "External systems this area depends on, with the FULL set of outcomes each can produce. Declaring them turns 'what if the payment provider times out?' from a question nobody asked into an outcome some requirement (or verdict) must answer. An external with no declared outcomes is an idealized dependency — the most common place real-world semantics go missing.",
       "items": {
         "type": "object",
         "required": [
@@ -297,7 +297,7 @@
           "outcomes": {
             "type": "array",
             "minItems": 1,
-            "description": "Every outcome the dependency can produce, INCLUDING the unhappy ones (DECLINED, TIMEOUT, NETWORK_ERROR, DUPLICATE). Each becomes a row in the external×outcome completeness matrix.",
+            "description": "Every outcome the dependency can produce, INCLUDING the unhappy ones (DECLINED, TIMEOUT, NETWORK_ERROR, DUPLICATE). Each must be answered by a requirement's or a verdict's @error.",
             "items": {
               "type": "object",
               "required": [
@@ -845,7 +845,7 @@
           },
           "source": {
             "type": "string",
-            "description": "Where the question came from: matrix, matrix-orphan, red-team:critical, red-team:important, counterexample, elicitation, …"
+            "description": "Where the question came from: coverage, explanation, red-team:critical, red-team:important, counterexample, elicitation, …"
           },
           "status": {
             "type": "string",
