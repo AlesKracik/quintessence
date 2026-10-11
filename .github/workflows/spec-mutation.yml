@@ -35,7 +35,7 @@ jobs:
         name: Areas with a model
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os, pathlib
+          import json, os, pathlib, re
           root = "." if pathlib.Path(".spec/project.json").exists() else (
               "examples" if pathlib.Path("examples/specs").is_dir() else "")
           areas = []
@@ -46,7 +46,7 @@ jobs:
                   qnt = (intent.get("formal_model") or {}).get("quint_file") or f"{name}.qnt"
                   if intent.get("kind") != "contract" and pathlib.Path(root, "specs", qnt).exists():
                       text = pathlib.Path(root, "specs", qnt).read_text(encoding="utf-8")
-                      if "action " in text:
+                      if re.search(r"^\s*(pure\s+)?action\s+\w+", text, re.M):
                           areas.append(name)
           print(f"root={root}")
           print(f"areas={json.dumps(areas)}")
