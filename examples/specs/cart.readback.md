@@ -6,7 +6,7 @@
 
 **Status:** structured  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 2  |  **Coverage:** 4 cells, 1 covered, 3 triaged, 0 untriaged  |  **Extraction:** 18/18 sites accounted  |  **Mutation:** not run  |  **Open questions:** 5  |  **Last verified:** never
 
-*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
+*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ nothing to witness (a forbidden step, whose proof is its obligation, or a computed value, checked by the unit test it names) · ∀ checked on every reachable step, ∀✗ a step that breaks it was found*
 
 ## Purpose
 
@@ -55,9 +55,10 @@ flowchart LR
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — REQ-001: While the Cart is Open, when a shopper adds a SKU already present, the system shall increase that line's quantity by the amount added.
-- **Unchecked requirement** — REQ-002: While the Cart is Open and holds fewer than MAX_ITEMS (= 20, CON-001) lines, when a shopper adds a new SKU, the system shall append a line for that SKU.
-- **Unchecked requirement** — REQ-004: While the Cart is Open, if the payment gateway throws during checkout, then the system shall leave the Cart Open and return ok:false with reason 'unavailable'.
+- **Requirement not formal yet** — REQ-001: When a shopper adds a SKU already present, the system shall …. _(no formal @shall / @outcome yet — nothing to check)_
+- **Requirement not formal yet** — REQ-002: When a shopper adds a new SKU, the system shall …. _(no formal @shall / @outcome yet — nothing to check)_
+- **Requirement not formal yet** — REQ-003: If a shopper adds an item, then the system shall …. _(no formal @shall / @outcome yet — nothing to check)_
+- **Requirement not formal yet** — REQ-004: If the payment gateway throws during checkout, then the system shall …. _(no formal @shall / @outcome yet — nothing to check)_
 - **Open coverage GAPs** — Q-005 (spec is silent on triaged-real cells).
 - **Open question** — Q-001: What should adding an item to a full cart do — throw as today, or return a result the UI can render? The code throws, which no requirement describes. _(source: extraction)_
 - **Open question** — Q-002: Retry after a thrown charge assumes the money did not move (ASM-001). Should checkout send an idempotency key before we rely on that? _(source: extraction)_
@@ -69,10 +70,10 @@ flowchart LR
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [REQ-001](#req-001) | increase that line's quantity by the amount added | must |
-| ⏳ | [REQ-002](#req-002) | append a line for that SKU | must |
-| ⊘ | [REQ-003](#req-003) | refuse the call and leave the cart untouched | forbidden |
-| ⏳ | [REQ-004](#req-004) | leave the Cart Open and return ok:false with reason 'unavailable' | must |
+| ⏳ | [REQ-001](#req-001) | While the cart is Open, when a shopper adds a SKU already in the cart, the system shall… | must |
+| ⏳ | [REQ-002](#req-002) | While the cart is Open and holds fewer than MAX_ITEMS lines, when a shopper adds a new… | must |
+| ⊘ | [REQ-003](#req-003) | If a shopper adds an item to a CheckedOut cart, then the system shall refuse the call a… | forbidden |
+| ⏳ | [REQ-004](#req-004) | If the payment gateway is unavailable during checkout, then the system shall leave the… | must |
 
 ## What the System Does
 
@@ -80,7 +81,7 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 #### REQ-001
 
-⏳ While the Cart is Open, when a shopper adds a SKU already present, the system shall increase that line's quantity by the amount added.
+⏳ When a shopper adds a SKU already present, the system shall ….
 
 > _Extracted from `code/legacy-cart/cart.js:31-35` (high confidence)._
 
@@ -88,57 +89,45 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 |---|---|---|---|
 | EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | cart.items = [{sku: 'a', qty: 3}] |
 
-<details><summary>Quint action `add_item`</summary>
+<details><summary>Details</summary>
 
-_action `add_item` not found in `specs/cart.qnt`_
-
-**Record:** `specs/cart.qnt:1` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:5` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-002
 
-⏳ While the Cart is Open and holds fewer than MAX_ITEMS (= 20, CON-001) lines, when a shopper adds a new SKU, the system shall append a line for that SKU.
+⏳ When a shopper adds a new SKU, the system shall ….
 
 > _Extracted from `code/legacy-cart/cart.js:26-36` (high confidence)._
 
-> _No example rows yet — nothing concrete shows this behavior._
+<details><summary>Details</summary>
 
-<details><summary>Quint action `add_item`</summary>
-
-_action `add_item` not found in `specs/cart.qnt`_
-
-**Record:** `specs/cart.qnt:15` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:16` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-003
 
-⊘  *(failure path)* While the Cart is CheckedOut, if a shopper adds an item, then the system shall refuse the call and leave the cart untouched.
+⊘  *(failure path)* If a shopper adds an item, then the system shall ….
 
 > _Extracted from `code/legacy-cart/cart.js:22-24` (high confidence)._
 
-> **Forbidden** — this must never happen, so there is no trace to find. The proof is the invariant that stays true: **INV-001**. The examples below show the call being refused.
+> **Forbidden** — this must never happen, so there is no trace to find. The proof is the check that no reachable step of the action starts where it is forbidden. The examples below show the call being refused.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-002 — Adding to a checked-out cart is refused and the cart is untouched | cart.status = CheckedOut, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = b, qty = 1) | result = refused, cart.items = [{sku: 'a', qty: 1}] |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `checkedOutIsFrozen` ⏳
+<details><summary>Details</summary>
 
-> **Witness skipped:** A refusal has no reachable state to witness. INV-001 carries the model-side proof.
-
-<details><summary>Quint action `add_item`</summary>
-
-_action `add_item` not found in `specs/cart.qnt`_
-
-**Record:** `specs/cart.qnt:29` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:27` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-004
 
-⏳  *(failure path)* While the Cart is Open, if the payment gateway throws during checkout, then the system shall leave the Cart Open and return ok:false with reason 'unavailable'.
+⏳  *(failure path)* If the payment gateway throws during checkout, then the system shall ….
 
 > _Extracted from `code/legacy-cart/cart.js:58-62` (medium confidence)._
 
@@ -146,13 +135,9 @@ _action `add_item` not found in `specs/cart.qnt`_
 > **On PaymentGateway/DECLINED:** NO_CHANGE — the cart stays Open; reason 'declined' (safe to retry)
 > **On PaymentGateway/UNAVAILABLE:** NO_CHANGE — the cart stays Open; reason 'unavailable'; caller retries (safe to retry)
 
-> _No example rows yet — nothing concrete shows this behavior._
+<details><summary>Details</summary>
 
-<details><summary>Quint action `checkout_unavailable`</summary>
-
-_action `checkout_unavailable` not found in `specs/cart.qnt`_
-
-**Record:** `specs/cart.qnt:47` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:39` — the doc comment this requirement is read from.
 
 </details>
 
@@ -243,7 +228,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 |---|---|---|
 | Data model | ✓ | 1 entities, 1 stateful, 1 closed |
 | State space | ✓ | 1/4 cells covered, 3 triaged, 0 untriaged |
-| Operations | ! | 1/4 requirements with a discharged witness |
+| Operations | ! | 0/4 requirements with a discharged witness |
 | Failure behavior | ✓ | 3/3 external outcomes handled, 0 unspecified |
 | External systems | ✓ | 1 declared, 3 outcomes |
 | Assumptions | ✓ | 1 recorded, 0 open |

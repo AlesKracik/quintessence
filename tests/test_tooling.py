@@ -63,6 +63,8 @@ sep = _load("spec_separation", "spec-separation.py")
 audit = _load("spec_extract_audit", "spec-extract-audit.py")
 sys.path.insert(0, str(TOOLS))
 import spec_source  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent))
+import area_writer  # noqa: E402
 
 
 def _area_name(path):
@@ -78,8 +80,7 @@ _PRISTINE = {}   # model path -> (text the test wrote, text put_area wrote)
 
 def put_area(path, area):
     """Write a test area the way it lives on disk: records as doc comments in
-    the model (through the same migration a JSON-first project would run),
-    intent and ledger beside it. Write the model FIRST — the records are
+    the model (tests/area_writer.py), intent and ledger beside it. Write the model FIRST — the records are
     placed on its declarations."""
     specs = Path(path).parent
     specs.mkdir(parents=True, exist_ok=True)
@@ -92,7 +93,7 @@ def put_area(path, area):
     apath = specs / fm["alloy_file"] if fm.get("alloy_file") else None
     atext = apath.read_text(encoding="utf-8") if apath and apath.exists() else None
     ir = quint_ir.parse_qnt(qpath, engine="regex") if qtext is not None else {}
-    qnt, als, intent, records = spec_source.migrate_area(dict(area, area=name), qtext, atext, ir or {})
+    qnt, als, intent, records = area_writer.write_area(dict(area, area=name), qtext, atext, ir or {})
     if qnt is not None:
         qpath.write_text(qnt, encoding="utf-8")
         _PRISTINE[qpath] = (qtext, qnt)
@@ -216,15 +217,6 @@ def _predicate_findings(tmp_path, reqs):
     return [f for f in findings if f.check == "no-witness-predicate"]
 
 
-def test_missing_predicate_fails_past_draft(tmp_path):
-    hits = _predicate_findings(tmp_path, [
-        {"id": "REQ-001", "status": "specified",
-         "ears": {"trigger": "x", "response": "y"}},
-    ])
-    assert len(hits) == 1
-    assert hits[0].severity == lint.FAIL
-
-
 @pytest.mark.parametrize("draft_status", ["raw", "needs-validation"])
 def test_missing_predicate_exempt_in_draft(tmp_path, draft_status):
     hits = _predicate_findings(tmp_path, [{"id": "REQ-001", "status": draft_status}])
@@ -259,33 +251,6 @@ def _witness_codes(tmp_path, reqs):
     return [f.check for f in findings]
 
 
-def test_justification_without_skip_names_the_status_not_the_predicate(tmp_path):
-    codes = _witness_codes(tmp_path, [
-        {"id": "REQ-001", "status": "specified",
-         "witness": {"justification": "rejection — INV-002 keeps it true"}},
-    ])
-    assert codes == ["justification-without-skip"]
-
-
-def test_justification_without_skip_says_what_to_set(tmp_path):
-    findings = []
-    lint.check_witnesses(tmp_path, _area_with([
-        {"id": "REQ-001", "status": "specified",
-         "witness": {"justification": "rejection — INV-002 keeps it true"}},
-    ]), "auth", findings)
-    assert findings[0].severity == lint.FAIL
-    assert "skipped" in findings[0].description
-    # ... and steers the prose form toward the checkable one.
-    assert "enforced_by" in findings[0].description
-
-
-def test_an_undischarged_requirement_is_still_asked_for_a_predicate(tmp_path):
-    codes = _witness_codes(tmp_path, [
-        {"id": "REQ-001", "status": "specified", "witness": {"status": "not-run"}},
-    ])
-    assert codes == ["no-witness-predicate"]
-
-
 def test_a_justified_skip_is_unchanged(tmp_path):
     codes = _witness_codes(tmp_path, [
         {"id": "REQ-001", "status": "specified", "ears": {"unwanted": True},
@@ -293,16 +258,6 @@ def test_a_justified_skip_is_unchanged(tmp_path):
                      "justification": "rejection — INV-002 keeps it true"}},
     ])
     assert codes == []
-
-
-def test_witness_status_flags_a_discharge_that_counts_for_nothing(tmp_path):
-    area = {"kind": "area", "area": "a", "formal_model": {"quint_file": "a.qnt"},
-            "requirements": [
-                {"id": "REQ-001", "witness": {"justification": "prose"}}]}
-    rows, missing, discharged = itf.witness_status(tmp_path, "a", area)
-    assert (missing, discharged) == (1, 0)
-    assert rows[0][1] == "JUSTIFIED-UNSET"
-    assert "not 'skipped'" in rows[0][3]
 
 
 def test_a_forbidden_requirement_naming_its_enforcer_is_not_flagged_early(tmp_path):
@@ -330,68 +285,6 @@ def _sanity_codes(reqs, sidecar=_SIDECAR, sidecars=None, area=None):
     return [(f.severity, f.check) for f in findings]
 
 
-@pytest.mark.parametrize("pred", ["true", "false", "  (true) ", "((false))"])
-def test_constant_predicate_fails(pred):
-    codes = _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
-                            "witness": {"predicate": pred}}])
-    assert (lint.FAIL, "predicate-constant") in codes
-
-
-def test_predicate_with_no_state_var_fails():
-    codes = _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
-                            "witness": {"predicate": "1 + 1 == 2"}}])
-    assert (lint.FAIL, "predicate-no-state") in codes
-
-
-def test_good_predicate_clean():
-    assert _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
-                           "witness": {"predicate": "sessions.size() > 0"}}]) == []
-
-
-def test_predicate_off_action_warns():
-    # login assigns `sessions`; a predicate over `accountStatus` may witness a
-    # side condition, not this requirement's effect.
-    codes = _sanity_codes([{"id": "REQ-1", "quint_ref": "login",
-                            "witness": {"predicate": "accountStatus.size() > 0"}}])
-    assert (lint.WARN, "predicate-off-action") in codes
-
-
-def test_predicate_on_action_clean():
-    assert _sanity_codes([{"id": "REQ-1", "quint_ref": "lock",
-                           "witness": {"predicate": "accountStatus.size() > 0"}}]) == []
-
-
-@pytest.mark.parametrize("req", [
-    {"id": "REQ-1", "status": "deferred", "witness": {"predicate": "true"}},
-    {"id": "REQ-1", "type": "non-functional", "witness": {"predicate": "true"}},
-    {"id": "REQ-1", "witness": {"status": "skipped", "predicate": "true"}},
-])
-def test_predicate_sanity_skips(req):
-    assert _sanity_codes([req]) == []
-
-
-def test_predicate_sanity_no_module_returns():
-    assert lint.check_predicate_sanity(
-        {"requirements": [{"id": "R", "witness": {"predicate": "x == 1"}}]},
-        None, None, "a", []) is None
-
-
-def test_no_false_no_state_when_var_set_unknown():
-    codes = _sanity_codes([{"id": "REQ-1", "witness": {"predicate": "foo == 1"}}],
-                          sidecar={"vars": set(), "action_mutations": {}})
-    assert [c for c in codes if c[1] == "predicate-no-state"] == []
-
-
-def test_spanned_vars_unioned():
-    # A contract/UI predicate over an imported area's var must not false-FAIL.
-    codes = _sanity_codes(
-        [{"id": "INV-X", "witness": {"predicate": "billing_accounts.size() > 0"}}],
-        sidecar={"vars": set(), "action_mutations": {}},
-        sidecars={"billing": {"vars": {"billing_accounts"}}},
-        area={"spans": ["billing"]})
-    assert codes == []
-
-
 # ── Finding B (pass 2): precision lints gate at approval ─────────────────────
 
 def _state_binding_codes(status):
@@ -403,11 +296,6 @@ def _state_binding_codes(status):
                            "ears": {"state": "the user is logged in"}}]},
         "auth", findings)
     return [(f.severity, f.check) for f in findings]
-
-
-def test_state_binding_warns_then_fails_at_approval():
-    assert (lint.WARN, "state-not-bound") in _state_binding_codes("formalized")
-    assert (lint.FAIL, "state-not-bound") in _state_binding_codes("approved")
 
 
 # ── Finding C (pass 2): ship verdict ─────────────────────────────────────────
@@ -1121,32 +1009,11 @@ def _modality_codes(reqs, invs=None, status="formalized"):
     return [(f.severity, f.check) for f in findings]
 
 
-def test_forbidden_must_name_its_enforcing_invariant():
-    codes = _modality_codes([{"id": "REQ-006", "status": "specified",
-                              "modality": "forbidden", "witness": {"status": "skipped"}}])
-    assert (lint.FAIL, "forbidden-without-enforcer") in codes
-
-
-def test_forbidden_enforcer_must_exist():
-    codes = _modality_codes([{"id": "REQ-006", "status": "specified",
-                              "modality": "forbidden",
-                              "witness": {"status": "skipped", "enforced_by": "INV-404"}}])
-    assert (lint.FAIL, "forbidden-enforcer-dangling") in codes
-
-
 def test_forbidden_with_enforcer_is_clean():
     assert _modality_codes([{"id": "REQ-006", "status": "specified",
                              "modality": "forbidden",
                              "witness": {"status": "skipped",
                                          "enforced_by": "INV-002"}}]) == []
-
-
-def test_forbidden_carrying_a_witness_predicate_warns():
-    codes = _modality_codes([{"id": "REQ-006", "status": "specified",
-                              "modality": "forbidden",
-                              "witness": {"status": "skipped", "enforced_by": "INV-002",
-                                          "predicate": "x > 0"}}])
-    assert (lint.WARN, "forbidden-with-predicate") in codes
 
 
 def test_may_needs_a_witness_per_permitted_outcome():
@@ -1196,14 +1063,6 @@ def test_may_predicates_satisfy_the_vagueness_gate(tmp_path):
     findings = []
     lint.check_witnesses(tmp_path, area, "auth", findings)
     assert [f for f in findings if f.check == "no-witness-predicate"] == []
-
-
-def test_may_outcome_predicates_still_get_the_fake_witness_check():
-    codes = _sanity_codes([{"id": "REQ-007", "quint_ref": "login", "modality": "may",
-                            "witness": {"outcomes": [
-                                {"name": "a", "predicate": "sessions.size() > 0"},
-                                {"name": "b", "predicate": "true"}]}}])
-    assert (lint.FAIL, "predicate-constant") in codes
 
 
 def test_may_probe_names_are_distinct_per_outcome():
@@ -1462,50 +1321,12 @@ def _bind_codes(reqs, status="formalized", sidecar=_BIND_SIDECAR):
 
 
 def test_ghost_name_convention():
-    assert lint.ghost_for("uid") == "_lastUid"
-    assert lint.ghost_for("sid") == "_lastSid"
-    assert lint.ghost_for("c") == "_lastC"
-
-
-def test_unbound_existential_is_flagged():
-    # The exact shape that passes today while proving nothing about this call.
-    codes = _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "login",
-                          "witness": {"predicate":
-                                      "sessions.keys().exists(s => sessions.get(s) == Active)"}}])
-    assert (lint.WARN, "witness-unbound") in codes
-
-
-def test_bound_predicate_passes():
-    assert _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "login",
-                         "witness": {"predicate":
-                                     "statusOf(sessions, _lastSid) == Active"}}]) == []
-
-
-def test_binding_fails_at_review():
-    codes = _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "login",
-                          "witness": {"predicate": "sessions.size() > 0"}}],
-                        status="approved")
-    assert (lint.FAIL, "witness-unbound") in codes
-
-
-def test_parameterless_action_has_nothing_to_bind_to():
-    assert _bind_codes([{"id": "REQ-001", "status": "specified", "quint_ref": "tick",
-                         "witness": {"predicate": "sessions.size() > 0"}}]) == []
-
-
-def test_rejection_is_exempt_from_binding():
-    # A prohibition has no predicate to bind; it carries an enforcing invariant.
-    assert _bind_codes([{"id": "REQ-005", "status": "specified", "quint_ref": "login",
-                         "modality": "forbidden",
-                         "witness": {"status": "skipped", "enforced_by": "INV-002"}}]) == []
-
-
-def test_binding_reports_once_per_requirement():
-    codes = _bind_codes([{"id": "REQ-007", "status": "specified", "quint_ref": "login",
-                          "modality": "may",
-                          "witness": {"outcomes": [{"name": "a", "predicate": "sessions.size() > 0"},
-                                                   {"name": "b", "predicate": "sessions.size() > 1"}]}}])
-    assert codes.count((lint.WARN, "witness-unbound")) == 1
+    assert itf.ghost_for_param("uid") == "_lastUid"
+    assert itf.ghost_for_param("sid") == "_lastSid"
+    assert itf.ghost_for_param("c") == "_lastC"
+    assert itf.pre_ghost("REQ-001") == "_pre_REQ_001"
+    assert itf.old_ghost("REQ-001", "before") == "_old_REQ_001_before"
+    assert itf.obligation_name("REQ-001") == "oblig_REQ_001"
 
 
 def test_quint_ir_exposes_action_parameters(tmp_path):
@@ -1532,47 +1353,6 @@ def _delta_codes(tmp_path, reqs, status="formalized", probes=None):
     findings = []
     lint.check_witness_delta(tmp_path, area, {}, "auth", findings)
     return [(f.severity, f.check) for f in findings]
-
-
-def test_missing_delta_warns_then_fails(tmp_path):
-    req = [{"id": "REQ-001", "status": "specified", "witness": {"predicate": "p"}}]
-    assert (lint.WARN, "witness-delta-missing") in _delta_codes(tmp_path, req)
-    assert (lint.FAIL, "witness-delta-missing") in _delta_codes(tmp_path, req,
-                                                                status="approved")
-
-
-def test_present_delta_passes(tmp_path):
-    req = [{"id": "REQ-001", "status": "specified",
-            "witness": {"predicate": "p", "delta": {"pre": "not(_prevX.contains(k))"}}}]
-    assert _delta_codes(tmp_path, req) == []
-
-
-def test_delta_dropped_by_the_probe_generator_fails(tmp_path):
-    # A recorded delta the probe does not contain is worse than none: the JSON
-    # claims a check the model never performs.
-    probes = 'val witness_REQ_001: bool =\n  not(p and _lastAction == "login")\n'
-    req = [{"id": "REQ-001", "status": "specified",
-            "witness": {"predicate": "p", "delta": {"pre": "not(_prevX.contains(k))"}}}]
-    codes = _delta_codes(tmp_path, req, probes=probes)
-    assert (lint.FAIL, "witness-delta-not-in-probe") in codes
-
-
-def test_delta_in_the_probe_passes_despite_wrapping(tmp_path):
-    # The generator wraps long conjuncts across lines; the check is about the
-    # conjunct being there, not about its formatting.
-    probes = ('val witness_REQ_001: bool =\n'
-              '  not(p and _lastAction == "login"\n'
-              '      and not(_prevX.contains(k)))\n')
-    req = [{"id": "REQ-001", "status": "specified",
-            "witness": {"predicate": "p",
-                        "delta": {"pre": "not(_prevX.contains(k))"}}}]
-    assert _delta_codes(tmp_path, req, probes=probes) == []
-
-
-def test_rejection_owes_no_delta(tmp_path):
-    req = [{"id": "REQ-005", "status": "specified", "modality": "forbidden",
-            "witness": {"status": "skipped", "enforced_by": "INV-002"}}]
-    assert _delta_codes(tmp_path, req) == []
 
 
 # ── Witness soundness 3: paired invariants ──────────────────────────────────
@@ -1632,11 +1412,8 @@ def test_non_numeric_constraint_is_exempt(tmp_path):
 
 def test_is_rejection_shared_definition():
     assert itf.is_rejection({"modality": "forbidden"})
-    assert itf.is_rejection({"ears": {"unwanted": True},
-                             "witness": {"status": "skipped", "justification": "x"}})
-    # A skip on a requirement that is neither unwanted nor forbidden is a
-    # COMPUTED requirement (a derived value), not a refusal.
-    assert not itf.is_rejection({"witness": {"status": "skipped", "justification": "x"}})
+    # A computed requirement (on a pure def) is not a refusal.
+    assert not itf.is_rejection({"form": "computed"})
     # unwanted-behavior handling that CHANGES state is witnessable, and replay
     # already covers it — it is not a refusal.
     assert not itf.is_rejection({"ears": {"unwanted": True}})
@@ -1757,9 +1534,9 @@ def test_mutant_application_always_restores(tmp_path, monkeypatch):
 
 def _spec(**kw):
     base = {"area": "auth",
-            "requirements": [{"id": "REQ-001", "ears": {"response": "r"},
+            "requirements": [{"id": "REQ-001", "ears": {"response": "p"},
                               "status": "specified",
-                              "witness": {"predicate": "p", "status": "not-run"}}],
+                              "witness": {"status": "not-run"}}],
             "invariants": [{"id": "INV-001", "description": "d",
                             "formal_status": "specified"}],
             "constraints": [{"id": "CON-001", "name": "MAX", "value": 5}],
@@ -1786,10 +1563,10 @@ def test_separation_ignores_reformatting():
     assert sep.claim_diff(sep.claims(before), sep.claims(reflowed)) == []
 
 
-def test_separation_catches_a_weakened_predicate():
+def test_separation_catches_a_weakened_shall():
     before = _spec()
     after = json.loads(before)
-    after["requirements"][0]["witness"]["predicate"] = "true"
+    after["requirements"][0]["ears"]["response"] = "true"
     assert sep.claim_diff(sep.claims(before), sep.claims(json.dumps(after))) == \
         ["requirements.REQ-001"]
 
@@ -1857,7 +1634,7 @@ def test_separation_end_to_end_over_git(tmp_path):
     assert impl and not claim_changed
 
     # Now weaken a claim in the same commit as the code change: mixed.
-    payload["requirements"][0]["witness"]["predicate"] = "true"
+    payload["requirements"][0]["ears"]["response"] = "true"
     put_area(spec, payload)
     run("git", "add", "-A")
     claim_changed = sep.claim_diff(sep.claims(sep.derive_at(before, "auth", tmp_path)),
@@ -2276,7 +2053,7 @@ def _may_area(root, outcomes):
     return {"kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
             "formal_model": {"quint_file": "a.qnt"},
             "requirements": [{"id": "REQ-007", "status": "specified", "modality": "may",
-                              "quint_ref": "x",
+                              "quint_ref": "x", "form": "event",
                               "witness": {"status": "witnessed", "outcomes": outcomes}}]}
 
 
@@ -2312,6 +2089,7 @@ def test_may_requirement_discharges_the_verify_preflight(tmp_path):
     sha = itf.compute_model_sha(tmp_path, "a", area)
     for oc in outcomes:
         oc["model_sha"] = sha
+    area["requirements"][0]["obligation"] = {"formal_status": "verified", "model_sha": sha}
     rows, missing, discharged = itf.witness_status(tmp_path, "a", area)
     assert (missing, discharged) == (0, 1)
     assert rows[0][1] == "witnessed"
@@ -2351,7 +2129,8 @@ def test_must_requirement_witness_handling_is_unchanged(tmp_path):
     area = {"kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
             "formal_model": {"quint_file": "a.qnt"},
             "requirements": [{"id": "REQ-001", "status": "specified", "quint_ref": "x",
-                              "witness": {"status": "witnessed", "predicate": "p"}}]}
+                              "form": "event", "ears": {"response": "x > 0"},
+                              "witness": {"status": "witnessed"}}]}
     findings = []
     lint.check_witnesses(tmp_path, area, "a", findings)
     assert any(f.check == "witnessed-without-trace" for f in findings)
@@ -2914,72 +2693,6 @@ def test_prose_justification_still_discharges(tmp_path):
     assert "skipped-no-justification" not in _witness_findings(tmp_path, area)
 
 
-def test_skip_with_neither_form_still_fails(tmp_path):
-    area = _forbidden_area({"status": "skipped"}, rid="REQ-003", modality=None)
-    assert "skipped-no-justification" in _witness_findings(tmp_path, area)
-
-
-def test_a_non_forbidden_requirement_still_needs_a_predicate(tmp_path):
-    """The predicate exemption is scoped to prohibitions carrying enforced_by,
-    not handed to anything that omits a predicate."""
-    area = _forbidden_area({}, rid="REQ-004", modality=None)
-    assert "no-witness-predicate" in _witness_findings(tmp_path, area)
-
-
-def test_forbidden_without_enforced_by_is_not_exempt(tmp_path):
-    """modality alone must not buy the exemption \u2014 check_modality FAILs the
-    missing enforced_by, and the predicate gate must not go quiet meanwhile."""
-    assert "no-witness-predicate" in _witness_findings(tmp_path, _forbidden_area({}))
-
-
-@pytest.mark.parametrize("witness,expected", [
-    ({"status": "skipped", "enforced_by": "INV-001"}, "enforced by INV-001"),
-    ({"status": "skipped", "justification": "rejection \u2014 see INV-002"},
-     "rejection \u2014 see INV-002"),
-    ({"status": "skipped"}, None),
-    ({}, None),
-    ("not-a-dict", None),
-])
-def test_skip_discharge_is_the_single_definition(witness, expected):
-    assert itf.skip_discharge(witness) == expected
-
-
-def test_enforced_by_wins_over_prose_when_both_are_present():
-    """The checkable form is the one worth reporting."""
-    assert itf.skip_discharge({"status": "skipped", "enforced_by": "INV-001",
-                               "justification": "prose"}) == "enforced by INV-001"
-
-
-def test_witness_status_counts_a_typed_skip_as_discharged(tmp_path):
-    """The readback's ledger reads the same definition, so a prohibition no
-    longer renders as SKIPPED-UNJUSTIFIED, and it counts as discharged rather
-    than against the gate."""
-    area = {"kind": "area", "area": "auth",
-            "requirements": [{"id": "REQ-002", "modality": "forbidden",
-                              "witness": {"status": "skipped",
-                                          "enforced_by": "INV-001"}}]}
-    rows, missing, discharged = itf.witness_status(tmp_path, "auth", area)
-    assert [r[1] for r in rows] == ["skipped"]
-    assert "INV-001" in rows[0][3]
-    assert (missing, discharged) == (0, 1)
-
-
-def test_witness_status_still_gates_an_undischarged_skip(tmp_path):
-    area = {"kind": "area", "area": "auth",
-            "requirements": [{"id": "REQ-003",
-                              "witness": {"status": "skipped"}}]}
-    rows, missing, discharged = itf.witness_status(tmp_path, "auth", area)
-    assert rows[0][1] == "SKIPPED-UNJUSTIFIED"
-    assert (missing, discharged) == (1, 0)
-
-
-def test_a_typed_skip_is_a_rejection_for_refusal_purposes():
-    assert itf.is_rejection({"ears": {"unwanted": True},
-                             "witness": {"status": "skipped",
-                                         "enforced_by": "INV-001"}})
-    assert not itf.is_rejection({"witness": {"status": "skipped"}})
-
-
 # ── A missing parser must not report clean ──────────────────────────────────
 # QUINT_IR_ENGINE=cli demands the compiler's typed IR. With the CLI absent,
 # _parse_via_cli returned None, parse_sidecar turned that into
@@ -3449,16 +3162,6 @@ def test_shape_diagram_absent_when_there_is_nothing_to_draw():
     assert readback.shape_diagram({"area": "auth"}) == []
 
 
-def test_a_typed_prohibition_renders_as_discharged_not_pending():
-    """status_mark read only `justification`, so a forbidden requirement
-    discharged by enforced_by showed as not-yet-checked."""
-    assert readback.status_mark(
-        {"witness": {"status": "skipped", "enforced_by": "INV-001"}}) == "\u2298"
-    assert readback.status_mark(
-        {"witness": {"status": "skipped", "justification": "prose"}}) == "\u2298"
-    assert readback.status_mark({"witness": {"status": "skipped"}}) == "\u23f3"
-
-
 def test_the_shipped_example_carries_a_current_brief():
     area = spec_source.load_area(TOOLS.parent / "examples", "auth")
     assert itf.brief_status(area)[0] == "current", "example brief pin is stale"
@@ -3787,88 +3490,6 @@ def _bridge(check, reqs, sidecar=None):
     return [f.check for f in findings]
 
 
-def test_a_precondition_the_action_never_reads_is_not_a_translation_of_it():
-    """'While the account is Locked' over an action that never looks at
-    accountStatus. The sentence and the model disagree, and which var holds
-    'Locked' is derivable — var_types × type_variants — so nobody has to
-    write the mapping down."""
-    assert _bridge(lint.check_ears_guard_correspondence,
-                   [{"id": "REQ-001", "quint_ref": "login",
-                     "ears": {"state": "While the account is Locked",
-                              "response": "x"}}]) == ["guard-not-in-action"]
-    # The same sentence over the action that does read it: silent.
-    assert _bridge(lint.check_ears_guard_correspondence,
-                   [{"id": "REQ-002", "quint_ref": "lock",
-                     "ears": {"state": "While the account is Locked",
-                              "response": "x"}}]) == []
-
-
-def test_the_guard_check_stands_down_under_the_regex_parser():
-    """The fallback scans action bodies only, so a var a guard reaches
-    through a helper (`not(isLocked(uid))`) is invisible to it. FAILing on a
-    read the parser cannot see would fail correct models, so the check asks
-    which engine answered."""
-    lossy = dict(BRIDGE_SIDECAR, source="regex")
-    assert _bridge(lint.check_ears_guard_correspondence,
-                   [{"id": "REQ-001", "quint_ref": "login",
-                     "ears": {"state": "While the account is Locked",
-                              "response": "x"}}], lossy) == []
-
-
-def test_a_response_promising_a_state_the_action_never_writes():
-    assert _bridge(lint.check_ears_effect_correspondence,
-                   [{"id": "REQ-004", "quint_ref": "login",
-                     "ears": {"response": "the account shall become Locked"}}]
-                   ) == ["effect-not-in-action"]
-
-
-def test_the_right_variable_moved_to_the_wrong_state():
-    """`login` does write `sessions` — so a var-level check passes it. The
-    CLI parser knows it builds `Active` and never `Expired`, which is the
-    sharper question and the one worth asking when it can be answered."""
-    assert _bridge(lint.check_ears_effect_correspondence,
-                   [{"id": "REQ-003", "quint_ref": "login",
-                     "ears": {"response": "the session shall become Expired"}}]
-                   ) == ["effect-wrong-variant"]
-    # Under the regex parser, which misses a variant built across a
-    # continuation line, the check drops to var-level rather than guessing.
-    lossy = dict(BRIDGE_SIDECAR, source="regex")
-    assert _bridge(lint.check_ears_effect_correspondence,
-                   [{"id": "REQ-003", "quint_ref": "login",
-                     "ears": {"response": "the session shall become Expired"}}],
-                   lossy) == []
-
-
-def test_a_preservation_response_is_verified_not_exempted():
-    """'LEAVE the subscription Active' is implemented by `x' = x`, which
-    action_mutations deliberately drops as a non-mutation. Demanding a
-    mutation there fails the model for being right — the shipped
-    subscription example is exactly that case. So a preservation is checked
-    against action_preserves instead, which also makes the opposite error
-    reportable: a sentence promising no change over an action that makes
-    one."""
-    assert _bridge(lint.check_ears_effect_correspondence,
-                   [{"id": "REQ-005", "quint_ref": "login",
-                     "ears": {"response": "leave the account Locked"}}]) == []
-    assert _bridge(lint.check_ears_effect_correspondence,
-                   [{"id": "REQ-006", "quint_ref": "login",
-                     "ears": {"response": "the session shall remain Active"}}]
-                   ) == ["effect-contradicts-action"]
-
-
-def test_a_correct_requirement_produces_no_bridge_findings():
-    assert _bridge(lint.check_ears_effect_correspondence,
-                   [{"id": "REQ-007", "quint_ref": "login",
-                     "ears": {"response": "the session shall become Active"}}]) == []
-
-
-def test_a_prohibition_is_not_asked_to_implement_what_it_forbids():
-    assert _bridge(lint.check_ears_effect_correspondence,
-                   [{"id": "REQ-008", "quint_ref": "login",
-                     "modality": "forbidden",
-                     "ears": {"response": "the account shall not become Locked"}}]) == []
-
-
 def test_a_declared_state_no_assignment_can_produce():
     """One level above a vacuous witness: nothing can enter the state at
     all, so every requirement and invariant naming it holds for free."""
@@ -3906,24 +3527,6 @@ def test_the_ir_maps_a_declared_state_to_the_var_that_holds_it():
     assert ir["action_produces"]["login"] == ["Active"]
     assert set(ir["produced_variants"]) == {
         "Active", "Expired", "Locked", "LoggedOut", "Unlocked"}
-
-
-def test_the_shipped_examples_trip_no_bridge_check():
-    """These checks ship enabled. An example that fails them would teach the
-    wrong thing on the first run."""
-    specs = TOOLS.parent / "examples" / "specs"
-    for name in spec_source.list_areas(specs.parent):
-        area = spec_source.load_area(specs.parent, name)
-        qnt = specs / f"{name}.qnt"
-        if not qnt.exists():
-            continue
-        sidecar = lint.parse_sidecar(qnt)
-        findings = []
-        lint.check_ears_guard_correspondence(area, sidecar, name, findings)
-        lint.check_ears_effect_correspondence(area, sidecar, name, findings)
-        lint.check_unproducible_states(area, sidecar, name, findings)
-        assert not findings, [
-            f"{name}: {f.check} [{f.ref}] {f.description}" for f in findings]
 
 
 # ── Spec↔code provenance ────────────────────────────────────────────────────
@@ -4267,14 +3870,15 @@ def _hollow_area(tmp_path, states_by_req):
         (tmp_path / "specs" / rel).write_text(
             json.dumps({"vars": ["x"], "states": states}), encoding="utf-8")
         reqs.append({"id": rid, "status": "specified", "quint_ref": "f",
-                     "witness": {"predicate": "x > 0", "status": "witnessed",
-                                 "trace": rel}})
+                     "form": "event", "ears": {"response": "x > 0"},
+                     "witness": {"status": "witnessed", "trace": rel}})
     area = {"kind": "area", "area": "a", "version": "1.0.0",
             "status": "formalized", "formal_model": {"quint_file": "a.qnt"},
             "requirements": reqs}
     sha = itf.compute_model_sha(tmp_path, "a", area)
     for r in area["requirements"]:
         r["witness"]["model_sha"] = sha
+        r["obligation"] = {"formal_status": "verified", "model_sha": sha}
     return area
 
 
@@ -4287,7 +3891,7 @@ def test_a_hollow_witness_does_not_discharge_even_when_stamped(tmp_path):
     rows, missing, discharged = itf.witness_status(tmp_path, "a", area)
     by_id = {rid: (st, detail) for rid, st, _t, detail in rows}
     assert by_id["REQ-008"][0] == "HOLLOW"
-    assert "initial state" in by_id["REQ-008"][1]
+    assert "nothing happened" in by_id["REQ-008"][1]
     assert by_id["REQ-009"][0] == "witnessed"
     assert (missing, discharged) == (1, 1)
 
@@ -4308,22 +3912,24 @@ def test_the_recorder_refuses_to_mint_a_hollow_witness(tmp_path, monkeypatch):
     (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
                                                      encoding="utf-8")
     (tmp_path / "specs" / "a" / "traces").mkdir(parents=True)
-    (tmp_path / "specs" / "a.qnt").write_text("module a { var x: int }",
-                                              encoding="utf-8")
+    (tmp_path / "specs" / "a.qnt").write_text(
+        "module a {\n  var x: int\n  action f = x' = 1\n}\n", encoding="utf-8")
     (tmp_path / "specs" / "a.probes.qnt").write_text(
-        "module a_probes {\n  val witness_REQ_008: bool = true\n}\n",
+        "module a_probes {\n  val oblig_REQ_008: bool = true\n"
+        "  val witness_REQ_008: bool = true\n}\n",
         encoding="utf-8")
     area_path = tmp_path / "specs" / "a.intent.json"
     put_area(area_path, {
         "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
         "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
         "requirements": [{"id": "REQ-008", "status": "specified",
-                          "quint_ref": "f",
-                          "witness": {"predicate": "x > 0"}}],
+                          "quint_ref": "f", "ears": {"response": "x > 0"}}],
     })
 
     def fake_verify(quint, target, name, *a, **k):
-        # What Apalache writes when the predicate holds at init.
+        if name.startswith("oblig_"):
+            return ("verified", "", 0.1)
+        # A one-state counterexample: nothing happened.
         Path(k["out_itf"]).write_text(
             json.dumps({"vars": ["x"], "states": [{"x": 1}]}), encoding="utf-8")
         return ("counterexample", "", 0.3)
@@ -4374,17 +3980,20 @@ def _probe_area(tmp_path, reqs=None, domains=None, invariants=None):
             "invariants": invariants or [],
             "requirements": reqs if reqs is not None else [
                 {"id": "REQ-001", "description": "opening makes it Active",
-                 "quint_ref": "open_acct",
-                 "witness": {"predicate": "accounts.get(_lastUid) == Active",
-                             "delta": {"pre": "not(_prevAccounts.keys()"
-                                              ".contains(_lastUid))"}}}]}
+                 "status": "specified", "quint_ref": "open_acct",
+                 "ears": {"state": "not(accounts.keys().contains(uid))",
+                          "response": "accounts.get(uid) == Active"}}]}
     put_area((tmp_path / "specs" / "a.intent.json"), area)
     return area
 
 
 def _gen(tmp_path, area):
+    """Generate from the DERIVED view, as spec-probes does: where a record
+    sits decides its form, and the dict a test wrote does not carry it."""
     ir = quint_ir.parse_qnt(tmp_path / "specs" / "a.qnt")
-    return "\n".join(probes.build(area, "a", ir, "a.qnt"))
+    view = spec_source.load_area(tmp_path, "a")
+    view["formal_model"] = area["formal_model"]
+    return "\n".join(probes.build(view, "a", ir, "a.qnt"))
 
 
 def test_every_declared_action_gets_a_branch_in_step_p(tmp_path):
@@ -4413,40 +4022,50 @@ def test_a_missing_domain_is_a_setup_error_that_prints_what_to_add(tmp_path):
     assert exc.value.code == 2
 
 
-def test_ghosts_cover_the_parameters_and_the_deltas_only(tmp_path):
+def test_ghosts_cover_the_parameters_and_the_preconditions_only(tmp_path):
     area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'})
     out = _gen(tmp_path, area)
     assert "var _lastUid: UserId" in out
-    assert "var _prevAccounts: UserId -> Status" in out
-    # `count` is a state var but no delta reads it: snapshotting it would
-    # double the state space for a comparison nobody makes.
-    assert "_prevCount" not in out
+    assert "var _pre_REQ_001: bool" in out
+    # No transition invariant reads a state var, so nothing is snapshotted:
+    # @while is evaluated before the step into one boolean instead.
+    assert "_prevAccounts" not in out and "_prevCount" not in out
     # Explicit initial values — before init there is no prior state to read.
     assert '_lastUid\' = ""' in out
-    assert "_prevAccounts' = Map()" in out
+    assert "_pre_REQ_001' = false" in out
 
 
-def test_the_probe_carries_predicate_path_and_delta(tmp_path):
+def test_the_requirement_compiles_to_an_obligation_and_a_witness(tmp_path):
     area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'})
     out = _gen(tmp_path, area)
+    # The authored clauses, as defs over the action's own parameter names.
+    assert "def pre_REQ_001(uid: UserId): bool" in out
+    assert "def post_REQ_001(uid: UserId): bool" in out
+    assert "accounts.get(uid) == Active" in out
+    # @while is read BEFORE the step, from the step's own arguments.
+    assert "_pre_REQ_001' = pre_REQ_001(uid)" in out
+    # Every step (positive invariant) and some step (negated probe).
+    assert "val oblig_REQ_001: bool =" in out
     assert "val witness_REQ_001: bool =" in out
-    assert "accounts.get(_lastUid) == Active" in out
     assert '_lastAction == "open_acct"' in out
-    assert "_prevAccounts.keys()" in out
+    assert "post_REQ_001(_lastUid)" in out
 
 
 def test_a_requirement_owing_no_probe_is_named_not_silently_absent(tmp_path):
     """An unexplained gap in the generated file is indistinguishable from
     the omission bug this generator exists to prevent."""
     area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[
-        {"id": "REQ-002", "description": "never two open", "modality": "forbidden",
-         "quint_ref": "open_acct", "witness": {"enforced_by": "INV-001"}},
+        {"id": "REQ-002", "description": "never reopen", "modality": "forbidden",
+         "status": "specified", "quint_ref": "open_acct",
+         "ears": {"state": "accounts.keys().contains(uid)"}},
         {"id": "REQ-003", "description": "fast", "type": "non-functional"},
     ])
     out = _gen(tmp_path, area)
-    assert "REQ-002: forbidden" in out and "INV-001" in out
-    assert "REQ-003: non-functional" in out
+    # A prohibition is checked on every step, and has nothing to witness.
+    assert "val oblig_REQ_002: bool =" in out
     assert "witness_REQ_002" not in out
+    assert "REQ-002: no witness — forbidden" in out
+    assert "REQ-003: non-functional" in out
 
 
 def test_check_mode_detects_a_stale_module(tmp_path, monkeypatch, capsys):
@@ -4643,7 +4262,7 @@ def test_a_transition_invariant_cannot_claim_a_probe_name(tmp_path):
     area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'},
                        invariants=[{"id": "INV-003", "description": "x",
                                     "over": "probes",
-                                    "quint_name": "witness_REQ_001",
+                                    "quint_name": "oblig_REQ_001",
                                     "predicate": "count >= _prevCount"}])
     with pytest.raises(SystemExit) as exc:
         _gen(tmp_path, area)
@@ -4676,29 +4295,6 @@ def test_a_predicate_on_a_model_invariant_warns_that_nothing_emits_it(tmp_path):
     lint.check_quint_refs(area, model, "a", findings, probes=None)
     assert [f.check for f in findings] == ["invariant-predicate-ignored"]
     assert findings[0].severity == lint.WARN
-
-
-def test_record_names_the_missing_status_instead_of_a_missing_predicate(
-        tmp_path, monkeypatch, capsys):
-    area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'}, reqs=[
-        {"id": "REQ-001", "description": "a closed account is not reopened",
-         "modality": "forbidden",
-         "witness": {"justification": "rejection — INV-003 keeps it true"}}])
-    (tmp_path / "specs" / "a.probes.qnt").write_text(_gen(tmp_path, area),
-                                                     encoding="utf-8")
-    (tmp_path / ".spec").mkdir(exist_ok=True)
-    (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
-                                                     encoding="utf-8")
-    monkeypatch.setattr(record, "find_quint", lambda: "quint")
-    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
-    monkeypatch.setattr(record, "run_verify", lambda *a, **k: ("verified", "", 0.1))
-    args = _Args(tmp_path, "a")
-    args.no_witness = False
-    with pytest.raises(SystemExit):
-        record.cmd_check(args)
-    out = capsys.readouterr().out
-    assert "JUSTIFIED-UNSET" in out
-    assert "no-predicate" not in out
 
 
 # ── Extraction coverage: absent must not read as clean ──────────────────────
@@ -4898,48 +4494,12 @@ def test_shas_cover_an_unstructured_requirement():
 
 
 
-def _may_req(delta=None, status="specified"):
+def _may_req(status="specified"):
     outcomes = [{"name": "email", "predicate": "sent", "status": "witnessed"},
                 {"name": "in-app", "predicate": "shown", "status": "witnessed"}]
-    if delta:
-        for oc in outcomes:
-            oc["delta"] = {"pre": delta}
     return {"id": "REQ-007", "modality": "may", "status": status,
-            "type": "functional", "quint_ref": "notify",
+            "type": "functional", "quint_ref": "notify", "form": "event",
             "witness": {"outcomes": outcomes}}
-
-
-def test_may_delta_gate_reads_the_field_the_generator_consumes():
-    """spec-probes takes a `may` requirement's deltas from
-    witness.outcomes[].delta; the lint demanded witness.delta, which the
-    generator never reads — so a correctly authored permission could not
-    satisfy the gate at all."""
-    area = {"kind": "area", "area": "x", "status": "formalized",
-            "requirements": [_may_req(delta="_prevSent != sent")]}
-    findings = []
-    lint.check_witness_delta(Path("."), area, {}, "x", findings)
-    assert not findings, [f.description for f in findings]
-
-    area["requirements"] = [_may_req(delta=None)]
-    findings = []
-    lint.check_witness_delta(Path("."), area, {}, "x", findings)
-    # One per permitted outcome: which one lacks a delta is the fix.
-    assert len(findings) == 2
-    assert {f.check for f in findings} == {"witness-delta-missing"}
-
-
-def test_probe_body_does_not_match_a_longer_probe_name():
-    """A plain find() for "val witness_REQ_007" also matches
-    "val witness_REQ_007_email", so a may requirement's delta was compared
-    against one of its outcomes' probe bodies instead of its own."""
-    text = ("  val witness_REQ_007_email: bool =\n"
-            "    not(sent and _prevSent != sent)\n"
-            "\n"
-            "  val witness_REQ_007_in_app: bool =\n"
-            "    not(shown)\n")
-    assert lint.probe_body(text, "witness_REQ_007") is None
-    body = lint.probe_body(text, "witness_REQ_007_email")
-    assert "_prevSent" in body and "witness_REQ_007_in_app" not in body
 
 
 def test_unhashable_model_gates_a_may_requirement_too(tmp_path):
@@ -4952,7 +4512,7 @@ def test_unhashable_model_gates_a_may_requirement_too(tmp_path):
     area = {"kind": "area", "area": "x", "status": "formalized",
             # probes_file recorded but absent => model_sha is unverifiable
             "formal_model": {"quint_file": "x.qnt", "probes_file": "x.probes.qnt"},
-            "requirements": [_may_req(delta="_prevSent != sent")]}
+            "requirements": [_may_req()]}
     findings = []
     lint.check_witnesses(tmp_path, area, "x", findings)
     assert "model-files-missing" in {f.check for f in findings}
@@ -4965,7 +4525,7 @@ def test_unhashable_model_gates_a_may_requirement_too(tmp_path):
 def test_a_fully_witnessed_permission_does_not_read_as_unchecked():
     """status_mark and the header count read only witness.status, so a `may`
     whose every permitted outcome is witnessed rendered as untouched."""
-    req = _may_req(delta="_prevSent != sent")
+    req = _may_req()
     assert readback.req_is_witnessed(req)
     assert readback.status_mark(req) == "◐"
 
@@ -4973,16 +4533,21 @@ def test_a_fully_witnessed_permission_does_not_read_as_unchecked():
     assert not readback.req_is_witnessed(req), "one outcome is not all of them"
 
 
-def test_readback_counts_a_typed_rejection_as_discharged():
-    """The readback re-spelled is_rejection locally and read only
-    `justification`, missing every skip discharged by `enforced_by` — the
-    form spec-record actually writes."""
-    req = {"id": "REQ-005", "modality": "forbidden",
-           "witness": {"status": "skipped", "enforced_by": "INV-002"}}
+def test_readback_counts_a_checked_prohibition_as_discharged():
+    """A prohibition has no witness; its every-step obligation is the proof.
+    Verified, it discharges; unchecked, it does not."""
+    req = {"id": "REQ-005", "modality": "forbidden", "form": "event",
+           "status": "specified", "ears": {"state": "isLocked(uid)"},
+           "witness": {"status": "skipped"},
+           "obligation": {"formal_status": "verified"}}
     assert itf.is_rejection(req)
     assert readback.req_is_discharged(req)
+    assert readback.status_mark(req) == "⊘"
     # ...but a skip is not a witness: it discharges, it demonstrates nothing.
     assert not readback.req_is_witnessed(req)
+    req["obligation"] = {"formal_status": "counterexample-found"}
+    assert not readback.req_is_discharged(req)
+    assert readback.status_mark(req) == "✗"
 
 
 def test_matrix_stdout_survives_a_console_that_cannot_encode_arrows():
@@ -5021,42 +4586,14 @@ def test_generated_name_conventions_have_one_definition(attr):
 
 
 def test_ghost_and_plumbing_conventions_are_shared():
-    assert lint.ghost_for is probes.ghost_for_param
-    assert lint.ghost_for.__module__ == "itf_tools"
+    assert probes.ghost_for_param.__module__ == "itf_tools"
+    assert probes.obligation_name is itf.obligation_name or \
+        probes.obligation_name.__module__ == "itf_tools"
     assert probes.ghost_for_var.__module__ == "itf_tools"
     assert lint.PLUMBING_ACTIONS is matrix.PLUMBING_ACTIONS
     assert lint.soften_stdout.__module__ == "itf_tools"
     assert matrix.soften_stdout is lint.soften_stdout
     assert matrix.TRIAGE_VALUES == itf.TRIAGE_VALUES
-
-
-def test_a_permitted_outcome_may_carry_the_delta_the_generator_reads():
-    """spec-probes takes a `may` requirement's delta from
-    witness.outcomes[].delta, but the schema declared the outcome object
-    additionalProperties:false without it — so writing the field the
-    generator consumes made the whole area fail validation. One definition,
-    referenced from the witness and from each permitted outcome."""
-    jsonschema = pytest.importorskip("jsonschema")
-    schema = json.loads((TOOLS.parent / "schemas" / "area.schema.json")
-                        .read_text(encoding="utf-8"))
-    jsonschema.Draft7Validator.check_schema(schema)
-
-    witness = (schema["properties"]["requirements"]["items"]
-               ["properties"]["witness"]["properties"])
-    outcome = witness["outcomes"]["items"]["properties"]
-    assert witness["delta"] == outcome["delta"] == {"$ref": "#/$defs/witnessDelta"}
-    assert "pre" in schema["$defs"]["witnessDelta"]["properties"]
-
-    area = {"kind": "area", "area": "x", "version": "0.1.0",
-            "requirements": [{
-                "id": "REQ-007", "description": "d", "modality": "may",
-                "witness": {"outcomes": [
-                    {"name": "email", "predicate": "sent",
-                     "delta": {"pre": "_prevSent != sent"}},
-                    {"name": "in-app", "predicate": "shown",
-                     "delta": {"pre": "_prevShown != shown"}}]}}]}
-    errors = list(jsonschema.Draft7Validator(schema).iter_errors(area))
-    assert not errors, [e.message for e in errors]
 
 
 # ── journey rendering: who / story / route, and a marker per step ──────────
@@ -5379,18 +4916,18 @@ def _probe_ladder_area(tmp_path):
     (tmp_path / ".spec" / "project.json").write_text('{"project":"p"}',
                                                      encoding="utf-8")
     (tmp_path / "specs" / "a" / "traces").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "specs" / "a.qnt").write_text("module a { var x: int }",
-                                              encoding="utf-8")
+    (tmp_path / "specs" / "a.qnt").write_text(
+        "module a {\n  var x: int\n  action f = x' = 1\n}\n", encoding="utf-8")
     (tmp_path / "specs" / "a.probes.qnt").write_text(
-        "module a_probes {\n  val witness_REQ_008: bool = true\n}\n",
+        "module a_probes {\n  val oblig_REQ_008: bool = true\n"
+        "  val witness_REQ_008: bool = true\n}\n",
         encoding="utf-8")
     area_path = tmp_path / "specs" / "a.intent.json"
     put_area(area_path, {
         "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
         "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
         "requirements": [{"id": "REQ-008", "status": "specified",
-                          "quint_ref": "f",
-                          "witness": {"predicate": "x > 0"}}],
+                          "quint_ref": "f", "ears": {"response": "x > 0"}}],
     })
     return area_path
 
@@ -5402,7 +4939,7 @@ def test_a_witness_the_shallow_pass_misses_is_found_by_the_deep_one(
     area_path = _probe_ladder_area(tmp_path)
 
     def fake_verify(quint, target, name, steps, *a, **k):
-        if steps < 10:
+        if steps < 10 or name.startswith("oblig_"):
             return ("verified", "", 0.1)
         Path(k["out_itf"]).write_text(
             json.dumps({"vars": ["x"], "states": [{"x": 0}, {"x": 1}]}),
@@ -5535,8 +5072,10 @@ def test_the_per_check_bound_validates_against_the_area_schema():
                         .read_text(encoding="utf-8"))
     area = {"kind": "area", "area": "x", "version": "0.1.0",
             "requirements": [{"id": "REQ-001", "description": "d",
-                              "witness": {"predicate": "x > 0",
-                                          "status": "no-witness", "steps": 3}}],
+                              "ears": {"response": "x > 0"},
+                              "witness": {"status": "no-witness", "steps": 3},
+                              "obligation": {"formal_status": "verified",
+                                             "steps": 3}}],
             "check_results": {"max_steps": 10, "checks": [
                 {"id": "INV-001", "result": "verified", "steps": 3},
             ], "simulation": {"invariants": {"result": "violation",
@@ -5633,13 +5172,16 @@ def _full_area():
             {"id": "REQ-001", "description": "When opened, the system shall open it.",
              "status": "specified", "modality": "must", "determinism": "deterministic",
              "type": "functional", "source": "elicited", "quint_ref": "open",
-             "ears": {"trigger": "opened", "response": "open it"},
+             "ears": {"trigger": "opened", "state": "st.get(uid) != Open",
+                      "response": "st.get(uid) == Open"},
+             "old": [{"name": "before", "type": "int", "expr": "st.keys().size()"}],
+             "obligation": {"formal_status": "verified", "checked_at":
+                            "2026-01-01T00:00:00+00:00", "steps": 3,
+                            "model_sha": "d" * 64},
              "error_outcomes": [{"external": "Db", "outcome": "DOWN",
                                  "effect": "NO_CHANGE: retry", "idempotent": True,
                                  "note": "a note"}],
-             "witness": {"predicate": "st.get(_lastUid) == Open",
-                         "delta": {"pre": "_prevSt.get(_lastUid) != Open", "note": "moved"},
-                         "status": "witnessed", "trace": "a/traces/REQ-001.itf.json",
+             "witness": {"status": "witnessed", "trace": "a/traces/REQ-001.itf.json",
                          "checked_at": "2026-01-01T00:00:00+00:00", "steps": 3,
                          "model_sha": "d" * 64},
              "cross_refs": ["INV-001"],
@@ -5647,23 +5189,21 @@ def _full_area():
                             "inferred_by": "agent", "fingerprint": "c0ffee00"}},
             {"id": "REQ-002", "description": "If shut, then the system shall refuse.",
              "status": "specified", "modality": "forbidden", "quint_ref": "shut",
-             "ears": {"state": "it is Shut", "trigger": "shut again", "unwanted": True,
-                      "response": "refuse"},
-             "witness": {"status": "skipped", "enforced_by": "INV-001",
-                         "justification": "a prohibition"}},
+             "ears": {"state": "st.get(uid) == Shut", "trigger": "shut again",
+                      "unwanted": True},
+             "witness": {"status": "skipped"}},
             {"id": "REQ-003", "description": "Either way is fine.", "status": "specified",
              "modality": "may", "determinism": "nondeterministic", "quint_ref": "open",
-             "ears": {"trigger": "x", "response": "y or z"},
+             "ears": {"trigger": "x"},
              "witness": {"outcomes": [
-                 {"name": "first", "predicate": "st.get(_lastUid) == Open",
-                  "delta": {"pre": "true"}, "status": "witnessed", "steps": 3},
+                 {"name": "first", "predicate": "st.get(uid) == Open",
+                  "status": "witnessed", "steps": 3},
                  {"name": "second", "predicate": "st.keys().size() > 0"}]}},
             {"id": "REQ-004", "description": "Fast.", "type": "non-functional",
              "status": "raw", "fit_criterion": {"metric": "p99", "target": "< 1s",
                                                "measurement": "load test"}},
-            {"id": "REQ-005", "description": "Unwritten.", "status": "verified",
-             "ears": {"feature": "a flag is on", "response": "do it"},
-             "witness": {"justification": "nothing yet"}},
+            {"id": "REQ-005", "description": "Unwritten.", "status": "raw",
+             "ears": {"feature": "a flag is on", "response": "do it"}},
         ],
         "invariants": [
             {"id": "INV-001", "description": "Never both.", "quint_name": "neverBoth",
@@ -5708,11 +5248,6 @@ def _quint_ir_of(text, tmp_path):
     return quint_ir.parse_qnt(q, engine="regex")
 
 
-def test_migration_is_lossless_over_every_field(tmp_path):
-    area = _full_area()
-    assert spec_source.roundtrip(area, _FULL_QNT, None, _quint_ir_of(_FULL_QNT, tmp_path)) == []
-
-
 def test_every_example_derives_without_grammar_problems():
     root = TOOLS.parent / "examples"
     names = spec_source.list_areas(root)
@@ -5720,34 +5255,21 @@ def test_every_example_derives_without_grammar_problems():
     for name in names:
         area, info = spec_source.load_area(root, name, with_info=True)
         assert area and not info["problems"], (name, info["problems"])
-        assert not spec_source.legacy_path(root, name), f"{name}: JSON-first file left behind"
-
-
-def test_a_witness_hosts_body_is_its_predicate_and_typechecks_with_ghost_params(tmp_path):
-    qnt, _als, _intent, _rec = spec_source.migrate_area(
-        _full_area(), _FULL_QNT, None, _quint_ir_of(_FULL_QNT, tmp_path))
-    # Ghost params are typed from the action parameter they stand for.
-    assert "def shall_REQ_001(_lastUid: UserId, _prevSt: UserId -> St): bool" not in qnt
-    assert "def shall_REQ_001(_lastUid: UserId): bool =" in qnt
-    assert "    st.get(_lastUid) == Open" in qnt
-    # The record sits right above it, @via naming the action.
-    block = qnt[qnt.index("/// @req REQ-001"):qnt.index("def shall_REQ_001")]
-    assert "/// @via open" in block and "/// @pre _prevSt.get(_lastUid) != Open" in block
-    # A prohibition is hosted on the action it refuses.
-    shut = qnt.index("action shut(")
-    assert qnt.rfind("/// @req REQ-002", 0, shut) > qnt.rfind("action open(", 0, shut)
-    # Constants keep their value in the model only; non-ints ride as @value.
-    assert "@value 3" not in qnt and "@value 0.5" in qnt
 
 
 def test_derived_description_is_the_rendered_ears_sentence():
-    qnt = ("module a {\n  var x: int\n  action go: bool = x' = 1\n"
-           "  /// @req REQ-001\n  /// @when asked\n  /// @shall go\n  /// @via go\n"
-           "  val shall_REQ_001: bool = x == 1\n}\n")
+    qnt = ("module a {\n  var x: int\n"
+           "  /// @req REQ-001\n  /// @status specified\n  /// @when asked\n"
+           "  /// @while x == 0\n  /// @shall x == 1\n"
+           "  action go: bool = x' = 1\n}\n")
     area, problems = spec_source.derive_records(qnt, "a.qnt")
     req = area["requirements"][0]
-    assert req["description"] == "When asked, the system shall go."
-    assert req["witness"]["predicate"] == "x == 1" and req["quint_ref"] == "go"
+    assert req["description"] == "While `x == 0`, when asked, the system shall make `x == 1` hold."
+    assert req["quint_ref"] == "go" and req["form"] == "event"
+    # A raw requirement's clauses are words, and render as words.
+    raw = spec_source.derive_records(
+        "/// @req REQ-002\n/// @when asked\n/// @shall go\nmodule b { }\n", "b.qnt")[0]
+    assert raw["requirements"][0]["description"] == "When asked, the system shall go."
 
 
 def test_each_record_points_at_its_own_tag_line():
@@ -5764,13 +5286,15 @@ def test_each_record_points_at_its_own_tag_line():
 def test_grammar_problems_are_reported_not_swallowed():
     qnt = ("module a {\n  /// @req REQ-001\n  /// @shal typo\n  action go: bool = true\n"
            "  /// @req REQ-001\n  action again: bool = true\n"
-           "  /// @outcome-of REQ-009 x\n  val o: bool = true\n}\n")
+           "  /// @req REQ-002\n  /// @outcome bad outcome\n  /// @old 9x: int = 1\n"
+           "  action third: bool = true\n}\n")
     problems = []
     spec_source.derive_records(qnt, "a.qnt", problems=problems)
     text = "\n".join(problems)
     assert "unknown tag @shal" in text
     assert "duplicate id REQ-001" in text
-    assert "@outcome-of REQ-009: no such requirement" in text
+    assert "@outcome takes '<name>: <Quint expression>'" in text
+    assert "@old takes '<name>: <Type> = <Quint expression>'" in text
 
 
 def test_lint_fails_a_record_the_reader_could_not_place(tmp_path):
@@ -5785,14 +5309,6 @@ def test_lint_fails_a_record_the_reader_could_not_place(tmp_path):
     lint.check_sources(tmp_path, "a", info, findings)
     checks = {f.check for f in findings if f.severity == lint.FAIL}
     assert checks == {"record-grammar", "record-without-host"}
-
-
-def test_a_leftover_json_first_file_is_a_fail(tmp_path):
-    (tmp_path / "specs").mkdir()
-    (tmp_path / "specs" / "a.area.json").write_text("{}", encoding="utf-8")
-    findings = []
-    lint.check_sources(tmp_path, "a", {}, findings)
-    assert [f.check for f in findings] == ["legacy-spec-file"]
 
 
 def test_save_writes_the_ledger_and_nothing_authored(tmp_path):
@@ -5813,7 +5329,7 @@ def test_save_writes_the_ledger_and_nothing_authored(tmp_path):
 def test_save_refuses_a_tool_that_rewrites_a_claim(tmp_path):
     _put_full(tmp_path)
     area = spec_source.load_area(tmp_path, "a")
-    area["requirements"][0]["witness"]["predicate"] = "true"
+    area["requirements"][0]["ears"]["response"] = "true"
     with pytest.raises(spec_source.SpecSourceError, match="REQ-001"):
         spec_source.save_area(tmp_path, "a", area)
     area = spec_source.load_area(tmp_path, "a")
@@ -5822,35 +5338,28 @@ def test_save_refuses_a_tool_that_rewrites_a_claim(tmp_path):
         spec_source.save_area(tmp_path, "a", area)
 
 
-def test_an_authored_skip_survives_a_stale_ledger(tmp_path):
-    _put_full(tmp_path)
-    records = json.loads((tmp_path / "specs" / "a.records.json").read_text(encoding="utf-8"))
-    records.setdefault("by_id", {}).setdefault("REQ-002", {})["witness"] = {"status": "not-run"}
-    (tmp_path / "specs" / "a.records.json").write_text(json.dumps(records), encoding="utf-8")
-    req = {r["id"]: r for r in spec_source.load_area(tmp_path, "a")["requirements"]}["REQ-002"]
-    assert req["witness"]["status"] == "skipped"
-
-
-def test_model_sha_ignores_doc_comments_but_not_predicates(tmp_path):
+def test_model_sha_ignores_doc_comments_but_not_declarations(tmp_path):
+    """Rewording the description never stales a trace; changing the model
+    does. A changed @shall changes the generated probe module, which the
+    sha also covers (itf_tools.compute_model_sha)."""
     _put_full(tmp_path)
     qnt = tmp_path / "specs" / "a.qnt"
     area = spec_source.load_area(tmp_path, "a")
     sha = itf.compute_model_sha(tmp_path, "a", area)
     text = qnt.read_text(encoding="utf-8")
-    assert "/// @shall open it" in text, "the edit below must hit a doc comment"
-    qnt.write_text(text.replace("/// @shall open it", "/// @shall open it, reworded"),
-                   encoding="utf-8")
+    assert "/// Cap." in text, "the edit below must hit a doc comment"
+    qnt.write_text(text.replace("/// Cap.", "/// Cap, reworded."), encoding="utf-8")
     assert itf.compute_model_sha(tmp_path, "a", area) == sha
     qnt.write_text(qnt.read_text(encoding="utf-8").replace(
-        "st.get(_lastUid) == Open\n", "st.get(_lastUid) != Shut\n", 1), encoding="utf-8")
+        "st' = st.put(uid, Shut)", "st' = st.put(uid, Open)", 1), encoding="utf-8")
     assert itf.compute_model_sha(tmp_path, "a", area) != sha
 
 
 def test_a_records_only_module_is_not_a_formal_model(tmp_path):
-    qnt, _als, intent, records = spec_source.migrate_area(
+    qnt, _als, intent, records = area_writer.write_area(
         {"kind": "area", "area": "a", "version": "1",
-         "requirements": [{"id": "REQ-001", "description": "x", "quint_ref": "go",
-                           "witness": {"predicate": "y == 1"}}],
+         "requirements": [{"id": "REQ-001", "description": "x",
+                           "ears": {"trigger": "asked", "response": "y is 1"}}],
          "constraints": [{"id": "CON-001", "name": "MAX", "value": 3}]}, None)
     assert "def " not in qnt and "pure val" not in qnt
     assert not spec_source.has_model(qnt)
@@ -5858,23 +5367,8 @@ def test_a_records_only_module_is_not_a_formal_model(tmp_path):
     area, info = spec_source.derive_from_texts("a", files.get)
     assert not info["model_present"] and "formal_model" not in area
     req = area["requirements"][0]
-    assert req["witness"]["predicate"] == "y == 1" and req["quint_ref"] == "go"
+    assert req["ears"]["response"] == "y is 1" and "form" not in req
     assert area["constraints"][0]["value"] == 3
-
-
-def test_witness_host_ghost_type_must_match_the_action(tmp_path):
-    qnt = ("module a {\n  var x: int -> bool\n"
-           "  action go(uid: int): bool = x' = x.put(uid, true)\n"
-           "  /// @req REQ-001\n  /// @via go\n"
-           "  def shall_REQ_001(_lastUid: str): bool = x.get(0)\n}\n")
-    q = tmp_path / "a.qnt"
-    q.write_text(qnt, encoding="utf-8")
-    model, info = spec_source.derive_records(qnt, "a.qnt")
-    area = {"requirements": model["requirements"]}
-    sidecar = {"action_param_types": {"go": [("uid", "int")]}}
-    findings = []
-    lint.check_witness_hosts(area, sidecar, info, "a", findings)
-    assert [f.check for f in findings] == ["witness-host-param-type"]
 
 
 def test_the_source_schemas_are_generated_from_the_area_schema():
@@ -6047,25 +5541,3 @@ def test_ui_record_grammar_problems_are_reported(tmp_path):
     assert "duplicate screen Home" in text
 
 
-def test_screens_and_navigation_migrate_onto_the_type_and_actions():
-    legacy = {"area": "ui", "kind": "area", "version": "1",
-              "formal_model": {"quint_file": "ui.qnt"},
-              "screens": [{"name": "Home", "auth_required": False, "purpose": "Public landing.",
-                           "components": ["Header"]},
-                          {"name": "Panel", "auth_required": True}],
-              "navigation": [{"from": "Panel", "to": "Home", "trigger": "click 'Close'"},
-                             {"from": "Home", "to": "Panel", "trigger": "click 'Open'",
-                              "guard": "signed in"},
-                             {"from": "Panel", "to": "Panel", "trigger": "refresh"}]}
-    bare = spec_source.strip_docs(_UI_QNT)
-    qnt, _als, intent, _rec = spec_source.migrate_area(legacy, bare)
-    assert "screens" not in intent and "navigation" not in intent
-    recs = {(r["tag"], f"{r['id']} {r['extra']}".strip()): (r["host"] or {}).get("kind", "") +
-            " " + ((r["host"] or {}).get("name") or "")
-            for r in spec_source.read_records(qnt, "quint", "ui.qnt")}
-    assert recs[("screen", "Home")] == recs[("screen", "Panel")] == "type Screen"
-    assert recs[("nav", "Home -> Panel")] == "action open_panel"
-    assert recs[("nav", "Panel -> Home")] == "action close_panel"
-    # No action takes Panel -> Panel: the edge waits in the module doc.
-    assert recs[("nav", "Panel -> Panel")] == "module ui"
-    assert spec_source.roundtrip(legacy, bare) == []

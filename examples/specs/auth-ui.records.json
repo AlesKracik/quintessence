@@ -682,7 +682,72 @@
           "question": "efa51944"
         }
       ]
-    }
+    },
+    "checks": [
+      {
+        "id": "INV-001",
+        "kind": "invariant",
+        "quint_name": "guardedDashboard",
+        "result": "error",
+        "duration_s": 13.4,
+        "proof": "inductive",
+        "error": "> [1/2] Checking whether the inductive invariant 'guardedDashboard' holds in the initial state(s) defined by 'init'...\n> [2/2] Checking whether 'step' preserves the inductive invariant 'guardedDashboard'...\nerror: current is used before it is assigned. You need to have either `current == <expr>` or `current.in(<set>)` before doing anything else with `current` in your predicate."
+      },
+      {
+        "id": "UI-001",
+        "kind": "obligation",
+        "quint_name": "oblig_UI_001",
+        "result": "verified",
+        "duration_s": 13.7,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "UI-002",
+        "kind": "obligation",
+        "quint_name": "oblig_UI_002",
+        "result": "verified",
+        "duration_s": 15.0,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "UI-003",
+        "kind": "obligation",
+        "quint_name": "oblig_UI_003",
+        "result": "verified",
+        "duration_s": 12.8,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "UI-004",
+        "kind": "obligation",
+        "quint_name": "oblig_UI_004",
+        "result": "verified",
+        "duration_s": 13.0,
+        "steps": 4,
+        "over": "probes"
+      }
+    ],
+    "max_steps": 8,
+    "simulation": {
+      "ran_at": "2026-10-11T12:20:16+00:00",
+      "max_samples": 10000,
+      "max_steps": 8,
+      "backend": "rust",
+      "invariants": {
+        "result": "error",
+        "checked": 1,
+        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
+      },
+      "transition_invariants": {
+        "result": "error",
+        "checked": 4,
+        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
+      }
+    },
+    "ran_at": "2026-10-11T12:21:20+00:00"
   },
   "verification_log": [],
   "traceability": [],
@@ -692,22 +757,62 @@
     },
     "UI-001": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "auth-ui/traces/UI-001.itf.json",
+        "checked_at": "2026-10-11T11:55:04+00:00",
+        "steps": 2,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:54:11+00:00",
+        "steps": 4,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
       }
     },
     "UI-002": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "auth-ui/traces/UI-002.itf.json",
+        "checked_at": "2026-10-11T11:55:16+00:00",
+        "steps": 2,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:54:26+00:00",
+        "steps": 4,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
       }
     },
     "UI-003": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "auth-ui/traces/UI-003.itf.json",
+        "checked_at": "2026-10-11T12:21:00+00:00",
+        "steps": 8,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:54:39+00:00",
+        "steps": 4,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
       }
     },
     "UI-004": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "auth-ui/traces/UI-004.itf.json",
+        "checked_at": "2026-10-11T12:21:20+00:00",
+        "steps": 8,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:54:52+00:00",
+        "steps": 4,
+        "model_sha": "f37e483989a15ae0a9b7bede0362f82c4c6d9238dd40aaaf2854ebe6bafd124c"
       }
     }
   }

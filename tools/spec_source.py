@@ -44,8 +44,6 @@ they refuse, say). Lines before the first record tag are an ordinary doc
 comment and are ignored.
 
   Record tags        @req ID · @inv ID · @prop ID · @con ID · @example ID
-                     @outcome-of REQ-ID <name>   (one permitted outcome of a
-                                                 `may` requirement)
                      @screen <Name>              (one screen of a UI)
                      @nav [NAV-NNN] <From> -> <To>
                                                  (one navigation edge; the id
@@ -55,35 +53,35 @@ comment and are ignored.
 
 Untagged lines right after the record tag are the record's DESCRIPTION
 (invariant statement, constant description, example title, a requirement's
-free text). Untagged lines after an attribute tag CONTINUE that tag's value.
-A blank `///` line ends a continuation.
+sentence in plain words). Untagged lines after an attribute tag CONTINUE that
+tag's value. A blank `///` line ends a continuation.
 
-  REQ   @while @when @where @unwanted @shall     ears.state/trigger/feature/
-                                                 unwanted/response
+  REQ   @while <expr>                            ears.state: FORMAL, a Quint
+                                                 boolean over the state BEFORE
+                                                 the step; it may read the
+                                                 host action's parameters by
+                                                 their own names
+        @shall <expr>                            ears.response: FORMAL, a
+                                                 Quint boolean over the state
+                                                 AFTER the step, same names
+        @old <name>: <Type> = <expr>             a value read BEFORE the step
+                                                 (JML's old()), that @shall /
+                                                 @outcome may name: "shall
+                                                 increment" is
+                                                 `count(u) == before + 1`
+        @outcome <name>: <expr>                  one permitted outcome of a
+                                                 `may` requirement (formal,
+                                                 like @shall)
+        @when <text>  @where <text>  @unwanted   ears.trigger/feature/unwanted
+                                                 (words: the trigger IS the
+                                                 host action)
         @type @status @modality @determinism @source
         @fit <metric> | <target> | <measurement>
         @error <External>.<OUTCOME> [idempotent|not-idempotent]: <effect>
         @error-note <text>                       note on the @error above
-        @via <action>                            quint_ref — the action the
-                                                 witness must arrive through
-        @pre <expr>  @pre-note <text>            witness.delta (over the
-                                                 probe module's _prev*/_last*
-                                                 ghosts, so it is text: those
-                                                 ghosts exist only there)
-        @enforced-by INV-ID                      witness.enforced_by
-        @witness skipped[: <reason>]             a deliberately skipped
-                                                 witness (+ justification).
-                                                 On an @unwanted or forbidden
-                                                 requirement it is a REFUSAL
-                                                 (owes an @example that shows
-                                                 the refusal: an EX whose
-                                                 @refs names it);
-                                                 on any other it is COMPUTED —
-                                                 a derived value with no
-                                                 transition — and owes
         @verified-by <path>, <path>              verified_by: the unit
-                                                 test(s) that check it
-        @justification <text>                    justification, no skip
+                                                 test(s) that check a
+                                                 computed requirement
         @refs ID, ID                             cross_refs: `<area>.<ID>`
                                                  for another area, a bare ID
                                                  for this one (qualified when
@@ -106,19 +104,17 @@ A blank `///` line ends a continuation.
 
 Hosting — what the declaration under the block means for the record:
 
-  REQ on `val|def <name>` + @via   witnessed: the declaration's BODY is the
-                                   witness predicate. Parameters named like
-                                   probe ghosts (`_lastSid: SessionId`) make
-                                   it typecheck in the model while the probe
-                                   generator binds them; the name is free,
-                                   `shall_REQ_NNN` by convention (the probe
-                                   module already owns `witness_REQ_NNN`).
-  REQ on `action <name>`           quint_ref = the action (unless @via);
-                                   no predicate — a prohibition, a may with
-                                   outcomes, or not yet formalized.
-  REQ on the `module` / elsewhere  no host in the model yet (raw, NFR,
-                                   read path realized by a pure def).
-  @outcome-of on `val|def`         the body is that outcome's predicate.
+  REQ on `action <name>`           form "event": quint_ref = the action.
+                                   Every step of it from a state where
+                                   @while holds must end where @shall holds
+                                   (must), where one @outcome holds (may),
+                                   or must not happen at all (forbidden).
+                                   Several requirements may share an action.
+  REQ on a `pure def|pure val`     form "computed": a derived value no step
+                                   carries, verified by @verified-by tests.
+  REQ on the `module` with @shall  form "state": in every reachable state
+                                   where @while holds, @shall holds.
+  REQ on the `module`, no @shall   no form yet: raw, or non-functional.
   INV on `val <name>`              quint_name = name; on a `def` whose
                                    params are _prev* ghosts: a transition
                                    property, `over: probes`, body =
@@ -141,11 +137,6 @@ Hosting — what the declaration under the block means for the record:
 
 Usage:
   tools/spec_source.py derive <area> [--root .]        # print the derived view
-  tools/spec_source.py migrate <area> [--root .] [--write]
-                        # JSON-first specs/<area>.area.json (or .contract.json)
-                        # -> .qnt doc comments + .intent.json + .records.json
-  tools/spec_source.py roundtrip <area> [--root .]     # migrate in memory,
-                        # derive back, diff against the legacy JSON
   tools/spec_source.py schemas [--write]               # intent/records schemas,
                         # carved out of schemas/area.schema.json
 """
@@ -159,10 +150,9 @@ from pathlib import Path
 
 INTENT_SUFFIX = ".intent.json"
 RECORDS_SUFFIX = ".records.json"
-LEGACY_SUFFIXES = (".area.json", ".contract.json")
 
 # ── Ownership: which file holds which field ─────────────────────────────────
-# ONE table. derive/save/migrate, spec-separation (claims vs bookkeeping) and
+# ONE table. derive/save, spec-separation (claims vs bookkeeping) and
 # the schemas are all read off it, so they cannot disagree about where a
 # field lives.
 
@@ -181,9 +171,15 @@ RECORD_KEYS = ("check_results", "verification_log", "traceability",
 # Per-ID fields the tools write. Paths are dotted; `witness.outcomes[]`
 # entries are keyed by outcome name.
 WITNESS_MACHINE = ("status", "trace", "checked_at", "steps", "model_sha")
+# A requirement carries two verdicts: the WITNESS (its antecedent is
+# reachable: the requirement is not vacuous) and the OBLIGATION (every
+# reachable step it governs satisfies it). See itf_tools.obligation_name.
+OBLIGATION_MACHINE = ("formal_status", "trace", "checked_at", "steps",
+                      "model_sha")
 MACHINE_PATHS = {
     "requirements": ("witness.status", "witness.trace", "witness.checked_at",
-                     "witness.steps", "witness.model_sha"),
+                     "witness.steps", "witness.model_sha")
+                    + tuple(f"obligation.{f}" for f in OBLIGATION_MACHINE),
     "invariants": ("formal_status",),
     "properties": ("formal_status",),
     "constraints": (),
@@ -192,7 +188,7 @@ MACHINE_PATHS = {
 
 ID_KIND = {"req": "requirements", "inv": "invariants", "prop": "properties",
            "con": "constraints", "example": "examples"}
-RECORD_TAGS = tuple(ID_KIND) + ("outcome-of", "screen", "nav")
+RECORD_TAGS = tuple(ID_KIND) + ("screen", "nav")
 
 # tag -> (dotted path, value kind). Kinds: text, flag, list, json.
 EXTRACTION_TAGS = {
@@ -213,16 +209,10 @@ TAGS = {
         "modality": ("modality", "text"),
         "determinism": ("determinism", "text"),
         "source": ("source", "text"),
-        "via": ("quint_ref", "text"),
-        "predicate": ("witness.predicate", "text"),
-        "pre": ("witness.delta.pre", "text"),
-        "pre-note": ("witness.delta.note", "text"),
-        "enforced-by": ("witness.enforced_by", "text"),
-        "justification": ("witness.justification", "text"),
         "verified-by": ("verified_by", "list"),
         "refs": ("cross_refs", "list"),
         **EXTRACTION_TAGS,
-        # special: fit, error, error-note, witness
+        # special: fit, error, error-note, outcome
     },
     "invariants": {
         "criticality": ("criticality", "text"),
@@ -256,10 +246,6 @@ TAGS = {
         "trace": ("trace", "text"),
         # special: when
     },
-    "outcome": {
-        "pre": ("delta.pre", "text"),
-        "pre-note": ("delta.note", "text"),
-    },
     "screens": {
         "auth-required": ("auth_required", "flag"),
         "components": ("components", "list"),
@@ -268,27 +254,8 @@ TAGS = {
         "guard": ("guard", "text"),
     },
 }
-SPECIAL_TAGS = {"requirements": ("fit", "error", "error-note", "witness"),
+SPECIAL_TAGS = {"requirements": ("fit", "error", "error-note", "outcome", "old"),
                 "examples": ("when",)}
-# The order migrate emits tags in (and so the order a reader meets them).
-EMIT_ORDER = {
-    "requirements": ("type", "status", "modality", "determinism", "source",
-                     "where", "while", "when", "unwanted", "shall",
-                     "fit", "error", "via",
-                     "predicate", "pre", "pre-note", "enforced-by", "witness",
-                     "justification", "verified-by", "refs", "evidence",
-                     "confidence", "inferred-by", "fingerprint"),
-    "invariants": ("criticality", "proof", "over", "quint-name", "predicate",
-                   "alloy", "smt", "refs", "source", "evidence", "confidence",
-                   "inferred-by", "fingerprint"),
-    "properties": ("quint-name", "refs"),
-    "constraints": ("name", "unit", "pairs", "value", "source", "evidence", "confidence",
-                    "inferred-by", "fingerprint"),
-    "examples": ("given", "when", "expect", "refs", "source", "trace"),
-    "outcome": ("pre", "pre-note"),
-    "screens": ("auth-required", "components"),
-    "navigation": ("guard",),
-}
 
 
 class SpecSourceError(Exception):
@@ -308,14 +275,6 @@ def intent_path(root, name):
 
 def records_path(root, name):
     return specs_dir(root) / f"{name}{RECORDS_SUFFIX}"
-
-
-def legacy_path(root, name):
-    for suffix in LEGACY_SUFFIXES:
-        p = specs_dir(root) / f"{name}{suffix}"
-        if p.exists():
-            return p
-    return None
 
 
 def area_exists(root, name):
@@ -1057,23 +1016,46 @@ def journey_run(journey, views, decls_for):
 # ── Derive ──────────────────────────────────────────────────────────────────
 
 def ears_sentence(req):
-    """The EARS sentence, rendered from the fields (the source of truth);
-    the description for an unstructured requirement. ONE renderer: the
-    readback prints it, derive fills `description` with it, migrate drops a
-    description that only restated it."""
+    """The EARS sentence, rendered from the fields; the description for an
+    unstructured requirement. Past `raw`, @while and @shall are Quint, so
+    they render as code: the sentence says exactly what is checked, and the
+    plain-words version a reader wants is the record's description. A raw
+    requirement's clauses are still words and render as words."""
     ears = req.get("ears")
     if not ears:
         return req.get("description") or "(no description)"
+    if req.get("status", "raw") == "raw":
+        parts = []
+        if ears.get("feature"):
+            parts.append(f"Where {ears['feature']}, ")
+        if ears.get("state"):
+            parts.append(f"While {ears['state']}, ")
+        if ears.get("trigger"):
+            parts.append(f"{'if' if ears.get('unwanted') else 'when'} {ears['trigger']}, ")
+        shall = "then the system shall" if ears.get("unwanted") else "the system shall"
+        parts.append(f"{shall} {ears.get('response') or '…'}.")
+        sentence = "".join(parts)
+        return sentence[0].upper() + sentence[1:]
     parts = []
     if ears.get("feature"):
         parts.append(f"Where {ears['feature']}, ")
     if ears.get("state"):
-        parts.append(f"While {ears['state']}, ")
-    if ears.get("trigger"):
+        parts.append(f"While `{ears['state']}`, ")
+    trigger = ears.get("trigger") or (
+        f"`{req['quint_ref']}` runs" if req.get("quint_ref") else None)
+    if trigger:
         joiner = "if" if ears.get("unwanted") else "when"
-        parts.append(f"{joiner} {ears['trigger']}, ")
+        parts.append(f"{joiner} {trigger}, ")
     shall = "then the system shall" if ears.get("unwanted") else "the system shall"
-    parts.append(f"{shall} {ears.get('response', '…')}.")
+    if req.get("modality") == "forbidden":
+        parts.append(f"{shall} never let it happen.")
+    elif req.get("modality") == "may":
+        outs = [o.get("predicate") for o in (req.get("witness") or {}).get("outcomes") or []]
+        parts.append(f"{shall} end in one of: "
+                     + "; ".join(f"`{o}`" for o in outs if o) + ".")
+    else:
+        resp = ears.get("response")
+        parts.append(f"{shall} make `{resp}` hold." if resp else f"{shall} …")
     sentence = "".join(parts)
     return sentence[0].upper() + sentence[1:]
 
@@ -1190,15 +1172,23 @@ def _apply_tags(rec, kind, item, problems):
                     problems.append(f"{_where(rec)}: {rec['id']}: @error-note before any @error")
                     continue
                 item["error_outcomes"][-1]["note"] = value
-            elif name == "witness":
-                m = re.match(r"^skipped(?:\s*:\s*(.*))?$", value)
+            elif name == "old":
+                m = re.match(r"^([a-z_][A-Za-z0-9_]*)\s*:\s*([^=]+?)\s*=\s*(\S.*)$", value)
                 if not m:
-                    problems.append(f"{_where(rec)}: {rec['id']}: @witness takes "
-                                    f"'skipped[: reason]'")
+                    problems.append(f"{_where(rec)}: {rec['id']}: @old takes "
+                                    f"'<name>: <Type> = <Quint expression>'")
                     continue
-                _set(item, "witness.status", "skipped")
-                if m.group(1):
-                    _set(item, "witness.justification", m.group(1).strip())
+                item.setdefault("old", []).append(
+                    {"name": m.group(1), "type": m.group(2).strip(),
+                     "expr": m.group(3).strip()})
+            elif name == "outcome":
+                m = re.match(r"^([A-Za-z0-9_-]+)\s*:\s*(\S.*)$", value)
+                if not m:
+                    problems.append(f"{_where(rec)}: {rec['id']}: @outcome takes "
+                                    f"'<name>: <Quint expression>'")
+                    continue
+                item.setdefault("witness", {}).setdefault("outcomes", []).append(
+                    {"name": m.group(1), "predicate": m.group(2).strip()})
             elif name == "when":
                 m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$", value)
                 if not m:
@@ -1329,11 +1319,8 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
     decls = declarations(model_text) if model_text else {}
 
     out = {k: [] for k in MODEL_KEYS + UI_KEYS}
-    by_id, origin, outcomes, screens_seen = {}, {}, [], {}
+    by_id, origin, screens_seen = {}, {}, {}
     for rec in recs:
-        if rec["tag"] == "outcome-of":
-            outcomes.append(rec)
-            continue
         if rec["tag"] in ("screen", "nav"):
             _derive_ui(rec, out, screens_seen, problems)
             continue
@@ -1357,11 +1344,25 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
                 item["description"] = desc
             elif item.get("ears"):
                 item["description"] = ears_sentence(item)
-            if hk in ("val", "def") and item.get("quint_ref"):
-                if host.get("body"):
-                    _set(item, "witness.predicate", host["body"])
-            elif hk == "action" and not item.get("quint_ref"):
+            # The host decides the requirement's FORM, and the form decides
+            # what it obliges (itf_tools.obligation_name, spec-probes).
+            if hk == "action":
                 item["quint_ref"] = hn
+                item["form"] = "event"
+            elif hk in ("val", "def") and host.get("pure"):
+                item["form"] = "computed"
+            elif hk in (None, "module"):
+                # Only a formal requirement has a form: a raw one's @shall
+                # is still words, and an NFR is checked by its fit criterion.
+                if (item.get("ears") or {}).get("response") \
+                        and item.get("status", "raw") != "raw" \
+                        and item.get("type") != "non-functional":
+                    item["form"] = "state"
+            else:
+                problems.append(
+                    f"{_where(rec)}: {rid} sits on a {hk} — a requirement sits on "
+                    f"the action it governs, on the pure def it computes, or on "
+                    f"the module (a state requirement, or not yet formal)")
         elif kind == "invariants":
             item["description"] = desc
             if alloy and hk in ("assert", "check"):
@@ -1415,26 +1416,6 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
         origin[rid] = _where(rec)
         out[kind].append(item)
 
-    for rec in outcomes:
-        rid, name = rec["id"], rec["extra"]
-        req = by_id.get(rid)
-        if req is None or req not in out["requirements"]:
-            problems.append(f"{_where(rec)}: @outcome-of {rid}: no such requirement")
-            continue
-        host = rec["host"] or {}
-        oc = {"name": name}
-        if host.get("kind") in ("val", "def") and host.get("body"):
-            oc["predicate"] = host["body"]
-        else:
-            problems.append(f"{_where(rec)}: @outcome-of {rid} {name}: host must be "
-                            f"a val/def whose body is the outcome's predicate")
-        for tname, value in rec["tags"]:
-            if tname in TAGS["outcome"]:
-                _set(oc, TAGS["outcome"][tname][0], value)
-            else:
-                problems.append(f"{_where(rec)}: @outcome-of {rid}: unknown tag @{tname}")
-        req.setdefault("witness", {}).setdefault("outcomes", []).append(oc)
-
     for kind in MODEL_KEYS:
         out[kind].sort(key=lambda it: _natural(it["id"]))
     # Origins travel separately (not in the view: the schema does not know them).
@@ -1452,8 +1433,6 @@ def _merge_machine(area, records):
                 v = _get(m, path)
                 if v is None:
                     continue
-                if path == "witness.status" and _get(item, "witness.status") == "skipped":
-                    continue  # an authored skip is the author's call
                 _set(item, path, copy.deepcopy(v))
             if kind == "requirements":
                 if m.get("status") == "verified":
@@ -1612,12 +1591,12 @@ def split_machine(area):
             m = {}
             for path in MACHINE_PATHS[kind]:
                 v = _get(item, path)
-                if path == "witness.status" and v == "skipped":
-                    continue  # stays authored when the tag set it; see save
                 if v is not None:
                     _set(m, path, v)
                     _del(item, path)
             if kind == "requirements":
+                if item.get("obligation") == {}:
+                    del item["obligation"]   # wholly machine-written
                 if item.get("status") == "verified":
                     m["status"] = "verified"
                 outs = {}
@@ -1704,178 +1683,7 @@ def write_intent(root, name, intent):
     return path
 
 
-# ── Migrate (JSON-first area -> Quint-first files) ──────────────────────────
-
-WRAP = 76
-
-
-def _wrap(prefix, text, indent, cont="///   "):
-    """`/// @tag value` lines, wrapped when wrapping is lossless."""
-    text = str(text)
-    if "\n" in text:
-        raise SpecSourceError(f"cannot write a multi-line value into a doc tag: {text[:40]!r}")
-    head = f"{indent}/// {prefix}"
-    lossless = text == " ".join(text.split())
-    if not lossless or len(head) + len(text) + 1 <= WRAP + len(indent):
-        return [f"{head} {text}".rstrip()]
-    words, lines, cur = text.split(), [], head
-    for w in words:
-        if len(cur) + 1 + len(w) > WRAP + len(indent) and cur != head:
-            lines.append(cur)
-            cur = f"{indent}{cont}{w}"
-        else:
-            cur = f"{cur} {w}"
-    lines.append(cur)
-    return lines
-
-
-def _wrap_desc(text, indent):
-    if not text:
-        return []
-    return [l.replace("///  ", "/// ", 1) if i == 0 else l
-            for i, l in enumerate(_wrap("", text, indent, cont="/// "))]
-
-
-def _emit_value(kind, tag, item):
-    """Tag value(s) for one tag from an item, or [] when absent."""
-    if kind in TAGS and tag in TAGS[kind]:
-        path, vk = TAGS[kind][tag]
-        v = _get(item, path)
-        if v is None:
-            return []
-        if vk == "flag":
-            return [""] if v else []
-        if vk == "list":
-            return [", ".join(v)] if v else []
-        if vk == "json":
-            return [json.dumps(v, ensure_ascii=False)]
-        return [str(v)]
-    if tag == "fit":
-        f = item.get("fit_criterion")
-        return [f"{f['metric']} | {f['target']} | {f['measurement']}"] if f else []
-    if tag == "error":
-        out = []
-        for eo in item.get("error_outcomes") or []:
-            flag = {True: " idempotent", False: " not-idempotent"}.get(eo.get("idempotent"), "")
-            out.append((f"{eo['external']}.{eo['outcome']}{flag}: {eo['effect']}",
-                        eo.get("note")))
-        return out
-    if tag == "witness":
-        w = item.get("witness") or {}
-        if w.get("status") == "skipped":
-            return [f"skipped: {w['justification']}" if w.get("justification") else "skipped"]
-        return []
-    if tag == "when":
-        w = item.get("when") or {}
-        if not w:
-            return []
-        args = f" {json.dumps(w['args'], ensure_ascii=False)}" if w.get("args") else ""
-        return [f"{w['action']}{args}"]
-    return []
-
-
-def emit_doc(tag, rid, item, kind, indent="  ", extra="", skip=()):
-    lines = [f"{indent}/// @{tag} {rid}{(' ' + extra) if extra else ''}"]
-    desc_key = {"requirements": "description", "examples": "title"}.get(kind, "description")
-    desc = item.get(desc_key)
-    if kind == "requirements" and item.get("ears") and desc == ears_sentence(
-            {k: v for k, v in item.items() if k != "description"}):
-        desc = None  # derive renders it back from the EARS tags
-    if desc:
-        lines += _wrap_desc(desc, indent)
-    for t in EMIT_ORDER[kind]:
-        if t in skip:
-            continue
-        for v in _emit_value(kind, t, item):
-            if t == "error":
-                v, note = v
-                lines += _wrap(f"@{t}", v, indent)
-                if note:
-                    lines += _wrap("@error-note", note, indent)
-                continue
-            if t == "justification" and _get(item, "witness.status") == "skipped":
-                continue  # carried by @witness skipped: <reason>
-            lines += _wrap(f"@{t}", v, indent) if v != "" else [f"{indent}/// @{t}"]
-    return lines
-
-
-def _covered_paths(kind):
-    paths = {p for p, _ in TAGS[kind].values()}
-    paths |= set(MACHINE_PATHS[kind])
-    paths |= {"id"}
-    extra = {
-        "requirements": {"description", "fit_criterion", "error_outcomes",
-                         "witness.status", "witness.justification",
-                         "witness.predicate", "witness.outcomes", "status"},
-        "invariants": {"description", "quint_name", "alloy_command"},
-        "properties": {"description", "quint_name"},
-        "constraints": {"name", "value", "description"},
-        "examples": {"title", "when", "quint_run"},
-    }[kind]
-    return paths | extra
-
-
-def _leaf_paths(d, prefix=""):
-    out = []
-    for k, v in d.items():
-        p = f"{prefix}.{k}" if prefix else k
-        if isinstance(v, dict) and v and k not in ("given", "expect", "args", "when", "fit_criterion"):
-            out += _leaf_paths(v, p)
-        else:
-            out.append(p)
-    return out
-
-
-def _ghost_types(ir):
-    """Ghost name -> Quint type string, for typing a witness host's params."""
-    from itf_tools import ghost_for_param, ghost_for_var  # noqa: WPS433
-    types = {"_lastAction": "str"}
-    for _act, params in (ir.get("action_param_types") or {}).items():
-        for pname, ptype in params:
-            if ptype:
-                types.setdefault(ghost_for_param(pname), ptype)
-    for var, t in (ir.get("var_type_strs") or {}).items():
-        types.setdefault(ghost_for_var(var), t)
-    return types
-
-
-def _witness_host(name, predicate, ghost_types, indent):
-    ghosts = sorted(set(re.findall(r"\b(_(?:last|prev)[A-Z][A-Za-z0-9_]*)\b", predicate)))
-    if ghosts:
-        # Typed where the model says what the ghost stands for; left to
-        # Quint's inference where no action parameter or var does (lint's
-        # witness-unbound reports that case on its own terms).
-        params = ", ".join(f"{g}: {ghost_types[g]}" if g in ghost_types else g
-                           for g in ghosts)
-        head = f"{indent}def {name}({params}): bool ="
-    else:
-        head = f"{indent}val {name}: bool ="
-    return [head, f"{indent}  {predicate}"]
-
-
-def host_name(rid, suffix=None):
-    base = "shall_" + re.sub(r"[^A-Za-z0-9]+", "_", rid)
-    if suffix:
-        base += "_" + (re.sub(r"[^A-Za-z0-9]+", "_", suffix).strip("_") or "outcome")
-    return base
-
-
-def _open_module(lines):
-    """Put the module header and its closing brace on lines of their own
-    (`module a { var x: int }` -> three lines), so records can be inserted
-    above the header and declarations appended before the brace."""
-    text = "\n".join(lines)
-    m = re.search(r"^(\s*module\s+\w+\s*\{)(.*)$", text, re.M)
-    if m and m.group(2).strip():
-        text = text[:m.start()] + m.group(1) + "\n  " + m.group(2).strip() + text[m.end():]
-    end = text.rstrip().rfind("}")
-    if end >= 0:
-        before = text[:end]
-        last_nl = before.rfind("\n")
-        if before[last_nl + 1:].strip():
-            text = before.rstrip() + "\n}" + text[end + 1:]
-    return text.splitlines()
-
+# ── Model shapes the UI records are checked against ─────────────────────────
 
 def type_variants(body):
     """Constructor names of a sum type's body (`| A | B(int)`), or [] for a
@@ -1912,311 +1720,6 @@ def nav_moves(body, var, frm, to):
                               body))
     return bool(re.search(rf"\b{v}\s*==\s*{re.escape(frm)}\b", body)
                 and re.search(rf"\b{v}'\s*=\s*{re.escape(to)}\b", body))
-
-
-SCREEN_FIELDS = {"name", "auth_required", "purpose", "components"}
-NAV_FIELDS = {"id", "from", "to", "trigger", "guard", "action"}
-
-
-def emit_ui(tag, item, indent):
-    if tag == "screen":
-        lines = [f"{indent}/// @screen {item['name']}"]
-        lines += _wrap_desc(item.get("purpose"), indent)
-        if item.get("auth_required"):
-            lines.append(f"{indent}/// @auth-required")
-        if item.get("components"):
-            lines += _wrap("@components", ", ".join(item["components"]), indent)
-        return lines
-    nid = f"{item['id']} " if item.get("id") else ""
-    lines = [f"{indent}/// @nav {nid}{item['from']} -> {item['to']}"]
-    lines += _wrap_desc(item.get("trigger"), indent)
-    if item.get("guard"):
-        lines += _wrap("@guard", item["guard"], indent)
-    return lines
-
-
-def migrate_area(legacy, model_text, als_text=None, ir=None):
-    """Legacy area JSON + its model text(s) -> (qnt text, als text, intent,
-    records). Lossless: a field it cannot place raises SpecSourceError."""
-    name = legacy.get("area")
-    ir = ir or {}
-    intent = {"$schema": "../schemas/intent.schema.json"}
-    for k, v in legacy.items():
-        if k in MODEL_KEYS or k in UI_KEYS or k in RECORD_KEYS or k == "$schema":
-            continue
-        intent[k] = copy.deepcopy(v)
-    if isinstance(intent.get("brief"), dict):
-        intent["brief"].pop("written_against", None)
-    fm = intent.get("formal_model") or {}
-    qfile = fm.get("quint_file") or f"{name}.qnt"
-    _authored, records = split_machine(legacy)
-
-    # Check every field has a home before writing anything.
-    for kind in MODEL_KEYS:
-        covered = _covered_paths(kind)
-        for item in legacy.get(kind) or []:
-            for p in _leaf_paths(item):
-                if p not in covered and not any(p.startswith(c + ".") for c in covered):
-                    if kind == "requirements" and p.startswith("witness.outcomes"):
-                        continue
-                    raise SpecSourceError(f"{name}: {item.get('id')}: field '{p}' has "
-                                          f"no doc-comment tag — cannot migrate losslessly")
-
-    lines = (model_text or "").splitlines()
-    if model_text is None:
-        lines = [f"module {re.sub(r'[^A-Za-z0-9_]', '_', name)} {{", "}"]
-    lines = _open_module(lines)
-    inserts = {}       # line index -> doc lines to insert above it
-    appended = []      # declarations to add before the module's closing brace
-    mod_line = next((i for i, l in enumerate(lines) if re.match(r"^\s*module\s+\w+", l)), None)
-    if mod_line is None:
-        raise SpecSourceError(f"{name}: {qfile} has no module declaration")
-    close_line = max(i for i, l in enumerate(lines) if l.strip() == "}")
-
-    def decl_line(kind, decl_name):
-        if not decl_name:
-            return None
-        pat = re.compile(rf"^(\s*)(?:pure\s+)?{kind}\s+{re.escape(decl_name)}\b")
-        for i, l in enumerate(lines):
-            if pat.match(l):
-                return i
-        return None
-
-    def indent_of(i):
-        return re.match(r"^(\s*)", lines[i]).group(1)
-
-    def put(i, doc):
-        inserts.setdefault(i, []).extend(doc)
-
-    module_doc = []
-    gt = _ghost_types(ir) if ir else {}
-    reqs = legacy.get("requirements") or []
-    for r in reqs:
-        rid = r["id"]
-        w = r.get("witness") or {}
-        outcomes = w.get("outcomes") or []
-        pred = w.get("predicate")
-        act = decl_line("action", r.get("quint_ref"))
-        if pred and not outcomes and model_text is None:
-            # No model to host it in yet (Tier 1): the predicate rides as text.
-            module_doc.append(emit_doc("req", rid, r, "requirements", ""))
-        elif pred and not outcomes:
-            hn = host_name(rid)
-            appended.append(emit_doc("req", rid, r, "requirements", "  ",
-                                     skip=("predicate",)))
-            appended[-1] += _witness_host(hn, pred, gt, "  ")
-        elif act is not None:
-            put(act, emit_doc("req", rid, r, "requirements", indent_of(act),
-                              skip=("via", "predicate")))
-        else:
-            module_doc.append(emit_doc("req", rid, r, "requirements", ""))
-        for oc in outcomes:
-            if not oc.get("predicate"):
-                raise SpecSourceError(f"{name}: {rid} outcome {oc.get('name')}: no predicate")
-            doc = [f"  /// @outcome-of {rid} {oc['name']}"]
-            if _get(oc, "delta.pre"):
-                doc += _wrap("@pre", oc["delta"]["pre"], "  ")
-            if _get(oc, "delta.note"):
-                doc += _wrap("@pre-note", oc["delta"]["note"], "  ")
-            appended.append(doc + _witness_host(host_name(rid, oc["name"]),
-                                                oc["predicate"], gt, "  "))
-        if pred and outcomes:
-            raise SpecSourceError(f"{name}: {rid}: both a predicate and outcomes")
-
-    for inv in legacy.get("invariants") or []:
-        iid = inv["id"]
-        if inv.get("proof") == "structural":
-            if als_text is None:
-                raise SpecSourceError(f"{name}: {iid}: structural invariant but no .als")
-            continue  # handled below on the Alloy text
-        if inv.get("over") == "probes":
-            if inv.get("predicate") and model_text is not None:
-                gname = (inv.get("quint_name") or iid.replace("-", "_")) + "_over"
-                doc = emit_doc("inv", iid, inv, "invariants", "  ", skip=("predicate",))
-                appended.append(doc + _witness_host(gname, inv["predicate"], gt, "  "))
-            else:
-                module_doc.append(emit_doc("inv", iid, inv, "invariants", ""))
-            continue
-        line = decl_line("val", inv.get("quint_name"))
-        if line is not None:
-            put(line, emit_doc("inv", iid, inv, "invariants", indent_of(line),
-                               skip=("quint-name",)))
-        else:
-            module_doc.append(emit_doc("inv", iid, inv, "invariants", ""))
-
-    for p in legacy.get("properties") or []:
-        line = decl_line("temporal", p.get("quint_name"))
-        if line is not None:
-            put(line, emit_doc("prop", p["id"], p, "properties", indent_of(line),
-                               skip=("quint-name",)))
-        else:
-            module_doc.append(emit_doc("prop", p["id"], p, "properties", ""))
-
-    for c in legacy.get("constraints") or []:
-        line = decl_line("val", c.get("name"))
-        if line is None:
-            line = decl_line("const", c.get("name"))
-        doc_item = dict(c)
-        v = c.get("value")
-        if line is not None:
-            body = _literal((_parse_host(lines, line, "quint") or {}).get("body"))
-            if body == v and type(body) is type(v):
-                doc_item.pop("value")
-            put(line, emit_doc("con", c["id"], doc_item, "constraints", indent_of(line),
-                               skip=("name",)))
-        elif model_text is not None and isinstance(v, (int, bool, str)):
-            lit = json.dumps(v) if isinstance(v, str) else (str(v).lower() if isinstance(v, bool) else str(v))
-            doc_item.pop("value")
-            appended.append(emit_doc("con", c["id"], doc_item, "constraints", "  ",
-                                     skip=("name",))
-                            + [f"  pure val {c['name']} = {lit}"])
-        else:
-            module_doc.append(emit_doc("con", c["id"], c, "constraints", ""))
-
-    for ex in legacy.get("examples") or []:
-        line = decl_line("run", ex.get("quint_run"))
-        doc_item = dict(ex)
-        if line is not None:
-            put(line, emit_doc("example", ex["id"], doc_item, "examples", indent_of(line)))
-            continue
-        act = decl_line("action", (ex.get("when") or {}).get("action"))
-        if act is not None and not (ex.get("when") or {}).get("args"):
-            doc_item = {k: v for k, v in ex.items() if k != "when"}
-            put(act, emit_doc("example", ex["id"], doc_item, "examples", indent_of(act)))
-        else:
-            module_doc.append(emit_doc("example", ex["id"], ex, "examples", ""))
-
-    # Screens on the sum type that lists them; each edge on the one action
-    # that moves the screen var between its two ends.
-    screens = legacy.get("screens") or []
-    navs = legacy.get("navigation") or []
-    for sc in screens:
-        if set(sc) - SCREEN_FIELDS:
-            raise SpecSourceError(f"{name}: screen {sc.get('name')}: field(s) "
-                                  f"{sorted(set(sc) - SCREEN_FIELDS)} have no doc-comment tag")
-    for nv in navs:
-        if set(nv) - NAV_FIELDS:
-            raise SpecSourceError(f"{name}: navigation {nv.get('from')} -> {nv.get('to')}: "
-                                  f"field(s) {sorted(set(nv) - NAV_FIELDS)} have no doc-comment tag")
-    types, actions = {}, {}
-    for i, l in enumerate(lines):
-        m = re.match(r"^\s*(type|action)\s+([A-Za-z_][A-Za-z0-9_]*)", l)
-        if m:
-            body = (_parse_host(lines, i, "quint") or {}).get("body") or ""
-            if m.group(1) == "type":
-                types[m.group(2)] = (i, type_variants(body))
-            else:
-                actions[m.group(2)] = (i, body)
-    names = {sc["name"] for sc in screens}
-    stype = next((t for t, (_i, v) in types.items() if names and names <= set(v)), None)
-    if stype:
-        i = types[stype][0]
-        doc = []
-        for sc in screens:
-            if doc:
-                doc.append(f"{indent_of(i)}///")
-            doc += emit_ui("screen", sc, indent_of(i))
-        put(i, doc)
-    else:
-        module_doc.extend(emit_ui("screen", sc, "") for sc in screens)
-    svar = screen_var(model_text, stype) if stype else None
-    for nv in navs:
-        target = nv.get("action")
-        if target is not None and target not in actions:
-            raise SpecSourceError(f"{name}: navigation {nv['from']} -> {nv['to']}: "
-                                  f"no action `{target}` in the model")
-        if target is None:
-            cands = [a for a, (_i, b) in actions.items()
-                     if nav_moves(b, svar, nv["from"], nv["to"])]
-            target = cands[0] if len(cands) == 1 else None
-        if target is None:
-            module_doc.append(emit_ui("nav", nv, ""))
-            continue
-        i = actions[target][0]
-        if i in inserts:
-            inserts[i].append(f"{indent_of(i)}///")
-        put(i, emit_ui("nav", nv, indent_of(i)))
-
-    # Module doc: records with no host in the model yet.
-    if module_doc:
-        flat = []
-        for block in module_doc:
-            if flat:
-                flat.append("///")
-            flat += block
-        put(mod_line, flat)
-
-    out = []
-    for i, l in enumerate(lines):
-        if i == close_line and appended:
-            if out and out[-1].strip():
-                out.append("")
-            out.append("  // ----------------------------------------------------------")
-            out.append("  // REQUIREMENTS — witness predicates, constants and transition")
-            out.append("  // properties whose records live on them (spec_source.py)")
-            out.append("  // ----------------------------------------------------------")
-            for block in appended:
-                out.append("")
-                out += block
-        if i in inserts:
-            existing_doc = bool(out) and DOC_RE.match(out[-1] or "")
-            if existing_doc:
-                out.append(f"{indent_of(i)}///")
-            out += inserts[i]
-        out.append(l)
-    qnt_out = "\n".join(out) + "\n"
-    if model_text is None and not module_doc and not appended:
-        qnt_out = None  # nothing lives in a model this area does not have
-
-    als_out = als_text
-    if als_text is not None:
-        alines = als_text.splitlines()
-        ains = {}
-        for inv in legacy.get("invariants") or []:
-            if inv.get("proof") != "structural":
-                continue
-            target = inv.get("alloy_command")
-            idx = next((i for kw in ("assert", "check") for i, l in enumerate(alines)
-                        if re.match(rf"^\s*{kw}\s+{re.escape(target or '')}\b", l)), None)
-            if idx is None:
-                raise SpecSourceError(f"{name}: {inv['id']}: no `assert {target}` "
-                                      f"(or `check {target}`) in the .als")
-            ains[idx] = emit_doc("inv", inv["id"], inv, "invariants", "",
-                                 skip=("proof", "alloy"))
-        res = []
-        for i, l in enumerate(alines):
-            if i in ains:
-                res += ains[i]
-            res.append(l)
-        als_out = "\n".join(res) + "\n"
-    return qnt_out, als_out, intent, records
-
-
-def _drop_empty(v):
-    if isinstance(v, dict):
-        return {k: _drop_empty(x) for k, x in v.items() if x not in ([], {}, None)}
-    if isinstance(v, list):
-        return [_drop_empty(x) for x in v]
-    return v
-
-
-def _normalize_for_compare(area):
-    a = _drop_empty(copy.deepcopy(area))
-    a.pop("$schema", None)
-    for k in MODEL_KEYS:
-        if k in a and not a[k]:
-            del a[k]
-        a[k] = sorted(a.get(k) or [], key=lambda it: _natural(it.get("id")))
-        if not a[k]:
-            a.pop(k)
-    for ex in a.get("examples") or []:
-        ex.setdefault("expect", {})
-    for sc in a.get("screens") or []:
-        sc.setdefault("auth_required", False)
-    if a.get("navigation"):
-        a["navigation"] = sorted(a["navigation"], key=lambda n: (
-            n.get("from") or "", n.get("to") or "", n.get("trigger") or ""))
-    return a
 
 
 # ── Schemas (generated from the area-view schema, never hand-edited) ───────
@@ -2277,6 +1780,7 @@ def source_schemas(area_schema):
             "status": {"type": "string", "enum": ["verified"],
                        "description": "Written by `spec-record verify` on a green replay; overrides the authored @status."},
             "witness": witness_rec,
+            "obligation": copy.deepcopy(req["obligation"]),
             "formal_status": {"type": "string", "enum": sorted(set(
                 props["invariants"]["items"]["properties"]["formal_status"]["enum"]) | set(
                 props["properties"]["items"]["properties"]["formal_status"]["enum"]))},
@@ -2344,97 +1848,17 @@ def _cmd_derive(args):
     return 1 if info["problems"] else 0
 
 
-def _legacy_inputs(root, name):
-    path = legacy_path(root, name)
-    if path is None:
-        sys.exit(f"ERROR: no specs/{name}.area.json or .contract.json to migrate")
-    legacy = json.loads(path.read_text(encoding="utf-8"))
-    fm = legacy.get("formal_model") or {}
-    qpath = specs_dir(root) / (fm.get("quint_file") or f"{name}.qnt")
-    qtext = qpath.read_text(encoding="utf-8") if qpath.exists() else None
-    apath = specs_dir(root) / fm["alloy_file"] if fm.get("alloy_file") else None
-    atext = apath.read_text(encoding="utf-8") if apath and apath.exists() else None
-    ir = {}
-    if qtext is not None:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from quint_ir import parse_qnt  # noqa: WPS433
-        ir = parse_qnt(qpath) or {}
-    return path, legacy, qpath, qtext, apath, atext, ir
-
-
-def _cmd_migrate(args):
-    path, legacy, qpath, qtext, apath, atext, ir = _legacy_inputs(args.root, args.area)
-    qnt, als, intent, records = migrate_area(legacy, qtext, atext, ir)
-    if not args.write:
-        print(qnt)
-        return 0
-    if qnt is not None:
-        qpath.write_text(qnt, encoding="utf-8")
-    if apath and als is not None:
-        apath.write_text(als, encoding="utf-8")
-    write_intent(args.root, args.area, intent)
-    write_records(args.root, args.area, records)
-    path.unlink()
-    hosts = [n.name for n, t in ((qpath, qnt), (apath, als)) if n and t is not None]
-    print(f"migrated {args.area}: records -> doc comments in {', '.join(hosts)}; "
-          f"{args.area}{INTENT_SUFFIX}, {args.area}{RECORDS_SUFFIX}; removed {path.name}")
-    return 0
-
-
-def roundtrip(legacy, qtext, atext=None, ir=None):
-    """Differences between a legacy area and the view derived from its
-    migration — [] when the migration is lossless."""
-    name = legacy.get("area")
-    qnt, als, intent, records = migrate_area(legacy, qtext, atext, ir)
-    fm = intent.get("formal_model") or {}
-    files = {f"{name}{INTENT_SUFFIX}": json.dumps(intent),
-             f"{name}{RECORDS_SUFFIX}": json.dumps(records),
-             fm.get("quint_file") or f"{name}.qnt": qnt}
-    if qnt is None:
-        files.pop(fm.get("quint_file") or f"{name}.qnt")
-    if fm.get("alloy_file") and als is not None:
-        files[fm["alloy_file"]] = als
-    problems = []
-    derived, _ = derive_from_texts(name, files.get, problems)
-    if qtext is None and "formal_model" in derived and "formal_model" not in legacy:
-        derived.get("formal_model", {}).pop("quint_file", None)
-        if derived.get("formal_model") == {}:
-            derived.pop("formal_model")
-    if not any("action" in n for n in legacy.get("navigation") or []):
-        for n in derived.get("navigation") or []:
-            n.pop("action", None)  # found by migration: added, not lost
-    # A bare ref is qualified on derive: a normalization, not a loss.
-    legacy = copy.deepcopy(legacy)
-    _qualify_refs(legacy, name)
-    a, b = _normalize_for_compare(legacy), _normalize_for_compare(derived)
-    return problems + _diff_paths(a, b)
-
-
-def _cmd_roundtrip(args):
-    _path, legacy, _q, qtext, _a, atext, ir = _legacy_inputs(args.root, args.area)
-    diffs = roundtrip(legacy, qtext, atext, ir)
-    for d in diffs:
-        print(f"differs: {d}")
-    print(f"{args.area}: {'lossless' if not diffs else f'{len(diffs)} difference(s)'}")
-    return 1 if diffs else 0
-
-
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    for cmd in ("derive", "migrate", "roundtrip"):
-        sp = sub.add_parser(cmd)
-        sp.add_argument("area")
-        sp.add_argument("--root", default=".")
-        if cmd == "migrate":
-            sp.add_argument("--write", action="store_true",
-                            help="write the files and remove the legacy JSON")
+    sp = sub.add_parser("derive")
+    sp.add_argument("area")
+    sp.add_argument("--root", default=".")
     sp = sub.add_parser("schemas", help="(re)generate intent/records schemas")
     sp.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
     sp.add_argument("--write", action="store_true")
     args = p.parse_args(argv)
-    return {"derive": _cmd_derive, "migrate": _cmd_migrate,
-            "roundtrip": _cmd_roundtrip, "schemas": _cmd_schemas}[args.cmd](args)
+    return {"derive": _cmd_derive, "schemas": _cmd_schemas}[args.cmd](args)
 
 
 if __name__ == "__main__":

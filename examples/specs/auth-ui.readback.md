@@ -4,9 +4,9 @@
 
 **⚠ NOT READY** — 4 of 4 requirement(s) not verified against code; 1 of 1 invariant(s) not holding.
 
-**Status:** formalized  |  **Requirements:** 0/4 verified, 0/4 witnessed  |  **Invariants:** 0 proven + 0 bounded / 1  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Mutation:** 62% pinned by examples, 11 question(s) open  |  **Open questions:** 0  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/4 verified, 4/4 witnessed  |  **Invariants:** 0 proven + 0 bounded (≤8) / 1  |  **Coverage:** matrix not run  |  **Extraction:** n/a (no code)  |  **Mutation:** 62% pinned by examples, 11 question(s) open  |  **Open questions:** 0  |  **Last verified:** never
 
-*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ skipped with justification (a refusal — an invariant carries the proof and an example shows the refused call — or a computed value, checked by the unit test it names)*
+*Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ nothing to witness (a forbidden step, whose proof is its obligation, or a computed value, checked by the unit test it names) · ∀ checked on every reachable step, ∀✗ a step that breaks it was found*
 
 ## Purpose
 
@@ -14,15 +14,17 @@ Login flow UI: Home screen, Login form, Dashboard (auth-required), LockedNotice.
 
 ## ⚠ Needs Your Attention
 
-- **Unchecked requirement** — UI-001: While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
-- **Unchecked requirement** — UI-002: While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
-- **Unchecked requirement** — UI-003: While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
-- **Unchecked requirement** — UI-004: While the user is on Dashboard, when the session expires, the system shall return to Login.
+- **Check error** — INV-001 (`guardedDashboard`): > [1/2] Checking whether the inductive invariant 'guardedDashboard' holds in the initial state(s) defined by 'init'...
+> [2/2] Checking whether 'step' preserves the inductive invariant 'guardedDashboard'...
+error: current is used before it is assigned. You need to have either `current == <expr>` or `current.in(<set>)` before doing anything else with `current` in your predicate.
 - **The examples leave 11 behavior(s) open** — the model decides them and no example does. Answer the [questions](#questions-the-examples-leave-open): yes adds an example, no finds a model bug.
+- **Mutation results are for an older model** — rerun `tools/spec-questions.py <area> --record` before answering.
 
 ## Questions the Examples Leave Open
 
 _Small changes to the model that every example and invariant still pass: 13 of 40 tried (`tools/spec-questions.py`, 4340c15). Each is a behavior the model chose and nobody approved. **Yes** pins it: add the run as an example. **No** means the model is wrong here._
+
+> ⚠ These were raised against an older model — rerun before answering.
 
 ### b79923fe · [UI-001](#ui-001)
 
@@ -221,10 +223,10 @@ graph TB
 
 | | ID | Behavior | Modality |
 |---|---|---|---|
-| ⏳ | [UI-001](#ui-001) | navigate to Login | must |
-| ⏳ | [UI-002](#ui-002) | navigate to Dashboard | must |
-| ⏳ | [UI-003](#ui-003) | navigate to LockedNotice | must |
-| ⏳ | [UI-004](#ui-004) | return to Login | must |
+| ◐ | [UI-001](#ui-001) | While on Home, when the user clicks 'Sign in', the system shall navigate to Login. | must |
+| ◐ | [UI-002](#ui-002) | While on Login, when the user submits valid credentials, the system shall navigate to D… | must |
+| ◐ | [UI-003](#ui-003) | If the user submits credentials for a Locked account, then the system shall navigate to… | must |
+| ◐ | [UI-004](#ui-004) | While on Dashboard, when the session expires, the system shall return to Login. | must |
 
 ## What the System Does
 
@@ -232,14 +234,14 @@ graph TB
 
 > **Who** · User<br>
 > **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
-> **Route** · ⏳ [UI-001](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ⏳ [UI-002](#ui-002) → [auth.REQ-003](auth.readback.md#req-003) → ⏳ [UI-003](#ui-003)<br>
+> **Route** · ◐ [UI-001](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ◐ [UI-002](#ui-002) → [auth.REQ-003](auth.readback.md#req-003) → ◐ [UI-003](#ui-003)<br>
 > **Runs as** · ✓ `auth-ui.signInJourney` — `quint test` runs it; it walks 5 of 5 step(s) in order.
 
 **Step 1 of 5**
 
 #### UI-001
 
-⏳ While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login.
+◐ ∀ While on Home, when the user clicks 'Sign in', the system shall navigate to Login.
 
 | Example | Given | When | Then |
 |---|---|---|---|
@@ -249,9 +251,15 @@ graph TB
 
 > **Left open** · [b79923fe](#b79923fe) click_sign_in — the model decides, no example does
 
-<details><summary>Quint action `click_sign_in`, witness predicate + trace</summary>
+> **Witness:** 2 steps: click_sign_in → current = Login({tag: "UNIT"})
 
-`specs/auth-ui.qnt:L101-L107` · model `4340c1516108`
+> **∀ Every step:** checked on every reachable step (≤4 steps).
+
+<details><summary>EARS sentence, Quint action `click_sign_in`, formal claim + trace</summary>
+
+**As specified (EARS):** While `current == Home`, when the user clicks 'Sign in', the system shall make `current == Login` hold.
+
+`specs/auth-ui.qnt:L109-L115` · model `f37e483989a1`
 
 ```quint
   action click_sign_in: bool = all {
@@ -263,9 +271,20 @@ graph TB
   }
 ```
 
-**Witness predicate:** `current == Login` — true exactly when the behavior has happened.
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `current == Home`
+- **shall** `current == Login`
 
-**Record:** `specs/auth-ui.qnt:296` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:102` — the doc comment this requirement is read from.
+
+```mermaid
+sequenceDiagram
+    title UI-001 witness
+    participant E as Env
+    participant S as System
+    E->>S: click_sign_in
+    Note over S: current = Login({tag: "UNIT"})
+```
 
 </details>
 
@@ -275,7 +294,7 @@ graph TB
 
 #### UI-002
 
-⏳ While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
+◐ ∀ While on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 
 | Example | Given | When | Then |
 |---|---|---|---|
@@ -285,9 +304,15 @@ graph TB
 
 > **Left open** · [d5442974](#d5442974) submit_success(alice, s1) · [f8263eaa](#f8263eaa) submit_success(bob, s1) · [e20334a7](#e20334a7) submit_success(bob, s2) — the model decides, no example does
 
-<details><summary>Quint action `submit_success`, witness predicate + trace</summary>
+> **Witness:** 3 steps: click_sign_in → submit_success(s1, alice) → current = Dashboard({tag: "UNIT"}); auth::sessions = {"s1": Active({tag: "UNIT"})}; mySession = "s1"; auth::sessionOwner = {"s1": "alice"}; auth::failedAttempts = {"alice": 0}; auth::userActiveSession = {"alice": {"s1"}}; auth::idleFor = {"s1": 0}
 
-`specs/auth-ui.qnt:L115-L121` · model `4340c1516108`
+> **∀ Every step:** checked on every reachable step (≤4 steps).
+
+<details><summary>EARS sentence, Quint action `submit_success`, formal claim + trace</summary>
+
+**As specified (EARS):** While `current == Login`, when the user submits valid credentials, the system shall make `current == Dashboard and authenticated and mySession == s` hold.
+
+`specs/auth-ui.qnt:L131-L137` · model `f37e483989a1`
 
 ```quint
   action submit_success(u: UserId, s: SessionId): bool = all {
@@ -299,9 +324,28 @@ graph TB
   }
 ```
 
-**Witness predicate:** `current == Dashboard and authenticated and mySession == _lastS` — true exactly when the behavior has happened.
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `current == Login`
+- **shall** `current == Dashboard and authenticated and mySession == s`
 
-**Record:** `specs/auth-ui.qnt:308` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:124` — the doc comment this requirement is read from.
+
+```mermaid
+sequenceDiagram
+    title UI-002 witness
+    participant E as Env
+    participant S as System
+    E->>S: click_sign_in
+    Note over S: current = Login({tag: "UNIT"})
+    E->>S: submit_success
+    Note over S: current = Dashboard({tag: "UNIT"})
+    Note over S: auth::sessions = {"s1": Active({tag: "UNIT"})}
+    Note over S: mySession = "s1"
+    Note over S: auth::sessionOwner = {"s1": "alice"}
+    Note over S: auth::failedAttempts = {"alice": 0}
+    Note over S: auth::userActiveSession = {"alice": {"s1"}}
+    Note over S: auth::idleFor = {"s1": 0}
+```
 
 </details>
 
@@ -315,7 +359,7 @@ graph TB
 
 #### UI-003
 
-⏳  *(failure path)* While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
+◐ ∀  *(failure path)* If the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 
 | Example | Given | When | Then |
 |---|---|---|---|
@@ -325,9 +369,15 @@ graph TB
 
 > **Left open** · [aaa2ce5e](#aaa2ce5e) submit_locked(bob) — the model decides, no example does
 
-<details><summary>Quint action `submit_locked`, witness predicate + trace</summary>
+> **Witness:** 8 steps: click_sign_in → submit_invalid(alice) ×5 → submit_locked(alice) → current = LockedNotice({tag: "UNIT"}); form = ErrorLocked({tag: "UNIT"})
 
-`specs/auth-ui.qnt:L140-L147` · model `4340c1516108`
+> **∀ Every step:** checked on every reachable step (≤4 steps).
+
+<details><summary>EARS sentence, Quint action `submit_locked`, formal claim + trace</summary>
+
+**As specified (EARS):** While `current == Login`, if the user submits credentials for a Locked account, then the system shall make `current == LockedNotice and form == ErrorLocked and accountLocked(u)` hold.
+
+`specs/auth-ui.qnt:L165-L172` · model `f37e483989a1`
 
 ```quint
   action submit_locked(u: UserId): bool = all {
@@ -340,9 +390,37 @@ graph TB
   }
 ```
 
-**Witness predicate:** `current == LockedNotice and form == ErrorLocked and accountLocked(_lastU)` — true exactly when the behavior has happened.
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `current == Login`
+- **shall** `current == LockedNotice and form == ErrorLocked and accountLocked(u)`
 
-**Record:** `specs/auth-ui.qnt:320` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:157` — the doc comment this requirement is read from.
+
+```mermaid
+sequenceDiagram
+    title UI-003 witness
+    participant E as Env
+    participant S as System
+    E->>S: click_sign_in
+    Note over S: current = Login({tag: "UNIT"})
+    E->>S: submit_invalid
+    Note over S: form = ErrorBadCreds({tag: "UNIT"})
+    Note over S: auth::accountStatus = {"alice": Unlocked({tag: "UNIT"})}
+    Note over S: auth::failedAttempts = {"alice": 1}
+    E->>S: submit_invalid
+    Note over S: auth::failedAttempts = {"alice": 2}
+    E->>S: submit_invalid
+    Note over S: auth::failedAttempts = {"alice": 3}
+    E->>S: submit_invalid
+    Note over S: auth::failedAttempts = {"alice": 4}
+    E->>S: submit_invalid
+    Note over S: auth::accountStatus = {"alice": Locked({tag: "UNIT"})}
+    Note over S: auth::failedAttempts = {"alice": 5}
+    Note over S: auth::userActiveSession = {"alice": {}}
+    E->>S: submit_locked
+    Note over S: current = LockedNotice({tag: "UNIT"})
+    Note over S: form = ErrorLocked({tag: "UNIT"})
+```
 
 </details>
 
@@ -352,7 +430,7 @@ graph TB
 
 #### UI-004
 
-⏳ While the user is on Dashboard, when the session expires, the system shall return to Login.
+◐ ∀ While on Dashboard, when the session expires, the system shall return to Login.
 
 | Example | Given | When | Then |
 |---|---|---|---|
@@ -360,9 +438,15 @@ graph TB
 
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-<details><summary>Quint action `session_expired`, witness predicate + trace</summary>
+> **Witness:** 8 steps: click_sign_in → submit_success(s1, bob) → time_passes(s1, bob) ×4 → session_expired(s1, bob) → current = Login({tag: "UNIT"}); auth::sessions = {"s1": Expired({tag: "UNIT"})}; mySession = ""; auth::userActiveSession = {"bob": {}}
 
-`specs/auth-ui.qnt:L165-L171` · model `4340c1516108`
+> **∀ Every step:** checked on every reachable step (≤4 steps).
+
+<details><summary>EARS sentence, Quint action `session_expired`, formal claim + trace</summary>
+
+**As specified (EARS):** While `current == Dashboard`, when the session expires, the system shall make `current == Login and not(authenticated)` hold.
+
+`specs/auth-ui.qnt:L198-L204` · model `f37e483989a1`
 
 ```quint
   action session_expired: bool = all {
@@ -374,9 +458,41 @@ graph TB
   }
 ```
 
-**Witness predicate:** `current == Login and not(authenticated)` — true exactly when the behavior has happened.
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `current == Dashboard`
+- **shall** `current == Login and not(authenticated)`
 
-**Record:** `specs/auth-ui.qnt:333` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:191` — the doc comment this requirement is read from.
+
+```mermaid
+sequenceDiagram
+    title UI-004 witness
+    participant E as Env
+    participant S as System
+    E->>S: click_sign_in
+    Note over S: current = Login({tag: "UNIT"})
+    E->>S: submit_success
+    Note over S: current = Dashboard({tag: "UNIT"})
+    Note over S: auth::sessions = {"s1": Active({tag: "UNIT"})}
+    Note over S: mySession = "s1"
+    Note over S: auth::sessionOwner = {"s1": "bob"}
+    Note over S: auth::failedAttempts = {"bob": 0}
+    Note over S: auth::userActiveSession = {"bob": {"s1"}}
+    Note over S: auth::idleFor = {"s1": 0}
+    E->>S: time_passes
+    Note over S: auth::idleFor = {"s1": 1}
+    E->>S: time_passes
+    Note over S: auth::idleFor = {"s1": 2}
+    E->>S: time_passes
+    Note over S: auth::idleFor = {"s1": 3}
+    E->>S: time_passes
+    Note over S: auth::idleFor = {"s1": 4}
+    E->>S: session_expired
+    Note over S: current = Login({tag: "UNIT"})
+    Note over S: auth::sessions = {"s1": Expired({tag: "UNIT"})}
+    Note over S: mySession = ""
+    Note over S: auth::userActiveSession = {"bob": {}}
+```
 
 </details>
 
@@ -405,7 +521,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 |---|---|---|
 | Data model | — | no entities declared |
 | State space | — | matrix not run |
-| Operations | ! | 0/4 requirements with a discharged witness |
+| Operations | ✓ | 4/4 requirements with a discharged witness |
 | Failure behavior | — | 1 unwanted-path requirement(s); no external outcome matrix — unmeasured |
 | External systems | — | none declared — if the area calls anything, this is a gap |
 | Assumptions | — | none recorded |

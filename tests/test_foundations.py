@@ -299,15 +299,31 @@ def test_may_outcomes_with_the_same_predicate_fail():
     assert (lint.FAIL, "may-outcomes-identical") in _codes(findings)
 
 
+def _val_body(text, name):
+    """The lines of `val <name>` in a generated probe module, up to the next
+    blank line."""
+    lines = text.splitlines()
+    i = next(i for i, l in enumerate(lines) if l.strip().startswith(f"val {name}:"))
+    out = []
+    for l in lines[i + 1:]:
+        if not l.strip():
+            break
+        out.append(l.strip())
+    return out
+
+
 def test_each_may_outcome_probe_requires_the_others_false():
-    area = {"requirements": [{
-        "id": "REQ-007", "modality": "may", "quint_ref": "cancel",
-        "witness": {"outcomes": [{"name": "email", "predicate": "mailed"},
-                                 {"name": "in-app", "predicate": "shown"}]}}]}
-    got = {name: pred for _r, name, pred, _d, _o in probes.probe_requirements(area)}
-    assert len(got) == 2
-    email = next(p for n, p in got.items() if "email" in n)
-    assert email == "(mailed) and not(shown)"
+    area = spec_source.load_area(EXAMPLES, "subscription")
+    req = next(r for r in area["requirements"] if r["id"] == "REQ-007")
+    assert [n for _r, n, _o in probes.probe_requirements({"requirements": [req]})] == \
+        ["witness_REQ_007_email", "witness_REQ_007_in_app"]
+    text = (EXAMPLES / "specs" / "subscription.probes.qnt").read_text(encoding="utf-8")
+    email = " ".join(_val_body(text, "witness_REQ_007_email"))
+    assert "and outcome_REQ_007_email(" in email
+    assert "and not(outcome_REQ_007_in_app(" in email
+    # ...and the obligation: every step ends in SOME permitted outcome.
+    oblig = " ".join(_val_body(text, "oblig_REQ_007"))
+    assert "outcome_REQ_007_email(" in oblig and " or outcome_REQ_007_in_app(" in oblig
 
 
 # ── Refusals shown by examples ──────────────────────────────────────────────
@@ -576,9 +592,8 @@ def test_a_generated_probe_reads_its_ghosts_only_after_the_path_holds():
     action runs, so it goes first and evaluation stops there."""
     area = spec_source.load_area(EXAMPLES, "subscription")
     text = (EXAMPLES / "specs" / "subscription.probes.qnt").read_text(encoding="utf-8")
-    body = lint.probe_body(text, "witness_REQ_001")
-    first = body.split("not(", 1)[1].strip().splitlines()[0]
-    assert first == '_lastAction == "cancel_subscription"'
+    body = _val_body(text, "witness_REQ_001")
+    assert body[0] == 'not(_lastAction == "cancel_subscription"'
     assert "val reached_REQ_001: bool = not(witness_REQ_001)" in text
     assert area["requirements"]
 

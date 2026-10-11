@@ -85,7 +85,7 @@ CALL_RE = re.compile(rf"^\s*({QNAME})\s*(\(.*\))?\s*$", re.S)
 CMP_RE = re.compile(r">=|<=|==|!=|>|<")
 CMP_SWAP = {">=": ">", ">": ">=", "<=": "<", "<": "<=", "==": "!=", "!=": "=="}
 CONST_RE = re.compile(r"^\s*pure\s+val\s+([A-Za-z_]\w*)\s*:\s*int\s*=\s*(-?\d+)\b")
-PROPERTY_TAGS = {"req", "outcome-of", "inv", "prop"}
+PROPERTY_TAGS = {"req", "inv", "prop"}
 
 
 def fail_setup(msg):

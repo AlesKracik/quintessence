@@ -41,7 +41,7 @@ from itf_tools import (  # noqa: E402
     load_trace, mermaid_lines, render_value, state_vars,
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
-    skip_discharge, brief_status, action_params, GHOST_PARAM_RE,
+    witness_exempt, owes_obligation, brief_status, action_params, GHOST_PARAM_RE,
     compute_spec_sha, is_rejection, is_computed, witness_entries,
     GHOST_PREFIXES,
 )
@@ -66,9 +66,9 @@ LEGEND = ("*Legend: ✓ verified — witness trace replayed green against real c
           "◐ witnessed — proven possible in the model, not yet demonstrated in code · "
           "✗ no witness — claimed behavior is UNREACHABLE in the model · "
           "⏳ not checked yet · "
-          "⊘ skipped with justification (a refusal — an invariant carries the proof "
-          "and an example shows the refused call — or a computed value, checked by "
-          "the unit test it names)*")
+          "⊘ nothing to witness (a forbidden step, whose proof is its obligation, or "
+          "a computed value, checked by the unit test it names) · "
+          "∀ checked on every reachable step, ∀✗ a step that breaks it was found*")
 
 
 def load_json(path):
@@ -120,24 +120,41 @@ def req_is_witnessed(req):
     only the top level counted a fully-demonstrated permission as unchecked
     in every headline number on the page.
 
-    Strictly about traces: a justified skip DISCHARGES the obligation but
-    demonstrates nothing, so it belongs in the discharged count, not here."""
+    Strictly about traces: an exempt requirement (witness_exempt) has
+    nothing to demonstrate, so it belongs in the discharged count, not here."""
     entries = witness_entries(req)
     return bool(entries) and all(e.get("status") == "witnessed" for _l, e in entries)
 
 
+def obligation_mark(req):
+    """The universal half, as one glyph: '∀' when every reachable step of
+    the action satisfies the requirement, '∀✗' when the checker found one
+    that does not, '' when there is no verdict (or nothing to oblige)."""
+    if not owes_obligation(req):
+        return ""
+    st = (req.get("obligation") or {}).get("formal_status")
+    return {"verified": "∀", "counterexample-found": "∀✗"}.get(st, "")
+
+
 def req_is_discharged(req):
-    """Witnessed, or a rejection whose skip names what carries the proof."""
-    return req_is_witnessed(req) or (
-        (req.get("witness") or {}).get("status") == "skipped"
-        and skip_discharge(req.get("witness"), req) is not None)
+    """Both halves: witnessed (or exempt from a witness by what it is) AND
+    its obligation verified. A computed requirement is discharged by the
+    test it names. Freshness is itf_tools.witness_status's business."""
+    if is_computed(req):
+        return bool(req.get("verified_by"))
+    if not owes_obligation(req):
+        return False
+    witnessed = req_is_witnessed(req) or witness_exempt(req) is not None
+    return witnessed and (req.get("obligation") or {}).get("formal_status") == "verified"
 
 
 def status_mark(req):
     w = req.get("witness") or {}
     if req.get("status") == "verified":
         return "✓"
-    if w.get("status") == "skipped" and skip_discharge(w, req):
+    if (req.get("obligation") or {}).get("formal_status") == "counterexample-found":
+        return "✗"
+    if witness_exempt(req) is not None:
         return "⊘"
     # Per entry, so a `may` whose every permitted outcome is witnessed reads
     # as demonstrated rather than as untouched.
@@ -147,8 +164,8 @@ def status_mark(req):
         # Both are failures to demonstrate the behavior, so both render as
         # a cross. Which one it is comes from the Needs-Your-Attention
         # entry, where the fix differs: unreachable means look at the
-        # guard, hollow means the predicate never distinguished before
-        # from after.
+        # guard, hollow means the requirement already held before the
+        # step.
         return "✗"
     return "⏳"
 
@@ -280,14 +297,16 @@ def resolve_constraints(sentence, constraints):
 
 
 def req_sentence(req, constraints):
-    """The sentence a reviewer reads for this requirement: the EARS sentence
-    rendered from its fields, constraint values resolved in place. Rendered,
-    never authored — what the reader agrees to is exactly what the model and
-    the probes were built from. The example rows under it say the same thing
+    """The sentence a reviewer reads for this requirement, constraint values
+    resolved in place. A formal requirement's EARS rendering is Quint, so the
+    headline is its plain-words description, and the formal claim stays one
+    click away under it ("As specified"); a requirement with no description
+    falls back to the rendering. The example rows say the same thing
     concretely."""
     if not req:
         return ""
-    return resolve_constraints(ears_sentence(req), constraints)
+    text = req.get("description") if req.get("status", "raw") != "raw" else None
+    return resolve_constraints(text or ears_sentence(req), constraints)
 
 
 def witness_one_liner(root, trace_rel):
@@ -430,10 +449,15 @@ def attention_items(root, area_name, area):
     for rid, st, _trace, detail in rows:
         if st in ("not-run", "no-witness", "hollow", "HOLLOW", "STALE",
                   "UNSTAMPED", "UNVERIFIABLE",
-                  "MISSING-FILE", "INVALID", "SKIPPED-UNJUSTIFIED"):
-            hollow_label = ("HOLLOW witness — the predicate already held "
-                            "before anything happened; add witness.delta")
+                  "MISSING-FILE", "INVALID", "VIOLATED", "OBLIGATION-NOT-RUN",
+                  "NOT-FORMAL", "COMPUTED-UNTESTED"):
+            hollow_label = ("HOLLOW witness — the trace shows nothing "
+                            "happening")
             label = {"not-run": "Unchecked requirement",
+                     "VIOLATED": "Requirement BROKEN on some step",
+                     "OBLIGATION-NOT-RUN": "Not checked on every step yet",
+                     "NOT-FORMAL": "Requirement not formal yet",
+                     "COMPUTED-UNTESTED": "Computed requirement with no test",
                      "no-witness": "UNREACHABLE behavior (no witness)",
                      "hollow": hollow_label,
                      "HOLLOW": hollow_label}.get(st, f"Witness {st}")
@@ -781,20 +805,37 @@ def _mutated_vars(decls, action):
 
 def guarding_invariants(area, req, decls):
     """Invariants that constrain what this requirement's action changes:
-    every invariant reading a var the action writes, plus a prohibition's
-    enforcing invariant. Derived from the model, so the list cannot omit
+    every invariant reading a var the action writes. Derived from the model, so the list cannot omit
     one that the checker in fact holds this step to."""
     invs = [i for i in area.get("invariants", []) or [] if i.get("id")]
-    enforced = (req.get("witness") or {}).get("enforced_by")
     action = req.get("quint_ref")
     changed = _mutated_vars(decls, action) if decls and action else set()
     out = []
     for inv in invs:
         qn = inv.get("quint_name")
         reads = spec_source.name_closure(decls, [qn]) if (decls and qn) else set()
-        if inv.get("id") == enforced or (changed and changed & reads):
+        if changed and changed & reads:
             out.append(inv)
     return out
+
+
+def formal_lines(req):
+    """The requirement as the checker reads it: @old snapshots, @while,
+    @shall or the @outcome predicates. Empty for a raw requirement."""
+    if not owes_obligation(req) and not is_computed(req):
+        return []
+    ears = req.get("ears") or {}
+    out = []
+    for o in req.get("old") or []:
+        out.append(f"- **old** `{o.get('name')}: {o.get('type')} = {o.get('expr')}`")
+    if ears.get("state"):
+        out.append(f"- **while** `{ears['state']}`")
+    if ears.get("response"):
+        out.append(f"- **shall** `{ears['response']}`")
+    for oc in (req.get("witness") or {}).get("outcomes") or []:
+        out.append(f"- **outcome {oc.get('name')}** `{oc.get('predicate')}`")
+    return (["**Formal claim** (pre-state for while/old, post-state for shall):"]
+            + out) if out else []
 
 
 def render_requirement(root, area, req, constraints, rendered_full,
@@ -815,7 +856,8 @@ def render_requirement(root, area, req, constraints, rendered_full,
     lines.append("")
     ears_rendered = resolve_constraints(ears_sentence(req), constraints)
     sentence = req_sentence(req, constraints)
-    lines.append(f"{mark}{tag} {sentence}")
+    oblig = obligation_mark(req)
+    lines.append(f"{mark}{(' ' + oblig) if oblig else ''}{tag} {sentence}")
     lines.append("")
     prov = req.get("extraction") or {}
     if prov.get("evidence"):
@@ -838,11 +880,10 @@ def render_requirement(root, area, req, constraints, rendered_full,
     w = req.get("witness") or {}
     modality = req.get("modality", "must")
     if modality == "forbidden":
-        enforced = w.get("enforced_by")
         lines.append("> **Forbidden** \u2014 this must never happen, so there is no trace to "
-                     "find. The proof is the invariant that stays true"
-                     + (f": **{enforced}**." if enforced else " (none named yet).")
-                     + " The examples below show the call being refused.")
+                     "find. The proof is the check that no reachable step of the action "
+                     "starts where it is forbidden. The examples below show the call "
+                     "being refused.")
         lines.append("")
     elif modality == "may":
         lines.append("> **Permitted, not required** — the system MAY do any of the "
@@ -903,18 +944,20 @@ def render_requirement(root, area, req, constraints, rendered_full,
                      "transition, so there is no trace to witness and nothing to "
                      "refuse. " + (f"Verified by {tests}." if tests else
                                    "**No test named yet** (`@verified-by`)."))
-        if w.get("justification"):
-            lines.append(f"> _{w['justification']}_")
-        lines.append("")
-    elif w.get("status") == "skipped" and w.get("justification"):
-        lines.append(f"> **Witness skipped:** {w['justification']}")
         lines.append("")
     elif w.get("trace") and w.get("status") == "witnessed":
         lines.append(f"> **Witness:** {witness_one_liner(root, w['trace'])}")
-        delta = (w.get("delta") or {}).get("pre")
-        if delta:
-            lines.append(f"> **Starting from:** `{delta}` \u2014 the step had to move the "
-                         f"state, not merely find it already there.")
+        lines.append("")
+    ob = req.get("obligation") or {}
+    if owes_obligation(req) and ob.get("formal_status") == "counterexample-found":
+        where = f" Trace: `specs/{ob['trace']}`." if ob.get("trace") else ""
+        lines.append("> **\u2200\u2717 Broken:** the checker found a step of "
+                     f"`{req.get('quint_ref') or 'the model'}` that does not satisfy "
+                     f"this requirement.{where}")
+        lines.append("")
+    elif owes_obligation(req) and ob.get("formal_status") == "verified":
+        steps = f" (\u2264{ob['steps']} steps)" if ob.get("steps") else ""
+        lines.append(f"> **\u2200 Every step:** checked on every reachable step{steps}.")
         lines.append("")
     details = []
     if sentence != ears_rendered:
@@ -937,9 +980,9 @@ def render_requirement(root, area, req, constraints, rendered_full,
         else:
             details.append(f"_action `{qref}` not found in `specs/{qnt_rel}`_")
         details.append("")
-    if w.get("predicate"):
-        details.append(f"**Witness predicate:** `{w['predicate']}` — true exactly when "
-                       f"the behavior has happened.")
+    formal = formal_lines(req)
+    if formal:
+        details.extend(formal)
         details.append("")
     origin = (area.get("_origins") or {}).get(req.get("id"))
     if origin:
@@ -965,8 +1008,8 @@ def render_requirement(root, area, req, constraints, rendered_full,
             parts.append("EARS sentence")
         if qref:
             parts.append(f"Quint action `{qref}`")
-        if w.get("predicate") or trace_rel:
-            parts.append("witness predicate + trace")
+        if formal or trace_rel:
+            parts.append("formal claim + trace")
         summary = ", ".join(parts) if parts else "Details"
         lines.append(f"<details><summary>{summary}</summary>")
         lines.append("")
@@ -1511,7 +1554,7 @@ def at_a_glance(area):
     """A one-screen index of the requirements before the per-REQ detail.
 
     The detail sections are complete but flat: a reviewer meets Quint
-    excerpts and witness predicates before knowing how many requirements
+    excerpts and formal clauses before knowing how many requirements
     there are or which ones are in trouble. This is the layer between.
     """
     reqs = [r for r in area.get("requirements", []) or []
@@ -1522,8 +1565,10 @@ def at_a_glance(area):
              "| | ID | Behavior | Modality |", "|---|---|---|---|"]
     for r in reqs:
         rid = r.get("id", "?")
-        response = ((r.get("ears") or {}).get("response")
-                    or r.get("description") or "").strip()
+        # The description is the plain-words claim; a formal @shall is
+        # Quint, and reads as code rather than as behavior.
+        response = (r.get("description")
+                    or (r.get("ears") or {}).get("response") or "").strip()
         if len(response) > 88:
             response = response[:87].rstrip() + "…"
         modality = r.get("modality") or "must"
@@ -1799,9 +1844,7 @@ def dimensions_section(area):
     examples = area.get("examples", []) or []
     props = area.get("properties", []) or []
     unwanted = [r for r in reqs if (r.get("ears") or {}).get("unwanted")]
-    # The shared definition, not a local re-spelling of it: this copy read
-    # only `justification` and so missed every skip discharged by the typed
-    # `enforced_by` form — the one spec-record actually writes.
+    # The shared definition, not a local re-spelling of it.
     rejections = [r for r in reqs if is_rejection(r)]
     shown_ids = {ref.split(".", 1)[-1] for ex in (area.get("examples") or [])
                  for ref in (ex.get("refs") or [])}
@@ -2146,19 +2189,17 @@ def emit_change(root, slug, since=None):
                 sent = req_sentence(item, constraints)
                 lines.append(f"- {mark} **[{iid}]({anchor})** — {sent}")
                 qref = item.get("quint_ref")
-                w = item.get("witness") or {}
                 sub = []
                 if qref:
                     excerpt, ln1, ln2, qnt_rel = quint_excerpt(root, area, qref)
                     if excerpt:
                         sub.append(f"  <details><summary>Quint `{qref}` "
-                                   f"(`specs/{qnt_rel}:L{ln1}-L{ln2}`) + predicate</summary>")
+                                   f"(`specs/{qnt_rel}:L{ln1}-L{ln2}`) + formal claim</summary>")
                         sub.append("")
                         sub.append("  ```quint")
                         sub.extend("  " + ln for ln in excerpt.splitlines())
                         sub.append("  ```")
-                        if w.get("predicate"):
-                            sub.append(f"  **Witness predicate:** `{w['predicate']}`")
+                        sub.extend("  " + ln for ln in formal_lines(item))
                         sub.append("")
                         sub.append("  </details>")
                 lines.extend(sub)

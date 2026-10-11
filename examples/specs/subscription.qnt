@@ -73,16 +73,40 @@ module subscription {
   // ----------------------------------------------------------
 
   // The provider accepts: billing stops, access survives to the
-  // end of the paid period (REQ-002), and the customer is told by
-  // one of the two channels REQ-007 permits.
+  // end of the paid period, and the customer is told by one of the
+  // two channels REQ-007 permits. Three requirements govern this one
+  // step; each is checked on EVERY step of it, not just on one.
+  /// @req REQ-001
+  /// When a customer cancels an Active subscription, the system shall stop
+  /// future billing.
+  /// @status specified
+  /// @modality must
+  /// @determinism deterministic
+  /// @when the customer cancels and the provider accepts
+  /// @while status.get(c) == Active
+  /// @shall status.get(c) == Cancelled and not(billingEnabled.get(c))
+  /// @error BillingProvider.SUCCESS idempotent: Cancelled
+  ///
+  /// @req REQ-002
+  /// When a cancellation succeeds, the system shall keep access available
+  /// until the paid period ends.
+  /// @status specified
+  /// @modality must
+  /// @when the customer cancels and the provider accepts
+  /// @while status.get(c) == Active
+  /// @shall status.get(c) == Cancelled and accessUntilPeriodEnd.get(c)
+  /// @refs INV-002
+  ///
   /// @req REQ-007
   /// When a cancellation succeeds, the system shall confirm it to the
-  /// customer.
+  /// customer by email or by an in-app notice.
   /// @status specified
   /// @modality may
   /// @determinism nondeterministic
-  /// @when a cancellation succeeds
-  /// @shall confirm to the customer by email or in-app notice
+  /// @when the customer cancels and the provider accepts
+  /// @while notice.get(c) == NoNotice
+  /// @outcome email: notice.get(c) == Email
+  /// @outcome in-app: notice.get(c) == InApp
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
     status.get(c) == Active,
     n != NoNotice,
@@ -94,8 +118,21 @@ module subscription {
     notice' = notice.set(c, n),
   }
 
-  // REQ-008: the provider refuses the change (DECLINED): nothing
-  // moves but the recorded answer.
+  // The provider refuses the change (DECLINED): nothing moves but
+  // the recorded answer.
+  /// @req REQ-008
+  /// If the billing provider declines a cancellation, then the system shall
+  /// leave the subscription Active.
+  /// @status specified
+  /// @modality must
+  /// @determinism deterministic
+  /// @unwanted
+  /// @when the billing provider declines the cancellation
+  /// @while status.get(c) == Active
+  /// @shall lastBillingResult.get(c) == Declined and status.get(c) == Active
+  ///   and billingEnabled.get(c)
+  /// @error BillingProvider.DECLINED idempotent: NO_CHANGE — the provider
+  ///   refused the change; the subscription stays Active and billable
   action cancel_declined(c: CustomerId): bool = all {
     status.get(c) == Active,
     lastBillingResult' = lastBillingResult.set(c, Declined),
@@ -106,12 +143,26 @@ module subscription {
     notice' = notice,
   }
 
-  // REQ-004: the provider does not answer — it times out, or the
-  // call never reaches it. The subscription MUST remain Active,
-  // and the try counts against the retry budget. ASM-001 says the
-  // provider answers within MAX_CANCEL_RETRIES tries; the guard is
-  // that assumption, written where the checker holds the model to
-  // it.
+  // The provider does not answer — it times out, or the call never
+  // reaches it. The subscription MUST remain Active, and the try
+  // counts against the retry budget. ASM-001 says the provider
+  // answers within MAX_CANCEL_RETRIES tries; the guard is that
+  // assumption, written where the checker holds the model to it.
+  /// @req REQ-004
+  /// If the billing provider does not answer a cancellation, then the
+  /// system shall leave the subscription Active.
+  /// @status specified
+  /// @modality must
+  /// @unwanted
+  /// @when the billing provider does not answer the cancellation
+  /// @while status.get(c) == Active
+  /// @shall (lastBillingResult.get(c) == Timeout
+  ///   or lastBillingResult.get(c) == NetworkError)
+  ///   and status.get(c) == Active and billingEnabled.get(c)
+  /// @error BillingProvider.TIMEOUT idempotent: NO_CHANGE — the subscription
+  ///   stays Active and billable; retry
+  /// @error BillingProvider.NETWORK_ERROR idempotent: NO_CHANGE — the request
+  ///   never landed; retry
   action cancel_unanswered(c: CustomerId, timedOut: bool): bool = all {
     status.get(c) == Active,
     triesOf(c) < MAX_CANCEL_RETRIES,
@@ -123,8 +174,20 @@ module subscription {
     notice' = notice,
   }
 
-  // REQ-003: cancelling twice is harmless — the second call is a
-  // no-op, not an error.
+  // Cancelling twice is harmless — the second call is a no-op, not
+  // an error.
+  /// @req REQ-003
+  /// When a customer cancels an already-Cancelled subscription, the system
+  /// shall make no further change.
+  /// @status specified
+  /// @modality must
+  /// @determinism deterministic
+  /// @when the customer cancels again
+  /// @while status.get(c) == Cancelled
+  /// @old billed: bool = billingEnabled.get(c)
+  /// @old told: Notice = notice.get(c)
+  /// @shall status.get(c) == Cancelled and accessUntilPeriodEnd.get(c)
+  ///   and billingEnabled.get(c) == billed and notice.get(c) == told
   action cancel_again(c: CustomerId): bool = all {
     status.get(c) == Cancelled,
     status' = status,
@@ -135,7 +198,15 @@ module subscription {
     notice' = notice,
   }
 
-  // REQ-005: the paid period runs out; access finally stops.
+  // The paid period runs out; access finally stops.
+  /// @req REQ-005
+  /// When the paid period ends for a cancelled subscription, the system
+  /// shall withdraw access.
+  /// @status specified
+  /// @modality must
+  /// @when the paid period ends
+  /// @while status.get(c) == Cancelled
+  /// @shall status.get(c) == Expired and not(accessUntilPeriodEnd.get(c))
   action expire_period(c: CustomerId): bool = all {
     status.get(c) == Cancelled,
     status' = status.set(c, Expired),
@@ -146,22 +217,17 @@ module subscription {
     notice' = notice,
   }
 
-  // REQ-006: a customer may ask for a refund; the policy (DEC-001)
-  // is that the answer is always no. The request is a call the
-  // system refuses in every state, so the refusal can be shown —
-  // an example attempts it with `.fail()`.
+  // A customer may ask for a refund; the policy (DEC-001) is that the
+  // answer is always no. The request is a call the system refuses in
+  // every state: REQ-006's obligation is that this step never
+  // happens, and EX-006 shows the refusal for the code to replay.
   /// @req REQ-006
   /// The system shall never issue a refund for the unused part of a paid
   /// period.
   /// @status specified
   /// @modality forbidden
-  /// @when the customer asks for a refund
   /// @unwanted
-  /// @shall refuse the refund and leave the subscription as it is
-  /// @enforced-by INV-002
-  /// @witness skipped: A prohibition has no witness trace — there is no
-  ///   reachable state in which 'no refund happened' becomes visible. INV-002
-  ///   carries the model-side proof; EX-006 shows the refusal.
+  /// @when the customer asks for a refund
   action request_refund(c: CustomerId): bool = all {
     false,   // DEC-001: refunds are never granted
     status' = status,
@@ -185,11 +251,11 @@ module subscription {
       (status.get(c) == Cancelled or status.get(c) == Expired)
         implies not(billingEnabled.get(c)))
 
-  // INV-002: carries the FORBIDDEN requirement (REQ-006, no
-  // refund): a cancelled subscriber keeps access to the end of the
-  // period they paid for, which a refund would take back.
+  // INV-002: a refund would take back the access a cancelled
+  // subscriber has paid for, so this is the state-side shadow of
+  // REQ-006. REQ-006 itself is checked on the refund step.
   /// @inv INV-002
-  /// No refund is ever issued for the unused period.
+  /// A cancelled subscriber keeps access until the paid period ends.
   /// @criticality high
   val noRefundIssued: bool =
     status.keys().forall(c => accessUntilPeriodEnd.get(c) or
@@ -346,111 +412,4 @@ module subscription {
     .then(cancel_again("alice"))
     .then(expire_period("alice"))
     .expect(status.get("alice") == Expired and not(billingEnabled.get("alice")))
-
-  // ----------------------------------------------------------
-  // REQUIREMENTS — witness predicates, bound to the customer the
-  // call was about (`_lastC`), each with the pre-state the step
-  // had to start from.
-  // ----------------------------------------------------------
-
-  /// @req REQ-001
-  /// When a customer cancels an Active subscription, the system shall stop
-  /// future billing.
-  /// @status specified
-  /// @modality must
-  /// @determinism deterministic
-  /// @while the Subscription is Active
-  /// @when the customer cancels
-  /// @shall stop future billing and mark the Subscription Cancelled
-  /// @error BillingProvider.SUCCESS idempotent: Cancelled
-  /// @via cancel_subscription
-  /// @pre _prevStatus.get(_lastC) == Active
-  def shall_REQ_001(_lastC: CustomerId): bool =
-    status.get(_lastC) == Cancelled and not(billingEnabled.get(_lastC))
-
-  /// @req REQ-002
-  /// While the paid period has not ended, the system shall keep access
-  /// available to a cancelled subscriber.
-  /// @status specified
-  /// @modality must
-  /// @while the Subscription is Cancelled and the paid period has not ended
-  /// @shall keep access available
-  /// @via cancel_subscription
-  /// @pre _prevStatus.get(_lastC) == Active
-  def shall_REQ_002(_lastC: CustomerId): bool =
-    status.get(_lastC) == Cancelled and accessUntilPeriodEnd.get(_lastC)
-
-  /// @req REQ-003
-  /// When a customer cancels an already-Cancelled subscription, the system
-  /// shall make no further change.
-  /// @status specified
-  /// @modality must
-  /// @determinism deterministic
-  /// @while the Subscription is Cancelled
-  /// @when the customer cancels again
-  /// @shall make no further change and report success
-  /// @via cancel_again
-  /// @pre _prevStatus.get(_lastC) == Cancelled
-  def shall_REQ_003(_lastC: CustomerId): bool =
-    status.get(_lastC) == Cancelled and accessUntilPeriodEnd.get(_lastC)
-
-  /// @req REQ-004
-  /// If the billing provider does not answer a cancellation, then the
-  /// system shall leave the subscription Active.
-  /// @status specified
-  /// @modality must
-  /// @while the Subscription is Active
-  /// @when the billing provider does not answer the cancellation
-  /// @unwanted
-  /// @shall leave the Subscription Active and billing enabled
-  /// @error BillingProvider.TIMEOUT idempotent: NO_CHANGE — the subscription
-  ///   stays Active and billable; retry
-  /// @error BillingProvider.NETWORK_ERROR idempotent: NO_CHANGE — the request
-  ///   never landed; retry
-  /// @via cancel_unanswered
-  /// @pre _prevStatus.get(_lastC) == Active
-  def shall_REQ_004(_lastC: CustomerId): bool =
-    (lastBillingResult.get(_lastC) == Timeout or lastBillingResult.get(_lastC) == NetworkError)
-      and status.get(_lastC) == Active and billingEnabled.get(_lastC)
-
-  /// @req REQ-008
-  /// If the billing provider declines a cancellation, then the system shall
-  /// leave the subscription Active.
-  /// @status specified
-  /// @modality must
-  /// @determinism deterministic
-  /// @while the Subscription is Active
-  /// @when the billing provider declines the cancellation
-  /// @unwanted
-  /// @shall leave the Subscription Active and billing enabled
-  /// @error BillingProvider.DECLINED idempotent: NO_CHANGE — the provider
-  ///   refused the change; the subscription stays Active and billable
-  /// @via cancel_declined
-  /// @pre _prevStatus.get(_lastC) == Active
-  def shall_REQ_008(_lastC: CustomerId): bool =
-    lastBillingResult.get(_lastC) == Declined
-      and status.get(_lastC) == Active and billingEnabled.get(_lastC)
-
-  /// @req REQ-005
-  /// When the paid period ends for a cancelled subscription, the system
-  /// shall withdraw access.
-  /// @status specified
-  /// @modality must
-  /// @while the Subscription is Cancelled
-  /// @when the paid period ends
-  /// @shall withdraw access and mark the Subscription Expired
-  /// @via expire_period
-  /// @pre _prevStatus.get(_lastC) == Cancelled
-  def shall_REQ_005(_lastC: CustomerId): bool =
-    status.get(_lastC) == Expired and not(accessUntilPeriodEnd.get(_lastC))
-
-  /// @outcome-of REQ-007 email
-  /// @pre _prevNotice.get(_lastC) == NoNotice
-  def shall_REQ_007_email(_lastC: CustomerId): bool =
-    notice.get(_lastC) == Email
-
-  /// @outcome-of REQ-007 in-app
-  /// @pre _prevNotice.get(_lastC) == NoNotice
-  def shall_REQ_007_in_app(_lastC: CustomerId): bool =
-    notice.get(_lastC) == InApp
 }

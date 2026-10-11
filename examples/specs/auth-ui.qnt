@@ -98,6 +98,14 @@ module authUi {
 
   /// @nav Home -> Login
   /// click 'Sign in'
+  ///
+  /// @req UI-001
+  /// While on Home, when the user clicks 'Sign in', the system shall
+  /// navigate to Login.
+  /// @status specified
+  /// @when the user clicks 'Sign in'
+  /// @while current == Home
+  /// @shall current == Login
   action click_sign_in: bool = all {
     current == Home,
     current'   = Login,
@@ -112,6 +120,14 @@ module authUi {
   /// @nav Login -> Dashboard
   /// submit valid credentials
   /// @guard auth::login succeeds
+  ///
+  /// @req UI-002
+  /// While on Login, when the user submits valid credentials, the system
+  /// shall navigate to Dashboard.
+  /// @status specified
+  /// @when the user submits valid credentials
+  /// @while current == Login
+  /// @shall current == Dashboard and authenticated and mySession == s
   action submit_success(u: UserId, s: SessionId): bool = all {
     current == Login,
     auth::login(u, s),
@@ -137,6 +153,15 @@ module authUi {
   /// @nav Login -> LockedNotice
   /// submit when account locked
   /// @guard auth::isLocked(user)
+  ///
+  /// @req UI-003
+  /// If the user submits credentials for a Locked account, then the system
+  /// shall navigate to LockedNotice.
+  /// @status specified
+  /// @unwanted
+  /// @when the user submits credentials for a Locked account
+  /// @while current == Login
+  /// @shall current == LockedNotice and form == ErrorLocked and accountLocked(u)
   action submit_locked(u: UserId): bool = all {
     current == Login,
     accountLocked(u),
@@ -162,6 +187,14 @@ module authUi {
   /// @nav Dashboard -> Login
   /// the session expires (sign in again)
   /// @guard auth::expire_session succeeds
+  ///
+  /// @req UI-004
+  /// While on Dashboard, when the session expires, the system shall return
+  /// to Login.
+  /// @status specified
+  /// @when the session expires
+  /// @while current == Dashboard
+  /// @shall current == Login and not(authenticated)
   action session_expired: bool = all {
     current == Dashboard,
     auth::expire_session(mySession),
@@ -287,58 +320,4 @@ module authUi {
     .then(submit_invalid("bob"))
     .then(submit_locked("bob"))
     .expect(current == LockedNotice and accountLocked("bob"))
-
-  // ----------------------------------------------------------
-  // REQUIREMENTS — witness predicates, each with the screen the step
-  // had to start from
-  // ----------------------------------------------------------
-
-  /// @req UI-001
-  /// While on Home, when the user clicks 'Sign in', the system shall
-  /// navigate to Login.
-  /// @status specified
-  /// @while the user is on Home
-  /// @when the user clicks 'Sign in'
-  /// @shall navigate to Login
-  /// @via click_sign_in
-  /// @pre _prevCurrent == Home
-  val shall_UI_001: bool =
-    current == Login
-
-  /// @req UI-002
-  /// While on Login, when the user submits valid credentials, the system
-  /// shall navigate to Dashboard.
-  /// @status specified
-  /// @while the user is on Login
-  /// @when the user submits valid credentials
-  /// @shall navigate to Dashboard
-  /// @via submit_success
-  /// @pre _prevCurrent == Login
-  def shall_UI_002(_lastS: SessionId): bool =
-    current == Dashboard and authenticated and mySession == _lastS
-
-  /// @req UI-003
-  /// If the user submits credentials for a Locked account, then the system
-  /// shall navigate to LockedNotice.
-  /// @status specified
-  /// @while the user is on Login
-  /// @when the user submits credentials for a Locked account
-  /// @unwanted
-  /// @shall navigate to LockedNotice
-  /// @via submit_locked
-  /// @pre _prevCurrent == Login
-  def shall_UI_003(_lastU: UserId): bool =
-    current == LockedNotice and form == ErrorLocked and accountLocked(_lastU)
-
-  /// @req UI-004
-  /// While on Dashboard, when the session expires, the system shall return
-  /// to Login.
-  /// @status specified
-  /// @while the user is on Dashboard
-  /// @when the session expires
-  /// @shall return to Login
-  /// @via session_expired
-  /// @pre _prevCurrent == Dashboard
-  val shall_UI_004: bool =
-    current == Login and not(authenticated)
 }

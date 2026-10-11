@@ -6,8 +6,8 @@
 // Structure convention used by /spec when drafting a model.
 // QUINT-FIRST: every record lives HERE, as a `///` doc comment on
 // the declaration that realizes it (grammar: tools/spec_source.py):
-//   @req  on a `shall_<ID>` witness host (its body IS the witness
-//         predicate), or on the action a prohibition refuses
+//   @req  on the action it governs (formal @while / @shall), on the
+//         pure def it computes, or on the module while still raw
 //   @inv  on its val      @prop on its temporal
 //   @con  on its pure val (the literal IS the value)
 //   @example on its run
@@ -85,14 +85,14 @@ module {{MODULE_NAME}} {
   //   pure def refuse(s: State, r: Result): { st: State, last: Result } =
   //     { st: s, last: r }
   // The probe generator mirrors only the actions `step` calls; a
-  // helper written as an action gets no branch, and @via on it is
-  // refused.
+  // helper written as an action gets no branch, and a requirement
+  // on it is refused.
   //
   // A COMPUTED requirement (derived value, no transition) sits on
   // the pure def that computes it, verified by a unit test:
   //   /// @req REQ-NNN
-  //   /// @shall compute effort as the sum of issue effort
-  //   /// @witness skipped: a derived value, no transition to witness
+  //   /// The system shall compute effort as the sum of issue effort.
+  //   /// @status specified
   //   /// @verified-by src/utils/__tests__/score.test.ts
   //   pure def effort(xs: List[int]): int = xs.foldl(0, (a, b) => a + b)
 
@@ -140,17 +140,34 @@ module {{MODULE_NAME}} {
   // ----------------------------------------------------------
 
   // {{ACTION_DEFINITIONS}}
-  // Template for each action:
-  //
-  // A prohibition's record sits on the action it refuses:
+  // Template for each action. A REQUIREMENT sits on the action it
+  // governs. @while is a Quint boolean over the state BEFORE the
+  // step, @shall over the state AFTER, both over the action's own
+  // parameter names. /spec-check proves every step of the action
+  // from @while ends in @shall (the obligation), and that such a
+  // step can happen (the witness). Never name a _-ghost here.
   //
   // /// @req REQ-NNN
+  // /// <the sentence, in the user's words>
+  // /// @status specified
+  // /// @when <trigger, in words: the trigger IS this action>
+  // /// @while <Quint: pre-state condition>
+  // /// @old before: <Type> = <Quint over the pre-state>
+  // /// @shall <Quint: post-state condition; may name `before`>
+  // /// @refs REQ-001, DEC-002, billing.REQ-004
+  // ///   (bare ID = this area; <area>.<ID> = another; any kind)
+  // ///
+  // /// @req REQ-NNN
+  // /// <a permission: the system MAY do one of several things>
+  // /// @modality may
+  // /// @outcome <name>: <Quint: post-state for this outcome>
+  // /// @outcome <name>: <Quint: post-state for that outcome>
+  // ///
+  // /// @req REQ-NNN
+  // /// <a prohibition: this step must never happen while ...>
   // /// @modality forbidden
-  // /// @while <state>
-  // /// @when <trigger>
   // /// @unwanted
-  // /// @shall <response>
-  // /// @enforced-by INV-NNN
+  // /// @while <Quint: when it is forbidden>
   // action {{ACTION_NAME}}({{PARAMS}}): bool = all {
   //   {{PRECONDITION}},          // CON-NNN guard, a plain boolean
   //   {{STATE_UPDATES}}
@@ -244,31 +261,6 @@ module {{MODULE_NAME}} {
   // /// @prop PROP-NNN
   // /// <what eventually happens>
   // temporal {{PROP_NAME}} = {{TEMPORAL_FORMULA}}
-
-
-  // ----------------------------------------------------------
-  // WITNESS HOSTS (REQ-*) — one per witnessed requirement
-  // The record AND the predicate the witness probe is built from.
-  // Name parameters after the probe ghosts (uid -> _lastUid) so
-  // the predicate is bound to THIS call and typechecks here.
-  // @pre (the delta) stays text: _prev* exists only in the probe
-  // module. A `may` requirement: its record on the action, one
-  // `shall_<ID>_<outcome>` host per permitted outcome, tagged
-  // `/// @outcome-of REQ-NNN <outcome>`.
-  // ----------------------------------------------------------
-
-  // Template:
-  //
-  // /// @req REQ-NNN
-  // /// @status specified
-  // /// @when <trigger>
-  // /// @shall <response>
-  // /// @via {{ACTION_NAME}}
-  // /// @refs REQ-001, DEC-002, billing.REQ-004
-  // ///   (bare ID = this area; <area>.<ID> = another; any kind)
-  // /// @pre not(_prevX.keys().contains(_lastK))
-  // def shall_REQ_NNN(_lastK: <param type>): bool =
-  //   <postcondition over state, of the thing this call touched>
 
 
   // ----------------------------------------------------------

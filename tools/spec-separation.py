@@ -47,7 +47,7 @@ import spec_source  # noqa: E402
 # Everything a tool writes on its own. Changes confined to these are
 # bookkeeping, never claims.
 MECHANICAL_TOP = {"check_results", "verification_log", "last_modified"}
-MECHANICAL_REQ = {"status", "witness", "traceability"}
+MECHANICAL_REQ = {"status", "witness", "traceability", "obligation", "form"}
 MECHANICAL_INV = {"formal_status"}
 
 
@@ -112,15 +112,9 @@ def claims(data):
         if not isinstance(req, dict) or not req.get("id"):
             continue
         kept = {k: v for k, v in req.items() if k not in MECHANICAL_REQ}
-        # The witness PREDICATE is a claim ("this is what the behavior means");
-        # its status, trace and sha are results. Keep the first, drop the rest.
+        # The @outcome predicates are claims ("this is what the behavior
+        # means"); statuses, traces and shas are results. Keep the first.
         w = req.get("witness") or {}
-        if w.get("predicate"):
-            kept["_witness_predicate"] = w["predicate"]
-        if w.get("delta"):
-            kept["_witness_delta"] = w["delta"]
-        if w.get("enforced_by"):
-            kept["_witness_enforced_by"] = w["enforced_by"]
         for oc in (w.get("outcomes") or []):
             kept.setdefault("_witness_outcomes", []).append(
                 {"name": oc.get("name"), "predicate": oc.get("predicate")})

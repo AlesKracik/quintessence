@@ -100,11 +100,19 @@ What `check` does, in order:
      from the run's receipt.json (empty solution[] = no counterexample
      within the scope declared in the .als). Off unless an area
      declares alloy_file; nothing about the Apalache path changes.
-  2. Witness probes (unless --no-witness): for every requirement with a
-     witness.predicate (not skipped/deferred/non-functional), runs the
-     probe `witness_<ID>` from the probes module with --init=initP
-     --step=stepP. Violation = witness found (trace saved, model_sha
-     pinned); no violation = no-witness (vacuity red flag).
+  1r. Requirement OBLIGATIONS (unless --no-witness): for every formal
+     requirement, `oblig_<ID>` from the probes module — every reachable step
+     of its action from a state where @while held ends where @shall holds
+     (or never happens, if forbidden). It rides the bounded ladder like a
+     transition invariant; the verdict goes to the requirement's
+     obligation.formal_status (with steps and model_sha), a violation's
+     trace to specs/<area>/traces/<ID>.violation.itf.json.
+  2. Witness probes (unless --no-witness): for every formal requirement
+     whose witness is not exempt (forbidden, computed, or holding in every
+     state — itf_tools.witness_exempt), runs the probe `witness_<ID>` from
+     the probes module with --init=initP --step=stepP. Violation = witness
+     found (trace saved, model_sha pinned); no violation = no-witness
+     (vacuity red flag: the obligation above holds of nothing).
      Skip-if-fresh: a requirement already witnessed against the current
      model_sha is not re-proven.
      2b. Requirements with modality "may" get ONE PROBE PER PERMITTED
@@ -126,8 +134,9 @@ What `check` does, in order:
 What `verify` does, in order (the deterministic half of /spec-code-verify —
 the LLM keeps the judgment dimensions: completeness/correctness/coherence
 reads of the code):
-  1. Witness preflight via itf_tools.witness_status — refuses conformance
-     replay while any obligation is undischarged (stale/missing/not-run).
+  1. Requirement preflight via itf_tools.witness_status — refuses
+     conformance replay while any requirement's witness or obligation is
+     undischarged (stale/missing/not-run/violated).
      1b. Refusal preflight: every rejection requirement must be shown by
      an example (an EX whose @refs names it). A rejection has no witness
      trace by design, so its code-side evidence is that example's run,
@@ -193,8 +202,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
                        load_trace, witness_status, is_hollow,
-                       area_json_path, is_rejection, skip_discharge,
-                       probe_name, outcome_probe_name, reach_name)
+                       area_json_path, is_rejection, witness_exempt,
+                       owes_obligation, probe_name, outcome_probe_name,
+                       reach_name, obligation_name)
 from spec_source import (load_area, save_area as save_records,  # noqa: E402
                          records_path, SpecSourceError)
 import spec_source  # noqa: E402
@@ -812,7 +822,7 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
                 oc["trace"] = trace_rel
                 bad += 1
                 print(f"{label:<24} HOLLOW           (predicate already true in the "
-                      f"initial state — add witness.delta)")
+                      f"initial state)")
                 continue
             oc["status"] = "witnessed"
             oc["trace"] = trace_rel
@@ -949,6 +959,8 @@ def cmd_check(args):
     def selected(item):
         return not only or item.get("id") in only
 
+    current_sha = compute_model_sha(root, args.area, area)
+
     # ── 0. Simulator pre-gate (advisory — never a verdict) ───────────────
     # The pre-gate's findings are the only ORDERING signal in the run: an
     # invariant it falsified is guaranteed to produce a counterexample and
@@ -972,6 +984,12 @@ def cmd_check(args):
         sim_trans = [i["quint_name"] for i in sim_pool
                      if (i.get("over") or "model") == "probes"
                      and i["quint_name"] in probe_vals]
+        # Requirement obligations live in the probe module too, and are
+        # simulated beside the transition invariants for the same reason.
+        sim_trans += [obligation_name(r["id"])
+                      for r in area.get("requirements") or []
+                      if r.get("id") and selected(r) and owes_obligation(r)
+                      and obligation_name(r["id"]) in probe_vals]
         sim_probes = []
         for r in area.get("requirements") or []:
             if not (r.get("id") and selected(r)):
@@ -1141,6 +1159,10 @@ def cmd_check(args):
         }
         if over == "probes":
             entry["over"] = "probes"
+        if job.get("obligation"):
+            entry["kind"] = "obligation"
+            item["checked_at"] = now_iso()
+            item["steps"] = steps
         if batched:
             entry["batched"] = True
         notes = [n for n in ((detail if result == "counterexample" else None), note)
@@ -1159,10 +1181,18 @@ def cmd_check(args):
                     and isinstance(prior.get("counterexample"), dict)):
                 entry["counterexample"] = prior["counterexample"]
             item["formal_status"] = "counterexample-found"
+            if job.get("obligation"):
+                item.pop("model_sha", None)
+                if cex_path.exists():
+                    item["trace"] = cex_rel
         elif result == "verified":
             if cex_path.exists():
                 cex_path.unlink()  # stale counterexample of a now-green check
             item["formal_status"] = "verified"
+            if job.get("obligation"):
+                item.pop("trace", None)
+                if current_sha:
+                    item["model_sha"] = current_sha
         else:
             bad += 1
             entry["error"] = detail
@@ -1312,6 +1342,35 @@ def cmd_check(args):
             print(f"{iid:<12} {result + suffix:<26} ({duration:.1f}s)"
                   + (f"  {detail}" if detail and result == "error" else ""))
 
+    # ── 1b. Requirement obligations ──────────────────────────────────────
+    # The universal half of every requirement: each reachable step it governs
+    # satisfies it. An obligation is an invariant of the probe module, so it
+    # rides the same ladder as a transition invariant; its verdict is written
+    # on the requirement (obligation.*), not on an invariant.
+    if not args.no_witness:
+        for req in area.get("requirements") or []:
+            rid = req.get("id")
+            if not rid or not selected(req) or not owes_obligation(req):
+                continue
+            ob = req.setdefault("obligation", {})
+            oname = obligation_name(rid)
+            if (ob.get("formal_status") == "verified" and current_sha
+                    and ob.get("model_sha") == current_sha):
+                print(f"{rid:<12} {'obligation fresh':<26} (model unchanged — skipped)")
+                continue
+            if not probes_file or oname not in probe_vals:
+                print(f"{rid:<12} {'no-obligation':<26} ('{oname}' missing — "
+                      f"regenerate the probe module with tools/spec-probes.py)")
+                bad += 1
+                continue
+            cex_rel = f"{args.area}/traces/{rid}.violation.itf.json"
+            ladder.append({
+                "item": ob, "id": rid, "quint_name": oname, "over": "probes",
+                "target": probes_file, "init": "initP", "step": "stepP",
+                "cex_rel": cex_rel, "cex_path": root / "specs" / cex_rel,
+                "seq": len(ladder), "obligation": True,
+            })
+
     # ── 1-ladder. Two passes over the bounded invariants ─────────────────
     # Pass 1 is ordered by the only information the run already holds: an
     # invariant the simulator falsified WILL produce a counterexample and
@@ -1426,8 +1485,6 @@ def cmd_check(args):
     # counterexample (the violation trace IS the witness), so a shallow run
     # that finds one is final and cheap; depth is only needed to keep FAILING
     # to find one, which is the expensive half — and the answer nobody wants.
-    current_sha = compute_model_sha(root, args.area, area)
-
     def probe_run(pname, trace_path, steps):
         result, detail, duration = run_verify(
             need_quint(), probes_file, pname, steps, timeout,
@@ -1472,34 +1529,17 @@ def cmd_check(args):
                     deep_queue=may_deep if shallow_steps < max_steps else None)
                 flush()
                 continue
-            if req.get("modality") == "forbidden" and witness.get("enforced_by"):
-                # A non-event has no trace; the named invariant carries the
-                # proof and is checked in its own right above.
+            exempt = witness_exempt(req)
+            if exempt:
+                # Nothing to find, by what the requirement IS — derived, never
+                # authored. Its obligation (above) carries the proof.
                 req["witness"] = witness
                 witness["status"] = "skipped"
-                print(f"{rid:<12} forbidden        (enforced by "
-                      f"{witness['enforced_by']})")
+                print(f"{rid:<12} no witness       ({exempt})")
                 continue
-            if witness.get("status") == "skipped":
-                if skip_discharge(witness, req) is None:
-                    # Same gate as spec-lint — an unjustified skip must not
-                    # let this runner report green.
-                    print(f"{rid:<12} SKIPPED-UNJUST.  (skip with neither enforced_by "
-                          f"nor justification does not discharge)")
-                    bad += 1
-                continue
-            if not witness.get("predicate"):
-                if skip_discharge(witness, req) is not None:
-                    # Discharged in substance but not in status: only
-                    # 'skipped' consults the justification, so reporting this
-                    # as a missing predicate asks for work the author already
-                    # decided against. Still counts against the gate — an
-                    # undeclared skip discharges nothing.
-                    print(f"{rid:<12} JUSTIFIED-UNSET  (witness.status is "
-                          f"'{witness.get('status', 'not-run')}', not 'skipped' "
-                          f"— the justification discharges nothing until it is)")
-                else:
-                    print(f"{rid:<12} no-predicate     (draft one via /spec, then re-run)")
+            if not owes_obligation(req):
+                print(f"{rid:<12} not-formal       (no @shall / @outcome yet — "
+                      f"formalize it via /spec, then re-run)")
                 bad += 1
                 continue
             req["witness"] = witness  # persist only for reqs we actually process
@@ -1554,7 +1594,7 @@ def cmd_check(args):
                     bad += 1
                     print(f"{rid:<12} HOLLOW           (predicate already true in the "
                           f"initial state — 1-state counterexample proves nothing "
-                          f"happened; add witness.delta and re-run)")
+                          f"happened)")
                     flush()
                     continue
                 witness["status"] = "witnessed"
@@ -1619,7 +1659,7 @@ def cmd_check(args):
                 witness["steps"] = max_steps
                 print(f"{rid:<12} HOLLOW           (predicate already true in the "
                       f"initial state — 1-state counterexample proves nothing "
-                      f"happened; add witness.delta and re-run)")
+                      f"happened)")
                 flush()
                 continue
             # The deep pass found it: the shallow bound was simply too small.
@@ -1668,7 +1708,7 @@ def cmd_check(args):
                 oc["trace"] = job["trace_rel"]
                 oc["steps"] = max_steps
                 print(f"{label:<24} HOLLOW           (predicate already true in the "
-                      f"initial state — add witness.delta)")
+                      f"initial state)")
                 continue
             oc["status"] = "witnessed"
             oc["trace"] = job["trace_rel"]
@@ -2264,7 +2304,8 @@ def main():
                     help="Override apalache.budget_seconds — the wall-clock cap "
                          "on the WHOLE run. --timeout caps one check.")
     pc.add_argument("--only", help="Comma-separated IDs (INV/PROP/REQ) to run.")
-    pc.add_argument("--no-witness", action="store_true", help="Skip witness probes.")
+    pc.add_argument("--no-witness", action="store_true",
+                    help="Skip the requirement checks (obligations and witness probes).")
     pc.add_argument("--no-simulate", action="store_true",
                     help="Skip the advisory `quint run` pre-gate.")
     pc.add_argument("--only-simulate", action="store_true",

@@ -638,6 +638,134 @@
           "question": "ce72947e"
         }
       ]
+    },
+    "checks": [
+      {
+        "id": "INV-001",
+        "kind": "invariant",
+        "quint_name": "noBillingAfterCancel",
+        "result": "error",
+        "duration_s": 9.1,
+        "proof": "inductive",
+        "error": "Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=43025 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=\nOct 11, 2026 11:43:33 AM com.google.protobuf.GeneratedMessage warnPre22Gencode\nWARNING: Vulnerable protobuf generated type in use: io.grpc.reflection.v1alpha.ServerReflectionRequest\nAs of 2022/09/29 (release 21.7) makeExtensionsImmutable should not be called from protobuf gencode. If you are seeing this message, your gencode is vulnerable to a denial of service attack. You should regenerate your code using protobuf 25.6 or later. Use the latest version that meets your needs. However, if you understand the risks and wish to continue with vulnerable gencode, you can set the system property `-Dcom.google.protobuf.use_unsafe_pre22_gencode` on the command line to silence this warning. You also can set `-Dcom.google.protobuf.error_on_unsafe_pre22_gencode` to throw an error instead. See security vulnerability: https://github.com/protocolbuffers/protobuf/security/advisories/GHSA-h4h5-3hr4-j3g2\nerror: status is used before it is assigned. You need to have either `status == <expr>` or `status.in(<set>)` before doing anything else with `status` in your predicate."
+      },
+      {
+        "id": "INV-002",
+        "kind": "invariant",
+        "quint_name": "noRefundIssued",
+        "result": "verified",
+        "duration_s": 11.8,
+        "steps": 4,
+        "batched": true
+      },
+      {
+        "id": "INV-003",
+        "kind": "invariant",
+        "quint_name": "unacceptedCancelLeavesActive",
+        "result": "verified",
+        "duration_s": 11.8,
+        "steps": 4,
+        "batched": true
+      },
+      {
+        "id": "INV-004",
+        "kind": "invariant",
+        "quint_name": "retriesWithinBudget",
+        "result": "verified",
+        "duration_s": 11.8,
+        "steps": 4,
+        "batched": true
+      },
+      {
+        "id": "REQ-001",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_001",
+        "result": "verified",
+        "duration_s": 13.1,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "REQ-002",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_002",
+        "result": "verified",
+        "duration_s": 12.8,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "REQ-003",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_003",
+        "result": "verified",
+        "duration_s": 13.7,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "REQ-004",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_004",
+        "result": "verified",
+        "duration_s": 13.5,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "REQ-005",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_005",
+        "result": "verified",
+        "duration_s": 13.3,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "REQ-006",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_006",
+        "result": "verified",
+        "duration_s": 12.9,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "REQ-007",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_007",
+        "result": "verified",
+        "duration_s": 12.9,
+        "steps": 4,
+        "over": "probes"
+      },
+      {
+        "id": "REQ-008",
+        "kind": "obligation",
+        "quint_name": "oblig_REQ_008",
+        "result": "verified",
+        "duration_s": 12.7,
+        "steps": 4,
+        "over": "probes"
+      }
+    ],
+    "max_steps": 4,
+    "ran_at": "2026-10-11T11:49:14+00:00",
+    "simulation": {
+      "ran_at": "2026-10-11T11:43:23+00:00",
+      "max_samples": 10000,
+      "max_steps": 4,
+      "backend": "rust",
+      "invariants": {
+        "result": "error",
+        "checked": 4,
+        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
+      },
+      "transition_invariants": {
+        "result": "error",
+        "checked": 8,
+        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
+      }
     }
   },
   "matrix_triage": [
@@ -761,55 +889,142 @@
       "formal_status": "specified"
     },
     "INV-002": {
-      "formal_status": "specified"
+      "formal_status": "verified"
     },
     "INV-003": {
-      "formal_status": "specified"
+      "formal_status": "verified"
     },
     "INV-004": {
-      "formal_status": "specified"
+      "formal_status": "verified"
     },
     "REQ-001": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "subscription/traces/REQ-001.itf.json",
+        "checked_at": "2026-10-11T11:47:40+00:00",
+        "steps": 2,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:45:57+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
       }
     },
     "REQ-002": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "subscription/traces/REQ-002.itf.json",
+        "checked_at": "2026-10-11T11:47:53+00:00",
+        "steps": 2,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:46:09+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
       }
     },
     "REQ-003": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "subscription/traces/REQ-003.itf.json",
+        "checked_at": "2026-10-11T11:48:07+00:00",
+        "steps": 2,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:46:23+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
       }
     },
     "REQ-004": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "subscription/traces/REQ-004.itf.json",
+        "checked_at": "2026-10-11T11:48:20+00:00",
+        "steps": 2,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:46:37+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
       }
     },
     "REQ-005": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "subscription/traces/REQ-005.itf.json",
+        "checked_at": "2026-10-11T11:48:34+00:00",
+        "steps": 2,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:46:50+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
+      }
+    },
+    "REQ-006": {
+      "witness": {
+        "status": "skipped"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:47:03+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
       }
     },
     "REQ-007": {
       "witness": {
-        "status": "not-run",
+        "status": "witnessed",
+        "checked_at": "2026-10-11T11:49:00+00:00",
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41",
         "outcomes": {
           "email": {
-            "status": "not-run"
+            "status": "witnessed",
+            "trace": "subscription/traces/REQ-007.email.itf.json",
+            "checked_at": "2026-10-11T11:48:47+00:00",
+            "steps": 2,
+            "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
           },
           "in-app": {
-            "status": "not-run"
+            "status": "witnessed",
+            "trace": "subscription/traces/REQ-007.in-app.itf.json",
+            "checked_at": "2026-10-11T11:49:00+00:00",
+            "steps": 2,
+            "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
           }
         }
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:47:16+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
       }
     },
     "REQ-008": {
       "witness": {
-        "status": "not-run"
+        "status": "witnessed",
+        "trace": "subscription/traces/REQ-008.itf.json",
+        "checked_at": "2026-10-11T11:49:14+00:00",
+        "steps": 2,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
+      },
+      "obligation": {
+        "formal_status": "verified",
+        "checked_at": "2026-10-11T11:47:29+00:00",
+        "steps": 4,
+        "model_sha": "e681597c837702f050207787ec988f0cfca6494b22c2cebc37bc0edd82c0eb41"
       }
     }
   }

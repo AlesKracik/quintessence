@@ -232,25 +232,29 @@ def test_a_recursive_type_has_no_zero_and_does_not_hang(tmp_path):
     assert quint_ir.zero_value("T", ir) is None
 
 
-def _record_area(delta, extra_fm=None):
+def _record_area(extra_fm=None):
     fm = {"quint_file": "ents.qnt", "probe_domains": {"Id": 'Set("a", "b")'}}
     fm.update(extra_fm or {})
     return {"kind": "area", "area": "ents", "formal_model": fm, "invariants": [],
             "requirements": [{"id": "REQ-001", "description": "store stores a Draft",
-                              "quint_ref": "store",
-                              "witness": {"predicate": "st.items.get(_lastId) == Draft",
-                                          "delta": {"pre": delta}}}]}
+                              "quint_ref": "store", "form": "event",
+                              "status": "specified",
+                              "ears": {"state": "not(st.items.keys().contains(id))",
+                                       "response": "st.items.get(id) == Draft and "
+                                                   "st.version == before.version + 1"},
+                              "old": [{"name": "before", "type": "State",
+                                       "expr": "st"}]}]}
 
 
 def test_probe_module_snapshots_a_record_state_var(tmp_path):
     """`var st: State` is the shape a conformance adapter with st()/last()
-    getters produces; it used to fail with 'cannot synthesize an initial
-    value for: _prevSt (State)'."""
+    getters produces; an @old snapshot of it used to fail with 'cannot
+    synthesize an initial value' for the ghost."""
     ir = _ir_of(tmp_path, RECORD_QNT)
-    area = _record_area("not(_prevSt.items.keys().contains(_lastId))")
+    area = _record_area()
     out = "\n".join(probes.build(area, "ents", ir, "ents.qnt"))
-    assert "var _prevSt: State" in out
-    assert "_prevSt' = { items: Map(), version: 0, flags: Set() }," in out
+    assert "var _old_REQ_001_before: State" in out
+    assert "_old_REQ_001_before' = { items: Map(), version: 0, flags: Set() }," in out
 
 
 @pytest.mark.skipif(not quint_ir.cli_available(), reason="quint CLI not installed")
@@ -259,7 +263,7 @@ def test_the_generated_record_probe_module_typechecks(tmp_path):
     specs.mkdir()
     (specs / "ents.qnt").write_text(RECORD_QNT, encoding="utf-8")
     ir = quint_ir.parse_qnt(specs / "ents.qnt")
-    area = _record_area("not(_prevSt.items.keys().contains(_lastId))")
+    area = _record_area()
     (specs / "ents.probes.qnt").write_text(
         "\n".join(probes.build(area, "ents", ir, "ents.qnt")) + "\n", encoding="utf-8")
     r = subprocess.run(["quint", "typecheck", str(specs / "ents.probes.qnt")],
@@ -282,9 +286,9 @@ def test_lint_flags_a_prev_ghost_with_no_zero_at_authoring_time(tmp_path):
     write_project(tmp_path, [{"name": "ents", "kind": "area"}])
     write_area(tmp_path, "ents", FUNC_VAR_QNT.replace(
         "  action store(id: Id)",
-        "  /// @req REQ-001\n  /// @status draft\n  /// put fills it\n"
-        "  /// @via store\n  /// @pre _prevSt == Empty\n"
-        "  def shall_REQ_001(_lastId: Id): bool = st != Empty\n\n  action store(id: Id)"))
+        "  /// @req REQ-001\n  /// put fills it\n  /// @status specified\n"
+        "  /// @old was: Box[int] = st\n  /// @shall st != Empty and was == Empty\n"
+        "  action store(id: Id)"))
     rep = lint_json(tmp_path, "ents")
     assert ("FAIL", "ghost-zero-unsynthesizable", "REQ-001") in checks(rep)
 
@@ -338,8 +342,9 @@ def _helper_area(quint_ref="createEntity", domains=None):
             "formal_model": {"quint_file": "ents.qnt",
                              "probe_domains": domains or {"Id": 'Set("a")', "Role": 'Set("admin", "user")'}},
             "requirements": [{"id": "REQ-001", "description": "admin creates",
-                              "quint_ref": quint_ref,
-                              "witness": {"predicate": "st.items.contains(_lastId)"}}]}
+                              "quint_ref": quint_ref, "form": "event",
+                              "status": "specified",
+                              "ears": {"response": "st.items.contains(id)"}}]}
 
 
 @pytest.mark.parametrize("engine", ["regex", "auto"])
@@ -359,7 +364,7 @@ def test_a_witness_through_a_helper_action_is_refused_by_name(tmp_path, capsys):
     ir = _ir_of(tmp_path, HELPER_QNT)
     with pytest.raises(SystemExit):
         probes.build(_helper_area(quint_ref="commit"), "ents", ir, "ents.qnt")
-    assert "REQ-001 @via commit" in capsys.readouterr().err
+    assert "REQ-001 on commit" in capsys.readouterr().err
 
 
 # ── 10. Probe domains per parameter ─────────────────────────────────────────
@@ -412,18 +417,12 @@ def test_computed_requirements_owe_a_test_not_a_refusal(tmp_path):
                    for _s, c, r in found)
 
 
-def test_an_unwanted_skip_is_still_a_refusal():
-    req = {"ears": {"unwanted": True},
-           "witness": {"status": "skipped", "justification": "INV-001"}}
-    assert itf.is_rejection(req) and not itf.is_computed(req)
-    assert not itf.is_computed({"modality": "forbidden", "witness": {"status": "skipped"}})
-
-
 def test_the_readback_calls_it_computed(tmp_path):
-    req = {"id": "REQ-010", "verified_by": ["t/score.test.ts"],
-           "witness": {"status": "skipped", "justification": "derived"}}
-    assert itf.skip_discharge(req["witness"], req) == "verified by t/score.test.ts"
+    req = {"id": "REQ-010", "form": "computed", "status": "specified",
+           "verified_by": ["t/score.test.ts"]}
+    assert itf.witness_exempt(req) == "computed — verified by t/score.test.ts"
     assert readback.status_mark(req) == "⊘"
+    assert readback.req_is_discharged(req)
 
 
 # ── 5. @source on INV and CON ───────────────────────────────────────────────
@@ -529,7 +528,7 @@ def test_summarize_a_directory_of_traces():
                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
     assert out.returncode == 0, out.stderr
     assert "== auth/traces/REQ-003.itf.json" in out.stdout
-    assert "login_failed(bob)" in out.stdout
+    assert "login_failed(alice)" in out.stdout
 
 
 # ── 9. Scattered code, test files, bulk triage ──────────────────────────────

@@ -101,11 +101,11 @@ try:
     from quint_ir import zero_value as _zero_value
     # Shared rejection definition — lint, spec-record and the readback must
     # not disagree about which requirements owe a refusal example.
-    from itf_tools import is_rejection, is_computed, witness_entries, skip_discharge
+    from itf_tools import is_rejection, is_computed, witness_entries
+    from itf_tools import witness_exempt, owes_obligation, obligation_name
     # Generated-name conventions and the plumbing-action set live in
     # itf_tools so the probe generator, the recorder and these checks
     # cannot drift apart on what a probe or a ghost is called.
-    from itf_tools import ghost_for_param as ghost_for
     from itf_tools import ghost_for_var as _ghost_for_var
     from itf_tools import probe_name, outcome_probe_name, PLUMBING_ACTIONS
     from itf_tools import stream_encodes as _stream_encodes, soften_stdout
@@ -330,71 +330,6 @@ def check_quint_refs(area_data, sidecar, area_name, findings, probes=None):
 EARLY_STATUSES = ("raw", "needs-validation")
 
 
-def check_ears(area_data, area_name, findings):
-    """EARS structure per requirement. The pattern is DERIVED from which
-    fields are filled (trigger → 'When', state → 'While', feature →
-    'Where', none → ubiquitous); only `unwanted` is declared. So there's
-    nothing to cross-check — just three rules."""
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        status = req.get("status", "raw")
-        if status == "deferred":
-            continue
-        ears = req.get("ears")
-        if not ears:
-            if status not in EARLY_STATUSES:
-                add(findings, WARN, "ears", "unstructured-requirement", area_name,
-                    f"{rid} has status '{status}' but no ears structure. "
-                    f"Run /spec to capture trigger/state/response.",
-                    ref=rid)
-            continue
-        if not ears.get("response"):
-            add(findings, FAIL, "ears", "ears-missing-response", area_name,
-                f"{rid}.ears has no response ('the system shall ...').", ref=rid)
-        if ears.get("unwanted") and not ears.get("trigger"):
-            add(findings, FAIL, "ears", "ears-unwanted-no-trigger", area_name,
-                f"{rid}.ears is unwanted-behavior handling but names no trigger "
-                f"('If <what goes wrong>, then ...').", ref=rid)
-        if not (ears.get("trigger") or ears.get("state") or ears.get("feature")
-                or ears.get("unwanted")):
-            add(findings, WARN, "ears", "ubiquitous-requirement", area_name,
-                f"{rid} has no trigger/state/feature — a 'shall always' statement "
-                f"is an invariant, not a behavior. Move it to invariants[] so "
-                f"Apalache proves it; a witness adds nothing to an always-true "
-                f"statement.", ref=rid)
-
-
-def check_state_binding(area_data, area_name, findings):
-    """ears.state should be phrased with a DECLARED entity state name
-    ('the Session is Active', not 'the user is logged in') — that's what
-    makes the requirement↔state-machine link reviewable and matrix triage
-    mechanical. Only fires when the area declares states at all."""
-    # Shared with the EARS↔model bridge checks: two definitions of "a
-    # declared state" drifting apart would let one check disagree with
-    # another about the same sentence.
-    declared = declared_states(area_data)
-    if not declared:
-        return
-    gating = area_data.get("status") in ("in-review", "approved")
-    severity = FAIL if gating else WARN
-    pattern = re.compile(
-        r"\b(" + "|".join(re.escape(s) for s in sorted(declared)) + r")\b",
-        re.IGNORECASE,
-    )
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") == "deferred":
-            continue
-        state_text = (req.get("ears") or {}).get("state")
-        if state_text and not pattern.search(state_text):
-            add(findings, severity, "ears", "state-not-bound", area_name,
-                f"{rid}.ears.state ('{state_text}') names no declared entity "
-                f"state ({', '.join(sorted(declared))}). Phrase preconditions "
-                f"with declared state names so the requirement↔state-machine "
-                f"link is checkable.",
-                ref=rid)
-
-
 def check_fit_criteria(area_data, area_name, findings):
     """Non-functional requirements are exempt from witness obligations, so
     their precision mechanism is the fit_criterion: metric, target,
@@ -414,138 +349,206 @@ def check_fit_criteria(area_data, area_name, findings):
                 ref=rid)
 
 
+# Ghost names a requirement must not read: its pre-state is @while (read
+# before the step) and @old, and its parameters are the action's own names.
+GHOST_TOKEN_RE = re.compile(r"\b_(?:last|prev)[A-Z][A-Za-z0-9_]*\b")
+
+
+def _formal_texts(req):
+    """(label, Quint text) for every formal field of a requirement."""
+    ears = req.get("ears") or {}
+    out = []
+    if ears.get("state"):
+        out.append(("@while", ears["state"]))
+    if ears.get("response"):
+        out.append(("@shall", ears["response"]))
+    for o in req.get("old") or []:
+        out.append((f"@old {o.get('name')}", o.get("expr") or ""))
+    for oc in (req.get("witness") or {}).get("outcomes") or []:
+        out.append((f"@outcome {oc.get('name')}", oc.get("predicate") or ""))
+    return out
+
+
+def check_requirement_form(area_data, area_name, findings):
+    """Past `raw`, a functional requirement is FORMAL: it sits on the action
+    it governs with Quint @while / @shall (or @outcome, or nothing for a
+    forbidden step), on the module with @shall (a state requirement), or on
+    the pure def it computes. That is what makes it checkable on every step
+    — a requirement you cannot write a boolean @shall for is too vague to
+    verify, and saying so is this gate's job."""
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        status = req.get("status", "raw")
+        if status == "deferred" or req.get("type") == "non-functional":
+            continue
+        form, modality = req.get("form"), req.get("modality", "must")
+        ears = req.get("ears") or {}
+        for label, text in _formal_texts(req):
+            ghosts = sorted(set(GHOST_TOKEN_RE.findall(text)))
+            if ghosts:
+                add(findings, FAIL, "ears", "requirement-reads-ghost", area_name,
+                    f"{rid} {label} reads {', '.join(ghosts)} — probe ghosts are "
+                    f"generated, not written. Name the action's parameters "
+                    f"directly; say what held before the step with @while, or "
+                    f"bind a before-value with `@old <name>: <Type> = <expr>`.",
+                    ref=rid)
+        if req.get("old") and form != "event":
+            add(findings, FAIL, "ears", "old-without-step", area_name,
+                f"{rid} binds @old but sits on no action — there is no step "
+                f"whose before-state it could read.", ref=rid)
+        if ears.get("unwanted") and not (ears.get("trigger") or form == "event"):
+            add(findings, FAIL, "ears", "ears-unwanted-no-trigger", area_name,
+                f"{rid} is unwanted-behavior handling but names no trigger "
+                f"('If <what goes wrong>, then ...').", ref=rid)
+        if form == "event" and modality == "forbidden" and ears.get("response"):
+            add(findings, FAIL, "ears", "forbidden-with-response", area_name,
+                f"{rid} is forbidden — its obligation is that `{req.get('quint_ref')}` "
+                f"never runs from @while — so a @shall describes a step that "
+                f"cannot happen. Drop it.", ref=rid)
+        if form == "state" and modality != "must":
+            add(findings, FAIL, "ears", "state-requirement-modality", area_name,
+                f"{rid} is a state requirement (on the module) with modality "
+                f"'{modality}'. Only an action can be permitted several outcomes "
+                f"or forbidden: put it on the action it governs.", ref=rid)
+        if status == "raw" or form == "computed":
+            continue
+        formal = owes_obligation(req)
+        if not formal:
+            add(findings, FAIL, "ears", "requirement-not-formal", area_name,
+                f"{rid} has status '{status}' but nothing the model can check. "
+                f"Put it on the action it governs with `@while <Quint>` and "
+                f"`@shall <Quint>` (or `@outcome` for a 'may', nothing for a "
+                f"forbidden step), on the module with `@shall` if it must hold "
+                f"in every state, or on the `pure def` it computes. Until then "
+                f"it is `raw`.", ref=rid)
+
+
+def _state_reach(decls, text):
+    """State-variable names a Quint expression reaches, helpers included."""
+    roots = set(spec_source.IDENT_TOKEN.findall(text or ""))
+    return spec_source.name_closure(decls or {}, roots)
+
+
+def check_shall_sanity(area_data, sidecar, sidecars, decls, area_name, findings):
+    """A @shall / @outcome must say something about state. A constant
+    (`true`) makes the obligation hold of any step and the witness fire on
+    any step of the action; an expression that reaches no state variable —
+    directly or through a helper — cannot describe what the step did."""
+    if not sidecar or sidecar.get("__no_module__"):
+        return
+    vars_avail = set(sidecar.get("vars") or set())
+    for span in area_data.get("spans") or []:
+        sp = (sidecars or {}).get(span) or {}
+        vars_avail |= set(sp.get("vars") or set())
+    for req in area_data.get("requirements", []) or []:
+        rid = req.get("id", "?")
+        if req.get("status", "raw") in ("raw", "deferred") \
+                or req.get("type") == "non-functional":
+            continue
+        texts = [("@shall", (req.get("ears") or {}).get("response"))] + [
+            (f"@outcome {oc.get('name')}", oc.get("predicate"))
+            for oc in (req.get("witness") or {}).get("outcomes") or []]
+        for label, text in texts:
+            bare = (text or "").strip()
+            if not bare:
+                continue
+            while bare.startswith("(") and bare.endswith(")"):
+                bare = bare[1:-1].strip()
+            if bare in ("true", "false"):
+                add(findings, FAIL, "ears", "shall-constant", area_name,
+                    f"{rid} {label} is the constant `{bare}` — it says nothing "
+                    f"about what the step did. Write a boolean over state.",
+                    ref=rid)
+                continue
+            # Spanned modules' state is reached through qualified names
+            # (`auth::sessions`), which the token closure does not follow.
+            if vars_avail and "::" not in text \
+                    and not (_state_reach(decls, text) & vars_avail):
+                add(findings, FAIL, "ears", "shall-no-state", area_name,
+                    f"{rid} {label} reaches no state variable "
+                    f"({', '.join(sorted(vars_avail))}), directly or through a "
+                    f"helper — it cannot describe a state the step produced.",
+                    ref=rid)
+
+
 def check_witnesses(root, area_data, area_name, findings):
-    """Witness obligations: every claimed behavior must be demonstrable in
-    the model. A verified-but-unwitnessed spec can be vacuous (invariants
-    hold over an empty state space). /spec-check produces the traces; this
-    check enforces their presence and freshness (model_sha pinning — a
-    trace found against an older model proves nothing about this one)."""
+    """Both halves of every formal requirement, as recorded by /spec-check:
+    the WITNESS (its step can happen — the requirement is not vacuous) and
+    the OBLIGATION (every such step satisfies it). Presence, validity and
+    freshness: a verdict found against an older model proves nothing about
+    this one."""
     approved = area_data.get("status") == "approved"
     current_sha = _compute_model_sha(root, area_name, area_data)
-    # Per ENTRY, not per requirement: a `may` requirement keeps its statuses
-    # in witness.outcomes[] and may carry nothing on the witness itself, so
-    # reading only the top level let a permission with witnessed outcomes
-    # sail past the unhashable-model gate below.
-    any_witnessed = any(
+    any_recorded = any(
         entry.get("status") == "witnessed"
         for r in area_data.get("requirements", []) or []
         for _label, entry in witness_entries(r)
-    )
-    if any_witnessed and current_sha is None:
+    ) or any((r.get("obligation") or {}).get("formal_status") == "verified"
+             for r in area_data.get("requirements", []) or [])
+    if any_recorded and current_sha is None:
         add(findings, FAIL, "witness", "model-files-missing", area_name,
-            "Requirements are marked witnessed but the model files can't be "
+            "Requirements carry verdicts but the model files can't be "
             "hashed (sidecar missing, or formal_model.probes_file recorded but "
-            "absent). Freshness is unverifiable — every witness is suspect. "
+            "absent). Freshness is unverifiable — every verdict is suspect. "
             "Restore the files or re-run /spec-check.")
     for req in area_data.get("requirements", []) or []:
         rid = req.get("id", "?")
-        if req.get("status") == "deferred":
+        if req.get("status") == "deferred" or req.get("type") == "non-functional":
             continue
-        if req.get("type") == "non-functional":
-            # Exempt from witness obligations by design: no reachable state
-            # change to demonstrate. The obligation it carries instead is a
-            # measurable fit_criterion — enforced in check_fit_criteria.
-            continue
-        witness = req.get("witness") or {}
-        predicate = witness.get("predicate")
-        if not predicate and req.get("modality") == "forbidden" and witness.get("enforced_by"):
-            # A prohibition has no state change to witness — that is the whole
-            # reason it names an enforcing invariant instead. Demanding a
-            # predicate here failed every correctly-written prohibition before
-            # spec-record had even run (which is what sets status 'skipped').
-            # check_modality separately FAILs a forbidden REQ with no
-            # enforced_by, and a dangling one.
-            continue
-        if not predicate and req.get("modality") == "may":
-            # A 'may' requirement carries one predicate per permitted outcome
-            # instead of a single one; the gate is satisfied when they exist
-            # (check_modality enforces that there are at least two, each with
-            # a predicate). Reading only witness.predicate here would FAIL
-            # every correctly-written permission.
-            outs = witness.get("outcomes") or []
-            if outs and all(o.get("predicate") for o in outs):
-                predicate = outs[0]["predicate"]
-        wstatus = witness.get("status", "not-run")
-        # A `may` requirement's traces live one per permitted outcome; reading
-        # only witness.trace would FAIL every correctly written permission.
-        entries = witness_entries(req)
-        per_outcome = len(entries) > 1 or bool(witness.get("outcomes"))
-
-        if wstatus == "skipped":
-            # Deliberate opt-out — legitimate for rejection requirements
-            # (no state change to witness; an invariant carries the proof).
-            # Only a JUSTIFIED skip discharges the obligation.
-            if skip_discharge(witness, req) is None:
-                add(findings, FAIL, "witness", "skipped-no-justification", area_name,
-                    f"{rid}.witness is skipped with neither witness.enforced_by "
-                    f"nor a justification — an undischarged skip proves nothing. "
-                    f"Rejection requirement? Set modality 'forbidden' and "
-                    f"witness.enforced_by to the invariant that enforces it.",
-                    ref=rid)
-            if is_computed(req) and not req.get("verified_by"):
-                # A derived value (a score, a total) has no transition to
-                # witness and nothing to refuse, so the skip is fine — but
-                # then the calculation is checked by a unit test or by
-                # nothing, and the spec has to say which test.
+        if is_computed(req):
+            if not req.get("verified_by"):
                 add(findings, FAIL if at_review(area_data) else WARN, "witness",
                     "computed-without-verified-by", area_name,
-                    f"{rid} skips its witness but is neither @unwanted nor "
-                    f"forbidden, so it is a COMPUTED requirement — a derived "
-                    f"value with no state transition. Name the unit test that "
-                    f"checks it: `/// @verified-by <test path>`. (If it is a "
-                    f"refusal, mark it @unwanted or @modality forbidden; it "
-                    f"then owes a refusal example instead.)", ref=rid)
+                    f"{rid} sits on a pure def, so it is a COMPUTED requirement — "
+                    f"a derived value no step carries. Name the unit test that "
+                    f"checks it: `/// @verified-by <test path>`.", ref=rid)
+            continue
+        if not owes_obligation(req):
+            if approved:
+                add(findings, FAIL, "witness", "approved-unwitnessed", area_name,
+                    f"Area is approved but {rid} is not formal — nothing about "
+                    f"it has been checked.", ref=rid)
             continue
 
-        # Approval gate: every non-deferred functional REQ must be witnessed
-        # or justified-skipped — REGARDLESS of how incomplete its witness
-        # block is. (Checked before any early-return below, so a predicate-less
-        # requirement can't slip through an approved area.)
+        # ── the obligation: every reachable step ─────────────────────────
+        ob = req.get("obligation") or {}
+        ostatus = ob.get("formal_status", "not-run")
+        if ostatus == "counterexample-found":
+            add(findings, FAIL, "witness", "obligation-violated", area_name,
+                f"{rid}: /spec-check found a reachable step that breaks it"
+                + (f" (trace: specs/{ob['trace']})" if ob.get("trace") else "")
+                + ". The model contradicts the requirement — fix whichever is "
+                  "wrong.", ref=rid)
+        elif ostatus == "verified":
+            stamped = ob.get("model_sha")
+            if not stamped:
+                add(findings, FAIL, "witness", "obligation-unstamped", area_name,
+                    f"{rid}.obligation has no model_sha — freshness can't be "
+                    f"checked. Re-run /spec-check to pin it.", ref=rid)
+            elif current_sha and stamped != current_sha:
+                add(findings, FAIL, "witness", "obligation-stale", area_name,
+                    f"{rid}.obligation was checked against an older model. "
+                    f"Re-run /spec-check.", ref=rid)
+        elif approved:
+            add(findings, FAIL, "witness", "approved-unchecked", area_name,
+                f"Area is approved but {rid}'s every-step obligation is "
+                f"'{ostatus}'. Run /spec-check before approval.", ref=rid)
+
+        # ── the witness: the step can happen ─────────────────────────────
+        if witness_exempt(req):
+            continue
+        witness = req.get("witness") or {}
+        wstatus = witness.get("status", "not-run")
+        entries = witness_entries(req)
+        per_outcome = len(entries) > 1 or bool(witness.get("outcomes"))
         if approved and wstatus != "witnessed":
             add(findings, FAIL, "witness", "approved-unwitnessed", area_name,
                 f"Area is approved but {rid} witness status is '{wstatus}'. "
-                f"Run /spec-check before approval.",
-                ref=rid)
-
-        # Trace presence/validity/freshness run UNCONDITIONALLY — they must
-        # not depend on the predicate being present, or deleting the
-        # predicate would silence the freshness FAILs on a witnessed REQ.
-        if (not predicate and req.get("status") not in EARLY_STATUSES
-                and not witness.get("outcomes")
-                and skip_discharge(witness) is not None):
-            # The author already discharged this one — named an enforcing
-            # invariant, or wrote the prose justification — but the discharge
-            # only counts at witness.status 'skipped'. At any other status
-            # nothing consults it, so every runner reads the requirement as a
-            # missing predicate and tells the author to draft one they
-            # deliberately did not write. Name the actual gap instead.
-            add(findings, FAIL, "witness", "justification-without-skip", area_name,
-                f"{rid} discharges its witness ({skip_discharge(witness)}) but "
-                f"witness.status is '{wstatus}', not 'skipped' — so the "
-                f"discharge counts for nothing and spec-record reports it as "
-                f"no-predicate. Set witness.status to 'skipped'"
-                + (", and prefer witness.enforced_by over prose."
-                   if not witness.get("enforced_by") else "."),
-                ref=rid)
-        elif not predicate and req.get("status") not in EARLY_STATUSES:
-            # Past the draft phase (raw/needs-validation), an absent predicate
-            # is the mechanized vagueness gate: a functional response you can't
-            # write a boolean witness for is too vague to ever be witnessed or
-            # verified ("handle errors gracefully" — what observable state?).
-            # FAIL, not WARN — vagueness must block, not nag. Draft statuses (raw/needs-validation) are exempt so
-            # elicitation isn't blocked mid-capture.
-            add(findings, FAIL, "witness", "no-witness-predicate", area_name,
-                f"{rid} (status '{req.get('status')}') has no witness.predicate — the "
-                f"behavior can't be demonstrated reachable, so it's too vague to verify. "
-                f"Sharpen the response to a named observable state, capture a predicate "
-                f"via /spec, then run /spec-check.",
-                ref=rid)
-
+                f"Run /spec-check before approval.", ref=rid)
         for label, entry in entries:
             # For a `must` requirement this loop runs once over the witness
-            # itself, so the single-witness behaviour is unchanged. For a
-            # `may` it runs once per permitted outcome, where the traces
-            # actually live.
+            # itself; for a `may` once per permitted outcome, where the
+            # traces actually live.
             e_trace = entry.get("trace")
             e_status = entry.get("status", "not-run") if per_outcome else wstatus
             if e_trace:
@@ -562,127 +565,64 @@ def check_witnesses(root, area_data, area_name, findings):
                             f"{label}.witness.trace '{e_trace}' is not a valid ITF "
                             f"trace: {trace_errs[0]}", ref=rid)
                     elif _is_hollow(trace_obj):
-                        # The stamp claims a witness; the trace shows a single
-                        # state, i.e. the predicate already held before
-                        # anything ran. Checked here as well as in the recorder
-                        # so a status hand-edited into the JSON, or minted
-                        # before this gate existed, still cannot pass review.
+                        # The probe requires the action to have run, so a
+                        # one-state trace cannot come from it: the stamp was
+                        # edited or minted by something else.
                         add(findings, FAIL, "witness", "witness-hollow", area_name,
-                            f"{label}.witness.trace '{e_trace}' has ONE state: the "
-                            f"predicate was already true in the initial state, so "
-                            f"the trace proves the starting position satisfies it, "
-                            f"not that the behavior happens. Add a witness.delta so "
-                            f"the probe must show the state moving, and sharpen the "
-                            f"predicate if it cannot tell before from after.",
-                            ref=rid)
+                            f"{label}.witness.trace '{e_trace}' has ONE state — "
+                            f"no step happened, so it witnesses nothing.", ref=rid)
                     stamped = entry.get("model_sha")
                     if not stamped:
                         add(findings, FAIL, "witness", "witness-unstamped", area_name,
                             f"{label}.witness has no model_sha — freshness can't be "
-                            f"checked, so the 'every witness fresh' obligation is "
-                            f"unenforceable. Re-run /spec-check to pin it.", ref=rid)
+                            f"checked. Re-run /spec-check to pin it.", ref=rid)
                     elif current_sha and stamped != current_sha:
                         add(findings, FAIL, "witness", "witness-stale", area_name,
                             f"{label}.witness.model_sha doesn't match the current "
                             f"model (.qnt/.probes.qnt changed since the trace was "
-                            f"found). The trace proves nothing about the current "
-                            f"model — re-run /spec-check.", ref=rid)
+                            f"found). Re-run /spec-check.", ref=rid)
             elif e_status == "witnessed":
                 add(findings, FAIL, "witness", "witnessed-without-trace", area_name,
                     f"{label}.witness.status is 'witnessed' but no trace file is "
                     f"recorded.", ref=rid)
-
-        if wstatus == "hollow":
-            add(findings, FAIL, "witness", "witness-hollow-status", area_name,
-                f"{rid}: /spec-check found only a HOLLOW witness — the predicate "
-                f"already held in the initial state, so nothing was demonstrated. "
-                f"Add witness.delta (a pre-state the step must start from, over the "
-                f"`_prev*` ghosts) and re-run.",
-                ref=rid)
-
         if wstatus == "no-witness":
             add(findings, FAIL, "witness", "no-witness-found", area_name,
-                f"{rid}: /spec-check found NO witness — the behavior is unreachable "
-                f"in the model (impossible guard or missing action?). Fix the model "
-                f"or the requirement.",
-                ref=rid)
+                f"{rid}: /spec-check found NO witness — no reachable step of "
+                f"`{req.get('quint_ref') or 'the model'}` starts where @while holds "
+                f"and ends where @shall holds, so its obligation holds of nothing. "
+                f"Fix the model or the requirement.", ref=rid)
 
 
-def check_predicate_sanity(area_data, sidecar, sidecars, area_name, findings):
-    """A witness.predicate must be a real postcondition. spec-lint can't judge
-    full semantics, but it kills the two fakes that otherwise sail the whole
-    pipeline as a green 'witnessed':
+def check_constant_hosts(info, area_name, findings):
+    """A @con on a declaration whose body is a literal: the literal is the
+    value, so an @value beside it is a second copy that can drift."""
+    for rec in info.get("records") or []:
+        if rec["tag"] == "con" and any(t == "value" for t, _ in rec["tags"]) \
+                and (rec.get("host") or {}).get("body") is not None \
+                and spec_source._literal((rec.get("host") or {}).get("body")) is not None:
+            add(findings, FAIL, "source", "constant-value-twice", area_name,
+                f"{rec['id']}: @value restates the value of `{rec['host']['name']}`. "
+                f"The model's literal is the value; drop the tag.", ref=rec["id"])
 
-      - a CONSTANT predicate. `true` makes the probe
-        `not(true and _lastAction == X)` == `not(_lastAction == X)`, which the
-        checker violates the instant action X fires — so the requirement is
-        'witnessed' having demonstrated nothing but that its action runs.
-      - a predicate naming NO state variable — it can't assert an observable
-        state change, so it isn't a postcondition.
 
-    Both degrade the anti-vacuity guarantee ('every claim a witness') to the
-    far weaker 'every action fires'. This check is the backstop."""
-    if not sidecar or sidecar.get("__no_module__"):
-        return
-    # Available state vars: this module's, plus spanned modules' (a contract
-    # or UI predicate ranges over imported state).
-    vars_avail = set(sidecar.get("vars") or set())
-    for span in area_data.get("spans") or []:
-        sp = (sidecars or {}).get(span) or {}
-        vars_avail |= set(sp.get("vars") or set())
-    mutations = sidecar.get("action_mutations") or {}
+def _probe_generated_names(area_data):
+    """Every name tools/spec-probes.py declares for this area's
+    requirements, so a transition invariant cannot collide with one."""
+    names = set()
     for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") == "deferred" or req.get("type") == "non-functional":
+        rid = req.get("id")
+        if not rid or not owes_obligation(req):
             continue
-        witness = req.get("witness") or {}
-        if witness.get("status") == "skipped":
-            continue
-        # A 'may' requirement keeps one predicate per permitted outcome. Each
-        # gets the same scrutiny as a single one, or `true` would sail through
-        # simply by being written a level deeper.
-        preds = [(rid, (witness.get("predicate") or "").strip())]
-        for oc in (witness.get("outcomes") or []):
-            preds.append((f"{rid}/{oc.get('name', '?')}",
-                          (oc.get("predicate") or "").strip()))
-        for label, pred in preds:
-            if pred:
-                sanity_one_predicate(label, pred, req, vars_avail, mutations,
-                                     area_name, findings)
-
-
-def sanity_one_predicate(rid, pred, req, vars_avail, mutations, area_name, findings):
-    """The two fakes, checked against one predicate."""
-    bare = pred
-    while bare.startswith("(") and bare.endswith(")"):
-        bare = bare[1:-1].strip()
-    if bare in ("true", "false"):
-        add(findings, FAIL, "witness", "predicate-constant", area_name,
-            f"{rid}.witness.predicate is the constant `{bare}` — it witnesses "
-            f"nothing (the probe reduces to 'the action fired'). Write a boolean "
-            f"over state that is true exactly when the behavior has occurred.",
-            ref=rid)
-        return
-    referenced = {v for v in vars_avail if re.search(rf"\b{re.escape(v)}\b", pred)}
-    # Only assert no-state when we actually know the var set — an empty
-    # vars_avail (unparseable spanned sidecar) must not false-FAIL.
-    if vars_avail and not referenced:
-        add(findings, FAIL, "witness", "predicate-no-state", area_name,
-            f"{rid}.witness.predicate references no state variable "
-            f"({', '.join(sorted(vars_avail))}) — it can't be a postcondition. "
-            f"A witness must assert an observable state change.",
-            ref=rid)
-        return
-    # WARN: predicate names no var the requirement's OWN action assigns —
-    # it may be witnessing a side condition, not this requirement's effect.
-    qref = req.get("quint_ref")
-    assigned = set(mutations.get(qref) or []) if qref else set()
-    if assigned and referenced and not (referenced & assigned):
-        add(findings, WARN, "witness", "predicate-off-action", area_name,
-            f"{rid}.witness.predicate references {sorted(referenced)} but its action "
-            f"`{qref}` assigns {sorted(assigned)} — the predicate may not capture "
-            f"this requirement's own effect. Confirm it's the right postcondition.",
-            ref=rid)
+        slug = re.sub(r"[^A-Za-z0-9]+", "_", rid)
+        names |= {probe_name(rid), obligation_name(rid), f"pre_{slug}",
+                  f"post_{slug}"}
+        for oc in (req.get("witness") or {}).get("outcomes") or []:
+            oname = re.sub(r"[^A-Za-z0-9]+", "_", oc.get("name") or "").strip("_")
+            names |= {outcome_probe_name(rid, oc.get("name")),
+                      f"outcome_{slug}_{oname or 'outcome'}"}
+        for old in req.get("old") or []:
+            names.add(f"old_{slug}_{old.get('name')}")
+    return names
 
 
 def declared_states(area_data):
@@ -695,185 +635,10 @@ def declared_states(area_data):
     return {s for s in declared if s}
 
 
-def _state_to_vars(sidecar):
-    """Declared state name -> the vars that can hold it.
-
-    Two hops through the IR: `type_variants` says which type declares the
-    variant `Locked`, `var_types` says which vars are annotated with that
-    type. `var accountStatus: UserId -> AccountStatus` therefore answers
-    "which variable does 'the account is Locked' talk about" without anyone
-    writing that mapping down."""
-    if not sidecar or "__no_module__" in sidecar:
-        return {}
-    holders = {}
-    for type_name, variants in (sidecar.get("type_variants") or {}).items():
-        for var, annotation in (sidecar.get("var_types") or {}).items():
-            if type_name in (annotation or []):
-                for variant in variants:
-                    holders.setdefault(variant, set()).add(var)
-    return holders
-
-
-def _states_named(text, states):
-    """Declared state names appearing in a sentence, word-boundary matched.
-    Case-sensitive on purpose: state names are identifiers in the sidecar,
-    and 'locked' in prose is a word while `Locked` is the variant."""
-    if not text:
-        return set()
-    return {s for s in states
-            if re.search(rf"\b{re.escape(s)}\b", text)}
-
-
-def check_ears_guard_correspondence(area_data, sidecar, area_name, findings):
-    """ears.state names a state; the requirement's own action must READ the
-    variable that holds it.
-
-    `state-not-bound` already checks that the sentence names a declared
-    state. This checks the other half — that the model actually gates on it.
-    A requirement saying "While the account is Locked" whose action never
-    looks at `accountStatus` is not a translation of that sentence, and that
-    is a mechanical fact, not a judgement about prose.
-
-    CLI engine only. The regex fallback scans action bodies and cannot see a
-    var a guard reaches through a helper (`not(isLocked(uid))`), so under it
-    a correct model would fail this check."""
-    if not sidecar or "__no_module__" in sidecar:
-        return
-    if sidecar.get("source") != "quint-cli":
-        return
-    states = declared_states(area_data)
-    holders = _state_to_vars(sidecar)
-    if not states or not holders:
-        return
-    reads = sidecar.get("action_reads") or {}
-    gating = area_data.get("status") in ("in-review", "approved")
-    severity = FAIL if gating else WARN
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") == "deferred" or req.get("type") == "non-functional":
-            continue
-        action = req.get("quint_ref")
-        if not action or action not in reads:
-            continue
-        named = _states_named((req.get("ears") or {}).get("state"), states)
-        for state in sorted(named):
-            candidates = holders.get(state) or set()
-            if not candidates:
-                continue
-            if candidates & set(reads.get(action) or []):
-                continue
-            add(findings, severity, "ears", "guard-not-in-action", area_name,
-                f"{rid}.ears.state names '{state}', which lives in "
-                f"{sorted(candidates)}, but its action `{action}` never reads "
-                f"{'that variable' if len(candidates) == 1 else 'any of those'} "
-                f"— the model does not gate on the precondition the sentence "
-                f"states. Add the guard, or fix the sentence.",
-                ref=rid)
-
-
 PRESERVE_TERMS = re.compile(
     r"\b(leave|leaves|remain|remains|stay|stays|keep|keeps|unchanged|"
     r"still|continue|continues|preserve|preserves|retain|retains)\b",
     re.IGNORECASE)
-
-
-def check_ears_effect_correspondence(area_data, sidecar, area_name, findings):
-    """ears.response names a state; the requirement's own action must write
-    the variable that holds it.
-
-    The effect half of the bridge. `predicate-off-action` already asks
-    whether the WITNESS touches what the action assigns; this asks whether
-    the SENTENCE does.
-
-    Two kinds of response, and the difference is load-bearing:
-
-      - a CHANGE ("shall lock the account") is implemented by a mutation,
-        so the var must appear in action_mutations;
-      - a PRESERVATION ("shall LEAVE the subscription Active") is
-        implemented by an identity assignment `x' = x`, which
-        action_mutations deliberately excludes. Demanding a mutation there
-        would fail the model for being right.
-
-    So a preservation response is checked against action_preserves instead —
-    which makes the check stronger, not weaker: a response promising the
-    state is left alone, over an action that assigns it, is a contradiction
-    this reports rather than a case it skips. Both engines: mutations and
-    preserves are computed by the regex fallback too.
-
-    Granularity follows the engine, because a claim is only worth making at
-    the precision the parser supports. Under the CLI parser the check is
-    VARIANT-level: the response says 'Expired', so the action's own
-    assignment must build `Expired`. The regex fallback reads assignments
-    line by line and misses a variant built across a continuation, so under
-    it the check drops to VAR-level — the action must write the variable
-    that holds the state. Weaker, never wrong.
-
-    The preservation/change split is read off the prose with a wordlist —
-    the one soft edge here, and the reason a miss lands as a finding about
-    the sentence rather than about the model."""
-    if not sidecar or "__no_module__" in sidecar:
-        return
-    states = declared_states(area_data)
-    holders = _state_to_vars(sidecar)
-    if not states or not holders:
-        return
-    mutations = sidecar.get("action_mutations") or {}
-    preserves = sidecar.get("action_preserves") or {}
-    produces = (sidecar.get("action_produces") or {}
-                if sidecar.get("source") == "quint-cli" else {})
-    gating = area_data.get("status") in ("in-review", "approved")
-    severity = FAIL if gating else WARN
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") == "deferred" or req.get("type") == "non-functional":
-            continue
-        if req.get("modality") == "forbidden":
-            # A prohibition's response describes what does NOT happen. Its
-            # proof is an invariant, and demanding an assignment here would
-            # ask the model to implement the thing it forbids.
-            continue
-        action = req.get("quint_ref")
-        if not action or action not in mutations:
-            continue
-        response = (req.get("ears") or {}).get("response")
-        keeping = bool(response and PRESERVE_TERMS.search(response))
-        wrote = set(mutations.get(action) or [])
-        held = set(preserves.get(action) or [])
-        for state in sorted(_states_named(response, states)):
-            candidates = holders.get(state) or set()
-            if not candidates:
-                continue
-            if keeping:
-                if candidates & held:
-                    continue
-                if candidates & wrote:
-                    add(findings, severity, "ears", "effect-contradicts-action",
-                        area_name,
-                        f"{rid}.ears.response says '{state}' is left as it is, "
-                        f"but its action `{action}` assigns "
-                        f"{sorted(candidates & wrote)} — the sentence promises "
-                        f"no change and the model makes one.",
-                        ref=rid)
-                    continue
-            elif candidates & wrote:
-                # The action writes the right variable. Where the parser can
-                # see WHICH variant it builds, ask the sharper question.
-                built = produces.get(action)
-                if not built or state in built:
-                    continue
-                add(findings, severity, "ears", "effect-wrong-variant", area_name,
-                    f"{rid}.ears.response says the system reaches '{state}', but "
-                    f"its action `{action}` writes {sorted(candidates & wrote)} "
-                    f"to {sorted(built)} and never to '{state}' — the model "
-                    f"moves the right variable to the wrong state.",
-                    ref=rid)
-                continue
-            add(findings, severity, "ears", "effect-not-in-action", area_name,
-                f"{rid}.ears.response says the system reaches '{state}', which "
-                f"lives in {sorted(candidates)}, but its action `{action}` "
-                f"assigns {sorted(wrote) or 'nothing'} — the model never writes "
-                f"the state the sentence promises.",
-                ref=rid)
 
 
 def check_unproducible_states(area_data, sidecar, area_name, findings):
@@ -1527,10 +1292,9 @@ def check_modality(area_data, area_name, findings):
       may       \u2014 one witness PER permitted outcome. A single trace would show
                    that one allowed behavior is reachable, which is exactly how
                    a permission silently narrows into a requirement.
-      forbidden \u2014 no witness can exist for a non-event, so it must name the
-                   invariant carrying the proof, as an ID rather than prose.
+      forbidden — no witness: a non-event has no trace. Its obligation
+                   (the action never fires from @while) is the proof.
     """
-    inv_ids = {i.get("id") for i in (area_data.get("invariants") or []) if i.get("id")}
     review = at_review(area_data)
     draft = ("raw", "needs-validation")
 
@@ -1546,25 +1310,7 @@ def check_modality(area_data, area_name, findings):
                 f"determinism 'deterministic' (exactly one observable result). Pick one.",
                 ref=rid)
 
-        if modality == "forbidden":
-            enforced = witness.get("enforced_by")
-            if not enforced:
-                if not early:
-                    add(findings, FAIL, "modality", "forbidden-without-enforcer", area_name,
-                        f"{rid} is modality 'forbidden' but names no witness.enforced_by. "
-                        f"A non-event has no witness trace \u2014 the proof has to be the "
-                        f"invariant that stays true.", ref=rid)
-            elif enforced not in inv_ids:
-                add(findings, FAIL, "modality", "forbidden-enforcer-dangling", area_name,
-                    f"{rid}.witness.enforced_by '{enforced}' is not a declared invariant.",
-                    ref=rid)
-            if witness.get("predicate"):
-                add(findings, WARN, "modality", "forbidden-with-predicate", area_name,
-                    f"{rid} is 'forbidden' but carries a witness predicate. A forbidden "
-                    f"behavior that IS witnessed is a contradiction \u2014 if the predicate is "
-                    f"right, the requirement is not forbidden.", ref=rid)
-
-        elif modality == "may":
+        if modality == "may":
             outcomes = witness.get("outcomes") or []
             if len(outcomes) < 2:
                 add(findings, WARN if early else FAIL, "modality", "may-needs-outcomes",
@@ -1600,15 +1346,6 @@ def check_modality(area_data, area_name, findings):
                         f"{rid} witness outcome '{oname}' is '{oc.get('status', 'not-run')}'. "
                         f"Every permitted outcome must be demonstrated before approval.",
                         ref=rid)
-
-        elif witness.get("status") == "skipped" and witness.get("justification") and review:
-            # The old free-text escape hatch still works, but at review time say
-            # so: an ID can be checked, a sentence cannot.
-            add(findings, WARN, "modality", "untyped-skip-justification", area_name,
-                f"{rid} skips its witness with a prose justification. If this is a "
-                f"rejection requirement, set modality 'forbidden' and "
-                f"witness.enforced_by so the link to the enforcing invariant is checkable.",
-                ref=rid)
 
 
 def check_decision_affects(area_data, all_areas, area_name, findings):
@@ -1656,137 +1393,6 @@ def check_examples(area_data, sidecar, all_areas, area_name, findings):
             if not resolve_ref(target, area_data, all_areas):
                 add(findings, FAIL, "examples", "example-ref-dangling", area_name,
                     f"{eid}.refs references '{target}', which does not exist.", ref=eid)
-
-
-def check_witness_binding(area_data, sidecar, area_name, findings):
-    """Rule 1. `_lastAction == login` pins WHICH action ran last, not that
-    this call produced the postcondition.
-
-    A bare existential — `sessions.keys().exists(s => sessions.get(s) == Active)`
-    — is satisfied by a session some unrelated earlier call created. The
-    requirement then goes green while its own action misbehaves, which is the
-    failure the path constraint was supposed to prevent and does not. Binding
-    the predicate to the param ghosts closes it: the postcondition must hold
-    OF THE THING THIS CALL ACTED ON."""
-    if not sidecar or sidecar.get("__no_module__"):
-        return
-    params_by_action = sidecar.get("action_params") or {}
-    review = at_review(area_data)
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") in EARLY_STATUSES or req.get("status") == "deferred":
-            continue
-        if req.get("type") == "non-functional" or is_rejection(req):
-            continue
-        qref = req.get("quint_ref")
-        params = params_by_action.get(qref) or []
-        if not params:
-            continue                      # parameterless action: nothing to bind to
-        witness = req.get("witness") or {}
-        preds = [witness.get("predicate") or ""]
-        preds += [oc.get("predicate") or "" for oc in (witness.get("outcomes") or [])]
-        ghosts = [ghost_for(x) for x in params]
-        for pred in preds:
-            if not pred.strip():
-                continue
-            if not any(re.search(rf"\b{re.escape(g)}\b", pred) for g in ghosts):
-                add(findings, FAIL if review else WARN, "witness", "witness-unbound",
-                    area_name,
-                    f"{rid}.witness.predicate is not bound to the arguments `{qref}` was "
-                    f"called with (expected one of {', '.join(ghosts)}). An unbound "
-                    f"existential is satisfied by state an unrelated call produced, so "
-                    f"the witness can pass while this requirement's own action is wrong.",
-                    ref=rid)
-                break          # one finding per requirement, not per predicate
-
-
-def delta_obligations(req, rid):
-    """(label, probe_val_name, declared delta.pre) for everything that owes a
-    pre-state condition — one entry for a `must`, one per permitted outcome
-    for a `may`. Mirrors spec-probes.probe_requirements, which is where the
-    deltas are actually consumed."""
-    witness = req.get("witness") or {}
-    if req.get("modality") == "may":
-        return [(f"{rid}/{oc.get('name', '?')}",
-                 outcome_probe_name(rid, oc.get("name")),
-                 (oc.get("delta") or {}).get("pre"))
-                for oc in (witness.get("outcomes") or [])]
-    return [(rid, probe_name(rid), (witness.get("delta") or {}).get("pre"))]
-
-
-def probe_body(probes_text, probe):
-    """Text of `val <probe>` in the generated module, or None if absent.
-
-    Anchored on the whole name: `find("val witness_REQ_007")` also matches
-    `val witness_REQ_007_email`, so a `may` requirement's delta was compared
-    against one of its outcomes' probe bodies rather than its own."""
-    m = re.search(rf"^\s*val\s+{re.escape(probe)}\b", probes_text, re.MULTILINE)
-    if not m:
-        return None
-    nxt = re.search(r"^\s*val\s+", probes_text[m.end():], re.MULTILINE)
-    return probes_text[m.start():m.end() + nxt.start()] if nxt else probes_text[m.start():]
-
-
-def check_witness_delta(root, area_data, sidecar, area_name, findings):
-    """Rule 2. A postcondition alone proves reachability, not causation.
-
-    The vacuity case the methodology already covers is a guard too STRONG to
-    fire. Its mirror image is a guard that already implies its own
-    postcondition: the action becomes a no-op that can only fire once its
-    result holds, the probe finds a state where the postcondition is true and
-    that action ran, and dead text witnesses green. Requiring a pre-state
-    delta means the trace has to show the state actually moving."""
-    review = at_review(area_data)
-    fm = area_data.get("formal_model") or {}
-    probes_rel = fm.get("probes_file")
-    probes_text = None
-    if probes_rel:
-        probes_path = Path(root) / "specs" / probes_rel
-        if probes_path.exists():
-            try:
-                probes_text = probes_path.read_text(encoding="utf-8")
-            except OSError:
-                probes_text = None
-
-    for req in area_data.get("requirements", []) or []:
-        rid = req.get("id", "?")
-        if req.get("status") in EARLY_STATUSES or req.get("status") == "deferred":
-            continue
-        if req.get("type") == "non-functional" or is_rejection(req):
-            continue
-        witness = req.get("witness") or {}
-        if not witness.get("predicate") and not (witness.get("outcomes") or []):
-            continue                      # absence is the vagueness gate's job
-        # A `may` requirement's deltas live one per permitted outcome, which
-        # is where spec-probes reads them from. Reading only witness.delta
-        # here demanded a field the generator never consumes, so a correctly
-        # authored permission could not satisfy this gate at all.
-        for label, probe, delta in delta_obligations(req, rid):
-            if not delta:
-                add(findings, FAIL if review else WARN, "witness",
-                    "witness-delta-missing", area_name,
-                    f"{label} has no witness.delta.pre. Without a pre-state condition the "
-                    f"probe accepts a step that changed nothing \u2014 a guard implying its own "
-                    f"postcondition witnesses green over dead text.", ref=rid)
-                continue
-            # A recorded delta that the generated probe dropped is worse than
-            # none: the JSON claims a check the model never performs.
-            if probes_text is None:
-                continue
-            body = probe_body(probes_text, probe)
-            if body is None:
-                continue
-
-            def squash(t):
-                # Compare modulo whitespace: the check is about the conjunct
-                # being present, not how the generator wrapped it across lines.
-                return re.sub(r"\s+", " ", t).strip()
-
-            if squash(delta) not in squash(body):
-                add(findings, FAIL, "witness", "witness-delta-not-in-probe", area_name,
-                    f"{label}.witness.delta.pre is recorded but the generated probe "
-                    f"`{probe}` does not contain it \u2014 the JSON claims a check the "
-                    f"model does not make. Regenerate the probes module.", ref=rid)
 
 
 def check_paired_invariants(root, area_data, sidecar, area_name, findings):
@@ -2173,37 +1779,31 @@ def check_harvested_examples(root, area_data, area_name, findings):
                 ref=ex.get("id"))
 
 
-def _prev_reader_texts(area_data):
-    """Authored Quint that may read a `_prev<Var>` ghost: witness deltas
-    (requirement and per-outcome) and over-probes invariant predicates —
-    the same set spec-probes snapshots ghosts for."""
-    out = []
-    for req in area_data.get("requirements", []) or []:
-        w = req.get("witness") or {}
-        for blob in [w] + list(w.get("outcomes") or []):
-            pre = (blob.get("delta") or {}).get("pre")
-            if pre:
-                out.append((req.get("id", "?"), pre))
-    for inv in area_data.get("invariants", []) or []:
-        if (inv.get("over") or "model") == "probes" and inv.get("predicate"):
-            out.append((inv.get("id", "?"), inv["predicate"]))
-    return out
-
-
 def check_ghost_zeros(area_data, sidecar, area_name, findings):
     """Every probe ghost needs a literal initial value, and spec-probes
     refuses to generate the module without one. That refusal used to be the
-    first anyone heard of it — at /spec-check, after the deltas were written
+    first anyone heard of it — at /spec-check, after the predicates were written
     against a `var st: State` record. Said here, at authoring time, for the
-    ghosts the area's own text asks for: a `_prev<Var>` some delta or
-    transition invariant reads, and a `_last<Param>` of an action step
-    calls (a helper action stepP does not mirror owes nothing)."""
+    ghosts the area's own text asks for: a `_prev<Var>` a transition
+    invariant reads, an `@old` snapshot a requirement declares, and a
+    `_last<Param>` of an action step calls (a helper action stepP does not
+    mirror owes nothing)."""
     if not sidecar or "__no_module__" in sidecar or not sidecar.get("ir"):
         return
     ir = sidecar["ir"]
     overrides = (area_data.get("formal_model") or {}).get("ghost_zeros") or {}
     var_types = ir.get("var_type_strs") or {}
-    readers = _prev_reader_texts(area_data)
+    readers = [(inv.get("id", "?"), inv.get("predicate") or "")
+               for inv in area_data.get("invariants", []) or []
+               if (inv.get("over") or "model") == "probes"]
+    for req in area_data.get("requirements", []) or []:
+        for old in req.get("old") or []:
+            if _zero_value(old.get("type") or "", ir, overrides) is None:
+                add(findings, FAIL, "witness", "ghost-zero-unsynthesizable", area_name,
+                    f"{req.get('id', '?')} @old {old.get('name')}: {old.get('type')} "
+                    f"has no initial value the probe generator can build. Add "
+                    f"formal_model.ghost_zeros {{\"{old.get('type')}\": \"<Quint literal>\"}}.",
+                    ref=req.get("id"))
     for var in sorted(ir.get("vars") or []):
         ghost = _ghost_for_var(var)
         users = sorted({rid for rid, text in readers
@@ -2287,6 +1887,7 @@ def check_transition_invariant_names(area_data, sidecar, info, area_name, findin
     declared |= set(sidecar.get("named") or ()) | set(sidecar.get("actions") or ())
     hosts = {r["id"]: (r.get("host") or {}).get("name")
              for r in info.get("records") or [] if r.get("tag") == "inv"}
+    generated = _probe_generated_names(area_data)
     for inv in area_data.get("invariants", []) or []:
         if (inv.get("over") or "model") != "probes" or not inv.get("quint_name"):
             continue
@@ -2302,6 +1903,10 @@ def check_transition_invariant_names(area_data, sidecar, info, area_name, findin
                 f"{iid}: @quint-name {name} is already declared in the model; the probe "
                 f"module imports it and declares `val {name}` too, so it does not "
                 f"compile. Pick a name the model does not use.", ref=iid)
+        elif name in generated:
+            add(findings, FAIL, "invariant", "transition-invariant-name-clash", area_name,
+                f"{iid}: @quint-name {name} is a name the probe generator declares "
+                f"for a requirement check. Pick another.", ref=iid)
 
 
 def check_cross_refs(area_data, all_areas, area_name, findings):
@@ -2827,73 +2432,19 @@ def check_journey_run(root, journey, all_areas, jname, findings):
 def check_sources(root, area_name, info, findings):
     """The files an area is derived from, checked as files.
 
-    Grammar problems (an unknown tag, a duplicate id, an @outcome-of naming
-    no requirement, a malformed @error) come out of the derivation itself.
+    Grammar problems (an unknown tag, a duplicate id, a malformed @outcome
+    or @old, a malformed @error) come out of the derivation itself.
     They are FAILs at every status: a record the reader could not place is a
     claim nobody is checking, and that is never a draft-stage nicety."""
     for problem in info.get("problems") or []:
         add(findings, FAIL, "source", "record-grammar", area_name, problem)
-    for suffix in spec_source.LEGACY_SUFFIXES:
-        legacy = Path(root) / "specs" / f"{area_name}{suffix}"
-        if legacy.exists():
-            add(findings, FAIL, "source", "legacy-spec-file", area_name,
-                f"specs/{legacy.name} is a JSON-first spec. Records now live in "
-                f"the model's doc comments: run `tools/spec_source.py migrate "
-                f"{area_name} --write`, review the diff, and commit the result.")
     for rec in info.get("records") or []:
-        if rec.get("host") is None and rec["tag"] != "outcome-of":
+        if rec.get("host") is None:
             add(findings, FAIL, "source", "record-without-host", area_name,
                 f"{rec['where']['file']}:{rec['where']['line']}: @{rec['tag']} "
                 f"{rec['id']} documents no declaration — a doc comment at the end "
                 f"of a file belongs to nothing. Move it above its host.",
                 ref=rec["id"])
-
-
-def check_witness_hosts(area_data, sidecar, info, area_name, findings):
-    """A witness host's ghost parameters, against the action it witnesses.
-
-    `def shall_REQ_003(_lastUid: UserId)` typechecks in the model on its own
-    terms; the probe generator then binds `_lastUid` to the ghost of the
-    @via action's `uid`. If that action has no `uid`, or types it
-    differently, the model is happy and the probe is wrong — so it is
-    checked here, where both are visible."""
-    if not sidecar or sidecar.get("__no_module__"):
-        return
-    params_by_action = sidecar.get("action_param_types") or {}
-    for rec in info.get("records") or []:
-        host = rec.get("host") or {}
-        if rec["tag"] not in ("req", "outcome-of") or host.get("kind") not in ("val", "def"):
-            continue
-        via = next((v for t, v in rec["tags"] if t == "via"), None)
-        if rec["tag"] == "outcome-of":
-            req = next((r for r in area_data.get("requirements") or []
-                        if r.get("id") == rec["id"]), {})
-            via = req.get("quint_ref")
-        if not via:
-            if (host.get("name") or "").startswith("shall_"):
-                add(findings, WARN, "source", "witness-host-without-via", area_name,
-                    f"{rec['id']}: `{host['name']}` is named like a witness host "
-                    f"but its record has no @via, so its body is not read as the "
-                    f"witness predicate. Add `@via <action>`.", ref=rec["id"])
-            continue
-        declared = {ghost_for(n): t for n, t in (params_by_action.get(via) or [])}
-        for pname, ptype in host.get("params") or []:
-            if not pname.startswith("_last") or pname == "_lastAction":
-                continue
-            if pname not in declared:
-                continue  # binding to another action's ghost: witness-unbound's call
-            if ptype and declared[pname] and ptype.replace(" ", "") != declared[pname].replace(" ", ""):
-                add(findings, FAIL, "source", "witness-host-param-type", area_name,
-                    f"{rec['id']}: `{host['name']}` types {pname} as {ptype}, but "
-                    f"`{via}` declares it {declared[pname]} — the probe would bind "
-                    f"a value of the wrong type.", ref=rec["id"])
-    for rec in info.get("records") or []:
-        if rec["tag"] == "con" and any(t == "value" for t, _ in rec["tags"]) \
-                and (rec.get("host") or {}).get("body") is not None \
-                and spec_source._literal((rec.get("host") or {}).get("body")) is not None:
-            add(findings, FAIL, "source", "constant-value-twice", area_name,
-                f"{rec['id']}: @value restates the value of `{rec['host']['name']}`. "
-                f"The model's literal is the value; drop the tag.", ref=rec["id"])
 
 
 def check_ui_hosts(root, area_data, sidecar, info, area_name, findings):
@@ -3005,15 +2556,15 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     if info.get("records_file"):
         check_schema(info["records_file"], build_schema_validator(root, "records.schema.json"),
                      area_name, findings)
-    check_witness_hosts(area_data, sidecar, info, area_name, findings)
+    check_constant_hosts(info, area_name, findings)
     check_ui_hosts(root, area_data, sidecar, info, area_name, findings)
     check_area_meta(area_data, area_name, findings)
     check_ids(area_data, area_name, findings)
-    check_ears(area_data, area_name, findings)
-    check_state_binding(area_data, area_name, findings)
+    check_requirement_form(area_data, area_name, findings)
     check_fit_criteria(area_data, area_name, findings)
     check_witnesses(root, area_data, area_name, findings)
-    check_predicate_sanity(area_data, sidecar, sidecars, area_name, findings)
+    decls = model_decls(root, area_data, area_name)
+    check_shall_sanity(area_data, sidecar, sidecars, decls, area_name, findings)
     # The probe module, when the area has one: an invariant declared
     # `over: "probes"` names a val that lives there, not in the sidecar.
     _probes_rel = (area_data.get("formal_model") or {}).get("probes_file")
@@ -3023,10 +2574,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
                      probes=probes_sidecar)
     check_orphan_actions(area_data, sidecar, area_name, findings)
     check_constraint_values(area_data, sidecar, area_name, findings)
-    check_ears_guard_correspondence(area_data, sidecar, area_name, findings)
-    check_ears_effect_correspondence(area_data, sidecar, area_name, findings)
     check_unproducible_states(area_data, sidecar, area_name, findings)
-    decls = model_decls(root, area_data, area_name)
     check_cited_constants(area_data, decls, area_name, findings)
     check_unread_constants(area_data, decls, area_name, findings)
     check_error_outcomes_produced(area_data, sidecar, area_name, findings)
@@ -3043,8 +2591,6 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_modality(area_data, area_name, findings)
     check_decision_affects(area_data, all_areas, area_name, findings)
     check_examples(area_data, sidecar, all_areas, area_name, findings)
-    check_witness_binding(area_data, sidecar, area_name, findings)
-    check_witness_delta(root, area_data, sidecar, area_name, findings)
     check_ghost_zeros(area_data, sidecar, area_name, findings)
     check_builtin_names(sidecar, area_name, findings)
     check_transition_invariant_names(area_data, sidecar, info, area_name, findings)
