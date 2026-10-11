@@ -51,7 +51,7 @@ MAX_NOTE_LEN = 60
 # Ghost vars that carry replay bookkeeping, not model state. Underscore
 # prefix is the convention precisely so model vars ("lastLoginTime") are
 # never silently dropped from summaries/diagrams.
-GHOST_PREFIXES = ("_last", "mbt::")
+GHOST_PREFIXES = ("_last", "_pre_", "_old_", "_prev", "mbt::")
 # Params, not the action label: every _last* ghost except _lastAction itself,
 # and quint's own nondet record when the trace came from `quint run --mbt`.
 GHOST_PARAM_RE = re.compile(r"^_last(?!Action$)")
@@ -119,7 +119,7 @@ def ghost_for_param(name):
 
 
 def ghost_for_var(name):
-    """status -> _prevStatus. The pre-state snapshot a witness delta reads."""
+    """status -> _prevStatus. The pre-state snapshot a transition invariant reads."""
     return "_prev" + name[:1].upper() + name[1:]
 
 
@@ -164,79 +164,77 @@ def witness_entries(req):
     return [(rid, w)]
 
 
-def is_computed(req):
-    """True for a requirement verified by unit tests rather than a trace: a
-    derived value or pure calculation (effort = sum of issue effort, a score
-    formula) that no state transition carries, so there is nothing to
-    witness and nothing to refuse.
+def obligation_name(req_id):
+    """The probe-module `val` that states a requirement's OBLIGATION, the
+    universal half of what it claims: every reachable step it governs
+    satisfies it. Asserted positively, so a counterexample is a violation.
+    The witness probe is the existential half: the step can happen at all."""
+    return "oblig_" + req_id.replace("-", "_")
 
-    Spelled as a skipped witness on a requirement that is neither
-    `@unwanted` nor `forbidden`. Those two are what make a skip a REFUSAL;
-    without either, reading the skip as a rejection asked a score formula for
-    a refusal example it cannot have. What it owes instead is `verified_by` —
-    the test that checks the calculation."""
-    if not isinstance(req, dict):
-        return False
-    w = req.get("witness") or {}
-    return (w.get("status") == "skipped"
-            and req.get("modality") != "forbidden"
-            and not (req.get("ears") or {}).get("unwanted"))
+
+def pre_ghost(req_id):
+    """The boolean ghost that records whether a requirement's @while held in
+    the state BEFORE the step (stepP assigns it from the unprimed state, so
+    no snapshot of the whole pre-state is needed)."""
+    return "_pre_" + req_id.replace("-", "_")
+
+
+def old_ghost(req_id, name):
+    """The ghost holding a requirement's `@old <name>` — a value read in the
+    state BEFORE the step, so @shall can say how the step changed it."""
+    return "_old_" + req_id.replace("-", "_") + "_" + name
+
+
+def is_computed(req):
+    """True for a requirement verified by unit tests rather than the model: a
+    derived value or pure calculation (effort = sum of issue effort, a score
+    formula) that no state transition carries. It sits on the `pure def`
+    that computes it, and owes `verified_by` — the test that checks the
+    calculation."""
+    return isinstance(req, dict) and req.get("form") == "computed"
 
 
 def is_rejection(req):
-    """True when a requirement forbids a behavior rather than requiring one.
+    """True when a requirement forbids a behavior rather than requiring one:
+    modality "forbidden". Its obligation is that its action never fires from
+    a state where its @while holds; on the code side it owes a refusal
+    EXAMPLE — an @example whose @refs names it and whose run ends with the
+    refused call. Shared so lint, spec-record and the readback agree."""
+    return isinstance(req, dict) and req.get("modality") == "forbidden"
 
-    Shared so lint, spec-record and the readback cannot disagree about which
-    requirements owe a refusal EXAMPLE — an @example whose @refs names the
-    requirement and whose run reaches the blocking state and ends with the
-    refused call (`.fail()` in a guard-style model, a recorded refusal
-    result in a total-action one). Two forms count:
 
-      - modality "forbidden" (the typed form), or
-      - an `@unwanted` requirement whose witness is deliberately SKIPPED with
-        a discharge (the older prose form, still valid).
-
-    A skip on any other requirement is a computed requirement
-    (is_computed), not a refusal.
-
-    Deliberately NOT keyed on ears.unwanted alone: much unwanted-behavior
-    handling does change state (a timeout that moves the order to PENDING),
-    is witnessable, and is already covered by trace replay. The distinguishing
-    property of a refusal is that there is no state change to witness."""
-    if not isinstance(req, dict):
+def owes_obligation(req):
+    """True when the model must prove the requirement on every step: every
+    formal requirement except a computed one (whose proof is its tests). A
+    raw requirement's clauses are still words, so it owes nothing yet."""
+    if not isinstance(req, dict) or req.get("status", "raw") in ("raw", "deferred") \
+            or req.get("type") == "non-functional":
         return False
-    if req.get("modality") == "forbidden":
-        return True
-    w = req.get("witness") or {}
-    return (w.get("status") == "skipped" and not is_computed(req)
-            and skip_discharge(w) is not None)
+    form = req.get("form")
+    if form == "event":
+        if req.get("modality") == "forbidden":
+            return True
+        if req.get("modality") == "may":
+            return bool((req.get("witness") or {}).get("outcomes"))
+        return bool((req.get("ears") or {}).get("response"))
+    return form == "state"
 
 
-def skip_discharge(witness, req=None):
-    """What a `skipped` witness offers in place of a trace, or None.
-
-    Two forms discharge the obligation, and they are the same claim written
-    at different precisions:
-
-      - `enforced_by`: the enforcing invariant as an ID. The typed form, and
-        the one the schema and spec-lint both steer prohibitions toward,
-        because a dangling ID FAILs where a sentence cannot be checked.
-      - `justification`: the older prose form, still valid.
-
-    Shared so the gate has one definition. It previously read only the prose
-    field in three separate places, which meant spec-record wrote the typed
-    form for every `forbidden` requirement and spec-lint then failed it — the
-    documented flow breaking its own gate on the first run.
-    """
-    if not isinstance(witness, dict):
+def witness_exempt(req):
+    """Why a requirement has no witness to find, or None when it owes one.
+    Derived from what the requirement IS, never authored: a forbidden step
+    has no trace to show, a computed value has no step, and a requirement
+    with no @while holds in every state (it is an invariant)."""
+    if not isinstance(req, dict):
         return None
-    enforced = witness.get("enforced_by")
-    if enforced:
-        return f"enforced by {enforced}"
-    verified = (req or {}).get("verified_by") if isinstance(req, dict) else None
-    if verified:
-        return "verified by " + ", ".join(verified)
-    return witness.get("justification") or None
+    if req.get("modality") == "forbidden":
+        return "forbidden — its obligation is that the step never happens"
+    if is_computed(req):
+        tests = ", ".join(req.get("verified_by") or [])
+        return f"computed — verified by {tests}" if tests else "computed"
+    if req.get("form") == "state" and not (req.get("ears") or {}).get("state"):
+        return "holds in every state — its obligation is an invariant"
+    return None
 
 
 def compute_spec_sha(area_data):
@@ -706,29 +704,46 @@ def is_hollow(trace):
 
     Structural, so no Quint evaluator is needed and the answer cannot drift
     from what the checker actually produced: the trace either has a step in
-    it or it does not. The remedy is a witness.delta (the probe then has to
-    show the state MOVING, over the `_prev*` ghosts) and usually a predicate
-    that was too weak to tell before from after.
-
-    Deliberately independent of whether a delta is declared: a delta whose
-    `pre` also holds at init still yields a one-state trace, and the trace is
-    the evidence, not the field."""
+    it or it does not. Witness probes now require the governing action to
+    fire, so a one-state trace means the probe itself is broken (or a
+    record predates the obligation grammar)."""
     states = (trace or {}).get("states") or []
     return len(states) <= 1
 
 
+def _obligation_check(req, current_sha):
+    """(ok, status, detail) for a requirement's obligation verdict."""
+    ob = req.get("obligation") or {}
+    st = ob.get("formal_status", "not-run")
+    if st == "counterexample-found":
+        return False, "VIOLATED", (f"a reachable step breaks it — "
+                                   f"{ob.get('trace') or 'see check_results'}")
+    if st != "verified":
+        return False, "OBLIGATION-NOT-RUN", "the every-step check has not run"
+    if current_sha is None:
+        return False, "UNVERIFIABLE", "model files can't be hashed"
+    if not ob.get("model_sha"):
+        return False, "UNSTAMPED", "obligation verdict has no model_sha"
+    if ob["model_sha"] != current_sha:
+        return False, "STALE", "model changed since the obligation was checked"
+    steps = ob.get("steps")
+    return True, "verified", f"every step (≤{steps})" if steps else "every step"
+
+
 def witness_status(root, area_name, area_data):
-    """Witness-obligation status for every gating requirement.
+    """Proof status for every gating requirement: its WITNESS (the step can
+    happen) and its OBLIGATION (every such step satisfies it).
     Returns (rows, missing, discharged) where rows = [(rid, status, trace_rel,
     detail)] and missing > 0 means the area must NOT be conformance-replayed
     or treated as fully checked. This is the single implementation behind
     `itf_tools status` and spec-record's verify preflight.
 
-    Gate semantics: a requirement counts as discharged ONLY when it is
-    witnessed-with-a-fresh-stamped-valid-trace or justified-skipped.
-    Everything else — not-run, no-witness, stale, unstamped, invalid,
-    missing file, unjustified skip, unverifiable model sha — counts
-    against the gate."""
+    A requirement counts as discharged ONLY when both halves are: a fresh,
+    valid, non-hollow witness trace (or a witness exemption derived from
+    what the requirement is — witness_exempt), and a verified obligation
+    stamped with the current model sha. A computed requirement is
+    discharged by naming its tests. Everything else counts against the
+    gate."""
     root = Path(root)
     current_sha = compute_model_sha(root, area_name, area_data)
     rows = []
@@ -739,45 +754,30 @@ def witness_status(root, area_name, area_data):
         if req.get("status") == "deferred" or req.get("type") == "non-functional":
             continue
         w = req.get("witness") or {}
+        trace_rel = w.get("trace")
+        if is_computed(req):
+            if req.get("verified_by"):
+                discharged += 1
+                rows.append((rid, "computed", "—", witness_exempt(req)))
+            else:
+                missing += 1
+                rows.append((rid, "COMPUTED-UNTESTED", "—",
+                             "computed requirement names no @verified-by test"))
+            continue
+        if not owes_obligation(req):
+            missing += 1
+            rows.append((rid, "NOT-FORMAL", "—",
+                         "no formal @shall / @outcome yet — nothing to check"))
+            continue
         # A permission is discharged only when EVERY permitted outcome is:
         # proving one of several allowed behaviors reachable says nothing
         # about the others.
         entries = witness_entries(req)
         multi = len(entries) > 1 or (w.get("outcomes") or [])
-        trace_rel = w.get("trace")
         status = w.get("status", "not-run")
-        detail = ""
-        if status == "skipped":
-            # Justified skip discharges the obligation (rejection requirement —
-            # the proof is an invariant). Unjustified skip is a gate failure.
-            discharge = skip_discharge(w, req)
-            if discharge:
-                status, detail = "skipped", discharge
-                discharged += 1
-            else:
-                status, detail = ("SKIPPED-UNJUSTIFIED",
-                                  "no justification or enforced_by — does not discharge")
-                missing += 1
-            rows.append((rid, status, trace_rel or "—", detail))
-            continue
-        if (not w.get("predicate") and not w.get("outcomes")
-                and skip_discharge(w) is not None
-                and not (req.get("modality") == "forbidden"
-                         and w.get("enforced_by"))):
-            # A discharge is only consulted at status 'skipped'. Carrying one
-            # at any other status leaves the requirement with no predicate,
-            # no trace and no discharge — a gate failure whose cause is a
-            # missing status, not a missing predicate. (A `forbidden`
-            # requirement naming its enforcer is exempt: spec-record sets its
-            # status itself, and before that first run it is correct as
-            # written.)
-            rows.append((rid, "JUSTIFIED-UNSET", trace_rel or "—",
-                         f"witness.status is '{status}', not 'skipped' — "
-                         f"discharges nothing until it is"))
-            missing += 1
-            continue
         worst_status, worst_detail, entry_traces, bad_entries = None, "", [], 0
-        for label, entry in entries:
+        exempt = witness_exempt(req)
+        for label, entry in ([] if exempt else entries):
             e_status = entry.get("status", "not-run") if multi else status
             e_trace = entry.get("trace") if multi else trace_rel
             e_detail = ""
@@ -794,32 +794,25 @@ def witness_status(root, area_name, area_data):
                     if errs:
                         e_status = "INVALID"
                     elif e_status == "witnessed" and is_hollow(t):
-                        # The recorded status says witnessed; the trace says
-                        # the predicate held at init. The trace wins. Checked
-                        # here as well as at mint time so that witnesses
-                        # stamped before this gate existed \u2014 or edited by
-                        # hand \u2014 cannot keep a proof the evidence never
-                        # supported.
+                        # The trace wins over the recorded status.
                         e_status = "HOLLOW"
-                        e_detail = ("predicate already true in the initial state "
-                                    "(1-state counterexample) \u2014 proves nothing "
-                                    "happened; add a witness.delta")
+                        e_detail = ("1-state trace — nothing happened")
                     elif e_status == "witnessed":
                         stamped = entry.get("model_sha")
                         if current_sha is None:
                             # Model files unhashable (e.g. probes recorded but
-                            # missing): freshness UNVERIFIABLE \u2014 that must gate,
+                            # missing): freshness UNVERIFIABLE — that must gate,
                             # not silently discharge.
                             e_status = "UNVERIFIABLE"
                             e_detail = ("model files can't be hashed (probes file "
-                                        "missing?) \u2014 freshness unverifiable")
+                                        "missing?) — freshness unverifiable")
                         elif not stamped:
                             e_status = "UNSTAMPED"
-                            e_detail = ("no model_sha \u2014 freshness unverifiable; "
+                            e_detail = ("no model_sha — freshness unverifiable; "
                                         "re-run /spec-check to pin")
                         elif stamped != current_sha:
                             e_status = "STALE"
-                            e_detail = ("model changed since trace was found \u2014 "
+                            e_detail = ("model changed since trace was found — "
                                         "re-run /spec-check")
                         else:
                             ok = True
@@ -833,17 +826,21 @@ def witness_status(root, area_name, area_data):
                     if multi:
                         worst_detail = f"{label}: {e_detail}" if e_detail else label
 
+        ob_ok, ob_status, ob_detail = _obligation_check(req, current_sha)
         if bad_entries:
             missing += 1
-            status = worst_status or "not-run"
-            detail = worst_detail
+            status, detail = worst_status or "not-run", worst_detail
+        elif not ob_ok:
+            missing += 1
+            status, detail = ob_status, ob_detail
         else:
             discharged += 1
-            status = "witnessed"
-            detail = (f"{len(entries)} permitted outcome(s) witnessed" if multi
-                      else worst_detail or detail)
-        shown = ", ".join(entry_traces) if multi else (trace_rel or "\u2014")
-        rows.append((rid, status, shown or "\u2014", detail))
+            status = "skipped" if exempt else "witnessed"
+            what = exempt or (f"{len(entries)} permitted outcome(s) witnessed"
+                              if multi else worst_detail or "witnessed")
+            detail = f"{what}; {ob_detail}"
+        shown = ", ".join(entry_traces) if multi else (trace_rel or "—")
+        rows.append((rid, status, shown or "—", detail))
     return rows, missing, discharged
 
 
@@ -859,8 +856,8 @@ def cmd_status(args):
     for rid, status, trace_rel, detail in rows:
         print(f"{rid:<{width}}  {status:<20} {trace_rel}"
               + (f"  ({detail})" if detail else ""))
-    print(f"\n{discharged}/{len(rows)} witness obligations discharged "
-          f"(witnessed-and-fresh or justified-skip).")
+    print(f"\n{discharged}/{len(rows)} requirements discharged "
+          f"(witnessed or exempt, AND checked on every step).")
     if missing:
         sys.exit(1)
 

@@ -1,13 +1,14 @@
+/// No model yet, so the requirements below are `raw`: the sentence and
+/// the @when words are the claim until /spec formalizes each one on the
+/// action it governs (formal @while / @shall).
+///
 /// @req REQ-001
 /// While the cart is Open, when a shopper adds a SKU already in the cart,
 /// the system shall increase that line's quantity.
-/// @status needs-validation
+/// @status raw
 /// @modality must
 /// @source extracted
-/// @while the Cart is Open
 /// @when a shopper adds a SKU already present
-/// @shall increase that line's quantity by the amount added
-/// @via add_item
 /// @evidence code/legacy-cart/cart.js:31-35
 /// @confidence high
 /// @inferred-by agent
@@ -15,13 +16,10 @@
 /// @req REQ-002
 /// While the cart is Open and holds fewer than MAX_ITEMS lines, when a
 /// shopper adds a new SKU, the system shall append a line for it.
-/// @status needs-validation
+/// @status raw
 /// @modality must
 /// @source extracted
-/// @while the Cart is Open and holds fewer than MAX_ITEMS lines
 /// @when a shopper adds a new SKU
-/// @shall append a line for that SKU
-/// @via add_item
 /// @evidence code/legacy-cart/cart.js:26-36
 /// @confidence high
 /// @inferred-by agent
@@ -29,17 +27,11 @@
 /// @req REQ-003
 /// If a shopper adds an item to a CheckedOut cart, then the system shall
 /// refuse the call and change nothing.
-/// @status needs-validation
+/// @status raw
 /// @modality forbidden
 /// @source extracted
-/// @while the Cart is CheckedOut
 /// @when a shopper adds an item
 /// @unwanted
-/// @shall refuse the call and leave the cart untouched
-/// @via add_item
-/// @enforced-by INV-001
-/// @witness skipped: A refusal has no reachable state to witness. INV-001
-///   carries the model-side proof.
 /// @evidence code/legacy-cart/cart.js:22-24
 /// @confidence high
 /// @inferred-by agent
@@ -47,13 +39,11 @@
 /// @req REQ-004
 /// If the payment gateway is unavailable during checkout, then the system
 /// shall leave the cart Open and report that a retry is possible.
-/// @status needs-validation
+/// @status raw
 /// @modality must
 /// @source extracted
-/// @while the Cart is Open
 /// @when the payment gateway throws during checkout
 /// @unwanted
-/// @shall leave the Cart Open and return ok:false with reason 'unavailable'
 /// @error PaymentGateway.OK not-idempotent: CheckedOut
 /// @error PaymentGateway.DECLINED idempotent: NO_CHANGE — the cart stays
 ///   Open; reason 'declined'
@@ -61,7 +51,6 @@
 ///   Open; reason 'unavailable'; caller retries
 /// @error-note Retry safety rests on ASM-001, which is carried as a known
 ///   risk.
-/// @via checkout_unavailable
 /// @evidence code/legacy-cart/cart.js:58-62
 /// @confidence medium
 /// @inferred-by agent

@@ -496,13 +496,14 @@
             "properties": {
               "id": {
                 "type": "string",
-                "description": "INV-NNN or PROP-NNN. Witness results live in requirements[].witness, not here."
+                "description": "INV-NNN, PROP-NNN, or the REQ id of an obligation. Witness results live in requirements[].witness, not here."
               },
               "kind": {
                 "type": "string",
                 "enum": [
                   "invariant",
-                  "property"
+                  "property",
+                  "obligation"
                 ],
                 "default": "invariant"
               },
@@ -578,6 +579,10 @@
               "batched": {
                 "type": "boolean",
                 "description": "This verdict came from the batched `quint verify --invariants` run that checked every bounded invariant at once. Same check, same bound, one Apalache start for all of them — recorded because a batched ✓ and a per-id ✓ should not be indistinguishable when reading a ledger back."
+              },
+              "error": {
+                "type": "string",
+                "description": "What the checker printed when result is 'error'."
               },
               "note": {
                 "type": "string",
@@ -975,7 +980,7 @@
                   "skipped"
                 ],
                 "default": "not-run",
-                "description": "'witnessed' = a trace shows the behavior happening. 'no-witness' = UNREACHABLE (impossible guard or missing action). 'hollow' = the predicate was ALREADY TRUE before anything happened: the checker returned a single-state counterexample, so the trace shows the initial state satisfying the predicate, not the behavior occurring. A hollow witness is a false proof and gates exactly like a missing one — the usual fix is a witness.delta forcing the step to move the state, and often a predicate that was too weak to distinguish before from after."
+                "description": "'witnessed' = a trace shows the behavior happening. 'no-witness' = UNREACHABLE (impossible guard or missing action). 'hollow' = the predicate was ALREADY TRUE before anything happened: the checker returned a single-state counterexample, so the trace shows the initial state satisfying the predicate, not the behavior occurring. A hollow witness is a false proof and gates exactly like a missing one."
               },
               "trace": {
                 "type": "string",
@@ -1033,6 +1038,42 @@
               }
             }
           },
+          "obligation": {
+            "type": "object",
+            "description": "The universal half, written by /spec-check: the invariant `oblig_<REQ>` over the probe module, which says every reachable step of the governing action from a state where @while holds ends in @shall (for 'may': in one of the outcomes; for 'forbidden': never happens). A witness alone only proves the behavior CAN happen; this proves it ALWAYS does.",
+            "additionalProperties": false,
+            "properties": {
+              "formal_status": {
+                "type": "string",
+                "enum": [
+                  "not-run",
+                  "verified",
+                  "counterexample-found",
+                  "error",
+                  "timeout"
+                ],
+                "default": "not-run",
+                "description": "'counterexample-found' means the checker found a step of the action, from @while, that does not end in @shall; `trace` shows it."
+              },
+              "trace": {
+                "type": "string",
+                "description": "Counterexample ITF path relative to specs/, when violated."
+              },
+              "checked_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Step bound the check ran to. A verified obligation is valid only to this depth."
+              },
+              "model_sha": {
+                "type": "string",
+                "description": "sha256 of the model (.qnt + .probes.qnt) the obligation was verified against; stale when it no longer matches."
+              }
+            }
+          },
           "formal_status": {
             "type": "string",
             "enum": [
@@ -1047,25 +1088,6 @@
               "verified-smt"
             ]
           }
-        }
-      }
-    }
-  },
-  "$defs": {
-    "witnessDelta": {
-      "type": "object",
-      "description": "The PRE-state the witnessing step must start from. A postcondition alone proves reachability, not causation: a guard that already implies its own postcondition makes the action a no-op that only fires once its result already holds, and the probe goes green over dead text. The probe conjoins this over `_prev*` ghosts snapshotted before the step, so the trace must show the state actually MOVING. Referenced from BOTH the witness (a `must` has one) and each permitted outcome (a `may` proves each outcome with its own probe, so each names its own pre-state) — tools/spec-probes.py reads outcomes[].delta, which this schema previously forbade outright.",
-      "additionalProperties": false,
-      "required": [
-        "pre"
-      ],
-      "properties": {
-        "pre": {
-          "type": "string",
-          "description": "Quint boolean over the `_prev*` ghost vars, true exactly when the pre-state was one this behavior could still change. For a lockout: `_prevAccountStatus.get(_lastUid) == Unlocked`."
-        },
-        "note": {
-          "type": "string"
         }
       }
     }

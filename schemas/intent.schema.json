@@ -900,24 +900,5 @@
         }
       }
     }
-  },
-  "$defs": {
-    "witnessDelta": {
-      "type": "object",
-      "description": "The PRE-state the witnessing step must start from. A postcondition alone proves reachability, not causation: a guard that already implies its own postcondition makes the action a no-op that only fires once its result already holds, and the probe goes green over dead text. The probe conjoins this over `_prev*` ghosts snapshotted before the step, so the trace must show the state actually MOVING. Referenced from BOTH the witness (a `must` has one) and each permitted outcome (a `may` proves each outcome with its own probe, so each names its own pre-state) — tools/spec-probes.py reads outcomes[].delta, which this schema previously forbade outright.",
-      "additionalProperties": false,
-      "required": [
-        "pre"
-      ],
-      "properties": {
-        "pre": {
-          "type": "string",
-          "description": "Quint boolean over the `_prev*` ghost vars, true exactly when the pre-state was one this behavior could still change. For a lockout: `_prevAccountStatus.get(_lastUid) == Unlocked`."
-        },
-        "note": {
-          "type": "string"
-        }
-      }
-    }
   }
 }

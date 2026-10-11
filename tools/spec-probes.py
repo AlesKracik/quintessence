@@ -22,16 +22,28 @@ write them as `def`s.
 What it emits, per the convention in templates/probes.qnt.template:
 
   ghosts     _lastAction, one _last<Param> per distinct action parameter,
-             one _prev<Var> per state var some witness.delta reads
+             one _pre_<REQ> boolean per requirement with an @while (stepP
+             assigns it from the state BEFORE the step), and one _prev<Var>
+             per state var a transition invariant reads
   initP      init plus explicit ghost initial values (never `= <var>`:
              before init there is no prior state to read)
   stepP      the area module's step, mirrored, one branch per action it
-             calls,
-             tagging _lastAction and the param ghosts, snapshotting _prev
-  probes     one `val witness_<REQ>` per requirement carrying a predicate,
-             composed of the three conjuncts the methodology requires:
-             the bound predicate, the path constraint `_lastAction ==
-             <quint_ref>`, and the delta over the `_prev*` ghosts
+             calls, tagging _lastAction and the param ghosts, and setting
+             each _pre_<REQ> of a requirement on that action
+  defs       pre_<REQ> / post_<REQ> / outcome_<REQ>_<name>: the
+             requirement's @while / @shall / @outcome, verbatim, as defs
+             over the host action's own parameters — so nothing is rewritten
+             and the ghosts are passed as arguments
+  oblig      one `val oblig_<REQ>` per requirement: its OBLIGATION, asserted
+             positively. Every reachable step of the requirement's action
+             from a state where @while held ends where @shall holds (must),
+             where one @outcome holds (may), or never happens (forbidden); a
+             state requirement holds in every reachable state.
+  witness    one `val witness_<REQ>` per requirement that owes one: the
+             NEGATION of "the step happened from @while and ended in @shall"
+             — the model checker's counterexample to it is the witness trace,
+             proof the obligation is not vacuous. A `may` gets one per
+             outcome, each with the other outcomes false.
 
 Parameter domains cannot be inferred and are not guessed. `nondet uid =
 oneOf(<what?>)` is a scope decision — it decides how much of the state space
@@ -61,7 +73,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import spec_source  # noqa: E402
 from itf_tools import (area_json_path, ghost_for_param,  # noqa: E402
                        ghost_for_var, probe_name, outcome_probe_name,
-                       reach_name, skip_discharge, is_computed)
+                       reach_name, obligation_name, pre_ghost, old_ghost,
+                       witness_exempt, owes_obligation, is_computed)
 from quint_ir import parse_qnt, zero_value as _ir_zero  # noqa: E402
 
 def fail(msg):
@@ -100,26 +113,14 @@ def domain_for(name, type_str, domains):
 
 def prev_readers(area):
     """Every piece of authored Quint in this area that may read a `_prev`
-    ghost: witness deltas (the pre-state a probe had to start from) and the
-    predicates of invariants checked over this module (transition
-    properties)."""
-    text = []
-    for req in area.get("requirements") or []:
-        w = req.get("witness") or {}
-        pre = (w.get("delta") or {}).get("pre")
-        if pre:
-            text.append(pre)
-        for oc in w.get("outcomes") or []:
-            oc_pre = (oc.get("delta") or {}).get("pre")
-            if oc_pre:
-                text.append(oc_pre)
-    for _inv, _name, predicate in transition_invariants(area):
-        text.append(predicate)
-    return text
+    ghost: the predicates of invariants checked over this module (transition
+    properties). Requirements never do — their pre-state is @while, which
+    stepP evaluates before the step into a _pre_<REQ> boolean."""
+    return [predicate for _inv, _name, predicate in transition_invariants(area)]
 
 
 def collect_delta_vars(area, model_vars):
-    """State vars something in this area reads through a `_prev` ghost.
+    """State vars a transition invariant reads through a `_prev` ghost.
 
     Only the ones needed: a _prev ghost per state var would double the state
     space for snapshots nothing compares against."""
@@ -168,48 +169,50 @@ def transition_invariants(area):
     return out
 
 
-def probe_requirements(area):
-    """(req, probe_name, predicate, delta_pre) for everything that owes a
-    probe, permitted outcomes included.
+def def_name(prefix, rid, suffix=None):
+    base = f"{prefix}_" + re.sub(r"[^A-Za-z0-9]+", "_", rid)
+    if suffix:
+        base += "_" + (re.sub(r"[^A-Za-z0-9]+", "_", suffix).strip("_") or "outcome")
+    return base
 
-    Skipped on purpose, each for a different reason:
-      - deferred / non-functional: no behavior to witness in this model;
-      - forbidden with enforced_by: a prohibition has no reachable state to
-        witness, and the named invariant carries the proof;
-      - status 'skipped': the author discharged it in prose;
-      - no predicate: nothing to assert (spec-lint FAILs this separately —
-        emitting an empty probe here would hide it)."""
+
+def requirement_checks(area):
+    """One entry per requirement the model must prove, in declaration order:
+    {req, rid, form, action, while, shall, outcomes, modality}. Skipped:
+    deferred and non-functional requirements (no behavior in this model),
+    computed ones (their proof is a unit test), and anything not yet formal
+    (spec-lint FAILs that past `raw` — an empty check here would hide it)."""
     out = []
     for req in area.get("requirements") or []:
         rid = req.get("id")
-        if not rid or req.get("status") in ("deferred",) or \
-                req.get("type") == "non-functional":
+        if not rid or not owes_obligation(req):
             continue
-        w = req.get("witness") or {}
-        if w.get("status") == "skipped" or (req.get("modality") == "forbidden"
-                                            and w.get("enforced_by")):
+        ears = req.get("ears") or {}
+        outs = [oc for oc in (req.get("witness") or {}).get("outcomes") or []
+                if oc.get("predicate")]
+        out.append({"req": req, "rid": rid, "form": req.get("form"),
+                    "action": req.get("quint_ref"),
+                    "while": (ears.get("state") or "").strip() or None,
+                    "shall": (ears.get("response") or "").strip() or None,
+                    "outcomes": outs if req.get("modality") == "may" else [],
+                    "old": req.get("old") or [],
+                    "modality": req.get("modality") or "must"})
+    return out
+
+
+def probe_requirements(area):
+    """(req, probe_name, outcome_name) per witness probe this module emits —
+    what spec-record looks up. A requirement whose witness is exempt by what
+    it is (witness_exempt) has none."""
+    out = []
+    for c in requirement_checks(area):
+        if witness_exempt(c["req"]):
             continue
-        if req.get("modality") == "may":
-            outs = [oc for oc in w.get("outcomes") or [] if oc.get("predicate")]
-            for oc in outs:
-                # HONEST outcome: this outcome happened AND none of the
-                # others did. Without the negations one trace can witness
-                # every outcome at once — a predicate that does not tell
-                # "email" from "in-app" proves the latitude exists while
-                # demonstrating none of it.
-                predicate = oc["predicate"].strip()
-                siblings = [o["predicate"].strip() for o in outs if o is not oc]
-                if siblings:
-                    predicate = " and ".join(
-                        [f"({predicate})"] + [f"not({sib})" for sib in siblings])
-                out.append((req, outcome_probe_name(rid, oc.get("name")),
-                            predicate,
-                            (oc.get("delta") or {}).get("pre"),
-                            oc.get("name")))
-            continue
-        if w.get("predicate"):
-            out.append((req, probe_name(rid), w["predicate"],
-                        (w.get("delta") or {}).get("pre"), None))
+        if c["outcomes"]:
+            out += [(c["req"], outcome_probe_name(c["rid"], oc.get("name")),
+                     oc.get("name")) for oc in c["outcomes"]]
+        else:
+            out.append((c["req"], probe_name(c["rid"]), None))
     return out
 
 
@@ -239,18 +242,18 @@ def build(area, area_name, ir, quint_rel):
                      f"both — rename one of the parameters.")
             params[name] = type_str
 
-    # A requirement whose witness must arrive through an action stepP never
-    # takes can never fire: its path constraint names a branch that does not
-    # exist. Said here, where the cause is known, not as a no-witness later.
-    unmirrored = sorted({(r.get("id"), r.get("quint_ref"))
-                         for r, _n, _p, _d, _o in probe_requirements(area)
-                         if r.get("quint_ref") and r["quint_ref"] not in actions})
+    checks = requirement_checks(area)
+    # A requirement on an action stepP never takes can never be exercised:
+    # its obligation would hold vacuously and its witness never fire. Said
+    # here, where the cause is known.
+    unmirrored = sorted({(c["rid"], c["action"]) for c in checks
+                         if c["form"] == "event" and c["action"] not in actions})
     if unmirrored:
-        fail("witness path through an action step never calls: "
-             + ", ".join(f"{rid} @via {ref}" for rid, ref in unmirrored)
+        fail("requirement on an action step never calls: "
+             + ", ".join(f"{rid} on {ref}" for rid, ref in unmirrored)
              + f".\nstepP mirrors only the actions `step` calls ("
-             + ", ".join(actions) + "). Point @via at the route-level action "
-               "the helper is called from, or call it from step.")
+             + ", ".join(actions) + "). Put the requirement on the route-level "
+               "action the helper is called from, or call it from step.")
 
     missing_domains = sorted({t for n, t in params.items()
                               if domain_for(n, t, domains) is None})
@@ -284,7 +287,6 @@ def build(area, area_name, ir, quint_rel):
                "declare one in formal_model.ghost_zeros, keyed by the type as "
                "written: {\"ghost_zeros\": {\"<Type>\": \"<Quint literal>\"}}.")
 
-    probes = probe_requirements(area)
     transitions = transition_invariants(area)
 
     # A transition invariant reading a ghost that does not exist is the same
@@ -304,29 +306,57 @@ def build(area, area_name, ir, quint_rel):
                  + (", ".join(sorted(known_ghosts)) or "(the sidecar declares "
                     "no state vars)") + ".")
 
+    # Requirements whose @while needs a _pre ghost: those on an action. A
+    # state requirement's @while is read in the same state as its @shall.
+    pre_reqs = [c for c in checks if c["form"] == "event" and c["while"]]
+    old_vals = [(c, o) for c in checks if c["form"] == "event" for o in c["old"]]
+    for c, o in old_vals:
+        if zero(o["type"]) is None:
+            fail(f"{c['rid']} @old {o['name']}: cannot build an initial value "
+                 f"for type '{o['type']}' — declare one in "
+                 f"formal_model.ghost_zeros.")
+
+    def sig(action):
+        ps = param_types.get(action) or []
+        return ", ".join(f"{n}: {t}" for n, t in ps)
+
+    def ghost_args(action):
+        return ", ".join(ghost_for_param(n) for n, _ in param_types.get(action) or [])
+
+    def call(name, args):
+        return f"{name}({args})" if args else name
+
+    def head(name, action, olds=(), ret="bool"):
+        sg = ", ".join(x for x in [sig(action)] + [f"{o['name']}: {o['type']}"
+                                                   for o in olds] if x)
+        return f"  def {name}({sg}): {ret} =" if sg else f"  val {name}: {ret} ="
+
+    def post_args(c):
+        """The arguments a post/outcome def is called with in the probe
+        module: the action's parameter ghosts, then the @old ghosts."""
+        return ", ".join(x for x in [ghost_args(c["action"])]
+                         + [old_ghost(c["rid"], o["name"]) for o in c["old"]] if x)
+
     L = []
     a = L.append
     a("// " + "=" * 58)
-    a(f"// Witness Probe Module: {area_name}")
+    a(f"// Requirement Probe Module: {area_name}")
     a("// GENERATED by tools/spec-probes.py — regenerate, never hand-edit.")
-    a(f"// Source of predicates: the @req / @outcome-of doc comments in")
-    a(f"// specs/{area_name}.qnt — each witness host's body, inlined here.")
-    a("// Transition invariants: the @inv hosts over _prev* ghosts, same file.")
+    a(f"// Source: the @req records in specs/{area_name}.qnt — each")
+    a("// requirement's @while / @shall / @outcome, verbatim, as defs over its")
+    a("// action's own parameters.")
     a("//")
-    a("// To prove a behavior is REACHABLE, assert its negation as an")
-    a("// invariant — the checker's counterexample IS the witness trace.")
-    a("//")
-    a("// Each probe carries up to THREE conjuncts, and each closes a")
-    a("// different way a witness can prove less than the requirement claims:")
-    a("//   1. PATH CONSTRAINT (_lastAction == quint_ref) — the trace must")
-    a("//      arrive via the requirement's own action.")
-    a("//   2. DELTA over the _prev* ghosts — the pre-state the step had to")
-    a("//      start from. Without it a predicate already true at init")
-    a("//      witnesses green over nothing; spec-record refuses that trace")
-    a("//      as HOLLOW.")
-    a("//   3. PREDICATE, bound to the param ghosts.")
-    a("// The path comes first so that at init — no action yet, every ghost")
-    a("// still its zero — evaluation stops before reading a ghost as a key.")
+    a("// Every requirement is checked twice:")
+    a("//   oblig_<REQ>    its OBLIGATION, asserted positively: every reachable")
+    a("//                  step of its action from a state where @while held")
+    a("//                  ends where @shall holds (or never happens, for a")
+    a("//                  forbidden one). A counterexample is a VIOLATION.")
+    a("//   witness_<REQ>  the NEGATION of \"such a step happened\": the model")
+    a("//                  checker's counterexample IS the witness trace, proof")
+    a("//                  the obligation is not vacuous.")
+    a("// _pre_<REQ> is set by stepP from the state BEFORE the step, so @while")
+    a("// is read where the sentence says it holds. The path conjunct comes")
+    a("// first: at init no action has run and no ghost may be read as a key.")
     a("// " + "=" * 58)
     a("")
     a(f"module {module}_probes {{")
@@ -337,14 +367,41 @@ def build(area, area_name, ir, quint_rel):
     a('  var _lastAction: str')
     for name in sorted(params):
         a(f"  var {ghost_for_param(name)}: {params[name]}")
+    for c in pre_reqs:
+        a(f"  var {pre_ghost(c['rid'])}: bool")
+    for c, o in old_vals:
+        a(f"  var {old_ghost(c['rid'], o['name'])}: {o['type']}")
     for var in delta_vars:
         a(f"  var {ghost_for_var(var)}: {var_type_strs.get(var, 'int')}")
+    if checks:
+        a("")
+        a("  // -- What each requirement says, over its action's parameters --")
+    for c in checks:
+        rid, action = c["rid"], c["action"]
+        at = action if c["form"] == "event" else None
+        olds = c["old"] if at else []
+        if c["while"]:
+            a(head(def_name("pre", rid), at))
+            a(f"    {c['while']}")
+        for o in olds:
+            a(head(def_name("old", rid, o["name"]), at, ret=o["type"]))
+            a(f"    {o['expr']}")
+        if c["shall"] and c["modality"] == "must":
+            a(head(def_name("post", rid), at, olds))
+            a(f"    {c['shall']}")
+        for oc in c["outcomes"]:
+            a(head(def_name("outcome", rid, oc.get("name")), at, olds))
+            a(f"    {oc['predicate'].strip()}")
     a("")
     a("  action initP = all {")
     a("    init,")
     a('    _lastAction\' = "init",')
     for name in sorted(params):
         a(f"    {ghost_for_param(name)}' = {zero(params[name])},")
+    for c in pre_reqs:
+        a(f"    {pre_ghost(c['rid'])}' = false,")
+    for c, o in old_vals:
+        a(f"    {old_ghost(c['rid'], o['name'])}' = {zero(o['type'])},")
     for var in delta_vars:
         a(f"    {ghost_for_var(var)}' = "
           f"{zero(var_type_strs.get(var, ''))},")
@@ -356,8 +413,8 @@ def build(area, area_name, ir, quint_rel):
     a("    any {")
     for action in actions:
         args = [n for n, _ in (param_types.get(action) or [])]
-        call = f"{action}({', '.join(args)})" if args else action
-        a(f"      all {{ {call},")
+        callx = f"{action}({', '.join(args)})" if args else action
+        a(f"      all {{ {callx},")
         a(f'            _lastAction\' = "{action}",')
         for name in sorted(params):
             ghost = ghost_for_param(name)
@@ -366,54 +423,100 @@ def build(area, area_name, ir, quint_rel):
             # carrying the previous value is what "this action did not touch
             # it" means.
             a(f"            {ghost}' = {name if name in args else ghost},")
+        for c in pre_reqs:
+            # Read BEFORE the step: the right-hand side is the unprimed state.
+            value = (call(def_name("pre", c["rid"]), ", ".join(args))
+                     if c["action"] == action else "false")
+            a(f"            {pre_ghost(c['rid'])}' = {value},")
+        for c, o in old_vals:
+            g = old_ghost(c["rid"], o["name"])
+            value = (call(def_name("old", c["rid"], o["name"]), ", ".join(args))
+                     if c["action"] == action else g)
+            a(f"            {g}' = {value},")
         for var in delta_vars:
             a(f"            {ghost_for_var(var)}' = {var},")
         a("      },")
     a("    }")
     a("  }")
+    claimed = set()
     if transitions:
         a("")
         a("  // -- Transition invariants ----------------------------------")
         a("  // Declared over: \"probes\" because they read the pre-state. These")
         a("  // are asserted POSITIVELY, unlike the probes below: a")
         a("  // counterexample to one of these is a VIOLATION, not a witness.")
-        claimed = {name for _r, name, _p, _d, _o in probes}
+        generated = ({probe_name(c["rid"]) for c in checks}
+                     | {obligation_name(c["rid"]) for c in checks}
+                     | {outcome_probe_name(c["rid"], o.get("name"))
+                        for c in checks for o in c["outcomes"]})
         for inv, name, predicate in transitions:
-            if name in claimed:
+            if name in generated or name in claimed:
                 fail(f"{inv.get('id', '?')}.quint_name '{name}' collides with "
-                     f"a generated witness probe of the same name. Rename the "
-                     f"invariant's val — the probe name is derived from its "
-                     f"requirement id and cannot move.")
+                     f"a generated name in the probe module. Rename the "
+                     f"invariant's val — generated names are derived from "
+                     f"requirement ids and cannot move.")
             claimed.add(name)
             desc = (inv.get("description") or "").strip().replace("\n", " ")
             a("")
             a(f"  /// {inv.get('id', '?')}: {desc}")
             a(f"  val {name}: bool =")
             a(f"    {predicate.strip()}")
+
     a("")
-    a("  // -- Witness probes -----------------------------------------")
-    if not probes:
-        a("  // No requirement in this area carries a witness.predicate yet.")
-    for req, name, predicate, delta_pre, outcome in probes:
-        rid = req.get("id")
+    a("  // -- Obligations: every reachable step ----------------------")
+    if not checks:
+        a("  // No requirement in this area is formal yet.")
+    witnesses = []
+    for c in checks:
+        rid, req, action = c["rid"], c["req"], c["action"]
         desc = (req.get("description") or "").strip().replace("\n", " ")
-        label = f"{rid}" + (f" / {outcome}" if outcome else "")
+        if c["form"] == "event":
+            g = post_args(c)
+            fired = [f'_lastAction == "{action}"']
+            if c["while"]:
+                fired.append(pre_ghost(rid))
+            if c["modality"] == "forbidden":
+                body = "not(" + " and ".join(fired) + ")"
+                result = None
+            elif c["modality"] == "may":
+                outs = [call(def_name("outcome", rid, o.get("name")), g)
+                        for o in c["outcomes"]]
+                result = " or ".join(outs)
+                body = (f"not({' and '.join(fired)})\n      or ({result})")
+                for k, o in enumerate(c["outcomes"]):
+                    others = [f"not({x})" for j, x in enumerate(outs) if j != k]
+                    witnesses.append((outcome_probe_name(rid, o.get("name")),
+                                      f"{rid} / {o.get('name')}", desc,
+                                      fired + [outs[k]] + others))
+            else:
+                result = call(def_name("post", rid), g)
+                body = f"not({' and '.join(fired)})\n      or {result}"
+                if not witness_exempt(req):
+                    witnesses.append((probe_name(rid), rid, desc,
+                                      fired + [result]))
+        else:   # state
+            post = call(def_name("post", rid), "")
+            if c["while"]:
+                pre = call(def_name("pre", rid), "")
+                body = f"not({pre}) or {post}"
+                witnesses.append((probe_name(rid), rid, desc, [pre, post]))
+            else:
+                body = post
         a("")
-        a(f"  /// Witness probe for {label}: {desc}")
-        # Path, then pre-state, then the predicate: the order the header
-        # explains. At init `_lastC` is "" and `_prevStatus` is Map(), and a
-        # `get` on either is an error in the simulator; `and` stops at the
-        # first false conjunct, and the path is false until an action runs.
-        conjuncts = []
-        qref = req.get("quint_ref")
-        if qref:
-            conjuncts.append(f'_lastAction == "{qref}"')
-        if delta_pre:
-            conjuncts.append(delta_pre.strip())
-        conjuncts.append(predicate.strip())
+        a(f"  /// {rid}: {desc}")
+        a(f"  val {obligation_name(rid)}: bool =")
+        a(f"    {body}")
+
+    a("")
+    a("  // -- Witnesses: the step can happen -------------------------")
+    if not witnesses:
+        a("  // No requirement in this area owes a witness.")
+    for name, label, desc, conjuncts in witnesses:
+        a("")
+        a(f"  /// Witness for {label}: {desc}")
         a(f"  val {name}: bool =")
         a("    not(" + ("\n        and ".join(conjuncts)) + ")")
-    if probes:
+    if witnesses:
         a("")
         a("  // -- The same probes, the right way up ----------------------")
         a("  // For the simulator. `quint run --witnesses=<name>` counts the")
@@ -421,44 +524,35 @@ def build(area, area_name, ir, quint_rel):
         a("  // is a negation, which holds at init. These count the runs that")
         a("  // reached each behavior: the vacuity pre-screen spec-record runs")
         a("  // before the model checker, and the example gate in CI.")
-        for _req, name, _p, _d, _o in probes:
+        for name, _l, _d, _c in witnesses:
             a(f"  val {reach_name(name)}: bool = not({name})")
     a("")
-    # Requirements that owe no probe are named, not silently absent: an
+    # Requirements with nothing here are named, not silently absent: an
     # unexplained gap in this file is indistinguishable from the omission
     # bug this generator exists to prevent.
-    skipped = []
+    notes = []
+    in_checks = {c["rid"] for c in checks}
+    for c in checks:
+        why = witness_exempt(c["req"])
+        if why:
+            notes.append(f"{c['rid']}: no witness — {why}")
     for req in area.get("requirements") or []:
         rid = req.get("id")
-        if not rid or any(p[0] is req for p in probes):
+        if not rid or rid in in_checks:
             continue
-        w = req.get("witness") or {}
-        if req.get("modality") == "forbidden" and w.get("enforced_by"):
-            skipped.append(f"{rid}: forbidden — proof is {w['enforced_by']}")
-        elif is_computed(req):
-            skipped.append(f"{rid}: computed — verified by "
-                           + (", ".join(req.get("verified_by") or [])
-                              or "NO TEST NAMED (add @verified-by)"))
-        elif w.get("status") == "skipped":
-            skipped.append(f"{rid}: discharged in prose (witness.status skipped)")
+        if is_computed(req):
+            notes.append(f"{rid}: computed — verified by "
+                         + (", ".join(req.get("verified_by") or [])
+                            or "NO TEST NAMED (add @verified-by)"))
         elif req.get("type") == "non-functional":
-            skipped.append(f"{rid}: non-functional — fit criterion, not a trace")
+            notes.append(f"{rid}: non-functional — fit criterion, not a trace")
         elif req.get("status") == "deferred":
-            skipped.append(f"{rid}: deferred")
-        elif not (w.get("predicate") or w.get("outcomes")):
-            # A justification with any status other than 'skipped' discharges
-            # nothing, and reading it as "no predicate yet" sends the author
-            # to draft one they already decided not to write.
-            if skip_discharge(w, req):
-                skipped.append(
-                    f"{rid}: justified, but witness.status is "
-                    f"'{w.get('status', 'not-run')}' — set it to 'skipped' "
-                    f"or the discharge does not count")
-            else:
-                skipped.append(f"{rid}: NO PREDICATE YET — spec-lint FAILs this")
-    if skipped:
-        a("  // No probe, by design or because one is owed:")
-        for line in skipped:
+            notes.append(f"{rid}: deferred")
+        else:
+            notes.append(f"{rid}: NOT FORMAL YET — no @shall / @outcome to check")
+    if notes:
+        a("  // Not checked here, or checked without a witness:")
+        for line in notes:
             a(f"  //   {line}")
         a("")
     a("}")
@@ -532,9 +626,10 @@ def main():
     probes_path.parent.mkdir(parents=True, exist_ok=True)
     probes_path.write_text(text, encoding="utf-8")
     n_probes = sum(1 for ln in lines if ln.startswith("  val witness_"))
+    n_obl = sum(1 for ln in lines if ln.startswith("  val oblig_"))
     n_actions = sum(1 for ln in lines if "_lastAction' = \"" in ln) - 1
-    print(f"wrote {probes_path}: {n_probes} probe(s), {n_actions} action "
-          f"branch(es) in stepP")
+    print(f"wrote {probes_path}: {n_obl} obligation(s), {n_probes} witness "
+          f"probe(s), {n_actions} action branch(es) in stepP")
     return 0
 
 

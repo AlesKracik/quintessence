@@ -85,20 +85,25 @@ module auth {
 
   // -- Actions ------------------------------------------------------
 
-  // REQ-001: A registered user with valid credentials can log in.
+  // Signing in. Two requirements govern this step: what a login does
+  // (REQ-001), and when it must not happen at all (REQ-005).
+  /// @req REQ-001
+  /// When a registered user submits valid credentials, the system shall
+  /// create an Active session owned by that user.
+  /// @status specified
+  /// @when a registered user submits valid credentials
+  /// @shall isActive(sid) and sessionOwner.get(sid) == uid
+  ///   and activeSessionsOf(uid).contains(sid)
+  ///
   /// @req REQ-005
   /// While the account is Locked, if the user submits valid credentials,
   /// then the system shall refuse the login.
   /// @status specified
   /// @modality forbidden
-  /// @while the Account is Locked
-  /// @when the user submits valid credentials
   /// @unwanted
-  /// @shall refuse the login and leave every session and counter untouched
-  /// @enforced-by INV-002
-  /// @witness skipped: A prohibition has no reachable state to witness —
-  ///   there is no step in which 'the login did not happen' becomes visible.
-  ///   INV-002 (noSessionWhileLocked) carries the model-side proof.
+  /// @when the user submits valid credentials
+  /// @while isLocked(uid)
+  /// @refs INV-002
   action login(uid: UserId, sid: SessionId): bool = all {
     not(isLocked(uid)),
     not(sessions.keys().contains(sid)),
@@ -114,7 +119,13 @@ module auth {
     idleFor'           = idleFor.put(sid, 0),
   }
 
-  // REQ-002: A user with an Active session can log out.
+  /// @req REQ-002
+  /// While a user's session is Active, when the user requests logout, the
+  /// system shall transition that session to LoggedOut.
+  /// @status specified
+  /// @when the user requests logout
+  /// @while isActive(sid)
+  /// @shall statusOf(sessions, sid) == LoggedOut
   action logout(sid: SessionId): bool = {
     val uid = if (sessionOwner.keys().contains(sid)) sessionOwner.get(sid) else ""
     all {
@@ -132,12 +143,27 @@ module auth {
     }
   }
 
-  // REQ-003: After MAX_FAILED_ATTEMPTS, the account is locked.
-  //
   // Locking also ENDS the user's live sessions. Without that, locking an
-  // account left its Active session alive and INV-002 was violated — which
-  // REQ-005 leans on as its model-side proof. Found by checking this file
-  // after the rewrite; the Session state machine records the edge.
+  // account left its Active session alive and INV-002 was violated.
+  // Found by checking this file after a rewrite; the Session state
+  // machine records the edge.
+  //
+  // REQ-003 says both sides of the threshold in one obligation: the
+  // account is Locked after this failure IF AND ONLY IF the count has
+  // reached MAX_FAILED_ATTEMPTS. Loosen the guard to `>= 1` and the
+  // every-step check fails on the first failure — no separate
+  // "not early" invariant is needed for that.
+  /// @req REQ-003
+  /// If a login attempt fails while the account is Unlocked, then the system
+  /// shall increment failedAttempts and lock the account when it reaches
+  /// MAX_FAILED_ATTEMPTS.
+  /// @status specified
+  /// @unwanted
+  /// @when a login attempt fails
+  /// @while not(isLocked(uid))
+  /// @old before: int = attemptsOf(uid)
+  /// @shall attemptsOf(uid) == before + 1
+  ///   and (isLocked(uid) iff attemptsOf(uid) >= MAX_FAILED_ATTEMPTS)
   action login_failed(uid: UserId): bool = {
     val nextCount = attemptsOf(uid) + 1
     val locking = nextCount >= MAX_FAILED_ATTEMPTS
@@ -157,8 +183,15 @@ module auth {
     }
   }
 
-  // REQ-004: An Active session expires once it has been idle longer than
+  // An Active session expires once it has been idle longer than
   // MAX_SESSION_AGE ticks — the rule the sentence states, read here.
+  /// @req REQ-004
+  /// While a session is Active and has been inactive for longer than
+  /// MAX_SESSION_AGE, the system shall transition it to Expired.
+  /// @status specified
+  /// @when the session's idle time runs out
+  /// @while isActive(sid) and idleOf(sid) > MAX_SESSION_AGE
+  /// @shall statusOf(sessions, sid) == Expired
   action expire_session(sid: SessionId): bool = {
     val uid = if (sessionOwner.keys().contains(sid)) sessionOwner.get(sid) else ""
     all {
@@ -359,66 +392,4 @@ module auth {
     .then(login_failed("bob"))
     .expect(isLocked("bob") and attemptsOf("bob") == 5)
     .then(login("bob", "s2").fail())
-
-  // ----------------------------------------------------------
-  // REQUIREMENTS — witness predicates, constants and transition
-  // properties whose records live on them (spec_source.py)
-  // ----------------------------------------------------------
-
-  /// @req REQ-001
-  /// @status specified
-  /// @when a registered user submits valid credentials
-  /// @shall create an Active session owned by that user
-  /// @via login
-  /// @pre not(_prevSessions.keys().contains(_lastSid))
-  /// @pre-note The session must not have existed before the call — otherwise
-  ///   'some Active session exists' is satisfied by one an earlier login
-  ///   created.
-  def shall_REQ_001(_lastSid: SessionId, _lastUid: UserId): bool =
-    sessions.keys().contains(_lastSid) and statusOf(sessions, _lastSid) == Active and activeSessionsOf(_lastUid).contains(_lastSid)
-
-  /// @req REQ-002
-  /// While a user's session is Active, when the user requests logout, the
-  /// system shall transition that session to LoggedOut.
-  /// @status specified
-  /// @while the user's session is Active
-  /// @when the user requests logout
-  /// @shall transition that session to LoggedOut
-  /// @via logout
-  /// @pre statusOf(_prevSessions, _lastSid) == Active
-  /// @pre-note Logging out something already logged out proves nothing.
-  def shall_REQ_002(_lastSid: SessionId): bool =
-    statusOf(sessions, _lastSid) == LoggedOut
-
-  /// @req REQ-003
-  /// If a login attempt fails while the account is Unlocked, then the system
-  /// shall increment failedAttempts and lock the account when it reaches
-  /// MAX_FAILED_ATTEMPTS.
-  /// @status specified
-  /// @while the account is Unlocked
-  /// @when a login attempt fails
-  /// @unwanted
-  /// @shall increment failedAttempts and lock the account when it reaches
-  ///   MAX_FAILED_ATTEMPTS
-  /// @via login_failed
-  /// @pre not(_prevAccountStatus.keys().contains(_lastUid) and
-  ///   _prevAccountStatus.get(_lastUid) == Locked)
-  /// @pre-note The account must have been unlocked before the failure that
-  ///   locked it — a state where it was already Locked witnesses nothing
-  ///   about the lockout rule.
-  def shall_REQ_003(_lastUid: UserId): bool =
-    accountStatus.keys().contains(_lastUid) and accountStatus.get(_lastUid) == Locked
-
-  /// @req REQ-004
-  /// While a session is Active and has been inactive for longer than
-  /// MAX_SESSION_AGE, the system shall transition it to Expired.
-  /// @status specified
-  /// @while the session is Active and has been inactive for longer than
-  ///   MAX_SESSION_AGE
-  /// @shall transition it to Expired
-  /// @via expire_session
-  /// @pre statusOf(_prevSessions, _lastSid) == Active
-  /// @pre-note Only an Active session can expire.
-  def shall_REQ_004(_lastSid: SessionId): bool =
-    statusOf(sessions, _lastSid) == Expired
 }

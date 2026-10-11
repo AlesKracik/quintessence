@@ -4,10 +4,10 @@
 
 ## ⚠ Needs Your Attention
 
-- **auth** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [auth](./specs/auth.readback.md)
-- **auth-ui** — 5 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [auth-ui](./specs/auth-ui.readback.md)
-- **subscription** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Unchecked requirement … — see [subscription](./specs/subscription.readback.md)
-- **cart** — 9 item(s): Unchecked requirement; Unchecked requirement; Unchecked requirement; Open coverage GAPs … — see [cart](./specs/cart.readback.md)
+- **auth** — 6 item(s): Open coverage GAPs; Open question; Open question; Open question … — see [auth](./specs/auth.readback.md)
+- **auth-ui** — 3 item(s): Check error; The examples leave 11 behavior(s) open; Mutation results are for an older model — see [auth-ui](./specs/auth-ui.readback.md)
+- **subscription** — 4 item(s): Check error; Open question; The examples leave 6 behavior(s) open; Mutation results are for an older model — see [subscription](./specs/subscription.readback.md)
+- **cart** — 10 item(s): Requirement not formal yet; Requirement not formal yet; Requirement not formal yet; Requirement not formal yet … — see [cart](./specs/cart.readback.md)
 
 ## Areas
 
@@ -27,11 +27,11 @@
 
 | # | Step | Area | Status |
 |---|---|---|---|
-| 1 | [REQ-004](./specs/subscription.readback.md#req-004) — While the Subscription is Active, if the billing provider does not answer the cancellation, then the system shall leave the Subscription Active and billing enabled. — the provider does not answer the first try | subscription | ⏳ |
-| 2 | [REQ-001](./specs/subscription.readback.md#req-001) — While the Subscription is Active, when the customer cancels, the system shall stop future billing and mark the Subscription Cancelled. | subscription | ⏳ |
-| 3 | [REQ-002](./specs/subscription.readback.md#req-002) — While the Subscription is Cancelled and the paid period has not ended, the system shall keep access available. — same step as the cancel: access stays until the period ends | subscription | ⏳ |
-| 4 | [REQ-003](./specs/subscription.readback.md#req-003) — While the Subscription is Cancelled, when the customer cancels again, the system shall make no further change and report success. | subscription | ⏳ |
-| 5 | [REQ-005](./specs/subscription.readback.md#req-005) — While the Subscription is Cancelled, when the paid period ends, the system shall withdraw access and mark the Subscription Expired. | subscription | ⏳ |
+| 1 | [REQ-004](./specs/subscription.readback.md#req-004) — If the billing provider does not answer a cancellation, then the system shall leave the subscription Active. — the provider does not answer the first try | subscription | ◐ |
+| 2 | [REQ-001](./specs/subscription.readback.md#req-001) — When a customer cancels an Active subscription, the system shall stop future billing. | subscription | ◐ |
+| 3 | [REQ-002](./specs/subscription.readback.md#req-002) — When a cancellation succeeds, the system shall keep access available until the paid period ends. — same step as the cancel: access stays until the period ends | subscription | ◐ |
+| 4 | [REQ-003](./specs/subscription.readback.md#req-003) — When a customer cancels an already-Cancelled subscription, the system shall make no further change. | subscription | ◐ |
+| 5 | [REQ-005](./specs/subscription.readback.md#req-005) — When the paid period ends for a cancelled subscription, the system shall withdraw access. | subscription | ◐ |
 
 ### Sign in — *User — User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.*
 
@@ -39,8 +39,8 @@
 
 | # | Step | Area | Status |
 |---|---|---|---|
-| 1 | [UI-001](./specs/auth-ui.readback.md#ui-001) — While the user is on Home, when the user clicks 'Sign in', the system shall navigate to Login. | auth-ui | ⏳ |
-| 2 | [REQ-001](./specs/auth.readback.md#req-001) — When a registered user submits valid credentials, the system shall create an Active session owned by that user. | auth | ⏳ |
-| 3 | [UI-002](./specs/auth-ui.readback.md#ui-002) — While the user is on Login, when the user submits valid credentials, the system shall navigate to Dashboard. | auth-ui | ⏳ |
-| 4 | [REQ-003](./specs/auth.readback.md#req-003) — While the account is Unlocked, if a login attempt fails, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS. — failure branch: repeated bad credentials lock the account | auth | ⏳ |
-| 5 | [UI-003](./specs/auth-ui.readback.md#ui-003) — While the user is on Login, if the user submits credentials for a Locked account, then the system shall navigate to LockedNotice. — locked-account counterpart of the submit step | auth-ui | ⏳ |
+| 1 | [UI-001](./specs/auth-ui.readback.md#ui-001) — While on Home, when the user clicks 'Sign in', the system shall navigate to Login. | auth-ui | ◐ |
+| 2 | [REQ-001](./specs/auth.readback.md#req-001) — When a registered user submits valid credentials, the system shall create an Active session owned by that user. | auth | ◐ |
+| 3 | [UI-002](./specs/auth-ui.readback.md#ui-002) — While on Login, when the user submits valid credentials, the system shall navigate to Dashboard. | auth-ui | ◐ |
+| 4 | [REQ-003](./specs/auth.readback.md#req-003) — If a login attempt fails while the account is Unlocked, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS. — failure branch: repeated bad credentials lock the account | auth | ◐ |
+| 5 | [UI-003](./specs/auth-ui.readback.md#ui-003) — If the user submits credentials for a Locked account, then the system shall navigate to LockedNotice. — locked-account counterpart of the submit step | auth-ui | ◐ |
