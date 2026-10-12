@@ -365,12 +365,14 @@
                     "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow"], "default": "not-run", "description": "Same values as witness.status; 'hollow' means this outcome's predicate already held in the initial state." },
                     "checked_at": { "type": "string", "format": "date-time" },
                     "steps":      { "type": "integer", "minimum": 1, "description": "Step bound this outcome's probe actually ran to — same honesty rule as witness.steps." },
+                    "found_by":   { "type": "string", "enum": ["apalache", "simulator"], "description": "Same as witness.found_by." },
                     "model_sha":  { "type": "string" }
                   }
                 }
               },
               "checked_at": { "type": "string", "format": "date-time" },
               "steps":      { "type": "integer", "minimum": 1, "description": "Step bound the probe actually ran to. A 'no-witness' is only as strong as this number — unreachable within 3 steps is a very different claim from unreachable within 10, and when the run budget stops the deep pass the shallow bound is what stands. Absent on records written before the two-pass ladder existed." },
+              "found_by":   { "type": "string", "enum": ["apalache", "simulator"], "description": "Which engine found the witness trace. A witness is existential: one concrete execution that fires the step from @while and ends in @shall IS the proof, so a trace the simulator (`quint run`) reached is as strong as one Apalache constructed — and costs seconds instead of minutes. For 'simulator', steps is the trace's own length, not a search bound. Only the positive answer is ever taken from the simulator: 'no-witness' always comes from Apalache, because not finding something by random search is not proof that it is unreachable." },
               "model_sha":  { "type": "string", "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one." }
             }
           },
@@ -955,6 +957,22 @@
       "additionalProperties": false,
       "properties": {
         "ran_at": { "type": "string", "format": "date-time" },
+        "cost": {
+          "type": "object", "additionalProperties": false,
+          "description": "What the last check run cost, written by spec-record check. Pass 1 (the shallow sweep) is never budget-gated, so this is where a run says what it took and why the deep pass did not run: a deep pass the budget never reached leaves every bounded ✓ at the shallow bound, and the readback names that cause instead of leaving the reader to infer it.",
+          "properties": {
+            "pass1": { "type": "object", "additionalProperties": false, "properties": {
+              "checks":         { "type": "integer", "minimum": 0, "description": "Separate runs pass 1 made: per-check model-checker runs and witness probes (whichever engine answered). Checks a batched run cleared together are not counted." },
+              "after_checks":   { "type": "integer", "minimum": 0, "description": "How many had finished when the projection was made." },
+              "avg_check_s":    { "type": "number", "minimum": 0 },
+              "projected_s":    { "type": "number", "minimum": 0, "description": "Projected wall time of pass 1, made after the first few checks." },
+              "elapsed_s":      { "type": "number", "minimum": 0, "description": "Wall time pass 1 actually took." },
+              "parallel":       { "type": "integer", "minimum": 1 },
+              "budget_seconds": { "type": "number", "minimum": 0 }
+            } },
+            "deep_skipped":     { "type": "integer", "minimum": 0, "description": "Checks the budget stopped before their deep run; each keeps its shallow verdict and bound." }
+          }
+        },
         "max_steps": { "type": "integer", "minimum": 1, "description": "The CONFIGURED Apalache step ceiling for this run (apalache.max_steps). With the two-pass ladder it is no longer the depth every check reached — that is per check, in checks[].steps — so it serves as the fallback bound for records written before that field existed, and as the number a budget-stopped check is honest about NOT having reached." },
         "extraction": {
           "type": "object",

@@ -128,10 +128,10 @@ def _probe_module(tmp_path, text=COUNTER):
 
 def test_old_and_while_are_read_before_the_step(tmp_path):
     out = _probe_module(tmp_path)
-    assert "_pre_REQ_001' = pre_REQ_001(uid)" in out
-    assert "_old_REQ_001_before' = old_REQ_001_before(uid)" in out
+    assert "_pre_REQ_001' = pre_REQ_001(arg_UserId_1)" in out
+    assert "_old_REQ_001_before' = old_REQ_001_before(arg_UserId_1)" in out
     assert "def post_REQ_001(uid: UserId, before: int): bool" in out
-    assert "post_REQ_001(_lastUid, _old_REQ_001_before)" in out
+    assert "post_REQ_001(_arg_UserId_1, _old_REQ_001_before)" in out
 
 
 def test_a_prohibition_is_an_obligation_that_its_step_never_starts(tmp_path):

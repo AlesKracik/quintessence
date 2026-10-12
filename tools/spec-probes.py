@@ -21,7 +21,9 @@ write them as `def`s.
 
 What it emits, per the convention in templates/probes.qnt.template:
 
-  ghosts     _lastAction, one _last<Param> per distinct action parameter,
+  ghosts     _lastAction, one _arg_<Type>_<k> per parameter TYPE POSITION
+             (the k-th parameter of that type in an action's signature —
+             the name -> slot map is printed in the module header),
              one _pre_<REQ> boolean per requirement with an @while (stepP
              assigns it from the state BEFORE the step), and one _prev<Var>
              per state var a transition invariant reads
@@ -65,13 +67,14 @@ Exit codes: 0 = written / current, 1 = --check found it stale,
 
 import argparse
 import json
+import posixpath
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import spec_source  # noqa: E402
-from itf_tools import (area_json_path, ghost_for_param,  # noqa: E402
+from itf_tools import (area_json_path, param_slots,  # noqa: E402
                        ghost_for_var, probe_name, outcome_probe_name,
                        reach_name, obligation_name, pre_ghost, old_ghost,
                        witness_exempt, is_computed, verdict_ghost,
@@ -198,14 +201,32 @@ def build(area, area_name, ir, quint_rel):
         return _ir_zero(type_str, ir, overrides)
 
     # ── parameter ghosts, and the domains stepP will draw from ──────────
-    params = {}          # param name -> type as written
+    # One ghost per TYPE POSITION, not per name (itf_tools.param_slot): what a
+    # model costs to check must not depend on what its parameters are called.
+    slots = param_slots(param_types, actions)
+    slot_types = {}      # slot ghost -> type as written
     for action in actions:
-        for name, type_str in param_types.get(action) or []:
-            if name in params and params[name] != type_str:
-                fail(f"parameter '{name}' is declared as '{params[name]}' in one "
-                     f"action and '{type_str}' in another. One ghost cannot hold "
-                     f"both — rename one of the parameters.")
-            params[name] = type_str
+        for _name, type_str, slot in slots[action]:
+            slot_types.setdefault(slot, type_str)
+
+    # The nondet each parameter is drawn from. Shared by every parameter
+    # with the same domain at the same slot, so stepP makes as few choices
+    # as the actions need; a `param:<name>` domain gets a choice of its own.
+    def choice_for(name, type_str, slot):
+        if f"param:{name}" in domains:
+            same = {t for _a, row in slots.items() for n, t, _s in row if n == name}
+            return name if len(same) == 1 else f"{name}_{slot[len('_arg_'):]}"
+        return slot[1:]
+
+    choices = {}         # nondet var -> domain expression
+    arg_names = {}       # action -> [nondet var per parameter, in order]
+    for action in actions:
+        row = []
+        for name, type_str, slot in slots[action]:
+            var = choice_for(name, type_str, slot)
+            choices.setdefault(var, (name, type_str))
+            row.append(var)
+        arg_names[action] = row
 
     checks = requirement_checks(area)
     # A requirement on an action stepP never takes can never be exercised:
@@ -241,7 +262,7 @@ def build(area, area_name, ir, quint_rel):
             if v.get("verdict") == "NO-OP":
                 comp_vars.update(ch["var"] for ch in entry["changes"])
 
-    missing_domains = sorted({t for n, t in params.items()
+    missing_domains = sorted({t for n, t in choices.values()
                               if domain_for(n, t, domains) is None})
     if missing_domains:
         suggestion = json.dumps(
@@ -256,9 +277,9 @@ def build(area, area_name, ir, quint_rel):
              "parameter):\n\n" + suggestion)
 
     missing_zero = {}
-    for name, type_str in params.items():
+    for slot, type_str in slot_types.items():
         if zero(type_str) is None:
-            missing_zero[name] = type_str
+            missing_zero[slot] = type_str
     delta_vars = sorted(set(collect_delta_vars(area, ir.get("vars") or []))
                         | comp_vars)
     for var in delta_vars:
@@ -310,7 +331,7 @@ def build(area, area_name, ir, quint_rel):
         return ", ".join(f"{n}: {t}" for n, t in ps)
 
     def ghost_args(action):
-        return ", ".join(ghost_for_param(n) for n, _ in param_types.get(action) or [])
+        return ", ".join(slot for _n, _t, slot in slots.get(action) or [])
 
     def call(name, args):
         return f"{name}({args})" if args else name
@@ -346,6 +367,15 @@ def build(area, area_name, ir, quint_rel):
     a("// _pre_<REQ> is set by stepP from the state BEFORE the step, so @while")
     a("// is read where the sentence says it holds. The path conjunct comes")
     a("// first: at init no action has run and no ghost may be read as a key.")
+    if any(slots.values()):
+        a("//")
+        a("// Parameters ride in one ghost per TYPE POSITION, not per name;")
+        a("// spec-record writes every trace back under _last<Param> names.")
+        a("// name -> slot, per action:")
+        for action in actions:
+            if slots[action]:
+                a(f"//   {action}: " + ", ".join(f"{n} -> {sl}"
+                                            for n, _t, sl in slots[action]))
     a("// " + "=" * 58)
     a("")
     a(f"module {module}_probes {{")
@@ -354,8 +384,8 @@ def build(area, area_name, ir, quint_rel):
     a("")
     a("  // -- Ghost instrumentation ---------------------------------")
     a('  var _lastAction: str')
-    for name in sorted(params):
-        a(f"  var {ghost_for_param(name)}: {params[name]}")
+    for slot in sorted(slot_types):
+        a(f"  var {slot}: {slot_types[slot]}")
     for c in pre_reqs:
         a(f"  var {pre_ghost(c['rid'])}: bool")
     for c, o in old_vals:
@@ -390,8 +420,8 @@ def build(area, area_name, ir, quint_rel):
     a("  action initP = all {")
     a("    init,")
     a('    _lastAction\' = "init",')
-    for name in sorted(params):
-        a(f"    {ghost_for_param(name)}' = {zero(params[name])},")
+    for slot in sorted(slot_types):
+        a(f"    {slot}' = {zero(slot_types[slot])},")
     for c in pre_reqs:
         a(f"    {pre_ghost(c['rid'])}' = false,")
     for c, o in old_vals:
@@ -404,21 +434,22 @@ def build(area, area_name, ir, quint_rel):
     a("  }")
     a("")
     a("  action stepP = {")
-    for name in sorted(params):
-        a(f"    nondet {name} = oneOf({domain_for(name, params[name], domains)})")
+    for var in sorted(choices):
+        name, type_str = choices[var]
+        a(f"    nondet {var} = oneOf({domain_for(name, type_str, domains)})")
     a("    any {")
     for action in actions:
-        args = [n for n, _ in (param_types.get(action) or [])]
+        args = arg_names[action]
         callx = f"{action}({', '.join(args)})" if args else action
         a(f"      all {{ {callx},")
         a(f'            _lastAction\' = "{action}",')
-        for name in sorted(params):
-            ghost = ghost_for_param(name)
-            # A branch that does not take this parameter identity-assigns its
-            # ghost: Quint requires every var assigned in every action, and
+        taken = {sl: args[i] for i, (_n, _t, sl) in enumerate(slots[action])}
+        for slot in sorted(slot_types):
+            # A branch that does not fill this slot identity-assigns it:
+            # Quint requires every var assigned in every action, and
             # carrying the previous value is what "this action did not touch
             # it" means.
-            a(f"            {ghost}' = {name if name in args else ghost},")
+            a(f"            {slot}' = {taken.get(slot, slot)},")
         for c in pre_reqs:
             # Read BEFORE the step: the right-hand side is the unprimed state.
             value = (call(def_name("pre", c["rid"]), ", ".join(args))
@@ -579,6 +610,122 @@ def build(area, area_name, ir, quint_rel):
     if absent:
         fail("internal: actions missing from stepP: " + ", ".join(absent))
     return L
+
+
+# ── Slices: one small module per check ──────────────────────────────────────
+#
+# Every check used to run against the WHOLE probe module, so a witness for one
+# requirement carried every other requirement's _pre_ and _old_ ghosts: each
+# step assigned all of them, and the model checker encoded all of them. On a
+# brownfield area that is most of the state, and none of it is read by the
+# check at hand.
+#
+# A slice is the same module with the ghosts its check never reads taken out.
+# The transition relation is the same (stepP still takes every action; only
+# the bookkeeping of unread ghosts is gone, and nothing reads them), and the
+# check is the same formula, so the verdict is the same — tests hold the two
+# to it. What a slice always keeps:
+#   _lastAction       every probe's path conjunct, and every trace's step label
+#   every _arg_ slot  a trace must carry EVERY step's arguments, not only the
+#                     last one's: replay drives the code through each step
+# and beyond that only the _pre_ / _old_ / _prev / verdict ghosts the check's
+# own formula names. Slices are derived from the committed module at check
+# time, under specs/<area>/gen/ (gitignored); the committed module stays the
+# artifact CI typechecks.
+
+_VAL_RE = re.compile(r"^  val (\w+)\s*:")
+_VAR_RE = re.compile(r"^  var (\w+)\s*:")
+_ASSIGN_RE = re.compile(r"^\s+(_\w+)' = ")
+_GHOST_RE = re.compile(r"\b(_\w+)\b")
+ALWAYS_KEPT = re.compile(r"^(_lastAction|_arg_\w+)$")
+
+
+def _val_blocks(lines):
+    """[(start, end, name)] for every `val` in the module, its `///` doc
+    lines included; the body runs while lines are indented deeper."""
+    out = []
+    i = 0
+    while i < len(lines):
+        m = _VAL_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        start = i
+        while start > 0 and lines[start - 1].startswith("  ///"):
+            start -= 1
+        end = i + 1
+        while end < len(lines) and lines[end].startswith("    "):
+            end += 1
+        out.append((start, end, m.group(1)))
+        i = end
+    return out
+
+
+def slice_text(text, targets, module_name, import_prefix):
+    """The probe module `text` cut down to the checks named in `targets`:
+    module `module_name`, written `import_prefix` away from the probe module
+    (each import path is rebased onto it — a multi-module area's probe
+    module imports every module it spans).
+
+    Kept: every non-ghost line (defs, initP/stepP structure, nondets), the
+    ghosts in ALWAYS_KEPT, the ghosts the targets' bodies name, and every val
+    that is a target or reads no dropped ghost and no dropped val."""
+    lines = text.rstrip("\n").split("\n")
+    ghosts = {m.group(1) for ln in lines for m in [_VAR_RE.match(ln)] if m}
+    blocks = _val_blocks(lines)
+    bodies = {name: "\n".join(lines[s:e]) for s, e, name in blocks}
+    missing = [t for t in targets if t not in bodies]
+    if missing:
+        raise KeyError("not in the probe module: " + ", ".join(missing))
+    keep = {g for g in ghosts if ALWAYS_KEPT.match(g)}
+    for t in targets:
+        keep |= {g for g in _GHOST_RE.findall(bodies[t]) if g in ghosts}
+    dropped_ghosts = ghosts - keep
+    # A val survives if it is a target, or reads nothing that is gone. A val
+    # that reads a dropped val (reached_X reads witness_X) goes with it.
+    vals = set(bodies)
+    dropped_vals = set()
+    changed = True
+    while changed:
+        changed = False
+        for name in vals - dropped_vals - set(targets):
+            idents = set(re.findall(r"\b\w+\b", bodies[name])) - {name}
+            if idents & (dropped_ghosts | dropped_vals):
+                dropped_vals.add(name)
+                changed = True
+    skip = set()
+    for s, e, name in blocks:
+        if name in dropped_vals:
+            skip.update(range(s, e))
+    out = []
+    for i, ln in enumerate(lines):
+        if i in skip:
+            continue
+        m = _VAR_RE.match(ln) or _ASSIGN_RE.match(ln)
+        if m and m.group(1) in dropped_ghosts:
+            continue
+        if re.match(r"^module \w+ \{$", ln):
+            ln = f"module {module_name} {{"
+        else:
+            m = re.match(r'^(  import [\w:]+\.\* from ")([^"]+)("\s*)$', ln)
+            if m:
+                ln = (m.group(1) + posixpath.normpath(
+                    posixpath.join(import_prefix, m.group(2))) + m.group(3))
+        out.append(ln)
+    # Collapse the blank runs the dropped blocks leave behind.
+    tidy = []
+    for ln in out:
+        if ln == "" and tidy and tidy[-1] == "":
+            continue
+        tidy.append(ln)
+    header = [f"// SLICE of the probe module for: {', '.join(targets)}",
+              "// DERIVED by tools/spec-probes.py at check time — never committed.",
+              f"// Ghosts kept: {len(keep)} of {len(ghosts)}."]
+    return "\n".join(header + tidy) + "\n"
+
+
+def slice_module_name(module, target):
+    return f"{module}_slice_{target}"
 
 
 def main():

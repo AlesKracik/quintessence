@@ -49,6 +49,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import area_json_path  # noqa: E402
 import spec_source  # noqa: E402
+from proc import run_group  # noqa: E402
 
 DEFAULT_LIMIT = 25
 
@@ -280,8 +281,8 @@ def git_dirty(repo_root):
 
 def run_gate(command, repo_root, timeout):
     try:
-        proc = subprocess.run(command, shell=True, cwd=str(repo_root),
-                              capture_output=True, text=True, timeout=timeout)
+        proc = run_group(command, shell=True, cwd=str(repo_root),
+                         timeout=timeout)
         return proc.returncode
     except subprocess.TimeoutExpired:
         return 124                        # a hung gate is not a kill

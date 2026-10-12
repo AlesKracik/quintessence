@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 6 of 6 requirement(s) not verified against code; 3 open question(s); 1 open GAP verdict(s).
 
-**Status:** formalized  |  **Requirements:** 0/6 verified, 5/6 witnessed  |  **Invariants:** 0 proven + 5 bounded (≤4) / 5  |  **Coverage:** 3/3 actions covered, 5/5 changes explained  |  **Extraction:** n/a (no code)  |  **Mutation:** 64% pinned by examples, 6 question(s) open  |  **Open questions:** 3  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/6 verified, 5/6 witnessed  |  **Invariants:** 0 proven + 5 bounded (≤3) / 5  |  **Coverage:** 3/3 actions covered, 5/5 changes explained  |  **Extraction:** n/a (no code)  |  **Mutation:** 64% pinned by examples, 6 question(s) open  |  **Open questions:** 3  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ nothing to witness (a forbidden step, whose proof is its obligation, or a computed value, checked by the unit test it names) · ∀ checked on every reachable step, ∀✗ a step that breaks it was found*
 
@@ -47,6 +47,7 @@ flowchart LR
 
 ## ⚠ Needs Your Attention
 
+- **Deep pass not reached** — 10 check(s) rest on the shallow bound only: pass 1 took 24s against a 180s run budget. Raise apalache.budget_seconds, run with more --parallel, or cut the model's checking cost (spec-lint's cost/* warnings say where).
 - **Open GAP** — `unlock_account`: An admin can unlock a Locked account, but no requirement says who may or what the unlock resets. (Q-001)
 - **Open question** — Q-001: Should unlock_account be available to a self-service flow (e.g. password reset) or only to Admin?
 - **Open question** — Q-002: Session expiration: is it strictly time-based (inactivity timeout), or also bounded by absolute session age?
@@ -176,19 +177,19 @@ run q_6b84d96d = init.then(tick.fail())
 |---|---|---|---|
 | EX-001 — Sign in | the initial state | login(alice, s1) | `isActive("s1") and activeSessionsOf("alice") == Set("s1")` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤4 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤4 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤4 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤4 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤4 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
 > **Left open** · [3b71c867](#3b71c867) login(charlie, s3) — the model decides, no example does
 
-> **Witness:** 2 steps: login(s1, alice) → failedAttempts = {"alice": 0}; sessions = {"s1": Active({tag: "UNIT"})}; idleFor = {"s1": 0}; sessionOwner = {"s1": "alice"}; userActiveSession = {"alice": {"s1"}}
+> **Witness:** 2 steps: login(bob, s1) → failedAttempts = {"bob": 0}; idleFor = {"s1": 0}; sessionOwner = {"s1": "bob"}; sessions = {"s1": Active}; userActiveSession = {"bob": {"s1"}}
 
-> **∀ Every step:** checked on every reachable step (≤4 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps).
 
 <details><summary>EARS sentence, Quint action `login`, formal claim + trace</summary>
 
 **As specified (EARS):** When a registered user submits valid credentials, the system shall make `isActive(sid) and sessionOwner.get(sid) == uid and activeSessionsOf(uid).contains(sid) and attemptsOf(uid) == 0` hold.
 
-`specs/auth.qnt:L112-L125` · model `2ab18d0235ed`
+`specs/auth.qnt:L112-L125` · model `2fa4ee4982ec`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -218,11 +219,11 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: login
-    Note over S: failedAttempts = {"alice": 0}
-    Note over S: sessions = {"s1": Active({tag: "UNIT"})}
+    Note over S: failedAttempts = {"bob": 0}
     Note over S: idleFor = {"s1": 0}
-    Note over S: sessionOwner = {"s1": "alice"}
-    Note over S: userActiveSession = {"alice": {"s1"}}
+    Note over S: sessionOwner = {"s1": "bob"}
+    Note over S: sessions = {"s1": Active}
+    Note over S: userActiveSession = {"bob": {"s1"}}
 ```
 
 </details>
@@ -242,19 +243,19 @@ sequenceDiagram
 | EX-003 — The fifth failure locks the account | login_failed(bob) × 4 | login_failed(bob) | `isLocked("bob")` |
 | EX-004 — Four failures do not lock it | login_failed(bob) × 3 | login_failed(bob) | `not(isLocked("bob"))` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤4 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤4 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤4 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤4 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤4 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
 > **Left open** · [0faf1af0](#0faf1af0) login_failed(bob) — the model decides, no example does
 
-> **Witness:** 2 steps: login_failed(alice) → failedAttempts = {"alice": 1}; accountStatus = {"alice": Unlocked({tag: "UNIT"})}
+> **Witness:** 3 steps: login(bob, s1) → login_failed(alice) → accountStatus = {"alice": Unlocked}; failedAttempts = {"alice": 1, "bob": 0}
 
-> **∀ Every step:** checked on every reachable step (≤4 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps).
 
 <details><summary>EARS sentence, Quint action `login_failed`, formal claim + trace</summary>
 
 **As specified (EARS):** While `not(isLocked(uid))`, if a login attempt fails, then the system shall make `attemptsOf(uid) == before + 1 and (isLocked(uid) iff attemptsOf(uid) >= MAX_FAILED_ATTEMPTS (= 5, CON-001))` hold.
 
-`specs/auth.qnt:L183-L200` · model `2ab18d0235ed`
+`specs/auth.qnt:L183-L200` · model `2fa4ee4982ec`
 
 ```quint
   action login_failed(uid: UserId): bool = {
@@ -289,9 +290,15 @@ sequenceDiagram
     title REQ-003 witness
     participant E as Env
     participant S as System
+    E->>S: login
+    Note over S: failedAttempts = {"bob": 0}
+    Note over S: idleFor = {"s1": 0}
+    Note over S: sessionOwner = {"s1": "bob"}
+    Note over S: sessions = {"s1": Active}
+    Note over S: userActiveSession = {"bob": {"s1"}}
     E->>S: login_failed
-    Note over S: failedAttempts = {"alice": 1}
-    Note over S: accountStatus = {"alice": Unlocked({tag: "UNIT"})}
+    Note over S: accountStatus = {"alice": Unlocked}
+    Note over S: failedAttempts = {"alice": 1, "bob": 0}
 ```
 
 </details>
@@ -312,19 +319,19 @@ sequenceDiagram
 |---|---|---|---|
 | EX-002 — Sign in, then out | login(alice, s1) | logout(s1) | `statusOf(sessions, "s1") == LoggedOut` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤4 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤4 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤4 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤4 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
 > **Left open** · [249ef86b](#249ef86b) logout(s3) — the model decides, no example does
 
-> **Witness:** 3 steps: login(s1, alice) → logout(s1, alice) → sessions = {"s1": LoggedOut({tag: "UNIT"})}; userActiveSession = {"alice": {}}
+> **Witness:** 3 steps: login(bob, s1) → logout(s1) → sessions = {"s1": LoggedOut}; userActiveSession = {"bob": {}}
 
-> **∀ Every step:** checked on every reachable step (≤4 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps).
 
 <details><summary>EARS sentence, Quint action `logout`, formal claim + trace</summary>
 
 **As specified (EARS):** While `isActive(sid)`, when the user requests logout, the system shall make `statusOf(sessions, sid) == LoggedOut` hold.
 
-`specs/auth.qnt:L134-L149` · model `2ab18d0235ed`
+`specs/auth.qnt:L134-L149` · model `2fa4ee4982ec`
 
 ```quint
   action logout(sid: SessionId): bool = {
@@ -357,14 +364,14 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: login
-    Note over S: failedAttempts = {"alice": 0}
-    Note over S: sessions = {"s1": Active({tag: "UNIT"})}
+    Note over S: failedAttempts = {"bob": 0}
     Note over S: idleFor = {"s1": 0}
-    Note over S: sessionOwner = {"s1": "alice"}
-    Note over S: userActiveSession = {"alice": {"s1"}}
+    Note over S: sessionOwner = {"s1": "bob"}
+    Note over S: sessions = {"s1": Active}
+    Note over S: userActiveSession = {"bob": {"s1"}}
     E->>S: logout
-    Note over S: sessions = {"s1": LoggedOut({tag: "UNIT"})}
-    Note over S: userActiveSession = {"alice": {}}
+    Note over S: sessions = {"s1": LoggedOut}
+    Note over S: userActiveSession = {"bob": {}}
 ```
 
 </details>
@@ -378,19 +385,19 @@ sequenceDiagram
 | EX-005 — A session idle for four ticks expires | login(alice, s1); then tick × 4 | expire_session(s1) | `statusOf(sessions, "s1") == Expired` |
 | EX-007 — Three idle ticks are not enough to expire | login(alice, s1); then tick × 3, so `isActive("s1") and idleOf("s1") == 3` | expire_session(s1) — refused | refused — nothing changes |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤4 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤4 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤4 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤4 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
 > **Left open** · [07a48908](#07a48908) expire_session(s1) — the model decides, no example does
 
-> **Witness:** 7 steps: login(s1, bob) → tick(s1, bob) ×4 → expire_session(s1, bob) → sessions = {"s1": Expired({tag: "UNIT"})}; userActiveSession = {"bob": {}}
+> **Witness:** 7 steps: login(alice, s1) → tick(s1, alice) ×4 → expire_session(s1) → sessions = {"s1": Expired({tag: "UNIT"})}; userActiveSession = {"alice": {}}
 
-> **∀ Every step:** checked on every reachable step (≤4 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps).
 
 <details><summary>EARS sentence, Quint action `expire_session`, formal claim + trace</summary>
 
 **As specified (EARS):** While `isActive(sid) and idleOf(sid) > MAX_SESSION_AGE (= 3 ticks, CON-002)`, when the session's idle time runs out, the system shall make `statusOf(sessions, sid) == Expired` hold.
 
-`specs/auth.qnt:L211-L227` · model `2ab18d0235ed`
+`specs/auth.qnt:L211-L227` · model `2fa4ee4982ec`
 
 ```quint
   action expire_session(sid: SessionId): bool = {
@@ -424,11 +431,11 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: login
-    Note over S: failedAttempts = {"bob": 0}
     Note over S: sessions = {"s1": Active({tag: "UNIT"})}
+    Note over S: sessionOwner = {"s1": "alice"}
+    Note over S: userActiveSession = {"alice": {"s1"}}
+    Note over S: failedAttempts = {"alice": 0}
     Note over S: idleFor = {"s1": 0}
-    Note over S: sessionOwner = {"s1": "bob"}
-    Note over S: userActiveSession = {"bob": {"s1"}}
     E->>S: tick
     Note over S: idleFor = {"s1": 1}
     E->>S: tick
@@ -439,7 +446,7 @@ sequenceDiagram
     Note over S: idleFor = {"s1": 4}
     E->>S: expire_session
     Note over S: sessions = {"s1": Expired({tag: "UNIT"})}
-    Note over S: userActiveSession = {"bob": {}}
+    Note over S: userActiveSession = {"alice": {}}
 ```
 
 </details>
@@ -454,17 +461,17 @@ sequenceDiagram
 |---|---|---|---|
 | EX-006 — A locked account cannot sign in | login_failed(bob) × 5, so `isLocked("bob") and attemptsOf("bob") == 5` | login(bob, s2) — refused | refused — nothing changes |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤4 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤4 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤4 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤4 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤4 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
 > **Left open** · [3b71c867](#3b71c867) login(charlie, s3) — the model decides, no example does
 
-> **∀ Every step:** checked on every reachable step (≤4 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps).
 
 <details><summary>EARS sentence, Quint action `login`, formal claim + trace</summary>
 
 **As specified (EARS):** While `isLocked(uid)`, if the user submits valid credentials, then the system shall never let it happen.
 
-`specs/auth.qnt:L112-L125` · model `2ab18d0235ed`
+`specs/auth.qnt:L112-L125` · model `2fa4ee4982ec`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -496,17 +503,17 @@ sequenceDiagram
 
 > _No example rows yet — nothing concrete shows this behavior._
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤4 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤4 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤4 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤4 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤4 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
-> **Witness:** 2 steps: login_failed(alice) → failedAttempts = {"alice": 1}; accountStatus = {"alice": Unlocked({tag: "UNIT"})}
+> **Witness:** 3 steps: login(bob, s1) → login_failed(alice) → accountStatus = {"alice": Unlocked}; failedAttempts = {"alice": 1, "bob": 0}
 
-> **∀ Every step:** checked on every reachable step (≤4 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps).
 
 <details><summary>EARS sentence, Quint action `login_failed`, formal claim + trace</summary>
 
 **As specified (EARS):** While `not(isLocked(uid))`, if a failed login locks the account, then the system shall make `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))` hold.
 
-`specs/auth.qnt:L183-L200` · model `2ab18d0235ed`
+`specs/auth.qnt:L183-L200` · model `2fa4ee4982ec`
 
 ```quint
   action login_failed(uid: UserId): bool = {
@@ -540,9 +547,15 @@ sequenceDiagram
     title REQ-006 witness
     participant E as Env
     participant S as System
+    E->>S: login
+    Note over S: failedAttempts = {"bob": 0}
+    Note over S: idleFor = {"s1": 0}
+    Note over S: sessionOwner = {"s1": "bob"}
+    Note over S: sessions = {"s1": Active}
+    Note over S: userActiveSession = {"bob": {"s1"}}
     E->>S: login_failed
-    Note over S: failedAttempts = {"alice": 1}
-    Note over S: accountStatus = {"alice": Unlocked({tag: "UNIT"})}
+    Note over S: accountStatus = {"alice": Unlocked}
+    Note over S: failedAttempts = {"alice": 1, "bob": 0}
 ```
 
 </details>
@@ -566,7 +579,7 @@ _✓ coverage: REQ-001 applies to every step_
 |---|---|---|
 | REQ-002 | `isActive(sid)` | `statusOf(sessions, sid) == LoggedOut` |
 
-_✓ coverage (≤4) · ✓ `sessions` explained (≤4)_
+_✓ coverage (≤3) · ✓ `sessions` explained (≤3)_
 
 ### `login_failed`
 
@@ -575,7 +588,7 @@ _✓ coverage (≤4) · ✓ `sessions` explained (≤4)_
 | REQ-003 | `not(isLocked(uid))` |  | `(isLocked(uid) iff attemptsOf(uid) >= MAX_FAILED_ATTEMPTS)` | `attemptsOf(uid) == before + 1` ∧ `(isLocked(uid) iff attemptsOf(uid) >= MAX_FAILED_ATTEMPTS)` |
 | REQ-006 | `not(isLocked(uid))` | `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))` | `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))` |  |
 
-_✓ coverage (≤4) · ✓ `sessions` explained (≤4) · ✓ `accountStatus` explained (≤4) · ✓ `failedAttempts` explained (≤4)_
+_✓ coverage (≤3) · ✓ `sessions` explained (≤3) · ✓ `accountStatus` explained (≤3) · ✓ `failedAttempts` explained (≤3)_
 
 ### `expire_session`
 
@@ -583,7 +596,7 @@ _✓ coverage (≤4) · ✓ `sessions` explained (≤4) · ✓ `accountStatus` e
 |---|---|---|
 | REQ-004 | `isActive(sid) and idleOf(sid) > MAX_SESSION_AGE` | `statusOf(sessions, sid) == Expired` |
 
-_✓ coverage (≤4) · ✓ `sessions` explained (≤4)_
+_✓ coverage (≤3) · ✓ `sessions` explained (≤3)_
 
 ### `unlock_account`
 
@@ -599,7 +612,7 @@ _✓ coverage: unlock_account #1 GAP applies to every step_
 |---|---|
 | NO-OP #1 | always |  |
 
-_✓ coverage: tick #1 NO-OP applies to every step · ✓ verdict #1 (≤4)_
+_✓ coverage: tick #1 NO-OP applies to every step · ✓ verdict #1 (≤3)_
 
 **Bookkeeping, not behavior** (`@internal`, not explained):
 
@@ -610,11 +623,11 @@ _✓ coverage: tick #1 NO-OP applies to every step · ✓ verdict #1 (≤4)_
 
 _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · ✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a bounded ✓ by raising the bound or marking the invariant `proof: inductive`._
 
-- **INV-001** (`atMostOneActiveSession`) — At most one Active session per user. Criticality: critical. ✓ (≤4 steps)
-- **INV-002** (`noSessionWhileLocked`) — A Locked account has no Active session. Criticality: critical. ✓ (≤4 steps)
-- **INV-003** (`noAccessWithInvalidToken`) — Expired/LoggedOut sessions never appear in any user's active set. Criticality: high. ✓ (≤4 steps)
-- **INV-004** (`noEarlyLockout`) — Below MAX_FAILED_ATTEMPTS, the account stays unlocked. Criticality: high. ✓ (≤4 steps)
-- **INV-005** (`noEarlyExpiry`) — No session expires before it has been idle longer than MAX_SESSION_AGE. Criticality: high. ✓ (≤4 steps)
+- **INV-001** (`atMostOneActiveSession`) — At most one Active session per user. Criticality: critical. ✓ (≤3 steps)
+- **INV-002** (`noSessionWhileLocked`) — A Locked account has no Active session. Criticality: critical. ✓ (≤3 steps)
+- **INV-003** (`noAccessWithInvalidToken`) — Expired/LoggedOut sessions never appear in any user's active set. Criticality: high. ✓ (≤3 steps)
+- **INV-004** (`noEarlyLockout`) — Below MAX_FAILED_ATTEMPTS, the account stays unlocked. Criticality: high. ✓ (≤3 steps)
+- **INV-005** (`noEarlyExpiry`) — No session expires before it has been idle longer than MAX_SESSION_AGE. Criticality: high. ✓ (≤3 steps)
 
 ## Examples
 

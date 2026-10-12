@@ -16,6 +16,15 @@
 // _pre_<REQ> is set by stepP from the state BEFORE the step, so @while
 // is read where the sentence says it holds. The path conjunct comes
 // first: at init no action has run and no ghost may be read as a key.
+//
+// Parameters ride in one ghost per TYPE POSITION, not per name;
+// spec-record writes every trace back under _last<Param> names.
+// name -> slot, per action:
+//   login: uid -> _arg_UserId_1, sid -> _arg_SessionId_1
+//   logout: sid -> _arg_SessionId_1
+//   login_failed: uid -> _arg_UserId_1
+//   expire_session: sid -> _arg_SessionId_1
+//   unlock_account: uid -> _arg_UserId_1
 // ==========================================================
 
 module auth_probes {
@@ -24,8 +33,8 @@ module auth_probes {
 
   // -- Ghost instrumentation ---------------------------------
   var _lastAction: str
-  var _lastSid: SessionId
-  var _lastUid: UserId
+  var _arg_SessionId_1: SessionId
+  var _arg_UserId_1: UserId
   var _pre_REQ_002: bool
   var _pre_REQ_003: bool
   var _pre_REQ_004: bool
@@ -63,8 +72,8 @@ module auth_probes {
   action initP = all {
     init,
     _lastAction' = "init",
-    _lastSid' = "",
-    _lastUid' = "",
+    _arg_SessionId_1' = "",
+    _arg_UserId_1' = "",
     _pre_REQ_002' = false,
     _pre_REQ_003' = false,
     _pre_REQ_004' = false,
@@ -77,28 +86,28 @@ module auth_probes {
   }
 
   action stepP = {
-    nondet sid = oneOf(Set("s1", "s2"))
-    nondet uid = oneOf(Set("alice", "bob"))
+    nondet arg_SessionId_1 = oneOf(Set("s1", "s2"))
+    nondet arg_UserId_1 = oneOf(Set("alice", "bob"))
     any {
-      all { login(uid, sid),
+      all { login(arg_UserId_1, arg_SessionId_1),
             _lastAction' = "login",
-            _lastSid' = sid,
-            _lastUid' = uid,
+            _arg_SessionId_1' = arg_SessionId_1,
+            _arg_UserId_1' = arg_UserId_1,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
-            _pre_REQ_005' = pre_REQ_005(uid, sid),
+            _pre_REQ_005' = pre_REQ_005(arg_UserId_1, arg_SessionId_1),
             _pre_REQ_006' = false,
             _old_REQ_003_before' = _old_REQ_003_before,
             _prevAccountStatus' = accountStatus,
             _prevFailedAttempts' = failedAttempts,
             _prevSessions' = sessions,
       },
-      all { logout(sid),
+      all { logout(arg_SessionId_1),
             _lastAction' = "logout",
-            _lastSid' = sid,
-            _lastUid' = _lastUid,
-            _pre_REQ_002' = pre_REQ_002(sid),
+            _arg_SessionId_1' = arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
+            _pre_REQ_002' = pre_REQ_002(arg_SessionId_1),
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
@@ -108,27 +117,27 @@ module auth_probes {
             _prevFailedAttempts' = failedAttempts,
             _prevSessions' = sessions,
       },
-      all { login_failed(uid),
+      all { login_failed(arg_UserId_1),
             _lastAction' = "login_failed",
-            _lastSid' = _lastSid,
-            _lastUid' = uid,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = arg_UserId_1,
             _pre_REQ_002' = false,
-            _pre_REQ_003' = pre_REQ_003(uid),
+            _pre_REQ_003' = pre_REQ_003(arg_UserId_1),
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
-            _pre_REQ_006' = pre_REQ_006(uid),
-            _old_REQ_003_before' = old_REQ_003_before(uid),
+            _pre_REQ_006' = pre_REQ_006(arg_UserId_1),
+            _old_REQ_003_before' = old_REQ_003_before(arg_UserId_1),
             _prevAccountStatus' = accountStatus,
             _prevFailedAttempts' = failedAttempts,
             _prevSessions' = sessions,
       },
-      all { expire_session(sid),
+      all { expire_session(arg_SessionId_1),
             _lastAction' = "expire_session",
-            _lastSid' = sid,
-            _lastUid' = _lastUid,
+            _arg_SessionId_1' = arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
-            _pre_REQ_004' = pre_REQ_004(sid),
+            _pre_REQ_004' = pre_REQ_004(arg_SessionId_1),
             _pre_REQ_005' = false,
             _pre_REQ_006' = false,
             _old_REQ_003_before' = _old_REQ_003_before,
@@ -136,10 +145,10 @@ module auth_probes {
             _prevFailedAttempts' = failedAttempts,
             _prevSessions' = sessions,
       },
-      all { unlock_account(uid),
+      all { unlock_account(arg_UserId_1),
             _lastAction' = "unlock_account",
-            _lastSid' = _lastSid,
-            _lastUid' = uid,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = arg_UserId_1,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
@@ -152,8 +161,8 @@ module auth_probes {
       },
       all { tick,
             _lastAction' = "tick",
-            _lastSid' = _lastSid,
-            _lastUid' = _lastUid,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
@@ -172,22 +181,22 @@ module auth_probes {
   /// REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
   val oblig_REQ_001: bool =
     not(_lastAction == "login")
-      or post_REQ_001(_lastUid, _lastSid)
+      or post_REQ_001(_arg_UserId_1, _arg_SessionId_1)
 
   /// REQ-002: While a user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
   val oblig_REQ_002: bool =
     not(_lastAction == "logout" and _pre_REQ_002)
-      or post_REQ_002(_lastSid)
+      or post_REQ_002(_arg_SessionId_1)
 
   /// REQ-003: If a login attempt fails while the account is Unlocked, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS.
   val oblig_REQ_003: bool =
     not(_lastAction == "login_failed" and _pre_REQ_003)
-      or post_REQ_003(_lastUid, _old_REQ_003_before)
+      or post_REQ_003(_arg_UserId_1, _old_REQ_003_before)
 
   /// REQ-004: While a session is Active and has been inactive for longer than MAX_SESSION_AGE, the system shall transition it to Expired.
   val oblig_REQ_004: bool =
     not(_lastAction == "expire_session" and _pre_REQ_004)
-      or post_REQ_004(_lastSid)
+      or post_REQ_004(_arg_SessionId_1)
 
   /// REQ-005: While the account is Locked, if the user submits valid credentials, then the system shall refuse the login.
   val oblig_REQ_005: bool =
@@ -196,7 +205,7 @@ module auth_probes {
   /// REQ-006: If a failed login locks the account, then the system shall end the user's Active sessions.
   val oblig_REQ_006: bool =
     not(_lastAction == "login_failed" and _pre_REQ_006)
-      or post_REQ_006(_lastUid)
+      or post_REQ_006(_arg_UserId_1)
 
   // -- Completeness: every step is one a requirement speaks to --
 
@@ -252,31 +261,31 @@ module auth_probes {
   /// Witness for REQ-001: When a registered user submits valid credentials, the system shall create an Active session owned by that user.
   val witness_REQ_001: bool =
     not(_lastAction == "login"
-        and post_REQ_001(_lastUid, _lastSid))
+        and post_REQ_001(_arg_UserId_1, _arg_SessionId_1))
 
   /// Witness for REQ-002: While a user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
   val witness_REQ_002: bool =
     not(_lastAction == "logout"
         and _pre_REQ_002
-        and post_REQ_002(_lastSid))
+        and post_REQ_002(_arg_SessionId_1))
 
   /// Witness for REQ-003: If a login attempt fails while the account is Unlocked, then the system shall increment failedAttempts and lock the account when it reaches MAX_FAILED_ATTEMPTS.
   val witness_REQ_003: bool =
     not(_lastAction == "login_failed"
         and _pre_REQ_003
-        and post_REQ_003(_lastUid, _old_REQ_003_before))
+        and post_REQ_003(_arg_UserId_1, _old_REQ_003_before))
 
   /// Witness for REQ-004: While a session is Active and has been inactive for longer than MAX_SESSION_AGE, the system shall transition it to Expired.
   val witness_REQ_004: bool =
     not(_lastAction == "expire_session"
         and _pre_REQ_004
-        and post_REQ_004(_lastSid))
+        and post_REQ_004(_arg_SessionId_1))
 
   /// Witness for REQ-006: If a failed login locks the account, then the system shall end the user's Active sessions.
   val witness_REQ_006: bool =
     not(_lastAction == "login_failed"
         and _pre_REQ_006
-        and post_REQ_006(_lastUid))
+        and post_REQ_006(_arg_UserId_1))
 
   // -- The same probes, the right way up ----------------------
   // For the simulator. `quint run --witnesses=<name>` counts the

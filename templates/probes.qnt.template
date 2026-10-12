@@ -26,17 +26,21 @@ module {{MODULE_NAME}}_probes {
   // ----------------------------------------------------------
   // GHOST INSTRUMENTATION
   // _lastAction — which action produced the current state.
-  // Param ghosts (one per distinct action parameter) — the
-  // arguments that action was called with. The replay harness
-  // reads these from the trace; without them it would have to
-  // infer call arguments from state diffs (fragile).
+  // Param ghosts (one per parameter TYPE POSITION: the k-th
+  // parameter of that type in an action's signature) — the
+  // arguments that action was called with. Allocated by type
+  // position so the ghost count does not depend on parameter
+  // names; spec-record writes every trace back under
+  // _last<Param> names, which is what the replay harness reads
+  // (without them it would have to infer call arguments from
+  // state diffs — fragile).
   // Every probe run uses:  --init=initP --step=stepP
   // ----------------------------------------------------------
 
   var _lastAction: str
   // {{PARAM_GHOSTS}}  e.g.:
-  // var _lastUid: str
-  // var _lastSid: str
+  // var _arg_UserId_1: UserId     // login.uid, unlock.uid
+  // var _arg_SessionId_1: SessionId  // login.sid, logout.sid
   //
   //
   // {{PRE_GHOSTS}} — one per requirement: its @while, evaluated
@@ -49,21 +53,21 @@ module {{MODULE_NAME}}_probes {
 
   // Ghost initial values are written EXPLICITLY, never `= <var>`:
   // before init there is no prior state to read.
-  action initP = all { init, _lastAction' = "init" /*, _lastUid' = "",
+  action initP = all { init, _lastAction' = "init" /*, _arg_UserId_1' = "",
                        _prevSessions' = Map(), ... */ }
 
   action stepP = {
     // Mirror the area module's step, tagging each branch with the
     // action name and its parameters (identity-assign ghosts the
     // branch doesn't use):
-    nondet uid = oneOf(USERS)
+    nondet arg_UserId_1 = oneOf(USERS)
     any {
-      // all { login(uid, sid), _lastAction' = "login",
-      //       _lastUid' = uid,  _lastSid' = sid,
-      //       _pre_REQ_005' = pre_REQ_005(uid, sid),
+      // all { login(arg_UserId_1, arg_SessionId_1), _lastAction' = "login",
+      //       _arg_UserId_1' = arg_UserId_1,  _arg_SessionId_1' = arg_SessionId_1,
+      //       _pre_REQ_005' = pre_REQ_005(arg_UserId_1, arg_SessionId_1),
       //       _prevSessions' = sessions },
-      // all { logout(sid),     _lastAction' = "logout",
-      //       _lastUid' = _lastUid, _lastSid' = sid,
+      // all { logout(arg_SessionId_1), _lastAction' = "logout",
+      //       _arg_UserId_1' = _arg_UserId_1, _arg_SessionId_1' = arg_SessionId_1,
       //       _prevSessions' = sessions },
       // ... one branch per action `step` calls (helper actions
       //     are not mirrored — write shared logic as a def);
@@ -83,7 +87,7 @@ module {{MODULE_NAME}}_probes {
   //
   // stepP evaluates pre_/old_ BEFORE the step (from unprimed
   // state) into the ghosts; post_ is called AFTER it with the
-  // _last<Param> ghosts and the _old ghosts.
+  // slot ghosts of that action and the _old ghosts.
   // ----------------------------------------------------------
 
   // ----------------------------------------------------------
@@ -108,7 +112,7 @@ module {{MODULE_NAME}}_probes {
   //
   // val witness_{{REQ_ID}}: bool =
   //   not(_lastAction == "{{QUINT_REF}}" and _pre_{{REQ_ID}}
-  //       and post_{{REQ_ID}}(_lastUid, _old_{{REQ_ID}}_before))
+  //       and post_{{REQ_ID}}(_arg_UserId_1, _old_{{REQ_ID}}_before))
   //
   // A `may` gets one per outcome, each with the other outcomes
   // false. A `forbidden` or computed requirement gets none.

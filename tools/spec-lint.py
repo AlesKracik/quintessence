@@ -1926,6 +1926,239 @@ _DECL_NAME_RE = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
 
 
+# ── Checking cost (advisory) ─────────────────────────────────────────────────
+# A model that is right but too slow to check gets checked less — fewer
+# re-runs while a counterexample is fixed, witnesses skipped, the deep pass
+# never reached — and nothing records that the bound was the tooling's, not
+# a choice. These rules say where a model's checking cost comes from, each
+# with a rewrite that keeps its meaning. WARN only: none is wrong, all are
+# expensive. `spec-lint.py <area> --cost` prints the numbers behind them.
+
+COST_GHOSTS_WARN = 30
+COST_BRANCHING_WARN = 10 ** 5
+_DECL_END = (r"(?=\n[ \t]*(?:pure\s+)?(?:val|def|action|var|const|type|temporal|run|"
+             r"import|module)\b|\n[ \t]*///|\n}\s*$|\Z)")
+
+
+def _decl_bodies(text):
+    """{name: body} for every val/def in a module text (docs stripped)."""
+    out = {}
+    for m in re.finditer(r"(?:pure\s+)?(?:val|def)\s+(\w+)[^=\n]*(?:\([^)]*\))?[^=\n]*=(.*?)"
+                         + _DECL_END, text, re.S):
+        out.setdefault(m.group(1), m.group(2).strip())
+    return out
+
+
+def domain_size(expr, consts, depth=0):
+    """How many values `oneOf(expr)` can draw, or None when it cannot be
+    read off the text. Literal sets, `.powerset()`, `a.to(b)`, `M.keys()` of
+    a literal map, and names of constants that are any of those."""
+    e = (expr or "").strip()
+    if depth > 8 or not e:
+        return None
+    m = re.fullmatch(r"Set\((.*)\)", e, re.S)
+    if m:
+        return len(spec_source._split_top(m.group(1)))
+    m = re.fullmatch(r"(.+)\.powerset\(\)", e, re.S)
+    if m:
+        n = domain_size(m.group(1), consts, depth + 1)
+        return None if n is None else 2 ** n
+    m = re.fullmatch(r"(-?\d+)\.to\((-?\d+)\)", e)
+    if m:
+        return max(int(m.group(2)) - int(m.group(1)) + 1, 0)
+    m = re.fullmatch(r"(\w+)\.keys\(\)", e)
+    if m:
+        body = (consts.get(m.group(1)) or "").strip()
+        mm = re.fullmatch(r"Map\((.*)\)", body, re.S)
+        return len(spec_source._split_top(mm.group(1))) if mm else None
+    if re.fullmatch(r"\w+", e) and e in consts:
+        return domain_size(consts[e], consts, depth + 1)
+    return None
+
+
+def _assignments(text, var):
+    """Right-hand sides of every `var' = ...` in the module, each cut at the
+    top-level comma or closing brace that ends it."""
+    out = []
+    for m in re.finditer(rf"(?<![\w.]){re.escape(var)}'\s*=\s*", text):
+        i, depth, buf = m.end(), 0, []
+        while i < len(text):
+            c = text[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth < 0:
+                    break
+            elif c == "," and depth == 0:
+                break
+            buf.append(c)
+            i += 1
+        out.append("".join(buf).strip())
+    return out
+
+
+def cost_report(root, area_data, sidecar):
+    """The numbers the cost/* rules judge, computed once. None when the area
+    has no model to measure."""
+    if not sidecar or "__no_module__" in sidecar or not sidecar.get("ir"):
+        return None
+    ir = sidecar["ir"]
+    try:
+        text = spec_source.strip_docs(Path(sidecar["file"]).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    fm = area_data.get("formal_model") or {}
+    consts = _decl_bodies(text)
+    rep = {"ghosts": None, "largest_slice": None, "branching": None,
+           "factors": [], "growing_maps": [], "powerset": [], "counters": []}
+
+    # Probe module: its ghost count, and the largest per-check slice.
+    if fm.get("probes_file"):
+        pf = Path(root) / "specs" / fm["probes_file"]
+        if pf.exists():
+            ptext = pf.read_text(encoding="utf-8")
+            rep["ghosts"] = len(re.findall(r"^  var \w+\s*:", ptext, re.M))
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    "spec_probes_cost", Path(__file__).parent / "spec-probes.py")
+                sp = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(sp)
+                names = [n for n in re.findall(r"^  val (\w+)\s*:", ptext, re.M)
+                         if n.startswith(("oblig_", "witness_"))]
+                sizes = []
+                for n in names:
+                    m = re.search(r"Ghosts kept: (\d+) of",
+                                  sp.slice_text(ptext, [n], "s", "."))
+                    if m:
+                        sizes.append(int(m.group(1)))
+                rep["largest_slice"] = max(sizes) if sizes else None
+            except (ImportError, KeyError, OSError, AttributeError, SyntaxError):
+                pass
+
+    # Branching: per action stepP takes, the product of its parameters'
+    # probe domains; a step is any one of them, so the sum.
+    domains = fm.get("probe_domains") or {}
+    calls = (sidecar.get("action_calls") or {}).get("step") or []
+    param_types = sidecar.get("action_param_types") or {}
+    actions = [a for a in calls if a in param_types] or \
+        [a for a in param_types if a not in PLUMBING_ACTIONS]
+    total, factors, known = 0, [], True
+    for action in actions:
+        prod, parts = 1, []
+        for name, type_str in param_types.get(action) or []:
+            dom = domains.get(f"param:{name}", domains.get(type_str))
+            n = domain_size(dom, consts) if dom else None
+            if n is None:
+                known = False
+                continue
+            prod *= n
+            parts.append((name, type_str, n))
+        total += prod
+        factors.append((prod, action, parts))
+    if actions and known:
+        rep["branching"] = total
+        rep["factors"] = sorted(factors, reverse=True)[:3]
+
+    # nondet over a powerset, in the model's step or a probe domain.
+    for m in re.finditer(r"oneOf\(([^()]*(?:\([^()]*\))*[^()]*)\.powerset\(\)\)", text):
+        rep["powerset"].append(("step", m.group(1).strip()))
+    for key, dom in domains.items():
+        if isinstance(dom, str) and ".powerset()" in dom:
+            rep["powerset"].append((f"probe_domains.{key}", dom))
+
+    # A map that some action grows with `put`.
+    for var, t in (ir.get("var_type_strs") or {}).items():
+        if "->" in t and any(".put(" in rhs for rhs in _assignments(text, var)):
+            rep["growing_maps"].append((var, t))
+
+    # An int only ever kept or incremented, read only as "it went up by one".
+    readers = []
+    for req in area_data.get("requirements") or []:
+        ears = req.get("ears") or {}
+        readers += [ears.get("state") or "", ears.get("response") or ""]
+        readers += [oc.get("predicate") or "" for oc in
+                    (req.get("witness") or {}).get("outcomes") or []]
+    olds = [o.get("expr") or "" for req in area_data.get("requirements") or []
+            for o in req.get("old") or []]
+    inv_bodies = [consts.get(i.get("quint_name") or "", "") + (i.get("predicate") or "")
+                  for i in area_data.get("invariants") or []]
+    for var, t in (ir.get("var_type_strs") or {}).items():
+        if t.strip() != "int":
+            continue
+        rhs = _assignments(text, var)
+        if not rhs or not all(re.fullmatch(rf"{re.escape(var)}(\s*\+\s*1)?|-?\d+", r)
+                              for r in rhs):
+            continue
+        if not any(r.replace(" ", "") == f"{var}+1" for r in rhs):
+            continue
+        if any(re.search(rf"\b{re.escape(var)}\b", b) for b in inv_bodies):
+            continue
+        uses = sum(len(re.findall(rf"\b{re.escape(var)}\b", r)) for r in readers)
+        as_step = sum(len(re.findall(rf"\b{re.escape(var)}\s*==\s*\w+\s*\+\s*1\b", r))
+                      for r in readers)
+        if uses == as_step and all(o.strip() in ("", var) or var not in o for o in olds):
+            rep["counters"].append(var)
+    return rep
+
+
+def check_cost(root, area_data, sidecar, area_name, findings, report=None):
+    rep = report or cost_report(root, area_data, sidecar)
+    if not rep:
+        return
+    if rep["ghosts"] is not None and rep["ghosts"] > COST_GHOSTS_WARN:
+        add(findings, WARN, "cost", "probe-ghosts", area_name,
+            f"the probe module has {rep['ghosts']} state vars (warn above "
+            f"{COST_GHOSTS_WARN}); every check runs on a slice of it, the largest "
+            f"{rep['largest_slice'] or '?'} vars. The simulator pre-gate runs on "
+            f"the whole module. Fewer requirements with @while/@old on one action, "
+            f"or fewer transition invariants, bring it down.")
+    if rep["branching"] is not None and rep["branching"] > COST_BRANCHING_WARN:
+        top = "; ".join(f"{a} = " + " × ".join(f"{n}:{k}" for n, _t, k in parts)
+                        for _p, a, parts in rep["factors"])
+        add(findings, WARN, "cost", "branching", area_name,
+            f"stepP can take ≈{rep['branching']:,} distinct steps from one state "
+            f"(warn above {COST_BRANCHING_WARN:,}); largest: {top}. Shrink each "
+            f"probe domain to the fewest values that still tell the behaviors a "
+            f"requirement distinguishes apart.")
+    for where, base in rep["powerset"]:
+        add(findings, WARN, "cost", "powerset-nondet", area_name,
+            f"{where} draws from the powerset of `{base}`: 2^|{base}| choices per "
+            f"step. Shrink `{base}` to the fewest elements that still tell the "
+            f"behaviors apart, or list the few subsets that matter.")
+    for var, t in rep["growing_maps"]:
+        add(findings, WARN, "cost", "growing-map", area_name,
+            f"`{var}: {t}` grows with `put`, so its domain is part of the state "
+            f"the checker explores. A total map initialized over the key domain, "
+            f"with an `exists: bool` field (or a status variant), says the same "
+            f"and keeps the shape fixed.", ref=var)
+    for var in rep["counters"]:
+        add(findings, WARN, "cost", "counter-only-incremented", area_name,
+            f"`{var}: int` is only ever kept or incremented, and requirements only "
+            f"ask whether it went up by one. A bool \"changed by the last step\" "
+            f"says that without an unbounded int.", ref=var)
+
+
+def print_cost(rep, area_name):
+    print(f"checking cost — {area_name}")
+    if not rep:
+        print("  (no model to measure)")
+        return
+    if rep["ghosts"] is not None:
+        print(f"  probe module: {rep['ghosts']} state vars; largest per-check "
+              f"slice {rep['largest_slice'] if rep['largest_slice'] is not None else '?'}")
+    else:
+        print("  probe module: not generated yet (tools/spec-probes.py)")
+    if rep["branching"] is not None:
+        print(f"  branching: ≈{rep['branching']:,} steps from one state")
+        for prod, action, parts in rep["factors"]:
+            print(f"    {action}: {prod:,} = "
+                  + " × ".join(f"{n} ({t}) {k}" for n, t, k in parts))
+    else:
+        print("  branching: unknown (a probe domain is not a literal set)")
+
+
 def check_builtin_names(sidecar, area_name, findings):
     """A helper named `exists` or `size` fails the whole module with QNT101
     (built-in name redefined). Caught here, before quint is ever run."""
@@ -2666,6 +2899,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_decision_affects(area_data, all_areas, area_name, findings)
     check_examples(area_data, sidecar, all_areas, area_name, findings)
     check_ghost_zeros(area_data, sidecar, area_name, findings)
+    check_cost(root, area_data, sidecar, area_name, findings)
     check_builtin_names(sidecar, area_name, findings)
     check_transition_invariant_names(area_data, sidecar, info, area_name, findings)
     check_paired_invariants(root, area_data, sidecar, area_name, findings)
@@ -2786,6 +3020,11 @@ def main():
     parser.add_argument("--strict", action="store_true", help="Exit 1 on warnings too")
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--root", default=".")
+    parser.add_argument("--cost", action="store_true",
+                        help="Print what checking each area will cost (probe "
+                             "ghosts, largest slice, branching) and its cost/* "
+                             "warnings, then stop. What /spec reports before "
+                             "handing off to /spec-check.")
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -2825,6 +3064,19 @@ def main():
         # A records-only module (Tier 1, no model written yet) is no sidecar.
         sidecars[a] = (parse_sidecar(root / "specs" / (qrel or f"{a}.qnt"))
                        if (infos.get(a) or {}).get("model_present") else None)
+
+    if args.cost:
+        for a in target_areas:
+            area_data = all_areas.get(a)
+            if not isinstance(area_data, dict) or "__parse_error__" in area_data:
+                continue
+            rep = cost_report(root, area_data, sidecars.get(a))
+            print_cost(rep, a)
+            cost_findings = []
+            check_cost(root, area_data, sidecars.get(a), a, cost_findings, report=rep)
+            for f in cost_findings:
+                print(f"  ⚠ cost/{f.check}: {f.description}")
+        sys.exit(0)
 
     catalog = {
         "patterns":  load_catalog(root, "patterns"),

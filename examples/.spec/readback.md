@@ -4,8 +4,8 @@
 
 ## ⚠ Needs Your Attention
 
-- **auth** — 5 item(s): Open question; Open question; Open question; The examples leave 6 behavior(s) open … — see [auth](./specs/auth.readback.md)
-- **auth-ui** — 3 item(s): Check error; The examples leave 11 behavior(s) open; Mutation results are for an older model — see [auth-ui](./specs/auth-ui.readback.md)
+- **auth** — 6 item(s): Deep pass not reached; Open question; Open question; Open question … — see [auth](./specs/auth.readback.md)
+- **auth-ui** — 4 item(s): Check error; Deep pass not reached; The examples leave 11 behavior(s) open; Mutation results are for an older model — see [auth-ui](./specs/auth-ui.readback.md)
 - **subscription** — 4 item(s): Check error; Open question; The examples leave 6 behavior(s) open; Mutation results are for an older model — see [subscription](./specs/subscription.readback.md)
 - **cart** — 9 item(s): Requirement not formal yet; Requirement not formal yet; Requirement not formal yet; Requirement not formal yet … — see [cart](./specs/cart.readback.md)
 

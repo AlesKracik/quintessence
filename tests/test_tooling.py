@@ -3132,7 +3132,9 @@ def _capture_cmds(monkeypatch, module, outcomes):
         nxt = queue.pop(0) if queue else _FakeProc()
         return nxt(cmd) if callable(nxt) else nxt
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    # Every quint launch goes through proc.run_group (a timeout takes the
+    # child's own children down too), so that is what is answered here.
+    monkeypatch.setattr(module, "run_group", fake_run)
     return seen
 
 
@@ -3250,8 +3252,12 @@ def test_a_clean_batch_records_the_same_verdicts_for_one_apalache_start(
                         lambda *a, **k: ("verified", "", 1.5))
     monkeypatch.setattr(record, "run_verify",
                         lambda *a, **k: pytest.fail("per-id run after a clean batch"))
+    args = _Args(tmp_path, "auth")
+    # Serial: a parallel run batches only the shallow pass, and this
+    # is about both passes batching clean.
+    args.parallel = 1
     with pytest.raises(SystemExit) as exc:
-        record.cmd_check(_Args(tmp_path, "auth"))
+        record.cmd_check(args)
     assert exc.value.code == 0
     written = get_area(area_path)
     assert [i["formal_status"] for i in written["invariants"]] == ["verified", "verified"]
@@ -3945,7 +3951,7 @@ def test_every_declared_action_gets_a_branch_in_step_p(tmp_path):
     out = _gen(tmp_path, area)
     assert '_lastAction\' = "open_acct"' in out
     assert '_lastAction\' = "close_acct"' in out
-    assert "open_acct(uid)" in out and "close_acct(uid)" in out
+    assert "open_acct(arg_UserId_1)" in out and "close_acct(arg_UserId_1)" in out
     # init and step are the harness, not actions to mirror.
     assert '_lastAction\' = "step"' not in out
 
@@ -3967,7 +3973,7 @@ def test_a_missing_domain_is_a_setup_error_that_prints_what_to_add(tmp_path):
 def test_ghosts_cover_the_parameters_and_the_preconditions_only(tmp_path):
     area = _probe_area(tmp_path, domains={"UserId": 'Set("u1")'})
     out = _gen(tmp_path, area)
-    assert "var _lastUid: UserId" in out
+    assert "var _arg_UserId_1: UserId" in out
     assert "var _pre_REQ_001: bool" in out
     # @while is evaluated before the step into one boolean: no requirement
     # needs a snapshot for it. The snapshots here are the explanation
@@ -3975,7 +3981,7 @@ def test_ghosts_cover_the_parameters_and_the_preconditions_only(tmp_path):
     assert "def pre_REQ_001(uid: UserId): bool" in out
     assert "not(_lastAction == \"open_acct\" and count != _prevCount)" in out
     # Explicit initial values — before init there is no prior state to read.
-    assert '_lastUid\' = ""' in out
+    assert '_arg_UserId_1\' = ""' in out
     assert "_pre_REQ_001' = false" in out
 
 
@@ -4121,12 +4127,12 @@ def test_the_requirement_compiles_to_an_obligation_and_a_witness(tmp_path):
     assert "def post_REQ_001(uid: UserId): bool" in out
     assert "accounts.get(uid) == Active" in out
     # @while is read BEFORE the step, from the step's own arguments.
-    assert "_pre_REQ_001' = pre_REQ_001(uid)" in out
+    assert "_pre_REQ_001' = pre_REQ_001(arg_UserId_1)" in out
     # Every step (positive invariant) and some step (negated probe).
     assert "val oblig_REQ_001: bool =" in out
     assert "val witness_REQ_001: bool =" in out
     assert '_lastAction == "open_acct"' in out
-    assert "post_REQ_001(_lastUid)" in out
+    assert "post_REQ_001(_arg_UserId_1)" in out
 
 
 def test_a_requirement_owing_no_probe_is_named_not_silently_absent(tmp_path):
@@ -4204,7 +4210,8 @@ def test_a_probe_module_invariant_runs_against_the_probe_module(tmp_path,
         record.cmd_check(_Args(tmp_path, "a"))
 
     assert ("alwaysP", "a.qnt", None, None) in seen
-    assert ("policyStable", "a.probes.qnt", "initP", "stepP") in seen
+    # Against the probe module — through the slice of it that check reads.
+    assert ("policyStable", "a_probes_slice_policyStable.qnt", "initP", "stepP") in seen
     written = get_area((tmp_path / "specs" / "a.intent.json"))
     entry = {c["id"]: c for c in written["check_results"]["checks"]}
     assert entry["INV-003"]["over"] == "probes"
@@ -4643,7 +4650,7 @@ def test_generated_name_conventions_have_one_definition(attr):
 
 
 def test_ghost_and_plumbing_conventions_are_shared():
-    assert probes.ghost_for_param.__module__ == "itf_tools"
+    assert probes.param_slots.__module__ == "itf_tools"
     assert probes.obligation_name is itf.obligation_name or \
         probes.obligation_name.__module__ == "itf_tools"
     assert probes.ghost_for_var.__module__ == "itf_tools"
@@ -5011,6 +5018,68 @@ def test_a_witness_the_shallow_pass_misses_is_found_by_the_deep_one(
     w = get_area(area_path)["requirements"][0]["witness"]
     assert w["status"] == "witnessed"
     assert w["steps"] == 10
+
+
+def _simulated_witness_run(tmp_path, monkeypatch, last_action):
+    """One event-form requirement on `f`, a pre-screen that reached it, and a
+    simulator that hands back a trace ending in `last_action`."""
+    area_path = _probe_ladder_area(tmp_path)
+    area = get_area(area_path)
+    area["requirements"][0]["form"] = "event"
+    put_area(area_path, area)
+    apalache = []
+
+    def fake_verify(quint, target, name, steps, *a, **k):
+        apalache.append(name)
+        if name.startswith("witness_"):
+            Path(k["out_itf"]).write_text(json.dumps({"vars": ["x", "_lastAction"],
+                "states": [{"x": 0, "_lastAction": "init"},
+                           {"x": 1, "_lastAction": "f"}]}), encoding="utf-8")
+            return ("counterexample", "", 0.5)
+        return ("verified", "", 0.1)
+
+    def fake_simulate(*a, **k):
+        return ("ok", "", 0.1, {"reached_REQ_008": (7, 100)}, [])
+
+    def fake_trace(quint, qnt, name, samples, steps, timeout, out_itf, **k):
+        Path(out_itf).write_text(json.dumps({"vars": ["x", "_lastAction"],
+            "states": [{"x": 0, "_lastAction": "init"}, {"x": 1, "_lastAction": "g"},
+                       {"x": 1, "_lastAction": last_action}]}), encoding="utf-8")
+        return ("counterexample", "", 0.2)
+
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n  val oblig_REQ_008: bool = true\n"
+        "  val witness_REQ_008: bool = true\n"
+        "  val reached_REQ_008: bool = not(witness_REQ_008)\n}\n", encoding="utf-8")
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    monkeypatch.setattr(record, "run_verify", fake_verify)
+    monkeypatch.setattr(record, "run_simulate", fake_simulate)
+    monkeypatch.setattr(record, "run_simulate_trace", fake_trace)
+    args = _Args(tmp_path, "a")
+    args.no_witness = False
+    args.no_simulate = False
+    with pytest.raises(SystemExit):
+        record.cmd_check(args)
+    return get_area(area_path)["requirements"][0]["witness"], apalache
+
+
+def test_a_witness_the_simulator_reached_is_taken_from_the_simulator(
+        tmp_path, monkeypatch):
+    """A witness is existential: one run that fired the step from @while and
+    ended in @shall is the proof. Re-proving it with Apalache added minutes
+    and no strength."""
+    w, apalache = _simulated_witness_run(tmp_path, monkeypatch, "f")
+    assert w["status"] == "witnessed" and w["found_by"] == "simulator"
+    assert w["steps"] == 2, "the trace's own length, not a search bound"
+    assert "witness_REQ_008" not in apalache
+
+
+def test_a_simulator_trace_that_ends_elsewhere_goes_to_apalache(
+        tmp_path, monkeypatch):
+    w, apalache = _simulated_witness_run(tmp_path, monkeypatch, "g")
+    assert w["status"] == "witnessed" and w["found_by"] == "apalache"
+    assert "witness_REQ_008" in apalache
 
 
 def test_a_budget_stopped_probe_keeps_the_bound_it_was_actually_run_to(
@@ -5472,9 +5541,8 @@ def test_flag_probe_matches_whole_flags_only(monkeypatch):
     """quint 0.32 has --server-endpoint and no --server. A substring probe
     said --server existed, and the timeout path then passed a flag quint
     rejects."""
-    import subprocess
     help_text = "  --server-endpoint  Apalache server endpoint\n  --invariants  ...\n"
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: type(
+    monkeypatch.setattr(record, "run_group", lambda *a, **k: type(
         "P", (), {"stdout": help_text, "stderr": ""})())
     monkeypatch.setattr(record, "_QUINT_CAPS", {})
     assert record.quint_supports("quint", "verify", "--server") is False

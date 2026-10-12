@@ -16,6 +16,13 @@
 // _pre_<REQ> is set by stepP from the state BEFORE the step, so @while
 // is read where the sentence says it holds. The path conjunct comes
 // first: at init no action has run and no ghost may be read as a key.
+//
+// Parameters ride in one ghost per TYPE POSITION, not per name;
+// spec-record writes every trace back under _last<Param> names.
+// name -> slot, per action:
+//   submit_success: u -> _arg_UserId_1, s -> _arg_SessionId_1
+//   submit_invalid: u -> _arg_UserId_1
+//   submit_locked: u -> _arg_UserId_1
 // ==========================================================
 
 module authUi_probes {
@@ -24,8 +31,8 @@ module authUi_probes {
 
   // -- Ghost instrumentation ---------------------------------
   var _lastAction: str
-  var _lastS: SessionId
-  var _lastU: UserId
+  var _arg_SessionId_1: SessionId
+  var _arg_UserId_1: UserId
   var _pre_UI_001: bool
   var _pre_UI_002: bool
   var _pre_UI_003: bool
@@ -70,8 +77,8 @@ module authUi_probes {
   action initP = all {
     init,
     _lastAction' = "init",
-    _lastS' = "",
-    _lastU' = "",
+    _arg_SessionId_1' = "",
+    _arg_UserId_1' = "",
     _pre_UI_001' = false,
     _pre_UI_002' = false,
     _pre_UI_003' = false,
@@ -85,13 +92,13 @@ module authUi_probes {
   }
 
   action stepP = {
-    nondet s = oneOf(Set("s1", "s2"))
-    nondet u = oneOf(Set("alice", "bob"))
+    nondet arg_SessionId_1 = oneOf(Set("s1", "s2"))
+    nondet arg_UserId_1 = oneOf(Set("alice", "bob"))
     any {
       all { click_sign_in,
             _lastAction' = "click_sign_in",
-            _lastS' = _lastS,
-            _lastU' = _lastU,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
             _pre_UI_001' = pre_UI_001,
             _pre_UI_002' = false,
             _pre_UI_003' = false,
@@ -103,12 +110,12 @@ module authUi_probes {
             _prevForm' = form,
             _prevMySession' = mySession,
       },
-      all { submit_success(u, s),
+      all { submit_success(arg_UserId_1, arg_SessionId_1),
             _lastAction' = "submit_success",
-            _lastS' = s,
-            _lastU' = u,
+            _arg_SessionId_1' = arg_SessionId_1,
+            _arg_UserId_1' = arg_UserId_1,
             _pre_UI_001' = false,
-            _pre_UI_002' = pre_UI_002(u, s),
+            _pre_UI_002' = pre_UI_002(arg_UserId_1, arg_SessionId_1),
             _pre_UI_003' = false,
             _pre_UI_004' = false,
             _pre_UI_005' = false,
@@ -118,28 +125,28 @@ module authUi_probes {
             _prevForm' = form,
             _prevMySession' = mySession,
       },
-      all { submit_invalid(u),
+      all { submit_invalid(arg_UserId_1),
             _lastAction' = "submit_invalid",
-            _lastS' = _lastS,
-            _lastU' = u,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = arg_UserId_1,
             _pre_UI_001' = false,
             _pre_UI_002' = false,
             _pre_UI_003' = false,
             _pre_UI_004' = false,
-            _pre_UI_005' = pre_UI_005(u),
+            _pre_UI_005' = pre_UI_005(arg_UserId_1),
             _pre_UI_006' = false,
             _pre_UI_007' = false,
             _prevCurrent' = current,
             _prevForm' = form,
             _prevMySession' = mySession,
       },
-      all { submit_locked(u),
+      all { submit_locked(arg_UserId_1),
             _lastAction' = "submit_locked",
-            _lastS' = _lastS,
-            _lastU' = u,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = arg_UserId_1,
             _pre_UI_001' = false,
             _pre_UI_002' = false,
-            _pre_UI_003' = pre_UI_003(u),
+            _pre_UI_003' = pre_UI_003(arg_UserId_1),
             _pre_UI_004' = false,
             _pre_UI_005' = false,
             _pre_UI_006' = false,
@@ -150,8 +157,8 @@ module authUi_probes {
       },
       all { click_logout,
             _lastAction' = "click_logout",
-            _lastS' = _lastS,
-            _lastU' = _lastU,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
             _pre_UI_001' = false,
             _pre_UI_002' = false,
             _pre_UI_003' = false,
@@ -165,8 +172,8 @@ module authUi_probes {
       },
       all { session_expired,
             _lastAction' = "session_expired",
-            _lastS' = _lastS,
-            _lastU' = _lastU,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
             _pre_UI_001' = false,
             _pre_UI_002' = false,
             _pre_UI_003' = false,
@@ -180,8 +187,8 @@ module authUi_probes {
       },
       all { go_home,
             _lastAction' = "go_home",
-            _lastS' = _lastS,
-            _lastU' = _lastU,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
             _pre_UI_001' = false,
             _pre_UI_002' = false,
             _pre_UI_003' = false,
@@ -195,8 +202,8 @@ module authUi_probes {
       },
       all { time_passes,
             _lastAction' = "time_passes",
-            _lastS' = _lastS,
-            _lastU' = _lastU,
+            _arg_SessionId_1' = _arg_SessionId_1,
+            _arg_UserId_1' = _arg_UserId_1,
             _pre_UI_001' = false,
             _pre_UI_002' = false,
             _pre_UI_003' = false,
@@ -221,12 +228,12 @@ module authUi_probes {
   /// UI-002: While on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
   val oblig_UI_002: bool =
     not(_lastAction == "submit_success" and _pre_UI_002)
-      or post_UI_002(_lastU, _lastS)
+      or post_UI_002(_arg_UserId_1, _arg_SessionId_1)
 
   /// UI-003: If the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
   val oblig_UI_003: bool =
     not(_lastAction == "submit_locked" and _pre_UI_003)
-      or post_UI_003(_lastU)
+      or post_UI_003(_arg_UserId_1)
 
   /// UI-004: While on Dashboard, when the session expires, the system shall return to Login.
   val oblig_UI_004: bool =
@@ -236,7 +243,7 @@ module authUi_probes {
   /// UI-005: If the user submits invalid credentials, then the system shall stay on Login and show the bad-credentials error.
   val oblig_UI_005: bool =
     not(_lastAction == "submit_invalid" and _pre_UI_005)
-      or post_UI_005(_lastU)
+      or post_UI_005(_arg_UserId_1)
 
   /// UI-006: While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
   val oblig_UI_006: bool =
@@ -387,13 +394,13 @@ module authUi_probes {
   val witness_UI_002: bool =
     not(_lastAction == "submit_success"
         and _pre_UI_002
-        and post_UI_002(_lastU, _lastS))
+        and post_UI_002(_arg_UserId_1, _arg_SessionId_1))
 
   /// Witness for UI-003: If the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
   val witness_UI_003: bool =
     not(_lastAction == "submit_locked"
         and _pre_UI_003
-        and post_UI_003(_lastU))
+        and post_UI_003(_arg_UserId_1))
 
   /// Witness for UI-004: While on Dashboard, when the session expires, the system shall return to Login.
   val witness_UI_004: bool =
@@ -405,7 +412,7 @@ module authUi_probes {
   val witness_UI_005: bool =
     not(_lastAction == "submit_invalid"
         and _pre_UI_005
-        and post_UI_005(_lastU))
+        and post_UI_005(_arg_UserId_1))
 
   /// Witness for UI-006: While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
   val witness_UI_006: bool =

@@ -195,7 +195,8 @@ RECORD_KEYS = ("check_results", "verification_log", "traceability",
 
 # Per-ID fields the tools write. Paths are dotted; `witness.outcomes[]`
 # entries are keyed by outcome name.
-WITNESS_MACHINE = ("status", "trace", "checked_at", "steps", "model_sha")
+WITNESS_MACHINE = ("status", "trace", "checked_at", "steps", "found_by",
+                   "model_sha")
 # A requirement carries two verdicts: the WITNESS (its antecedent is
 # reachable: the requirement is not vacuous) and the OBLIGATION (every
 # reachable step it governs satisfies it). See itf_tools.obligation_name.
@@ -203,7 +204,7 @@ OBLIGATION_MACHINE = ("formal_status", "trace", "checked_at", "steps",
                       "model_sha")
 MACHINE_PATHS = {
     "requirements": ("witness.status", "witness.trace", "witness.checked_at",
-                     "witness.steps", "witness.model_sha")
+                     "witness.steps", "witness.found_by", "witness.model_sha")
                     + tuple(f"obligation.{f}" for f in OBLIGATION_MACHINE),
     "invariants": ("formal_status",),
     "properties": ("formal_status",),

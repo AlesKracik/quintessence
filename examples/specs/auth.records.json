@@ -633,215 +633,273 @@
         "kind": "invariant",
         "quint_name": "atMostOneActiveSession",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
-        "batched": true
+        "duration_s": 6.8,
+        "steps": 3,
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "INV-002",
         "kind": "invariant",
         "quint_name": "noSessionWhileLocked",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
-        "batched": true
+        "duration_s": 6.8,
+        "steps": 3,
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "INV-003",
         "kind": "invariant",
         "quint_name": "noAccessWithInvalidToken",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
-        "batched": true
+        "duration_s": 6.8,
+        "steps": 3,
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "INV-004",
         "kind": "invariant",
         "quint_name": "noEarlyLockout",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
-        "batched": true
+        "duration_s": 6.8,
+        "steps": 3,
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "INV-005",
         "kind": "invariant",
         "quint_name": "noEarlyExpiry",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
-        "batched": true
+        "duration_s": 6.8,
+        "steps": 3,
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "REQ-001",
         "kind": "obligation",
         "quint_name": "oblig_REQ_001",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 8.0,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
       },
       {
         "id": "REQ-002",
         "kind": "obligation",
         "quint_name": "oblig_REQ_002",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 8.0,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "REQ-003",
         "kind": "obligation",
         "quint_name": "oblig_REQ_003",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 8.0,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:51:52.324\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release"
       },
       {
         "id": "REQ-004",
         "kind": "obligation",
         "quint_name": "oblig_REQ_004",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 8.0,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
       },
       {
         "id": "REQ-005",
         "kind": "obligation",
         "quint_name": "oblig_REQ_005",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 8.0,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 300s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "REQ-006",
         "kind": "obligation",
         "quint_name": "oblig_REQ_006",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 8.0,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 300s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-logout",
         "kind": "coverage",
         "quint_name": "cover_logout",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-logout-sessions",
         "kind": "explanation",
         "quint_name": "explain_logout_sessions",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-login_failed",
         "kind": "coverage",
         "quint_name": "cover_login_failed",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-login_failed-sessions",
         "kind": "explanation",
         "quint_name": "explain_login_failed_sessions",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-login_failed-accountStatus",
         "kind": "explanation",
         "quint_name": "explain_login_failed_accountStatus",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-login_failed-failedAttempts",
         "kind": "explanation",
         "quint_name": "explain_login_failed_failedAttempts",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-expire_session",
         "kind": "coverage",
         "quint_name": "cover_expire_session",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-expire_session-sessions",
         "kind": "explanation",
         "quint_name": "explain_expire_session_sessions",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "verdict-tick-1",
         "kind": "verdict",
         "quint_name": "verdict_tick_1",
         "result": "verified",
-        "duration_s": 27.7,
-        "steps": 4,
+        "duration_s": 7.8,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       }
     ],
     "max_steps": 10,
     "simulation": {
-      "ran_at": "2026-10-11T12:04:48+00:00",
+      "ran_at": "2026-10-12T15:14:31+00:00",
       "max_samples": 10000,
-      "max_steps": 8,
+      "max_steps": 10,
       "backend": "rust",
+      "seed": "7",
       "invariants": {
-        "result": "error",
-        "checked": 5,
-        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
+        "result": "ok",
+        "checked": 5
       },
       "transition_invariants": {
-        "result": "error",
-        "checked": 5,
-        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
-      }
+        "result": "ok",
+        "checked": 15
+      },
+      "witnesses": [
+        {
+          "probe": "witness_REQ_001",
+          "traces": 9987,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_REQ_002",
+          "traces": 8132,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_REQ_003",
+          "traces": 9986,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_REQ_004",
+          "traces": 347,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_REQ_006",
+          "traces": 9986,
+          "explored": 10000
+        }
+      ]
     },
-    "ran_at": "2026-10-11T16:14:39+00:00"
+    "ran_at": "2026-10-12T15:19:17+00:00",
+    "cost": {
+      "pass1": {
+        "checks": 5,
+        "after_checks": 3,
+        "avg_check_s": 0.7,
+        "projected_s": 17,
+        "parallel": 2,
+        "budget_seconds": 180,
+        "elapsed_s": 24
+      },
+      "deep_skipped": 10
+    }
   },
   "verification_log": [],
   "traceability": [],
@@ -865,60 +923,64 @@
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-001.itf.json",
-        "checked_at": "2026-10-11T16:09:32+00:00",
-        "steps": 3,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T15:14:53+00:00",
+        "steps": 1,
+        "found_by": "simulator",
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:09:21+00:00",
-        "steps": 4,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T14:51:50+00:00",
+        "steps": 3,
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       }
     },
     "REQ-002": {
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-002.itf.json",
-        "checked_at": "2026-10-11T16:09:44+00:00",
-        "steps": 3,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T15:14:53+00:00",
+        "steps": 2,
+        "found_by": "simulator",
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:09:21+00:00",
-        "steps": 4,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T14:53:50+00:00",
+        "steps": 3,
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       }
     },
     "REQ-003": {
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-003.itf.json",
-        "checked_at": "2026-10-11T16:09:55+00:00",
-        "steps": 3,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T15:14:54+00:00",
+        "steps": 2,
+        "found_by": "simulator",
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:09:21+00:00",
-        "steps": 4,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T14:53:50+00:00",
+        "steps": 3,
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       }
     },
     "REQ-004": {
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-004.itf.json",
-        "checked_at": "2026-10-11T16:14:39+00:00",
+        "checked_at": "2026-10-12T15:19:17+00:00",
         "steps": 10,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "found_by": "apalache",
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:09:21+00:00",
-        "steps": 4,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T14:53:50+00:00",
+        "steps": 3,
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       }
     },
     "REQ-005": {
@@ -927,24 +989,25 @@
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:09:21+00:00",
-        "steps": 4,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T14:53:50+00:00",
+        "steps": 3,
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       }
     },
     "REQ-006": {
       "witness": {
         "status": "witnessed",
         "trace": "auth/traces/REQ-006.itf.json",
-        "checked_at": "2026-10-11T16:10:19+00:00",
-        "steps": 3,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T15:15:02+00:00",
+        "steps": 2,
+        "found_by": "simulator",
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:09:21+00:00",
-        "steps": 4,
-        "model_sha": "2ab18d0235ed25b612e9385247d39669e60b6a844d759d3daae554222287f4d6"
+        "checked_at": "2026-10-12T14:53:50+00:00",
+        "steps": 3,
+        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
       }
     }
   }

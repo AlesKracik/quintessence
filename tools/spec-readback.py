@@ -41,7 +41,8 @@ from itf_tools import (  # noqa: E402
     load_trace, mermaid_lines, render_value, state_vars,
     detect_action_var, witness_status, compute_model_sha,
     area_json_path, changes_dir, journeys_dir,
-    witness_exempt, owes_obligation, brief_status, action_params, GHOST_PARAM_RE,
+    witness_exempt, owes_obligation, brief_status, action_params, step_ghosts,
+    GHOST_PARAM_RE,
     compute_spec_sha, is_rejection, is_computed, witness_entries,
     GHOST_PREFIXES,
 )
@@ -327,7 +328,7 @@ def witness_one_liner(root, trace_rel):
         # which tool produced the trace — itf_tools.action_params knows both,
         # so an --mbt trace renders 'login(bob, s1)' like a probe trace does
         # instead of losing its arguments to a name this loop doesn't know.
-        params = action_params(s, ghosts)
+        params = action_params(s, step_ghosts(trace, s, action_var) or ghosts)
         labels.append(f"{action}({', '.join(params)})" if params else action)
     compressed = []
     for lbl in labels:
@@ -600,6 +601,19 @@ def attention_items(root, area_name, area):
         elif c.get("result") in ("timeout", "error"):
             items.append(f"**Check {c.get('result')}** — {c.get('id')} (`{c.get('quint_name')}`)"
                          + (f": {c.get('error')}" if c.get("error") else ""))
+    # A bound nobody could afford to raise is a cost of the tooling, not a
+    # choice anyone made — so the readback names the cause.
+    run_cost = cr.get("cost") or {}
+    if run_cost.get("deep_skipped"):
+        p1 = run_cost.get("pass1") or {}
+        took = (f": pass 1 took {p1['elapsed_s']}s against a "
+                f"{p1.get('budget_seconds', '?')}s run budget"
+                if p1.get("elapsed_s") is not None else "")
+        items.append(f"**Deep pass not reached** — {run_cost['deep_skipped']} "
+                     f"check(s) rest on the shallow bound only{took}. Raise "
+                     f"apalache.budget_seconds, run with more --parallel, or "
+                     f"cut the model's checking cost (spec-lint's cost/* "
+                     f"warnings say where).")
     rows, _missing, _ok = witness_status(root, area_name, area)
     for rid, st, _trace, detail in rows:
         if st in ("not-run", "no-witness", "hollow", "HOLLOW", "STALE",

@@ -183,7 +183,7 @@ def test_generation_writes_current_traces_and_check_reads_them(tmp_path, monkeyp
         Path(out).write_text(json.dumps(trace), encoding="utf-8")
         return FakeProc(stdout="ok")
 
-    monkeypatch.setattr(sr.subprocess, "run", fake_run)
+    monkeypatch.setattr(sr, "run_group", fake_run)
     monkeypatch.setattr(sr.shutil, "which", lambda name: "/usr/bin/quint")
     assert sr.generate(root, "shop", jobs=2) == 0
     written = json.loads(sr.trace_path(root, "shop", "closedStaysClosed").read_text())

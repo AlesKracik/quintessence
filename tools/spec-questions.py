@@ -74,6 +74,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import spec_source  # noqa: E402
 from itf_tools import compute_model_sha, soften_stdout  # noqa: E402
 from quint_ir import parse_qnt  # noqa: E402
+from proc import run_group  # noqa: E402
 
 OPS = ("cmp", "guard", "effect", "variant", "const")
 DEFAULT_LIMIT = 40
@@ -678,8 +679,8 @@ class Quint:
     def _run(self, args):
         self.calls += 1
         try:
-            p = subprocess.run([self.exe] + args, cwd=self.cwd, capture_output=True,
-                               text=True, timeout=self.timeout)
+            p = run_group([self.exe] + args, cwd=self.cwd,
+                          timeout=self.timeout)
             return p.returncode, (p.stdout or "") + (p.stderr or "")
         except subprocess.TimeoutExpired:
             return None, f"timed out after {self.timeout}s"

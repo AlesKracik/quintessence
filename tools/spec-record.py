@@ -196,7 +196,9 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -205,13 +207,37 @@ from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
                        load_trace, witness_status, is_hollow,
                        area_json_path, is_rejection, witness_exempt,
                        owes_obligation, probe_name, outcome_probe_name,
-                       reach_name, obligation_name)
+                       reach_name, obligation_name, pre_ghost,
+                       param_slots, restore_param_names)
 from spec_source import (load_area, save_area as save_records,  # noqa: E402
                          records_path, SpecSourceError)
 import spec_source  # noqa: E402
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
-from completeness import area_completeness  # noqa: E402
+from completeness import (area_completeness, requirement_checks,  # noqa: E402
+                          mirrored_actions)
+from proc import run_group, kill_all  # noqa: E402
+
+# How many checks pass 1 times before it projects what the rest will cost.
+PROJECT_AFTER = 3
+# Every check pool a run opens, so an interrupt can cancel what is queued
+# before it kills what is running.
+_POOLS = []
+
+
+def fmt_secs(s):
+    s = int(round(s))
+    if s < 90:
+        return f"{s}s"
+    if s < 5400:
+        return f"{s // 60}m{s % 60:02d}s" if s % 60 else f"{s // 60}m"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+
+
+def default_parallel():
+    """Half the CPUs: a check is one Apalache query plus a quint process,
+    and the other half is left for the server's own threads."""
+    return max(1, (os.cpu_count() or 2) // 2)
 
 
 def now_iso():
@@ -337,7 +363,7 @@ def run_alloy(java, jar, als_file, command, outdir, solver, timeout):
            str(als_file)]
     started = datetime.now(timezone.utc)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = run_group(cmd, timeout=timeout)
     except subprocess.TimeoutExpired:
         return "timeout", f"timed out after {timeout}s", timeout, {}
     duration = (datetime.now(timezone.utc) - started).total_seconds()
@@ -380,8 +406,7 @@ def run_smt(z3, smt_file, timeout):
     it would otherwise be misread as success."""
     started = datetime.now(timezone.utc)
     try:
-        proc = subprocess.run([z3, "-smt2", str(smt_file)],
-                              capture_output=True, text=True, timeout=timeout)
+        proc = run_group([z3, "-smt2", str(smt_file)], timeout=timeout)
     except subprocess.TimeoutExpired:
         return "timeout", f"timed out after {timeout}s", timeout, None
     duration = (datetime.now(timezone.utc) - started).total_seconds()
@@ -453,6 +478,20 @@ def find_quint():
 # question (TLC writes none): the file test stays the primary signal because
 # it cannot be confused by an error message that happens to contain a word.
 VIOLATION_MARKER = "[violation]"
+# The shared Apalache server died (a timed-out check is killed with its
+# whole process group, the server it started included) and two parallel
+# checks raced to start the next one: the loser could not bind the port.
+# Not an answer about the model — the run is retried once.
+SERVER_RACE = ("Address already in use", "Failed to bind to address")
+
+
+def run_quint(cmd, timeout):
+    proc = run_group(cmd, timeout=timeout)
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0 and any(m in out for m in SERVER_RACE):
+        time.sleep(3 + 3 * (hash(threading.current_thread().name) % 3))
+        proc = run_group(cmd, timeout=timeout)
+    return proc
 OK_MARKER = "[ok]"
 
 # "Witnesses: someName was witnessed in 7094 trace(s) out of 10000 explored"
@@ -473,8 +512,7 @@ def quint_supports(quint, subcommand, flag, timeout=60):
     key = (subcommand, flag)
     if key not in _QUINT_CAPS:
         try:
-            proc = subprocess.run([quint, subcommand, "--help"],
-                                  capture_output=True, text=True, timeout=timeout)
+            proc = run_group([quint, subcommand, "--help"], timeout=timeout)
             # Whole-flag match: "--server" must not match "--server-endpoint".
             _QUINT_CAPS[key] = re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])",
                                          (proc.stdout or "") + (proc.stderr or "")) is not None
@@ -485,7 +523,7 @@ def quint_supports(quint, subcommand, flag, timeout=60):
 
 def run_verify(quint, qnt_file, invariant, max_steps, timeout,
                init=None, step=None, out_itf=None, inductive=False,
-               temporal=False, backend=None, no_server=False):
+               temporal=False, backend=None, no_server=False, endpoint=None):
     """Run one `quint verify`. Returns (result, detail, duration_s) where
     result ∈ verified | counterexample | timeout | error.
     'counterexample' means a violation was found — for witness probes that
@@ -541,6 +579,11 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
         cmd.append(f"--backend={backend}")
     if no_server:
         cmd.append("--server=false")
+    if endpoint and itf_capable:
+        # A parallel worker's own Apalache server: quint starts one per
+        # call on the endpoint's port when none is running there, and two
+        # workers sharing a port race to bind it.
+        cmd.append(f"--server-endpoint={endpoint}")
     if init:
         cmd.append(f"--init={init}")
     if step:
@@ -550,9 +593,7 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
     cmd.append(str(qnt_file))
     started = datetime.now(timezone.utc)
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
-        )
+        proc = run_quint(cmd, timeout)
     except subprocess.TimeoutExpired:
         return "timeout", f"timed out after {timeout}s", timeout
     duration = (datetime.now(timezone.utc) - started).total_seconds()
@@ -599,7 +640,7 @@ def run_verify_batch(quint, qnt_file, names, max_steps, timeout,
            + [str(qnt_file)])
     started = datetime.now(timezone.utc)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = run_quint(cmd, timeout)
     except subprocess.TimeoutExpired:
         return "timeout", f"batch timed out after {timeout}s", timeout
     duration = (datetime.now(timezone.utc) - started).total_seconds()
@@ -653,7 +694,7 @@ def run_simulate(quint, qnt_file, invariants, max_samples, max_steps, timeout,
     cmd.append(str(qnt_file))
     started = datetime.now(timezone.utc)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = run_group(cmd, timeout=timeout)
     except subprocess.TimeoutExpired:
         return "timeout", f"timed out after {timeout}s", timeout, {}, []
     duration = (datetime.now(timezone.utc) - started).total_seconds()
@@ -675,6 +716,75 @@ def run_simulate(quint, qnt_file, invariants, max_samples, max_steps, timeout,
     # message is the CAUSE of the error, not a counterexample to it — read
     # as falsified, it was recorded as one and reordered the shallow pass.
     return "error", tail, duration, counts, []
+
+
+def run_simulate_trace(quint, qnt_file, invariant, max_samples, max_steps,
+                       timeout, out_itf, seed=None, backend=None, init=None,
+                       step=None):
+    """Ask the SIMULATOR for one execution that violates `invariant`, written
+    to `out_itf`. Returns (result, detail, duration_s) with result ∈
+    counterexample | ok | timeout | error — the same vocabulary as
+    run_verify, so a caller can take either engine's answer.
+
+    Used for witness probes only, and only for the POSITIVE answer. A
+    witness is existential: one concrete run that fired the step from
+    @while and ended in @shall is the proof, whoever found it. 'ok' here
+    means "not in the runs I tried", never "unreachable" — the caller sends
+    that probe to Apalache, which alone may say no-witness.
+
+    One invariant per run: `quint run` stops at the first violation, so a
+    violation of a single named invariant can only be that invariant's."""
+    out_path = Path(out_itf)
+    if out_path.exists():
+        out_path.unlink()
+    cmd = [quint, "run", f"--invariant={invariant}",
+           f"--max-samples={max_samples}", f"--max-steps={max_steps}",
+           f"--out-itf={out_path}"]
+    if backend:
+        cmd.append(f"--backend={backend}")
+    if seed:
+        cmd.append(f"--seed={seed}")
+    if init:
+        cmd.append(f"--init={init}")
+    if step:
+        cmd.append(f"--step={step}")
+    cmd.append(str(qnt_file))
+    started = datetime.now(timezone.utc)
+    try:
+        proc = run_group(cmd, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if out_path.exists():
+            out_path.unlink()
+        return "timeout", f"timed out after {timeout}s", timeout
+    duration = (datetime.now(timezone.utc) - started).total_seconds()
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode == 0:
+        if out_path.exists():
+            out_path.unlink()   # a sample trace, not a violation
+        return "ok", "", duration
+    if VIOLATION_MARKER in out and out_path.exists():
+        return "counterexample", "", duration
+    if out_path.exists():
+        out_path.unlink()
+    return "error", "\n".join(out.strip().splitlines()[-5:]), duration
+
+
+def simulated_witness_ok(trace, action, pre_ghost_name=None):
+    """Does a simulator trace end in the step its probe is about? The
+    mechanical half of trusting it: quint's evaluator reported the probe
+    violated at the last state; this checks, from the trace alone, the
+    conjuncts that can be read off it — the step is the requirement's own
+    action (not init: an event probe cannot be hollow) and, where the
+    requirement has an @while, its pre-state ghost is true."""
+    states = (trace or {}).get("states") or []
+    if len(states) < 2:
+        return False
+    last = states[-1]
+    if last.get("_lastAction") != action:
+        return False
+    if pre_ghost_name and pre_ghost_name in last and last[pre_ghost_name] is not True:
+        return False
+    return True
 
 
 def run_structural_check(item, iid, als_rel, als_file, root, area_name,
@@ -764,8 +874,13 @@ def roll_up_outcomes(witness, current_sha):
     witness["checked_at"] = now_iso()
 
 
+def outcome_trace_rel(area_name, rid, oname):
+    return f"{area_name}/traces/{rid}.{re.sub(r'[^A-Za-z0-9]+', '-', oname)}.itf.json"
+
+
 def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_name,
-                        probe_run, steps, current_sha, deep_queue=None):
+                        probe_run, steps, current_sha, deep_queue=None,
+                        stamp=None):
     """Prove each permitted outcome of a `may` requirement separately.
 
     Returns the number of failures. The requirement is only witnessed when
@@ -777,7 +892,8 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
     THIS pass uses. An outcome that finds no witness at a shallow bound is
     recorded as no-witness at that bound and, when `deep_queue` is given,
     queued for the deep pass — the caller re-runs it and calls
-    roll_up_outcomes again."""
+    roll_up_outcomes again. `stamp(oc, trace_path)` records which engine
+    found a witnessed outcome's trace."""
     outcomes = witness.get("outcomes") or []
     if not outcomes:
         print(f"{rid:<12} no-outcomes      (modality 'may' needs witness.outcomes[])")
@@ -805,7 +921,7 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
             print(f"{label:<24} no-probe         (expected val '{pname}')")
             bad += 1
             continue
-        trace_rel = f"{area_name}/traces/{rid}.{re.sub(r'[^A-Za-z0-9]+', '-', oname)}.itf.json"
+        trace_rel = outcome_trace_rel(area_name, rid, oname)
         trace_path = root / "specs" / trace_rel
         result, detail, duration = probe_run(pname, trace_path, steps)
         oc["checked_at"] = now_iso()
@@ -823,6 +939,7 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
                 # the system makes.
                 oc["status"] = "hollow"
                 oc.pop("model_sha", None)
+                oc.pop("found_by", None)
                 oc["trace"] = trace_rel
                 bad += 1
                 print(f"{label:<24} HOLLOW           (predicate already true in the "
@@ -832,10 +949,14 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
             oc["trace"] = trace_rel
             if current_sha:
                 oc["model_sha"] = current_sha
-            print(f"{label:<24} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s)")
+            if stamp:
+                stamp(oc, trace_path)
+            print(f"{label:<24} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s"
+                  + (", simulator" if oc.get("found_by") == "simulator" else "") + ")")
         elif result == "verified":
             oc["status"] = "no-witness"
             oc.pop("model_sha", None)
+            oc.pop("found_by", None)
             bad += 1
             if deep_queue is not None:
                 # Provisional: recorded pessimistically at this bound so an
@@ -893,6 +1014,12 @@ def cmd_check(args):
 
     def budget_left():
         return deadline - time.monotonic()
+    # Independent checks at once. 1 is the serial run exactly as it was.
+    parallel = max(1, getattr(args, "parallel", None)
+                   or apalache.get("parallel") or default_parallel())
+    # What this run cost, and whether the budget reached the deep pass:
+    # check_results.cost. Filled by the pass-1 projection and the deep pass.
+    cost = {}
     alloy_cfg = project.get("alloy") or {}
     alloy_solver = alloy_cfg.get("solver", "sat4j")
     alloy_timeout = args.timeout or alloy_cfg.get("timeout_seconds", 300)
@@ -908,6 +1035,9 @@ def cmd_check(args):
     sim_seed = args.seed or quint_cfg.get("seed")
     sim_timeout = quint_cfg.get("simulate_timeout_seconds", 120)
     batch_enabled = quint_cfg.get("batch_invariants", True)
+    # A probe the pre-screen HIT has a witness the simulator can hand over
+    # directly; off, every witness is constructed by Apalache as before.
+    sim_witnesses = quint_cfg.get("simulator_witnesses", True)
     temporal_backend = quint_cfg.get("temporal_backend", "tlc")
 
     # The completeness checks (coverage, explanation, verdicts), keyed by
@@ -968,6 +1098,75 @@ def cmd_check(args):
 
     def selected(item):
         return not only or item.get("id") in only
+
+    # One slice of the probe module per check (spec-probes.slice_text): the
+    # same transition relation and the same formula, without the ghosts the
+    # check never reads. Derived from the committed module, never committed.
+    # Anything that cannot be sliced runs against the whole module, as before.
+    slice_enabled = quint_cfg.get("slice_probes", True)
+    slice_dir = root / "specs" / args.area / "gen" / "slices"
+    slices = {}
+    slice_lock = threading.Lock()
+
+    def slice_for(val):
+        if not (slice_enabled and probes_file and probes_file.exists()):
+            return probes_file
+        with slice_lock:
+            if val in slices:
+                return slices[val]
+            target = probes_file
+            try:
+                sp = load_tool("spec-probes.py", "spec_probes_slicer")
+                text = probes_file.read_text(encoding="utf-8")
+                m = re.search(r"^module (\w+) \{$", text, re.MULTILINE)
+                name = sp.slice_module_name(m.group(1), val)
+                prefix = Path(os.path.relpath(probes_file.parent, slice_dir))
+                slice_dir.mkdir(parents=True, exist_ok=True)
+                target = slice_dir / f"{name}.qnt"
+                target.write_text(sp.slice_text(text, [val], name, prefix.as_posix()),
+                                  encoding="utf-8")
+            except (KeyError, AttributeError, OSError, ValueError) as e:
+                print(f"{'slice':<12} {val}: {e} — checked against the whole "
+                      f"probe module", flush=True)
+                target = probes_file
+            slices[val] = target
+            return target
+
+    # The probe module carries parameters in slots (one ghost per type
+    # position); every trace this run writes from it is restored to
+    # _last<Param> names before anything reads it.
+    model_ir = parse_qnt(qnt_file) if qnt_file.exists() else None
+    slots = (param_slots(model_ir.get("action_param_types") or {},
+                         mirrored_actions(model_ir)) if model_ir else {})
+
+    def restore_names(trace_path):
+        path = Path(trace_path)
+        if not slots or not path.exists():
+            return
+        try:
+            trace = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return   # load_trace reports it
+        if isinstance(trace, dict) and any(
+                k.startswith("_arg_") for k in ((trace.get("states") or [{}])[0])):
+            restore_param_names(trace, slots)
+            path.write_text(json.dumps(trace, separators=(",", ":")), encoding="utf-8")
+
+    # Event-form probes, by name: the action the step must be and the
+    # @while ghost that must be true at its end. Only these may take a
+    # simulator trace — `_lastAction` is "init" in the initial state, so an
+    # event probe cannot be violated there, and "hollow" (a verdict that
+    # rests on Apalache returning the SHORTEST trace) cannot arise. A state
+    # requirement's probe can hold at init, so it stays with Apalache.
+    event_probes = {}
+    for c in requirement_checks(area):
+        if c["form"] != "event":
+            continue
+        pg = pre_ghost(c["rid"]) if c["while"] else None
+        names = ([outcome_probe_name(c["rid"], o.get("name")) for o in c["outcomes"]]
+                 if c["outcomes"] else [probe_name(c["rid"])])
+        for n in names:
+            event_probes[n] = (c["action"], pg)
 
     current_sha = compute_model_sha(root, args.area, area)
 
@@ -1134,6 +1333,8 @@ def cmd_check(args):
         # The CONFIGURED ceiling. The depth each check actually reached is
         # checks[].steps — with a ladder one global number cannot describe it.
         cr["max_steps"] = max_steps
+        if cost:
+            cr["cost"] = dict(cost)
         if simulation is not None:
             cr["simulation"] = simulation  # advisory; carries no formal_status
         save_area(root, args.area, area)
@@ -1152,12 +1353,16 @@ def cmd_check(args):
                 and quint_supports(need_quint(), "verify", "--server"))
 
     def bounded_verify(job, steps):
+        target = (slice_for(job["quint_name"]) if job["over"] == "probes"
+                  else job["target"])
         result, detail, duration = run_verify(
-            need_quint(), job["target"], job["quint_name"], steps, timeout,
+            need_quint(), target, job["quint_name"], steps, timeout,
             init=job["init"], step=job["step"], out_itf=job["cex_path"],
-            no_server=server_off())
+            no_server=server_off(), endpoint=endpoint())
         if result == "timeout":
             server_state["dirty"] = True
+        if result == "counterexample" and job["over"] == "probes":
+            restore_names(job["cex_path"])
         return result, detail, duration
 
     def record_bounded(job, result, detail, duration, steps,
@@ -1442,6 +1647,15 @@ def cmd_check(args):
         for (target, init, step), batchable in groups.items():
             if len(batchable) < 2 or not Path(target).exists():
                 continue
+            # A batch the simulator already saw fail cannot come back green:
+            # it would cost one run of the whole module and decide nothing.
+            if any(j["quint_name"] in sim_falsified for j in batchable) or \
+                    (simulation or {}).get(
+                        "transition_invariants" if init else "invariants",
+                        {}).get("result") == "violation":
+                print(f"{'batch':<12} {'skipped — per-id below':<26} (the "
+                      f"simulator already found a violation here)")
+                continue
             quint = need_quint()
             if not quint_supports(quint, "verify", "--invariants"):
                 return {}, 0.0
@@ -1462,88 +1676,68 @@ def cmd_check(args):
                       f"({dur:.1f}s, {where})")
         return clean, total
 
-    # Pass 1 (shallow). Never budget-gated: it is the cheap half AND the half
-    # that carries the findings, so every selected check gets at least a
-    # shallow verdict even when the budget is already spent.
-    deep_queue = []
-    if ladder:
-        clean_ids, _total = batch_pass(ladder, shallow_steps)
-        for job in ladder:
-            if job["id"] in clean_ids:
-                job["shallow"] = ("verified", "", clean_ids[job["id"]], True)
-            else:
-                r, d, dur = bounded_verify(job, shallow_steps)
-                job["shallow"] = (r, d, dur, False)
-            r, d, dur, was_batched = job["shallow"]
-            if r == "verified" and shallow_steps < max_steps:
-                deep_queue.append(job)   # clean, and there is depth left to add
-            else:
-                # A counterexample is FINAL — depth cannot unfind it. So is a
-                # timeout or an error: running the same check deeper will not
-                # make it answer.
-                record_bounded(job, r, d, dur, shallow_steps, batched=was_batched)
+    # How each witness trace was found, keyed by its path: probe_run's
+    # callers stamp it on the witness (found_by, and for a simulator trace
+    # its own length as steps).
+    found = {}
+    sim_tried = set()
 
-    # Pass 2 (deep). Only the checks clean at shallow, and only while the run
-    # budget lasts. A check the budget stopped keeps its SHALLOW verdict and
-    # says so — a shallow pass is never silently upgraded to a deep one.
-    def budget_note():
-        return (f"deep pass skipped: the run budget of {budget_seconds}s was "
-                f"spent, so this verdict is the shallow pass's ≤{shallow_steps} "
-                f"steps, not the configured {max_steps}")
+    def stamp(block, trace_path):
+        engine, n = found.get(str(trace_path), ("apalache", None))
+        block["found_by"] = engine
+        if engine == "simulator":
+            # The trace's own length: the simulator ran to no bound worth
+            # recording, and this is the depth the witness actually needed.
+            block["steps"] = n
 
-    if deep_queue:
-        if budget_left() <= 0:
-            print(f"{'budget':<12} {'exhausted before deep pass':<26} "
-                  f"({budget_seconds}s spent; {len(deep_queue)} check(s) stay "
-                  f"at ≤{shallow_steps} steps)")
-            for job in deep_queue:
-                r, d, dur, wb = job["shallow"]
-                record_bounded(job, r, d, dur, shallow_steps, batched=wb,
-                               note=budget_note())
-        else:
-            clean_ids, _total = batch_pass(deep_queue, max_steps)
-            stopped = 0
-            for job in deep_queue:
-                sr, sd, sdur, swb = job["shallow"]
-                if job["id"] in clean_ids:
-                    record_bounded(job, "verified", "", clean_ids[job["id"]], max_steps,
-                                   batched=True)
-                    continue
-                if budget_left() <= 0:
-                    stopped += 1
-                    record_bounded(job, sr, sd, sdur, shallow_steps,
-                                   batched=swb, note=budget_note())
-                    continue
-                r, d, dur = bounded_verify(job, max_steps)
-                if r in ("verified", "counterexample"):
-                    record_bounded(job, r, d, dur, max_steps)
-                else:
-                    # The deep run did not answer (timeout/error). Recording
-                    # THAT would discard a verdict already held — clean to
-                    # shallow_steps. Keep the shallow one and say what the
-                    # deep pass did instead.
-                    record_bounded(job, sr, sd, sdur, shallow_steps,
-                                   batched=swb,
-                                   note=(f"deep pass at {max_steps} steps "
-                                         f"returned {r}"
-                                         + (f": {d}" if d else "")))
-            if stopped:
-                print(f"{'budget':<12} {'exhausted during deep pass':<26} "
-                      f"({budget_seconds}s spent; {stopped} check(s) stay at "
-                      f"≤{shallow_steps} steps)")
+    def simulator_witness(pname, trace_path):
+        """The simulator's trace for an event-form probe, or None. Tried
+        once per probe per run, on the probe's slice: for a probe the
+        pre-screen hit, and for one it could not report on (on a large
+        module the whole-module pre-screen can run out of time — the slice
+        is smaller). Not for a probe it explored and never reached: that one
+        is Apalache's to decide. Whatever this does not hand over goes to
+        Apalache exactly as before."""
+        if not (sim_witnesses and not args.no_simulate
+                and pname in event_probes and pname not in sim_tried
+                and sim_probe_hits.get(pname) != 0):
+            return None
+        sim_tried.add(pname)
+        quint = need_quint()
+        backend = eval_backend if quint_supports(quint, "run", "--backend") else None
+        # Bounded by the SHALLOW pass, not the pre-screen's depth: a random
+        # walk is not the shortest run, and a witness is read and replayed —
+        # one that wanders ten steps to show a three-step behavior is worse
+        # evidence than the one Apalache would construct.
+        r, d, dur = run_simulate_trace(
+            quint, slice_for(pname), pname, sim_samples, shallow_steps, sim_timeout,
+            trace_path, seed=sim_seed, backend=backend, init="initP",
+            step="stepP")
+        if r != "counterexample":
+            return None
+        restore_names(trace_path)
+        trace, errs = load_trace(trace_path)
+        action, pg = event_probes[pname]
+        if errs or not simulated_witness_ok(trace, action, pg):
+            # Not a trace we can stand behind; Apalache constructs one.
+            Path(trace_path).unlink()
+            return None
+        found[str(trace_path)] = ("simulator", len(trace["states"]) - 1)
+        return r, "", dur
 
-    # ── 2. Witness probes ────────────────────────────────────────────────
-    # Same ladder, same reason. A witness probe's GOOD outcome is a
-    # counterexample (the violation trace IS the witness), so a shallow run
-    # that finds one is final and cheap; depth is only needed to keep FAILING
-    # to find one, which is the expensive half — and the answer nobody wants.
-    def probe_run(pname, trace_path, steps):
+    def run_probe(pname, trace_path, steps):
+        sim = simulator_witness(pname, trace_path)
+        if sim is not None:
+            return sim
+        found[str(trace_path)] = ("apalache", steps)
         result, detail, duration = run_verify(
-            need_quint(), probes_file, pname, steps, timeout,
+            need_quint(), slice_for(pname), pname, steps, timeout,
             init="initP", step="stepP", out_itf=trace_path,
-            no_server=server_off())
+            no_server=server_off(), endpoint=endpoint())
         if result == "timeout":
             server_state["dirty"] = True
+        if result == "counterexample":
+            restore_names(trace_path)
         return result, detail, duration
 
     def probe_order_key(item):
@@ -1556,6 +1750,244 @@ def cmd_check(args):
         rank = 1 if hits is None else (0 if hits > 0 else 2)
         return (rank, seq)
 
+    def probe_run(pname, trace_path, steps):
+        """One probe's answer: the one pass 1 already started in parallel if
+        there is one, else run here."""
+        return consume(("probe", pname, str(trace_path), steps),
+                       run_probe, pname, trace_path, steps)
+
+    def is_fresh(block):
+        """Witnessed against this model, with its trace still on disk and
+        valid — the probe will be skipped, so it is not planned."""
+        if not (block.get("status") == "witnessed" and current_sha
+                and block.get("model_sha") == current_sha):
+            return False
+        t_rel = block.get("trace")
+        t_path = root / "specs" / t_rel if t_rel else None
+        return bool(t_path and t_path.exists() and not load_trace(t_path)[1])
+
+    def planned_probes():
+        """(probe, trace path) for every shallow probe
+        the witness loop below will run, in the order it will run them —
+        what pass 1 submits ahead and counts in its projection. A probe
+        missed here is not lost: the loop runs it where it is consumed."""
+        out = []
+        if probes_ir is None:
+            return out
+        for _, req in sorted(enumerate(area.get("requirements", []) or []),
+                             key=probe_order_key):
+            rid = req.get("id")
+            if (not rid or not selected(req) or req.get("status") == "deferred"
+                    or req.get("type") == "non-functional"):
+                continue
+            w = req.get("witness") or {}
+            if req.get("modality") == "may":
+                for oc in w.get("outcomes") or []:
+                    oname = oc.get("name") or "?"
+                    pname = outcome_probe_name(rid, oname)
+                    if oc.get("predicate") and not is_fresh(oc) and pname in probe_vals:
+                        tp = root / "specs" / outcome_trace_rel(args.area, rid, oname)
+                        out.append((pname, tp))
+                continue
+            if witness_exempt(req) or not owes_obligation(req) or is_fresh(w):
+                continue
+            pname = probe_name(rid)
+            if pname in probe_vals:
+                tp = root / "specs" / f"{args.area}/traces/{rid}.itf.json"
+                out.append((pname, tp))
+        return out
+
+    # ── Running checks in parallel ───────────────────────────────────────
+    # The checks are independent, and one Apalache server answers concurrent
+    # queries concurrently, so a pass is submitted N-wide up front and then
+    # CONSUMED in its own order: each verdict is still written the moment the
+    # loop reaches it, in the order it always was, by this thread alone — the
+    # ledger never has two writers. A check nobody submitted (or --parallel
+    # 1) simply runs where it is consumed, which is the serial path unchanged.
+    pool = ThreadPoolExecutor(max_workers=parallel) if parallel > 1 else None
+    # One Apalache port per worker thread (apalache.server_port + 1 + k); the
+    # main thread keeps quint's default, so a serial run is unchanged.
+    port_base = apalache.get("server_port", 8822)
+    worker = threading.local()
+    worker_ids = {"next": 0, "lock": threading.Lock()}
+
+    def endpoint():
+        if pool is None or threading.current_thread() is threading.main_thread():
+            return None
+        if not quint_supports(need_quint(), "verify", "--server-endpoint"):
+            return None
+        if not hasattr(worker, "port"):
+            with worker_ids["lock"]:
+                worker.port = port_base + 1 + worker_ids["next"]
+                worker_ids["next"] += 1
+        return f"localhost:{worker.port}"
+    if pool is not None:
+        _POOLS.append(pool)
+    futures = {}
+    timing = {"lock": threading.Lock(), "durations": [], "projected": False}
+
+    def timed(fn):
+        def run(*a):
+            started = time.monotonic()
+            out = fn(*a)
+            with timing["lock"]:
+                timing["durations"].append(time.monotonic() - started)
+                ready = (not timing["projected"]
+                         and len(timing["durations"]) >= PROJECT_AFTER)
+                if ready:
+                    timing["projected"] = True
+            if ready:
+                project_pass1()
+            return out
+        return run
+
+    def submit(key, fn, *a):
+        if pool is not None and key not in futures:
+            futures[key] = pool.submit(timed(fn), *a)
+
+    def consume(key, fn, *a):
+        fut = futures.pop(key, None)
+        return fut.result() if fut is not None else timed(fn)(*a)
+
+    # ── Pass-1 projection ────────────────────────────────────────────────
+    # Pass 1 is never budget-gated, so nothing else bounds it — and on
+    # a model the size of a real brownfield area it can run for most of an hour
+    # with no word about it. After the first few checks the run says what
+    # pass 1 will cost and whether the budget will reach the deep pass, and
+    # records it, so a readback can say why every ✓ rests on the shallow
+    # bound instead of leaving the reader to guess.
+    pass1 = {"total": 0, "started": None}
+
+    def project_pass1():
+        with timing["lock"]:
+            durs = list(timing["durations"])
+        if not durs or not pass1["total"]:
+            return
+        avg = sum(durs) / len(durs)
+        left = max(pass1["total"] - len(durs), 0)
+        projected = (time.monotonic() - pass1["started"]) + avg * left / parallel
+        cost["pass1"] = {"checks": pass1["total"], "after_checks": len(durs),
+                         "avg_check_s": round(avg, 1),
+                         "projected_s": round(projected),
+                         "parallel": parallel, "budget_seconds": budget_seconds}
+        fits = projected < budget_seconds
+        cover = ("leaves budget for pass 2" if fits else
+                 "budget covers pass 2 only if pass 1 ends early — the deep "
+                 "pass will likely not run")
+        print(f"{'projection':<12} pass 1: {len(durs)}/{pass1['total']} checks, "
+              f"~{fmt_secs(avg)}/check"
+              + (f" × {parallel} parallel" if parallel > 1 else "")
+              + f" → ~{fmt_secs(projected)} projected; budget "
+              f"{fmt_secs(budget_seconds)} {cover}", flush=True)
+
+    # Pass 1 (shallow). Never budget-gated: it is the cheap half AND the half
+    # that carries the findings, so every selected check gets at least a
+    # shallow verdict even when the budget is already spent.
+    deep_queue = []
+    pass1["started"] = time.monotonic()
+    witness_plan = planned_probes() if not args.no_witness else []
+    clean_ids = batch_pass(ladder, shallow_steps)[0] if ladder else {}
+    pending = [j for j in ladder if j["id"] not in clean_ids]
+    pass1["total"] = len(pending) + len(witness_plan)
+    for job in pending:
+        submit(("ladder", job["id"], shallow_steps), bounded_verify, job, shallow_steps)
+    # The witness probes join the same queue, so pass 1 stays N-wide from
+    # the first ladder check to the last probe.
+    for pname, trace_path in witness_plan:
+        submit(("probe", pname, str(trace_path), shallow_steps),
+               run_probe, pname, trace_path, shallow_steps)
+    for job in ladder:
+        if job["id"] in clean_ids:
+            job["shallow"] = ("verified", "", clean_ids[job["id"]], True)
+        else:
+            r, d, dur = consume(("ladder", job["id"], shallow_steps),
+                                bounded_verify, job, shallow_steps)
+            job["shallow"] = (r, d, dur, False)
+        r, d, dur, was_batched = job["shallow"]
+        if r == "verified" and shallow_steps < max_steps:
+            deep_queue.append(job)   # clean, and there is depth left to add
+        else:
+            # A counterexample is FINAL — depth cannot unfind it. So is a
+            # timeout or an error: running the same check deeper will not
+            # make it answer.
+            record_bounded(job, r, d, dur, shallow_steps, batched=was_batched)
+
+    # Pass 2 (deep). Only the checks clean at shallow, and only while the run
+    # budget lasts. A check the budget stopped keeps its SHALLOW verdict and
+    # says so — a shallow pass is never silently upgraded to a deep one.
+    # Run AFTER every shallow witness probe (below): pass 1 is the whole
+    # shallow sweep, and the budget pays for depth only once it is done.
+    def budget_note():
+        return (f"deep pass skipped: the run budget of {budget_seconds}s was "
+                f"spent, so this verdict is the shallow pass's ≤{shallow_steps} "
+                f"steps, not the configured {max_steps}")
+
+    def deep_or_none(job):
+        """The deep run of one ladder check, or None when the budget was
+        spent before it could start."""
+        if budget_left() <= 0:
+            return None
+        return bounded_verify(job, max_steps)
+
+    def deep_ladder():
+        if not deep_queue:
+            return
+        if budget_left() <= 0:
+            print(f"{'budget':<12} {'exhausted before deep pass':<26} "
+                  f"({budget_seconds}s spent; {len(deep_queue)} check(s) stay "
+                  f"at ≤{shallow_steps} steps)")
+            cost["deep_skipped"] = cost.get("deep_skipped", 0) + len(deep_queue)
+            for job in deep_queue:
+                r, d, dur, wb = job["shallow"]
+                record_bounded(job, r, d, dur, shallow_steps, batched=wb,
+                               note=budget_note())
+            return
+        # No batch at depth when checks run in parallel: one run of the whole
+        # module to the full depth is the slowest query this runner can make,
+        # and on a large model it times out and decides nothing, while the
+        # same checks per id, on slices, run N-wide.
+        clean_ids = (batch_pass(deep_queue, max_steps)[0] if parallel == 1
+                     else {})
+        for job in deep_queue:
+            if job["id"] not in clean_ids:
+                submit(("ladder", job["id"], max_steps), deep_or_none, job)
+        stopped = 0
+        for job in deep_queue:
+            sr, sd, sdur, swb = job["shallow"]
+            if job["id"] in clean_ids:
+                record_bounded(job, "verified", "", clean_ids[job["id"]], max_steps,
+                               batched=True)
+                continue
+            res = consume(("ladder", job["id"], max_steps), deep_or_none, job)
+            if res is None:
+                stopped += 1
+                record_bounded(job, sr, sd, sdur, shallow_steps,
+                               batched=swb, note=budget_note())
+                continue
+            r, d, dur = res
+            if r in ("verified", "counterexample"):
+                record_bounded(job, r, d, dur, max_steps)
+            else:
+                # The deep run did not answer (timeout/error). Recording
+                # THAT would discard a verdict already held — clean to
+                # shallow_steps. Keep the shallow one and say what the
+                # deep pass did instead.
+                record_bounded(job, sr, sd, sdur, shallow_steps,
+                               batched=swb,
+                               note=(f"deep pass at {max_steps} steps "
+                                     f"returned {r}"
+                                     + (f": {d}" if d else "")))
+        if stopped:
+            cost["deep_skipped"] = cost.get("deep_skipped", 0) + stopped
+            print(f"{'budget':<12} {'exhausted during deep pass':<26} "
+                  f"({budget_seconds}s spent; {stopped} check(s) stay at "
+                  f"≤{shallow_steps} steps)")
+
+    # ── 2. Witness probes ────────────────────────────────────────────────
+    # Same ladder, same reason. A witness probe's GOOD outcome is a
+    # counterexample (the violation trace IS the witness), so a shallow run
+    # that finds one is final and cheap; depth is only needed to keep FAILING
+    # to find one, which is the expensive half — and the answer nobody wants.
     witness_deep = []   # single-witness reqs that found nothing at shallow
     may_deep = []       # `may` outcomes that found nothing at shallow
     if not args.no_witness:
@@ -1578,7 +2010,8 @@ def cmd_check(args):
                     req, rid, witness, probes_ir if probes_rel_ok else None,
                     probes_file, root, args.area, probe_run, shallow_steps,
                     current_sha,
-                    deep_queue=may_deep if shallow_steps < max_steps else None)
+                    deep_queue=may_deep if shallow_steps < max_steps else None,
+                    stamp=stamp)
                 flush()
                 continue
             exempt = witness_exempt(req)
@@ -1642,6 +2075,7 @@ def cmd_check(args):
                     # one to everything downstream.
                     witness["status"] = "hollow"
                     witness.pop("model_sha", None)
+                    witness.pop("found_by", None)
                     witness["trace"] = trace_rel
                     bad += 1
                     print(f"{rid:<12} HOLLOW           (predicate already true in the "
@@ -1653,13 +2087,17 @@ def cmd_check(args):
                 witness["trace"] = trace_rel
                 if current_sha:
                     witness["model_sha"] = current_sha
-                print(f"{rid:<12} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s)")
+                stamp(witness, trace_path)
+                print(f"{rid:<12} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s"
+                      + (", simulator" if witness["found_by"] == "simulator" else "")
+                      + ")")
             elif result == "verified":
                 # Recorded PESSIMISTICALLY at the shallow bound, then queued:
                 # an interrupted run keeps the honest finding, and the deep
                 # pass can still upgrade it to witnessed.
                 witness["status"] = "no-witness"
                 witness.pop("model_sha", None)
+                witness.pop("found_by", None)
                 bad += 1
                 if shallow_steps < max_steps:
                     witness_deep.append({"req": req, "rid": rid, "witness": witness,
@@ -1679,12 +2117,33 @@ def cmd_check(args):
     # part of the witness pass. Budget-gated: a probe the budget stopped keeps
     # its shallow no-witness AND the bound it was found at, so nobody reads
     # "unreachable" as "unreachable at the configured depth".
+    def deep_probe_or_none(pname, trace_path):
+        if budget_left() <= 0:
+            return None
+        return run_probe(pname, trace_path, max_steps)
+
     def deepen_probe(pname, trace_path):
         """Re-run one probe at max_steps. Returns (result, detail, duration)
         or None when the budget is spent."""
-        if budget_left() <= 0:
-            return None
-        return probe_run(pname, trace_path, max_steps)
+        return consume(("deep", pname, str(trace_path)),
+                       deep_probe_or_none, pname, trace_path)
+
+    # Pass 1 ends here. What it cost is recorded whether or not a
+    # projection was printed: it is the number the deep pass's absence is
+    # explained by.
+    if pass1["total"]:
+        p1 = cost.setdefault("pass1", {"checks": pass1["total"],
+                                       "parallel": parallel,
+                                       "budget_seconds": budget_seconds})
+        p1["elapsed_s"] = round(time.monotonic() - pass1["started"])
+        flush()
+
+    # Pass 2: the deep witness probes are queued first — an unreachable
+    # behavior is the finding the deep pass exists for — then the ladder's.
+    for job in witness_deep + may_deep:
+        submit(("deep", job["pname"], str(job["trace_path"])),
+               deep_probe_or_none, job["pname"], job["trace_path"])
+    deep_ladder()
 
     for job in witness_deep:
         rid, witness = job["rid"], job["witness"]
@@ -1707,6 +2166,7 @@ def cmd_check(args):
             if is_hollow(trace):
                 witness["status"] = "hollow"
                 witness.pop("model_sha", None)
+                witness.pop("found_by", None)
                 witness["trace"] = job["trace_rel"]
                 witness["steps"] = max_steps
                 print(f"{rid:<12} HOLLOW           (predicate already true in the "
@@ -1718,6 +2178,7 @@ def cmd_check(args):
             witness["status"] = "witnessed"
             witness["trace"] = job["trace_rel"]
             witness["steps"] = max_steps
+            witness["found_by"] = "apalache"
             if current_sha:
                 witness["model_sha"] = current_sha
             bad -= 1   # the provisional no-witness the shallow pass counted
@@ -1757,6 +2218,7 @@ def cmd_check(args):
             if is_hollow(trace):
                 oc["status"] = "hollow"
                 oc.pop("model_sha", None)
+                oc.pop("found_by", None)
                 oc["trace"] = job["trace_rel"]
                 oc["steps"] = max_steps
                 print(f"{label:<24} HOLLOW           (predicate already true in the "
@@ -1765,6 +2227,7 @@ def cmd_check(args):
             oc["status"] = "witnessed"
             oc["trace"] = job["trace_rel"]
             oc["steps"] = max_steps
+            oc["found_by"] = "apalache"
             if current_sha:
                 oc["model_sha"] = current_sha
             bad -= 1
@@ -1783,6 +2246,9 @@ def cmd_check(args):
         roll_up_outcomes(witness, current_sha)
     if touched_may:
         flush()
+
+    if pool is not None:
+        pool.shutdown(wait=True)
 
     # ── 3. Write back ────────────────────────────────────────────────────
     # The ledger itself was already merged and saved after every check (see
@@ -1940,8 +2406,7 @@ def run_shell(command, cwd, timeout):
     (exit_code, tail). shell=True on purpose — these are user-authored
     command lines from project.json/area config."""
     try:
-        proc = subprocess.run(command, shell=True, cwd=str(cwd),
-                              capture_output=True, text=True, timeout=timeout)
+        proc = run_group(command, shell=True, cwd=str(cwd), timeout=timeout)
     except subprocess.TimeoutExpired:
         return 124, f"timed out after {timeout}s"
     out = (proc.stdout or "") + (proc.stderr or "")
@@ -1968,14 +2433,21 @@ def resolve_code_root(root, area_name, project, override=None):
     return Path(root), entry
 
 
+def load_tool(filename, modname):
+    """A sibling tool whose file name is not an importable module name."""
+    if modname not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            modname, Path(__file__).parent / filename)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        sys.modules[modname] = mod
+    return sys.modules[modname]
+
+
 def run_traces_status(root, area_name, area):
     """[(run, label, status)] for the area's example and journey run traces —
     tools/spec-runs.py's own reading of them, so the two cannot disagree."""
-    spec = importlib.util.spec_from_file_location(
-        "spec_runs", Path(__file__).parent / "spec-runs.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.status(root, area_name, area)
+    return load_tool("spec-runs.py", "spec_runs").status(root, area_name, area)
 
 
 def cmd_verify(args):
@@ -2355,6 +2827,9 @@ def main():
     pc.add_argument("--budget", type=int,
                     help="Override apalache.budget_seconds — the wall-clock cap "
                          "on the WHOLE run. --timeout caps one check.")
+    pc.add_argument("--parallel", type=int,
+                    help="Checks to run at once (default apalache.parallel, "
+                         "else half the CPUs). 1 runs them one at a time.")
     pc.add_argument("--only", help="Comma-separated IDs (INV/PROP/REQ) to run.")
     pc.add_argument("--no-witness", action="store_true",
                     help="Skip the requirement checks (obligations and witness probes).")
@@ -2438,7 +2913,18 @@ def main():
                  "quint (tools/check-tooling.sh prints how) or unset "
                  "QUINT_IR_ENGINE.")
 
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        # Queued checks first, so nothing new starts; then every child still
+        # running, with its own children. The ledger already holds every
+        # verdict reached so far — it is written as each one is known.
+        for pool in _POOLS:
+            pool.shutdown(wait=False, cancel_futures=True)
+        kill_all()
+        print("\ninterrupted: verdicts reached so far are recorded; "
+              "check_results.ran_at is not stamped", file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == "__main__":

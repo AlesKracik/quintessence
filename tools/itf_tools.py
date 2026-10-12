@@ -51,7 +51,7 @@ MAX_NOTE_LEN = 60
 # Ghost vars that carry replay bookkeeping, not model state. Underscore
 # prefix is the convention precisely so model vars ("lastLoginTime") are
 # never silently dropped from summaries/diagrams.
-GHOST_PREFIXES = ("_last", "_pre_", "_old_", "_prev", "mbt::")
+GHOST_PREFIXES = ("_last", "_arg_", "_pre_", "_old_", "_prev", "mbt::")
 # Params, not the action label: every _last* ghost except _lastAction itself,
 # and quint's own nondet record when the trace came from `quint run --mbt`.
 GHOST_PARAM_RE = re.compile(r"^_last(?!Action$)")
@@ -112,6 +112,89 @@ def ghost_for_param(name):
     module, not per action: two actions taking `uid` are talking about the
     same argument, and the replay harness reads one field for it."""
     return "_last" + name[:1].upper() + name[1:]
+
+
+def param_slot(type_str, k):
+    """The probe-module ghost for the k-th (1-based) parameter of type
+    `type_str` in an action's signature: `_arg_bool_1`, `_arg_Set_ItemId_1`.
+
+    Allocated by TYPE POSITION, not by name. Every ghost is a state var
+    every step must assign and the model checker must encode, and one per
+    distinct parameter name made the cost of checking a model depend on what
+    its author called things: `items`, `newItems` and `moved`, all Set[ItemId] in
+    different actions, were three ghosts where one does. With slots the
+    count is, per type, the most parameters of that type any ONE action
+    takes."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", type_str).strip("_") or "T"
+    return f"_arg_{slug}_{k}"
+
+
+def param_slots(param_types, actions):
+    """{action: [(name, type, slot)]} for the actions stepP mirrors, in
+    signature order — the name -> slot map the probe module is generated
+    from and every trace reader resolves through."""
+    out = {}
+    for action in actions:
+        seen = {}
+        row = []
+        for name, type_str in param_types.get(action) or []:
+            key = " ".join(type_str.split())
+            seen[key] = seen.get(key, 0) + 1
+            row.append((name, type_str, param_slot(key, seen[key])))
+        out[action] = row
+    return out
+
+
+SLOT_RE = re.compile(r"^_arg_")
+
+
+def restore_param_names(trace, slots, action_var="_lastAction"):
+    """Rewrite a probe-module trace from slot ghosts back to the
+    `_last<Param>` convention, in place, and return it.
+
+    A slot is shared: `_arg_OwnerId_1` is `o` in one step and `src` in the
+    next. Everything downstream of a trace — the replay harness, the
+    readback, a reviewer — asks for an argument BY NAME, so the trace is
+    written that way, exactly as it was before slots: each `_last<Param>`
+    holds the value its action last passed, carried unchanged by steps that
+    do not take it, and starts at its zero (the slot's initial value)."""
+    states = trace.get("states") or []
+    if not states or not any(SLOT_RE.match(k) for k in states[0]):
+        return trace
+    by_ghost = {}   # _last<Param> -> slot holding its zero at init
+    for row in slots.values():
+        for name, _t, slot in row:
+            by_ghost.setdefault(ghost_for_param(name), slot)
+    current = {g: states[0].get(slot) for g, slot in by_ghost.items()}
+    for i, st in enumerate(states):
+        if i:
+            for name, _t, slot in slots.get(st.get(action_var), []):
+                current[ghost_for_param(name)] = st.get(slot)
+        for k in [k for k in st if SLOT_RE.match(k)]:
+            del st[k]
+        st.update(current)
+    meta = trace.get("#meta")
+    if isinstance(trace.get("vars"), list):
+        trace["vars"] = ([v for v in trace["vars"] if not SLOT_RE.match(v)]
+                         + sorted(by_ghost))
+    if isinstance(meta, dict):
+        meta["param_slots"] = "restored to _last<Param> names by spec-record"
+        # Which ghosts are each action's OWN arguments. A _last<Param> of
+        # another action is carried along unchanged, and rendering it would
+        # show `login_failed(alice, s1)` for a call that takes no session.
+        meta["action_params"] = {a: [ghost_for_param(n) for n, _t, _s in row]
+                                 for a, row in slots.items()}
+    return trace
+
+
+def step_ghosts(trace, state, action_var="_lastAction"):
+    """The ghost vars holding THIS step's arguments, when the trace says
+    (#meta.action_params, written by restore_param_names); None otherwise,
+    and readers then fall back to every _last* ghost."""
+    per = ((trace or {}).get("#meta") or {}).get("action_params")
+    if not isinstance(per, dict) or not action_var:
+        return None
+    return per.get(str(state.get(action_var)).strip('"'))
 
 
 def ghost_for_var(name):
@@ -570,7 +653,7 @@ def summarize_trace(trace, action_var=None):
     lines, prev = [], None
     for i, s in enumerate(trace["states"]):
         label = step_label(s, i, action_var)
-        args = action_params(s) if i else []
+        args = action_params(s, step_ghosts(trace, s, action_var)) if i else []
         call = f"{label}({', '.join(args)})" if args else label
         delta = changed_vars(prev, s, var_names, action_var)
         rendered = "; ".join(f"{n} = {v}" for n, v in delta) or "(no change)"

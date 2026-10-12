@@ -356,8 +356,9 @@ def test_step_p_mirrors_only_the_actions_step_calls(tmp_path, engine):
     for helper in ("refuse", "commit", "occUpsert"):
         assert f'_lastAction\' = "{helper}"' not in out
     # No ghost for a helper's parameters — `apply: State => State` has none.
-    assert "_lastApply" not in out and "_lastS1" not in out and "_lastR:" not in out
-    assert "var _lastRole: Role" in out
+    assert "State => State" not in out and "_arg_State" not in out \
+        and "_arg_Result" not in out
+    assert "var _arg_Role_1: Role" in out
 
 
 def test_a_witness_through_a_helper_action_is_refused_by_name(tmp_path, capsys):

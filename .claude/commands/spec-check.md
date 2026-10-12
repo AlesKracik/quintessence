@@ -54,15 +54,15 @@ Before the runner can do anything:
 
 2. **Generate/refresh the probe module** at `specs/<target>.probes.qnt` (see `templates/probes.qnt.template`). It imports the area module, instruments steps with ghost vars, and declares, per requirement, an obligation `oblig_<REQ_ID with - → _>` (an invariant: every step of the action from `@while` ends in `@shall`) and a negated witness probe `witness_<REQ_ID with - → _>`:
 
-   - **Ghost vars** — underscore-prefixed so they can never collide with real model vars: `_lastAction` (which action produced the state), one param ghost per distinct action parameter (`_lastUid`, `_lastSid`, …), one `_pre_<REQ>` boolean per requirement (its `@while`, evaluated before the step over the step's own arguments), one `_old_<REQ>_<name>` per `@old`, and one `_prev<Var>` snapshot per state var a transition invariant reads. Ghost initial values in `initP` are written explicitly (`_prevSessions' = Map()`), never `= sessions`: before init there is no prior state to read. `initP`/`stepP` wrap the area's `init`/`step`, tagging every branch. The replay harness reads call parameters from these ghosts — never infer them from state diffs.
-   - **Path-constrained checks**: both the obligation and the witness are about steps where `_lastAction == <quint_ref>` and `_pre_<REQ>` held, and they call `post_<REQ>(_lastUid, …, _old_…)`, the generated `def` of `@shall` over the step's own arguments. So the claim is about *this call*: a state some other call produced cannot satisfy it.
+   - **Ghost vars** — underscore-prefixed so they can never collide with real model vars: `_lastAction` (which action produced the state), one param ghost per parameter TYPE POSITION (`_arg_UserId_1`, `_arg_bool_2`, … — the k-th parameter of that type in an action's signature, so what a model costs to check does not depend on what its parameters are called; the header lists the name → slot map), one `_pre_<REQ>` boolean per requirement (its `@while`, evaluated before the step over the step's own arguments), one `_old_<REQ>_<name>` per `@old`, and one `_prev<Var>` snapshot per state var a transition invariant reads. Ghost initial values in `initP` are written explicitly (`_prevSessions' = Map()`), never `= sessions`: before init there is no prior state to read. `initP`/`stepP` wrap the area's `init`/`step`, tagging every branch. Every trace the recorder writes from this module is restored to `_last<Param>` names (`_lastUid`, `_lastSid`, … — each holding what its action last passed), and the replay harness reads call parameters from those — never infer them from state diffs.
+   - **Path-constrained checks**: both the obligation and the witness are about steps where `_lastAction == <quint_ref>` and `_pre_<REQ>` held, and they call `post_<REQ>(_arg_UserId_1, …, _old_…)`, the generated `def` of `@shall` over the step's own arguments. So the claim is about *this call*: a state some other call produced cannot satisfy it.
    - **Transition invariants** — any invariant declaring `over: "probes"` is emitted here too, as `val <quint_name>: bool = <invariants[].predicate>`, **positively**: a probe is negated so its counterexample is the witness, while a counterexample to one of these is a violation. The `_prev*` ghosts such a predicate reads are declared and snapshotted for it. It is authored in the model as a `def` whose parameters ARE the `_prev*` ghosts (`def stable_over(_prevSt: UserId -> St): bool = st == _prevSt`, record `@inv INV-NNN` + `@quint-name stable`) — the parameters make it typecheck in the model, the generator emits its body into the probe module where the ghosts live; see "Transition properties" below.
 
 ```quint
 module auth_probes {
   import auth.* from "./auth"
   var _lastAction: str
-  var _lastUid: str
+  var _arg_UserId_1: UserId
   // initP / stepP wrap init / step, tagging branches (see template)
 
   // REQ-003, generated from @while / @old / @shall on login_failed
@@ -72,11 +72,11 @@ module auth_probes {
   // Every step: violated ⇔ some login_failed from @while broke it
   val oblig_REQ_003: bool =
     not(_lastAction == "login_failed" and _pre_REQ_003)
-      or post_REQ_003(_lastUid, _old_REQ_003_before)
+      or post_REQ_003(_arg_UserId_1, _old_REQ_003_before)
   // Some step: violated ⇔ such a step happened (the trace is the witness)
   val witness_REQ_003: bool =
     not(_lastAction == "login_failed" and _pre_REQ_003
-        and post_REQ_003(_lastUid, _old_REQ_003_before))
+        and post_REQ_003(_arg_UserId_1, _old_REQ_003_before))
 }
 ```
 
@@ -87,7 +87,7 @@ Record the file in `formal_model.probes_file`. The probe module is generated —
 ### Step 2a — Run the recorder (mechanical work)
 
 ```bash
-tools/spec-record.py check <target> [--steps N] [--only INV-001,REQ-003] [--no-witness]
+tools/spec-record.py check <target> [--steps N] [--only INV-001,REQ-003] [--no-witness] [--parallel N]
 ```
 
 The runner does, deterministically: an advisory `quint run` pre-gate (seconds, writes `check_results.simulation` and never a verdict — `--only-simulate` for the fast loop while drafting, `--no-simulate` to skip), every invariant check (batched into one `quint verify` first, per-id with counterexample traces to `specs/<target>/traces/<ID>.cex.itf.json` when the batch isn't clean), every property as a temporal formula (`--temporal`, on TLC — no step bound, no ITF trace), every witness probe (`--init=initP --step=stepP`, violation trace = the witness), skip-if-fresh (a REQ already `witnessed` against the current `model_sha` is not re-proven), and all JSON write-backs: `check_results`, `formal_status`, `witness.{status,trace,checked_at,model_sha}` — written **as each check completes**, so a run stopped by Ctrl-C or by its budget keeps what it proved (`check_results.ran_at`, the field that means "this area was checked", is the one thing stamped only at the end). Examples and journey runs are checked by `quint test` (`quint test specs/<target>.qnt`; CI's spec gates run it): a failing example is a model that disagrees with a case a human approved, and a failing journey run is a flow whose steps do not work one after another — report both as loudly as a counterexample. If it reports `quint` missing, run `tools/check-tooling.sh` for install hints — which also reports which of the optional flags (`run --backend`, `run --witnesses`, `verify --invariants`, `verify --temporal`) your quint has.
@@ -98,6 +98,10 @@ The runner does, deterministically: an advisory `quint run` pre-gate (seconds, w
 - **Pass 2 (deep, `max_steps`)** re-runs only what came back clean, for as long as `budget_seconds` lasts. Pass 1 itself is never budget-gated: it is the cheap half *and* the half that carries the findings, so every selected check always gets at least a shallow verdict.
 - **Ordering:** pass 1 runs the invariants the pre-gate already falsified first (`check_results.simulation.invariants.falsified`) — guaranteed counterexamples, cheaply. Witness probes are ordered by the same signal inverted: a probe the simulator *hit* is about to be witnessed in milliseconds, a probe it never reached is the expensive tail. A run with `--no-simulate` has no such signal and keeps declaration order.
 - **The ladder does not apply** to `proof: "inductive"` (unbounded), `proof: "structural"` (Alloy, finite scope), `proof: "smt"` (z3), or temporal properties (TLC, no step bound). A step ladder is meaningless for all four, and each keeps its existing single-pass path.
+- **Pass 1 says what it will cost.** After the first few checks the runner prints a projection (`pass 1: 9/48 checks, ~3.5m/check × 5 parallel → ~6m projected; budget 15m …`) and records it in `check_results.cost`; when the budget stops the deep pass, `check_results.cost.deep_skipped` says how many checks rest on the shallow bound and the readback names the cause. Report the projection to the user when it exceeds the budget, and point at `tools/spec-lint.py <target> --cost` for where the cost comes from.
+- **Checks run in parallel** (`--parallel N`, default `apalache.parallel` or half the CPUs): they are independent, and one Apalache server answers concurrent queries concurrently. Verdicts are still written one at a time, in the same order, as each is reached.
+- **Each probe-module check runs on its own slice** of the probe module (under `specs/<target>/gen/slices/`, gitignored): the same `stepP` and the same formula, without the ghosts the check never reads. A witness carries only its own `_pre_`/`_old_` ghosts, not every requirement's. The committed `specs/<target>.probes.qnt` stays the artifact CI typechecks; `quint.slice_probes: false` turns slicing off.
+- **A witness the simulator already reached is taken from the simulator.** A witness is existential — one run that fired the step from `@while` and ended in `@shall` is the proof — so for every event-form probe the pre-gate hit, the runner asks `quint run` for that violating trace and records it with `witness.found_by: "simulator"` and `witness.steps` = the trace's own length. Only the probes it never hit go to Apalache. The positive answer is the only one ever taken from the simulator: **`NO-WITNESS` always comes from Apalache**, and obligations and invariants (universal claims) always do. `quint.simulator_witnesses: false` sends every witness to Apalache.
 - **Server hygiene:** once any bounded check times out, the remaining ones add `quint verify --server=false`. Killing a timed-out check leaves its query inside the shared Apalache server, and without this the deep pass would inherit that congestion. Probe-gated — a quint without the flag behaves as before.
 
 `--only` narrows the set of checks but still runs each survivor through the ladder. It is a tool for extracting one trace, not a substitute for the two passes — don't reach for a hand-written `--only` list to make a run cheaper.

@@ -689,349 +689,429 @@
         "kind": "invariant",
         "quint_name": "guardedDashboard",
         "result": "error",
-        "duration_s": 11.0,
+        "duration_s": 7.0,
         "proof": "inductive",
-        "error": "Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStoreType=JKS -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=34101 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=\nOct 11, 2026 4:10:39 PM com.google.protobuf.GeneratedMessage warnPre22Gencode\nWARNING: Vulnerable protobuf generated type in use: io.grpc.reflection.v1alpha.ServerReflectionRequest\nAs of 2022/09/29 (release 21.7) makeExtensionsImmutable should not be called from protobuf gencode. If you are seeing this message, your gencode is vulnerable to a denial of service attack. You should regenerate your code using protobuf 25.6 or later. Use the latest version that meets your needs. However, if you understand the risks and wish to continue with vulnerable gencode, you can set the system property `-Dcom.google.protobuf.use_unsafe_pre22_gencode` on the command line to silence this warning. You also can set `-Dcom.google.protobuf.error_on_unsafe_pre22_gencode` to throw an error instead. See security vulnerability: https://github.com/protocolbuffers/protobuf/security/advisories/GHSA-h4h5-3hr4-j3g2\nerror: current is used before it is assigned. You need to have either `current == <expr>` or `current.in(<set>)` before doing anything else with `current` in your predicate."
+        "error": "WARNING: java.lang.System::load has been called by tools.aqua.turnkey.support.TurnKey in an unnamed module (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module\nWARNING: Restricted methods will be blocked in a future release unless native access is enabled\n\nerror: current is used before it is assigned. You need to have either `current == <expr>` or `current.in(<set>)` before doing anything else with `current` in your predicate."
       },
       {
         "id": "UI-001",
         "kind": "obligation",
         "quint_name": "oblig_UI_001",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.5,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "UI-002",
         "kind": "obligation",
         "quint_name": "oblig_UI_002",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.5,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:55:58.544\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release"
       },
       {
         "id": "UI-003",
         "kind": "obligation",
         "quint_name": "oblig_UI_003",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.5,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
       },
       {
         "id": "UI-004",
         "kind": "obligation",
         "quint_name": "oblig_UI_004",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.5,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "UI-005",
         "kind": "obligation",
         "quint_name": "oblig_UI_005",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.5,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:57:58.814\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release"
       },
       {
         "id": "UI-006",
         "kind": "obligation",
         "quint_name": "oblig_UI_006",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.5,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
       },
       {
         "id": "UI-007",
         "kind": "obligation",
         "quint_name": "oblig_UI_007",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.5,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "cover-click_sign_in",
         "kind": "coverage",
         "quint_name": "cover_click_sign_in",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "explain-click_sign_in-current",
         "kind": "explanation",
         "quint_name": "explain_click_sign_in_current",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "explain-click_sign_in-form",
         "kind": "explanation",
         "quint_name": "explain_click_sign_in_form",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
       },
       {
         "id": "cover-submit_success",
         "kind": "coverage",
         "quint_name": "cover_submit_success",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-submit_success-current",
         "kind": "explanation",
         "quint_name": "explain_submit_success_current",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-submit_success-form",
         "kind": "explanation",
         "quint_name": "explain_submit_success_form",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-submit_success-mySession",
         "kind": "explanation",
         "quint_name": "explain_submit_success_mySession",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-submit_invalid",
         "kind": "coverage",
         "quint_name": "cover_submit_invalid",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-submit_invalid-current",
         "kind": "explanation",
         "quint_name": "explain_submit_invalid_current",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-submit_invalid-form",
         "kind": "explanation",
         "quint_name": "explain_submit_invalid_form",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-submit_locked",
         "kind": "coverage",
         "quint_name": "cover_submit_locked",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-submit_locked-current",
         "kind": "explanation",
         "quint_name": "explain_submit_locked_current",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-submit_locked-form",
         "kind": "explanation",
         "quint_name": "explain_submit_locked_form",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-click_logout",
         "kind": "coverage",
         "quint_name": "cover_click_logout",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-click_logout-current",
         "kind": "explanation",
         "quint_name": "explain_click_logout_current",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-click_logout-form",
         "kind": "explanation",
         "quint_name": "explain_click_logout_form",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-click_logout-mySession",
         "kind": "explanation",
         "quint_name": "explain_click_logout_mySession",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-session_expired",
         "kind": "coverage",
         "quint_name": "cover_session_expired",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-session_expired-current",
         "kind": "explanation",
         "quint_name": "explain_session_expired_current",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-session_expired-form",
         "kind": "explanation",
         "quint_name": "explain_session_expired_form",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-session_expired-mySession",
         "kind": "explanation",
         "quint_name": "explain_session_expired_mySession",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "cover-go_home",
         "kind": "coverage",
         "quint_name": "cover_go_home",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-go_home-current",
         "kind": "explanation",
         "quint_name": "explain_go_home_current",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "explain-go_home-form",
         "kind": "explanation",
         "quint_name": "explain_go_home_form",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       },
       {
         "id": "verdict-time_passes-1",
         "kind": "verdict",
         "quint_name": "verdict_time_passes_1",
         "result": "verified",
-        "duration_s": 15.5,
-        "steps": 4,
+        "duration_s": 8.4,
+        "steps": 3,
         "over": "probes",
-        "batched": true
+        "batched": true,
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
       }
     ],
     "max_steps": 10,
     "simulation": {
-      "ran_at": "2026-10-11T12:20:16+00:00",
+      "ran_at": "2026-10-12T15:21:08+00:00",
       "max_samples": 10000,
-      "max_steps": 8,
+      "max_steps": 10,
       "backend": "rust",
+      "seed": "7",
       "invariants": {
-        "result": "error",
-        "checked": 1,
-        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
+        "result": "ok",
+        "checked": 1
       },
       "transition_invariants": {
-        "result": "error",
-        "checked": 4,
-        "detail": "    at async CommandWrapper.runRustEvaluator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:217:21)\n    at async CommandWrapper.simulate (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/rust/commandWrapper.js:62:24)\n    at async runSimulator (/opt/node22/lib/node_modules/@informalsystems/quint/dist/src/cliCommands.js:320:19)\n\nNode.js v22.22.0"
-      }
+        "result": "ok",
+        "checked": 32
+      },
+      "witnesses": [
+        {
+          "probe": "witness_UI_001",
+          "traces": 10000,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_UI_002",
+          "traces": 9937,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_UI_003",
+          "traces": 89,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_UI_004",
+          "traces": 267,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_UI_005",
+          "traces": 9573,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_UI_006",
+          "traces": 9582,
+          "explored": 10000
+        },
+        {
+          "probe": "witness_UI_007",
+          "traces": 41,
+          "explored": 10000
+        }
+      ]
     },
-    "ran_at": "2026-10-11T16:17:24+00:00"
+    "ran_at": "2026-10-12T15:26:03+00:00",
+    "cost": {
+      "pass1": {
+        "checks": 7,
+        "after_checks": 3,
+        "avg_check_s": 3.4,
+        "projected_s": 25,
+        "parallel": 2,
+        "budget_seconds": 180,
+        "elapsed_s": 27
+      },
+      "deep_skipped": 22
+    }
   },
   "verification_log": [],
   "traceability": [],
@@ -1043,105 +1123,112 @@
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-001.itf.json",
-        "checked_at": "2026-10-11T16:11:29+00:00",
-        "steps": 3,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T15:21:32+00:00",
+        "steps": 1,
+        "found_by": "simulator",
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:11:16+00:00",
-        "steps": 4,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T14:57:56+00:00",
+        "steps": 3,
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       }
     },
     "UI-002": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-002.itf.json",
-        "checked_at": "2026-10-11T16:11:42+00:00",
+        "checked_at": "2026-10-12T15:21:33+00:00",
         "steps": 3,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "found_by": "simulator",
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:11:16+00:00",
-        "steps": 4,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T14:57:56+00:00",
+        "steps": 3,
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       }
     },
     "UI-003": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-003.itf.json",
-        "checked_at": "2026-10-11T16:15:47+00:00",
+        "checked_at": "2026-10-12T15:26:03+00:00",
         "steps": 10,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "found_by": "apalache",
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:11:16+00:00",
-        "steps": 4,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T14:57:56+00:00",
+        "steps": 3,
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       }
     },
     "UI-004": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-004.itf.json",
-        "checked_at": "2026-10-11T16:16:14+00:00",
+        "checked_at": "2026-10-12T15:26:03+00:00",
         "steps": 10,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "found_by": "apalache",
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:11:16+00:00",
-        "steps": 4,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T14:59:56+00:00",
+        "steps": 3,
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       }
     },
     "UI-005": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-005.itf.json",
-        "checked_at": "2026-10-11T16:12:23+00:00",
-        "steps": 3,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T15:21:42+00:00",
+        "steps": 2,
+        "found_by": "simulator",
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:11:16+00:00",
-        "steps": 4,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T14:59:56+00:00",
+        "steps": 3,
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       }
     },
     "UI-006": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-006.itf.json",
-        "checked_at": "2026-10-11T16:12:36+00:00",
+        "checked_at": "2026-10-12T15:21:42+00:00",
         "steps": 3,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "found_by": "simulator",
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:11:16+00:00",
-        "steps": 4,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T14:59:56+00:00",
+        "steps": 3,
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       }
     },
     "UI-007": {
       "witness": {
         "status": "witnessed",
         "trace": "auth-ui/traces/UI-007.itf.json",
-        "checked_at": "2026-10-11T16:17:24+00:00",
+        "checked_at": "2026-10-12T15:26:03+00:00",
         "steps": 10,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "found_by": "apalache",
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       },
       "obligation": {
         "formal_status": "verified",
-        "checked_at": "2026-10-11T16:11:16+00:00",
-        "steps": 4,
-        "model_sha": "3cfd8a684ad0b135cb779ca3e2e9e1b8f03574c127c6205a3f842429523963e2"
+        "checked_at": "2026-10-12T15:01:56+00:00",
+        "steps": 3,
+        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
       }
     }
   }

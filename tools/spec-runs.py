@@ -50,6 +50,7 @@ import spec_source  # noqa: E402
 from itf_tools import (compute_model_sha, ghost_for_param, journeys_dir,  # noqa: E402
                        soften_stdout)
 from quint_ir import parse_qnt  # noqa: E402
+from proc import run_group  # noqa: E402
 
 REFUSED_VAR = "_refused"
 ACTION_VAR = "_lastAction"
@@ -319,8 +320,7 @@ def labelled(trace, steps, params_of, variants, consts, meta):
 # ── Running quint ───────────────────────────────────────────────────────────
 
 def _out_flag(exe):
-    help_text = subprocess.run([exe, "test", "--help"], capture_output=True,
-                               text=True).stdout
+    help_text = run_group([exe, "test", "--help"]).stdout
     for flag in ("--out-itf", "--output"):
         if flag in help_text:
             return flag
@@ -373,11 +373,9 @@ def generate(root, area_name, jobs=4, timeout=180):
             raw = Path(tmp) / f"{run}.raw.itf.json"
             cmd = [exe, "test", Path(rel).name, "--match", f"^{re.escape(run)}$",
                    f"{flag}={raw}"]
-            p = subprocess.run(cmd + ["--max-samples=1"], cwd=tmp, capture_output=True,
-                               text=True, timeout=timeout)
+            p = run_group(cmd + ["--max-samples=1"], cwd=tmp, timeout=timeout)
             if p.returncode != 0 and "max-samples" in (p.stderr or ""):
-                p = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True,
-                                   timeout=timeout)
+                p = run_group(cmd, cwd=tmp, timeout=timeout)
             if p.returncode != 0 or not raw.exists():
                 tail = " ".join(((p.stdout or "") + (p.stderr or "")).split())[-400:]
                 return run, label, False, f"quint test did not produce a trace: {tail}"

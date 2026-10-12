@@ -309,11 +309,14 @@ Then tell the user how to keep the spec current, because an extracted spec that 
 
 Write the model with its records (`specs/<target>.qnt`) and the intent file. Present extracted items in batches for confirm/edit/discard — with `extraction.evidence`, the user can jump to the code instead of reconstructing your reasoning.
 
+**Measure what checking it will cost, before handing off.** An extracted model is the shape that is slowest to check — many actions, many requirements, record-shaped state — and `/spec-check` is meant to run in a loop. Run `tools/spec-probes.py <target>`, then `tools/spec-lint.py <target> --cost`: it prints the probe module's ghost count, the largest per-check slice and the branching factor (steps from one state, with the actions that dominate it), plus any `cost/*` warning. Report those numbers next to the `/spec-check` line. If there are `cost/*` warnings, offer their rewrites now — each keeps the model's meaning (a total map with an `exists` field for a growing one, the smallest domain that still tells the behaviors apart, a bool for a counter only compared to `before + 1`) — before the user commits to a check that may not reach its deep pass. The principle is the template's CHECKING COST section.
+
 End with the ladder:
 
 ```
 Draft spec written from <n> files. <m> sites triaged, <k> GAPs open.
 <j> journeys deduced from the entry points.
+Checking cost: <g> probe ghosts (largest slice <s>), ≈<b> steps per state.
 
   /spec-check <target>     the model holds and nothing is vacuous
   /spec-code-verify <target>    the code conforms to the spec
@@ -385,7 +388,7 @@ Standard elicitation, organized as conversational clusters (not a rigid order �
 
 **Closing gap sweep**: when the clusters are exhausted (before formalizing), run one short red-team moment while the user is still in the conversation. From `/spec-check` Step 4b's category list, keep only the categories this domain plausibly touches; ask at most ~8 questions whose answer would add or change a requirement, each citing the REQ/INV/entity it touches (or "absent"). Answers become REQs/INVs/CONs in the same exchange; what the user can't answer becomes a Q-NNN. Same logic as the early completeness pass: a gap found now is a requirement in one exchange. The full `--reality` pass at check time is for depth — it shouldn't be the first time these questions are asked.
 
-Write as you go: requirements as doc comments in `specs/<target>.qnt` (on the module while there is no model), everything else in `specs/<target>.intent.json`. After enough is captured, draft the model in the same file (structure convention: `templates/spec.qnt.template`) — the trigger becomes an action — and move each requirement's record onto the action it governs. While formalizing, rewrite its English `@while` / `@shall` as Quint over the action's parameters (with `@old` where the response compares against before) and drop `@status raw`; `/spec-check` then proves it on every step and finds a witness, and the generator's `quint typecheck` checks the clauses. Show the module for confirmation; offer `/spec-check` next.
+Write as you go: requirements as doc comments in `specs/<target>.qnt` (on the module while there is no model), everything else in `specs/<target>.intent.json`. After enough is captured, draft the model in the same file (structure convention: `templates/spec.qnt.template`) — the trigger becomes an action — and move each requirement's record onto the action it governs. While formalizing, rewrite its English `@while` / `@shall` as Quint over the action's parameters (with `@old` where the response compares against before) and drop `@status raw`; `/spec-check` then proves it on every step and finds a witness, and the generator's `quint typecheck` checks the clauses. Show the module for confirmation. Before offering `/spec-check`, run `tools/spec-probes.py <target>` and `tools/spec-lint.py <target> --cost` and report the ghost count and branching factor next to the offer; if a `cost/*` warning fires, offer its rewrite first (template: CHECKING COST).
 
 #### resume — pick up the next phase
 

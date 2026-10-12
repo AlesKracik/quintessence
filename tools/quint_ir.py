@@ -60,6 +60,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from proc import run_group  # noqa: E402
+
 # Engine selection: 'auto' (CLI then regex), 'cli' (authoritative — fail if
 # the quint CLI can't parse), 'regex' (offline fallback only). CI should set
 # QUINT_IR_ENGINE=cli so lint verdicts never depend on a lossy regex parse;
@@ -493,9 +496,9 @@ def _parse_via_cli(qnt_path):
             mode="w", suffix=".json", delete=False, encoding="utf-8")
         tmp = Path(fd.name)
         fd.close()
-        result = subprocess.run(
+        result = run_group(
             [quint, "parse", f"--out={tmp}", str(qnt_path)],
-            capture_output=True, text=True, timeout=QUINT_TIMEOUT_S,
+            timeout=QUINT_TIMEOUT_S,
         )
         if result.returncode != 0 or not tmp.exists() or not tmp.stat().st_size:
             return None

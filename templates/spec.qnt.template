@@ -56,6 +56,31 @@ module {{MODULE_NAME}} {
 
 
   // ----------------------------------------------------------
+  // CHECKING COST
+  // A model is checked in a loop, so how long a check takes
+  // decides how often it is run. Model with the SMALLEST domains
+  // that still tell apart the behaviors you care about: one
+  // element per distinction a requirement makes.
+  //   two group ids      — to tell "this group" from "another"
+  //   one case pair      — "gold"/"GOLD" shows case-insensitivity
+  //   versions {0, 1}    — enough to show "stale"
+  // Shapes that cost the most, each with a rewrite that keeps
+  // the meaning (tools/spec-lint.py <area> --cost reports them):
+  //   a map grown with `put` from Map()  -> a total map over the
+  //     key domain with an `exists: bool` field (or a status)
+  //   `oneOf(S.powerset())`              -> a smaller S, or the
+  //     few subsets that matter, listed
+  //   an int only ever incremented, read only as `== before + 1`
+  //     -> a bool "changed by the last step"
+  //   many parameters on one action      -> its branching is the
+  //     product of their domains; drop or narrow the ones no
+  //     requirement distinguishes
+  // Parameter names are free: probe ghosts are allocated by
+  // type position, so `items` and `newItems` share one.
+  // ----------------------------------------------------------
+
+
+  // ----------------------------------------------------------
   // CONSTANTS / PARAMETERS
   // Bounds and configuration used in model checking. Use
   // `pure val NAME: type = literal` — the literal IS the

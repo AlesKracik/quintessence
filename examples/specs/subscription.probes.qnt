@@ -16,6 +16,16 @@
 // _pre_<REQ> is set by stepP from the state BEFORE the step, so @while
 // is read where the sentence says it holds. The path conjunct comes
 // first: at init no action has run and no ghost may be read as a key.
+//
+// Parameters ride in one ghost per TYPE POSITION, not per name;
+// spec-record writes every trace back under _last<Param> names.
+// name -> slot, per action:
+//   cancel_subscription: c -> _arg_CustomerId_1, n -> _arg_Notice_1
+//   cancel_declined: c -> _arg_CustomerId_1
+//   cancel_unanswered: c -> _arg_CustomerId_1, timedOut -> _arg_bool_1
+//   cancel_again: c -> _arg_CustomerId_1
+//   expire_period: c -> _arg_CustomerId_1
+//   request_refund: c -> _arg_CustomerId_1
 // ==========================================================
 
 module subscription_probes {
@@ -24,9 +34,9 @@ module subscription_probes {
 
   // -- Ghost instrumentation ---------------------------------
   var _lastAction: str
-  var _lastC: CustomerId
-  var _lastN: Notice
-  var _lastTimedOut: bool
+  var _arg_CustomerId_1: CustomerId
+  var _arg_Notice_1: Notice
+  var _arg_bool_1: bool
   var _pre_REQ_001: bool
   var _pre_REQ_002: bool
   var _pre_REQ_003: bool
@@ -81,9 +91,9 @@ module subscription_probes {
   action initP = all {
     init,
     _lastAction' = "init",
-    _lastC' = "",
-    _lastN' = NoNotice,
-    _lastTimedOut' = false,
+    _arg_CustomerId_1' = "",
+    _arg_Notice_1' = NoNotice,
+    _arg_bool_1' = false,
     _pre_REQ_001' = false,
     _pre_REQ_002' = false,
     _pre_REQ_003' = false,
@@ -101,21 +111,21 @@ module subscription_probes {
   }
 
   action stepP = {
-    nondet c = oneOf(Set("alice", "bob"))
-    nondet n = oneOf(Set(Email, InApp))
-    nondet timedOut = oneOf(Set(true, false))
+    nondet arg_CustomerId_1 = oneOf(Set("alice", "bob"))
+    nondet arg_Notice_1 = oneOf(Set(Email, InApp))
+    nondet arg_bool_1 = oneOf(Set(true, false))
     any {
-      all { cancel_subscription(c, n),
+      all { cancel_subscription(arg_CustomerId_1, arg_Notice_1),
             _lastAction' = "cancel_subscription",
-            _lastC' = c,
-            _lastN' = n,
-            _lastTimedOut' = _lastTimedOut,
-            _pre_REQ_001' = pre_REQ_001(c, n),
-            _pre_REQ_002' = pre_REQ_002(c, n),
+            _arg_CustomerId_1' = arg_CustomerId_1,
+            _arg_Notice_1' = arg_Notice_1,
+            _arg_bool_1' = _arg_bool_1,
+            _pre_REQ_001' = pre_REQ_001(arg_CustomerId_1, arg_Notice_1),
+            _pre_REQ_002' = pre_REQ_002(arg_CustomerId_1, arg_Notice_1),
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
-            _pre_REQ_007' = pre_REQ_007(c, n),
+            _pre_REQ_007' = pre_REQ_007(arg_CustomerId_1, arg_Notice_1),
             _pre_REQ_008' = false,
             _old_REQ_003_billed' = _old_REQ_003_billed,
             _old_REQ_003_told' = _old_REQ_003_told,
@@ -125,18 +135,18 @@ module subscription_probes {
             _prevNotice' = notice,
             _prevStatus' = status,
       },
-      all { cancel_declined(c),
+      all { cancel_declined(arg_CustomerId_1),
             _lastAction' = "cancel_declined",
-            _lastC' = c,
-            _lastN' = _lastN,
-            _lastTimedOut' = _lastTimedOut,
+            _arg_CustomerId_1' = arg_CustomerId_1,
+            _arg_Notice_1' = _arg_Notice_1,
+            _arg_bool_1' = _arg_bool_1,
             _pre_REQ_001' = false,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
             _pre_REQ_007' = false,
-            _pre_REQ_008' = pre_REQ_008(c),
+            _pre_REQ_008' = pre_REQ_008(arg_CustomerId_1),
             _old_REQ_003_billed' = _old_REQ_003_billed,
             _old_REQ_003_told' = _old_REQ_003_told,
             _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
@@ -145,15 +155,15 @@ module subscription_probes {
             _prevNotice' = notice,
             _prevStatus' = status,
       },
-      all { cancel_unanswered(c, timedOut),
+      all { cancel_unanswered(arg_CustomerId_1, arg_bool_1),
             _lastAction' = "cancel_unanswered",
-            _lastC' = c,
-            _lastN' = _lastN,
-            _lastTimedOut' = timedOut,
+            _arg_CustomerId_1' = arg_CustomerId_1,
+            _arg_Notice_1' = _arg_Notice_1,
+            _arg_bool_1' = arg_bool_1,
             _pre_REQ_001' = false,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
-            _pre_REQ_004' = pre_REQ_004(c, timedOut),
+            _pre_REQ_004' = pre_REQ_004(arg_CustomerId_1, arg_bool_1),
             _pre_REQ_005' = false,
             _pre_REQ_007' = false,
             _pre_REQ_008' = false,
@@ -165,36 +175,36 @@ module subscription_probes {
             _prevNotice' = notice,
             _prevStatus' = status,
       },
-      all { cancel_again(c),
+      all { cancel_again(arg_CustomerId_1),
             _lastAction' = "cancel_again",
-            _lastC' = c,
-            _lastN' = _lastN,
-            _lastTimedOut' = _lastTimedOut,
+            _arg_CustomerId_1' = arg_CustomerId_1,
+            _arg_Notice_1' = _arg_Notice_1,
+            _arg_bool_1' = _arg_bool_1,
             _pre_REQ_001' = false,
             _pre_REQ_002' = false,
-            _pre_REQ_003' = pre_REQ_003(c),
+            _pre_REQ_003' = pre_REQ_003(arg_CustomerId_1),
             _pre_REQ_004' = false,
             _pre_REQ_005' = false,
             _pre_REQ_007' = false,
             _pre_REQ_008' = false,
-            _old_REQ_003_billed' = old_REQ_003_billed(c),
-            _old_REQ_003_told' = old_REQ_003_told(c),
+            _old_REQ_003_billed' = old_REQ_003_billed(arg_CustomerId_1),
+            _old_REQ_003_told' = old_REQ_003_told(arg_CustomerId_1),
             _prevAccessUntilPeriodEnd' = accessUntilPeriodEnd,
             _prevBillingEnabled' = billingEnabled,
             _prevLastBillingResult' = lastBillingResult,
             _prevNotice' = notice,
             _prevStatus' = status,
       },
-      all { expire_period(c),
+      all { expire_period(arg_CustomerId_1),
             _lastAction' = "expire_period",
-            _lastC' = c,
-            _lastN' = _lastN,
-            _lastTimedOut' = _lastTimedOut,
+            _arg_CustomerId_1' = arg_CustomerId_1,
+            _arg_Notice_1' = _arg_Notice_1,
+            _arg_bool_1' = _arg_bool_1,
             _pre_REQ_001' = false,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
             _pre_REQ_004' = false,
-            _pre_REQ_005' = pre_REQ_005(c),
+            _pre_REQ_005' = pre_REQ_005(arg_CustomerId_1),
             _pre_REQ_007' = false,
             _pre_REQ_008' = false,
             _old_REQ_003_billed' = _old_REQ_003_billed,
@@ -205,11 +215,11 @@ module subscription_probes {
             _prevNotice' = notice,
             _prevStatus' = status,
       },
-      all { request_refund(c),
+      all { request_refund(arg_CustomerId_1),
             _lastAction' = "request_refund",
-            _lastC' = c,
-            _lastN' = _lastN,
-            _lastTimedOut' = _lastTimedOut,
+            _arg_CustomerId_1' = arg_CustomerId_1,
+            _arg_Notice_1' = _arg_Notice_1,
+            _arg_bool_1' = _arg_bool_1,
             _pre_REQ_001' = false,
             _pre_REQ_002' = false,
             _pre_REQ_003' = false,
@@ -233,27 +243,27 @@ module subscription_probes {
   /// REQ-001: When a customer cancels an Active subscription, the system shall stop future billing.
   val oblig_REQ_001: bool =
     not(_lastAction == "cancel_subscription" and _pre_REQ_001)
-      or post_REQ_001(_lastC, _lastN)
+      or post_REQ_001(_arg_CustomerId_1, _arg_Notice_1)
 
   /// REQ-002: When a cancellation succeeds, the system shall keep access available until the paid period ends.
   val oblig_REQ_002: bool =
     not(_lastAction == "cancel_subscription" and _pre_REQ_002)
-      or post_REQ_002(_lastC, _lastN)
+      or post_REQ_002(_arg_CustomerId_1, _arg_Notice_1)
 
   /// REQ-003: When a customer cancels an already-Cancelled subscription, the system shall make no further change.
   val oblig_REQ_003: bool =
     not(_lastAction == "cancel_again" and _pre_REQ_003)
-      or post_REQ_003(_lastC, _old_REQ_003_billed, _old_REQ_003_told)
+      or post_REQ_003(_arg_CustomerId_1, _old_REQ_003_billed, _old_REQ_003_told)
 
   /// REQ-004: If the billing provider does not answer a cancellation, then the system shall leave the subscription Active.
   val oblig_REQ_004: bool =
     not(_lastAction == "cancel_unanswered" and _pre_REQ_004)
-      or post_REQ_004(_lastC, _lastTimedOut)
+      or post_REQ_004(_arg_CustomerId_1, _arg_bool_1)
 
   /// REQ-005: When the paid period ends for a cancelled subscription, the system shall withdraw access.
   val oblig_REQ_005: bool =
     not(_lastAction == "expire_period" and _pre_REQ_005)
-      or post_REQ_005(_lastC)
+      or post_REQ_005(_arg_CustomerId_1)
 
   /// REQ-006: The system shall never issue a refund for the unused part of a paid period.
   val oblig_REQ_006: bool =
@@ -262,12 +272,12 @@ module subscription_probes {
   /// REQ-007: When a cancellation succeeds, the system shall confirm it to the customer by email or by an in-app notice.
   val oblig_REQ_007: bool =
     not(_lastAction == "cancel_subscription" and _pre_REQ_007)
-      or (outcome_REQ_007_email(_lastC, _lastN) or outcome_REQ_007_in_app(_lastC, _lastN))
+      or (outcome_REQ_007_email(_arg_CustomerId_1, _arg_Notice_1) or outcome_REQ_007_in_app(_arg_CustomerId_1, _arg_Notice_1))
 
   /// REQ-008: If the billing provider declines a cancellation, then the system shall leave the subscription Active.
   val oblig_REQ_008: bool =
     not(_lastAction == "cancel_declined" and _pre_REQ_008)
-      or post_REQ_008(_lastC)
+      or post_REQ_008(_arg_CustomerId_1)
 
   // -- Completeness: every step is one a requirement speaks to --
 
@@ -350,51 +360,51 @@ module subscription_probes {
   val witness_REQ_001: bool =
     not(_lastAction == "cancel_subscription"
         and _pre_REQ_001
-        and post_REQ_001(_lastC, _lastN))
+        and post_REQ_001(_arg_CustomerId_1, _arg_Notice_1))
 
   /// Witness for REQ-002: When a cancellation succeeds, the system shall keep access available until the paid period ends.
   val witness_REQ_002: bool =
     not(_lastAction == "cancel_subscription"
         and _pre_REQ_002
-        and post_REQ_002(_lastC, _lastN))
+        and post_REQ_002(_arg_CustomerId_1, _arg_Notice_1))
 
   /// Witness for REQ-003: When a customer cancels an already-Cancelled subscription, the system shall make no further change.
   val witness_REQ_003: bool =
     not(_lastAction == "cancel_again"
         and _pre_REQ_003
-        and post_REQ_003(_lastC, _old_REQ_003_billed, _old_REQ_003_told))
+        and post_REQ_003(_arg_CustomerId_1, _old_REQ_003_billed, _old_REQ_003_told))
 
   /// Witness for REQ-004: If the billing provider does not answer a cancellation, then the system shall leave the subscription Active.
   val witness_REQ_004: bool =
     not(_lastAction == "cancel_unanswered"
         and _pre_REQ_004
-        and post_REQ_004(_lastC, _lastTimedOut))
+        and post_REQ_004(_arg_CustomerId_1, _arg_bool_1))
 
   /// Witness for REQ-005: When the paid period ends for a cancelled subscription, the system shall withdraw access.
   val witness_REQ_005: bool =
     not(_lastAction == "expire_period"
         and _pre_REQ_005
-        and post_REQ_005(_lastC))
+        and post_REQ_005(_arg_CustomerId_1))
 
   /// Witness for REQ-007 / email: When a cancellation succeeds, the system shall confirm it to the customer by email or by an in-app notice.
   val witness_REQ_007_email: bool =
     not(_lastAction == "cancel_subscription"
         and _pre_REQ_007
-        and outcome_REQ_007_email(_lastC, _lastN)
-        and not(outcome_REQ_007_in_app(_lastC, _lastN)))
+        and outcome_REQ_007_email(_arg_CustomerId_1, _arg_Notice_1)
+        and not(outcome_REQ_007_in_app(_arg_CustomerId_1, _arg_Notice_1)))
 
   /// Witness for REQ-007 / in-app: When a cancellation succeeds, the system shall confirm it to the customer by email or by an in-app notice.
   val witness_REQ_007_in_app: bool =
     not(_lastAction == "cancel_subscription"
         and _pre_REQ_007
-        and outcome_REQ_007_in_app(_lastC, _lastN)
-        and not(outcome_REQ_007_email(_lastC, _lastN)))
+        and outcome_REQ_007_in_app(_arg_CustomerId_1, _arg_Notice_1)
+        and not(outcome_REQ_007_email(_arg_CustomerId_1, _arg_Notice_1)))
 
   /// Witness for REQ-008: If the billing provider declines a cancellation, then the system shall leave the subscription Active.
   val witness_REQ_008: bool =
     not(_lastAction == "cancel_declined"
         and _pre_REQ_008
-        and post_REQ_008(_lastC))
+        and post_REQ_008(_arg_CustomerId_1))
 
   // -- The same probes, the right way up ----------------------
   // For the simulator. `quint run --witnesses=<name>` counts the
