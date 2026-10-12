@@ -210,12 +210,38 @@ def test_a_slice_of_an_unknown_check_is_refused():
         probes.slice_text(MODULE, ["oblig_REQ_009"], "a_slice", "./a")
 
 
-def _quint():
+def _free_endpoint():
+    """A port of this test process's own. quint starts an Apalache server per
+    call on its endpoint's port; parallel test workers sharing quint's
+    default race to bind it, and the loser reads as Apalache not running."""
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("localhost", 0))
+        return f"localhost:{sock.getsockname()[1]}"
+
+
+def _apalache_runs():
+    """quint is on PATH AND its Apalache starts. CI's tool-test job has the
+    CLI but a Java too old for the Apalache quint downloads: there a slice
+    and the whole module both "fail" alike, which would prove nothing."""
     from quint_ir import cli_available
-    return cli_available()
+    if not cli_available():
+        return False
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        m = Path(d) / "smoke.qnt"
+        m.write_text("module smoke {\n  var x: int\n  action init = x' = 0\n"
+                     "  action step = x' = x\n  val ok = x == 0\n}\n", encoding="utf-8")
+        try:
+            p = run_group(["quint", "verify", "--invariant=ok", "--max-steps=1",
+                           f"--server-endpoint={_free_endpoint()}", str(m)],
+                          timeout=300)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return "[ok]" in (p.stdout + p.stderr)
 
 
-@pytest.mark.skipif(not _quint(), reason="quint CLI not installed")
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
 @pytest.mark.parametrize("area,checks", [
     ("auth", ["oblig_REQ_003", "witness_REQ_001", "witness_REQ_004",
               "verdict_tick_1"]),
@@ -236,7 +262,8 @@ def test_a_slice_gives_the_verdict_the_whole_module_gives(tmp_path, area, checks
 
     def verdict(path, name):
         p = run_group(["quint", "verify", f"--invariant={name}", "--init=initP",
-                       "--step=stepP", "--max-steps=3", str(path)], timeout=600)
+                       "--step=stepP", "--max-steps=3",
+                       f"--server-endpoint={_free_endpoint()}", str(path)], timeout=600)
         out = p.stdout + p.stderr
         assert "[ok]" in out or "[violation]" in out, out[-800:]
         return p.returncode

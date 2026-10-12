@@ -796,7 +796,7 @@ class _FakeProc:
 def test_a_name_error_is_an_error_not_a_falsified_invariant(monkeypatch, tmp_path):
     """`Name not found: noDecrease` names the invariant, and was read as the
     simulator having violated it."""
-    monkeypatch.setattr(record.subprocess, "run", lambda *a, **k: _FakeProc(
+    monkeypatch.setattr(record, "run_group", lambda *a, **k: _FakeProc(
         1, stderr="error: [QNT404] Name 'noDecrease' not found\nerror: parsing failed"))
     result, _d, _t, _c, falsified = record.run_simulate(
         "quint", tmp_path / "a.qnt", ["noDecrease"], 10, 5, 60)
