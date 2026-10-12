@@ -81,6 +81,9 @@ def _relayout(text, move):
     text = re.sub(r",(\s*\n\s*\})", r"\1", text)          # trailing commas
     text = re.sub(r"(?m)^(    \S.*) (&&|and|or|\+|==) ", r"\1  \2  ", text)
     text = text.replace(" = all {", " = all  {")
+    # Split one action header over several lines, and join a wrapped one.
+    text = re.sub(r"(?m)^(  action \w+\()(\w+: \w+), ", r"\1\n    \2,\n    ", text, count=1)
+    text = re.sub(r"\.put\(\n\s+", ".put(", text)
     return _move_block(text, *move)
 
 
@@ -117,18 +120,25 @@ def test_adding_or_removing_a_run_leaves_the_sha_alone(root, area):
         "evidence the runs produced must still see the runs"
 
 
-@pytest.mark.parametrize("before,after", [
-    ("    idleOf(sid) > MAX_SESSION_AGE,", "    idleOf(sid) >= MAX_SESSION_AGE,"),  # flip a comparison
-    ("    not(isLocked(uid)),\n", ""),                                    # drop a guard
-    ("pure val MAX_FAILED_ATTEMPTS: int = 5", "pure val MAX_FAILED_ATTEMPTS: int = 6"),
+@pytest.mark.parametrize("area,before,after", [
+    ("auth", "    idleOf(sid) > MAX_SESSION_AGE,", "    idleOf(sid) >= MAX_SESSION_AGE,"),
+    ("auth", "    not(isLocked(uid)),\n", ""),                              # drop a guard
+    ("auth", "pure val MAX_FAILED_ATTEMPTS: int = 5", "pure val MAX_FAILED_ATTEMPTS: int = 6"),
+    ("subscription", "    n != NoNotice,", "    n == NoNotice,"),
 ])
-def test_an_edit_that_reaches_the_checker_moves_the_sha(root, before, after):
-    qnt = root / "specs" / "auth.qnt"
-    sha = _sha(root, "auth")
+def test_an_edit_that_reaches_the_checker_moves_the_sha(root, area, before, after):
+    qnt = root / "specs" / f"{area}.qnt"
+    sha = _sha(root, area)
+    area_data = spec_source.load_area(root, area)
+    old = itf.model_index(root, area, area_data)
     text = qnt.read_text(encoding="utf-8")
     assert before in text
     qnt.write_text(text.replace(before, after, 1), encoding="utf-8")
-    assert _sha(root, "auth") != sha
+    assert _sha(root, area) != sha
+    # ... and every reachability verdict with it: the step relation moved.
+    new = itf.model_index(root, area, area_data)
+    for req in area_data["requirements"]:
+        assert new.verdict_sha(req["id"]) != old.verdict_sha(req["id"]), req["id"]
 
 
 def test_a_run_only_helper_still_counts_when_a_verdict_names_it():
