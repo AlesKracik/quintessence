@@ -408,7 +408,8 @@ def _with_mutation(sha=None):
     area = spec_source.load_area(EXAMPLES, "subscription")
     area["check_results"]["mutation"] = {
         "ran_at": "2026-10-10T15:00:00+00:00",
-        "model_sha": sha or readback.compute_model_sha(EXAMPLES, "subscription", area),
+        "model_sha": sha or readback.compute_model_sha(EXAMPLES, "subscription", area,
+                                                        include_runs=True),
         "mutants": 38, "stillborn": 0, "killed_by_examples": 27, "killed_otherwise": 3,
         "survived": 1, "no_difference": 7, "score": 0.871, "questions": [QUESTION]}
     return area

@@ -1127,7 +1127,7 @@ def run_area(root, area_name, args):
     changing = counts["killed"] + counts["survived"]
     summary = {
         "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "model_sha": compute_model_sha(root, area_name, area),
+        "model_sha": compute_model_sha(root, area_name, area, include_runs=True),
         "seed": args.seed, "max_steps": args.steps, "traces": args.traces,
         "mutants": len(results), "stillborn": counts["stillborn"],
         "killed_by_examples": by_example,

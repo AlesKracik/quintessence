@@ -104,7 +104,7 @@ def status(root, area_name, area=None):
     if not spec_source.has_model(text):
         return []
     decls = spec_source.declarations(text)
-    sha = compute_model_sha(root, area_name, area)
+    sha = compute_model_sha(root, area_name, area, include_runs=True)
     out = []
     for run, label in area_runs(root, area_name, area, decls):
         p = trace_path(root, area_name, run)
@@ -359,7 +359,7 @@ def generate(root, area_name, jobs=4, timeout=180):
         host = (imported.get(qualifier) or {}).get(action) if qualifier else decls.get(action)
         return [p for p, _t in (host or {}).get("params") or []]
 
-    sha = compute_model_sha(root, area_name, area)
+    sha = compute_model_sha(root, area_name, area, include_runs=True)
     flag = _out_flag(exe)
     outdir = trace_path(root, area_name, "x").parent
     outdir.mkdir(parents=True, exist_ok=True)

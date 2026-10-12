@@ -1126,13 +1126,13 @@
         "checked_at": "2026-10-12T15:21:32+00:00",
         "steps": 1,
         "found_by": "simulator",
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:57:56+00:00",
         "steps": 3,
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       }
     },
     "UI-002": {
@@ -1142,13 +1142,13 @@
         "checked_at": "2026-10-12T15:21:33+00:00",
         "steps": 3,
         "found_by": "simulator",
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:57:56+00:00",
         "steps": 3,
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       }
     },
     "UI-003": {
@@ -1158,13 +1158,13 @@
         "checked_at": "2026-10-12T15:26:03+00:00",
         "steps": 10,
         "found_by": "apalache",
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:57:56+00:00",
         "steps": 3,
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       }
     },
     "UI-004": {
@@ -1174,13 +1174,13 @@
         "checked_at": "2026-10-12T15:26:03+00:00",
         "steps": 10,
         "found_by": "apalache",
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:59:56+00:00",
         "steps": 3,
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       }
     },
     "UI-005": {
@@ -1190,13 +1190,13 @@
         "checked_at": "2026-10-12T15:21:42+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:59:56+00:00",
         "steps": 3,
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       }
     },
     "UI-006": {
@@ -1206,13 +1206,13 @@
         "checked_at": "2026-10-12T15:21:42+00:00",
         "steps": 3,
         "found_by": "simulator",
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:59:56+00:00",
         "steps": 3,
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       }
     },
     "UI-007": {
@@ -1222,13 +1222,13 @@
         "checked_at": "2026-10-12T15:26:03+00:00",
         "steps": 10,
         "found_by": "apalache",
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T15:01:56+00:00",
         "steps": 3,
-        "model_sha": "f017673248e7a251111d7dc449d45dfe96d9dc7307711653c49ace9925017043"
+        "model_sha": "592a2d1af329b14211cd031eb71325d154db40461cc097a46c4a630910315326"
       }
     }
   }

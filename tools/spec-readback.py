@@ -730,7 +730,7 @@ def mutation_stale(root, area_name, area):
     if not sha:
         return False
     try:
-        return compute_model_sha(root, area_name, area) != sha
+        return compute_model_sha(root, area_name, area, include_runs=True) != sha
     except Exception:  # noqa: BLE001 — a missing file reads as "cannot tell"
         return False
 

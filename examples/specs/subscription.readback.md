@@ -186,7 +186,7 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 
 **As specified (EARS):** While `status.get(c) == Active`, if the billing provider does not answer the cancellation, then the system shall make `(lastBillingResult.get(c) == Timeout or lastBillingResult.get(c) == NetworkError) and status.get(c) == Active and billingEnabled.get(c)` hold.
 
-`specs/subscription.qnt:L170-L179` · model `c9b9ba956644`
+`specs/subscription.qnt:L170-L179` · model `bd4334750867`
 
 ```quint
   action cancel_unanswered(c: CustomerId, timedOut: bool): bool = all {
@@ -243,7 +243,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Active`, when the customer cancels and the provider accepts, the system shall make `status.get(c) == Cancelled and not(billingEnabled.get(c)) and lastBillingResult.get(c) == Success` hold.
 
-`specs/subscription.qnt:L114-L123` · model `c9b9ba956644`
+`specs/subscription.qnt:L114-L123` · model `bd4334750867`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -305,7 +305,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Active`, when the customer cancels and the provider accepts, the system shall make `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c)` hold.
 
-`specs/subscription.qnt:L114-L123` · model `c9b9ba956644`
+`specs/subscription.qnt:L114-L123` · model `bd4334750867`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -363,7 +363,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Cancelled`, when the customer cancels again, the system shall make `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c) and billingEnabled.get(c) == billed and notice.get(c) == told` hold.
 
-`specs/subscription.qnt:L195-L203` · model `c9b9ba956644`
+`specs/subscription.qnt:L195-L203` · model `bd4334750867`
 
 ```quint
   action cancel_again(c: CustomerId): bool = all {
@@ -425,7 +425,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Cancelled`, when the paid period ends, the system shall make `status.get(c) == Expired and not(accessUntilPeriodEnd.get(c))` hold.
 
-`specs/subscription.qnt:L214-L222` · model `c9b9ba956644`
+`specs/subscription.qnt:L214-L222` · model `bd4334750867`
 
 ```quint
   action expire_period(c: CustomerId): bool = all {
@@ -487,7 +487,7 @@ sequenceDiagram
 
 **As specified (EARS):** If the customer asks for a refund, then the system shall never let it happen.
 
-`specs/subscription.qnt:L235-L243` · model `c9b9ba956644`
+`specs/subscription.qnt:L235-L243` · model `bd4334750867`
 
 ```quint
   action request_refund(c: CustomerId): bool = all {
@@ -528,7 +528,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `notice.get(c) == NoNotice`, when the customer cancels and the provider accepts, the system shall end in one of: `notice.get(c) == Email`; `notice.get(c) == InApp`.
 
-`specs/subscription.qnt:L114-L123` · model `c9b9ba956644`
+`specs/subscription.qnt:L114-L123` · model `bd4334750867`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -573,7 +573,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `status.get(c) == Active`, if the billing provider declines the cancellation, then the system shall make `lastBillingResult.get(c) == Declined and status.get(c) == Active and billingEnabled.get(c)` hold.
 
-`specs/subscription.qnt:L140-L148` · model `c9b9ba956644`
+`specs/subscription.qnt:L140-L148` · model `bd4334750867`
 
 ```quint
   action cancel_declined(c: CustomerId): bool = all {

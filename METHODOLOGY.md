@@ -194,7 +194,7 @@ The table is code: `MODEL_KEYS`, `UI_KEYS`, `RECORD_KEYS`, `MACHINE_PATHS` in `t
 - **A refusal is shown by an example**, not declared by a tag (see "Refusal Examples").
 - **Triage ledgers and freshness pins are in `records.json`** — keyed by fingerprint or hash, never in the file they describe.
 - **Screens and navigation edges are records on the model**; `ui_components` stays in the intent file (no declaration to sit on).
-- **`model_sha` hashes the model without its `///` records** (`spec_source.strip_docs`): rewording a record never stales a trace; changing a declaration does.
+- **`model_sha` hashes what the model means, not how it is laid out** (`itf_tools.canonical_quint`): the model as tokens, comments (`///` records included), whitespace and trailing commas gone, each module's declarations sorted. Rewording a record, re-indenting or moving a declaration never stales a trace; changing a token the checker reads does. `run` declarations, and whatever only runs reach, are left out too: adding an example does not stale a proof. Evidence the runs produced (run traces, the mutation run) uses the run-inclusive variant.
 
 ### The grammar
 
@@ -310,7 +310,7 @@ A requirement says what happens **every time**: "when a user signs in, the syste
 
 How the generator makes both sound without the author writing a ghost: in `stepP`, before the step, it evaluates `@while` and each `@old` expression over the action's own arguments and stores them in `_pre_<REQ>` / `_old_<REQ>_<name>`; `@shall` and each `@outcome` are emitted as `def post_<REQ>(<params>, <olds>)` and called with the step's argument ghosts after the step (one ghost per parameter *type position*, `_arg_<Type>_<k>`, so the cost of checking does not depend on what parameters are called; every trace is written back under `_last<Param>` names). `_lastAction == <quint_ref>` pins the step to the requirement's own action, so the claim is about *this call*, never a state an earlier call left behind, and `_pre_<REQ>` pins it to a step that started where the requirement applies, so a guard that already implies the postcondition cannot pass as a witness.
 
-- **Freshness.** Both verdicts record `model_sha` (sha256 of `.qnt` + `.probes.qnt`, `tools/itf_tools.py sha <area>`). A changed model stales them, and lint FAILs a stale one.
+- **Freshness.** Both verdicts record `model_sha` (sha256 of the canonical `.qnt` + `.probes.qnt`, `tools/itf_tools.py sha <area>`). A changed model stales them, and lint FAILs a stale one.
 
 `tools/spec-probes.py` generates `specs/<area>.probes.qnt`. `tools/spec-record.py check <area>` runs every invariant, obligation and witness probe, saves ITF traces under `specs/<area>/traces/`, and writes every verdict to `requirements[].obligation` and `requirements[].witness`. **The agent never hand-edits a verdict.**
 

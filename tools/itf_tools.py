@@ -44,7 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from spec_source import (intent_path, load_area, save_area,  # noqa: E402
-                         strip_docs, SpecSourceError)
+                         SpecSourceError)
 
 ACTION_VAR_CANDIDATES = ("mbt::actionTaken", "_lastAction", "lastAction")
 MAX_NOTE_LEN = 60
@@ -459,30 +459,187 @@ def journeys_dir(root):
     return Path(root) / "specs" / "journeys"
 
 
-def compute_model_sha(root, area_name, area_data):
-    """Canonical sha256 over the model the witnesses were checked against:
-    bytes of formal_model.quint_file, then formal_model.probes_file, both
-    resolved relative to specs/. Returns None if the sidecar is missing OR
-    if probes_file is recorded but absent — a half-hashable model must not
-    produce a sha that 'matches', it must fail loudly (witnesses were found
-    via the probes module; without it freshness is unverifiable)."""
+# ── model_sha: a hash of what the model means, not how it is laid out ───────
+#
+# A stamp says "this verdict was proved against this model". It must go stale
+# when the proof could have changed, and only then. So the hash reads the
+# model as a token stream: comments (`///` doc records included) and
+# whitespace are gone, and the top-level declarations of each module are
+# sorted, so re-indenting, re-wrapping, re-commenting or moving a declaration
+# leaves the sha alone. Every token that reaches the checker stays: flip a
+# comparison, drop a guard or change a constant and the sha moves.
+#
+# `run` declarations are examples, not part of what /spec-check explores, so
+# they are left out, and so is every declaration only runs reach. A
+# declaration a verdict can name (init, step, the probe module's
+# identifiers, the records' quint_* fields) is never "only reached by runs".
+#
+# Tokens, not `quint parse`: a stamp written on a machine with the CLI must
+# compare equal on one without it, so there is one canonical form.
+
+_TOKEN_RE = re.compile(r'"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z0-9_]*|\d+|\S')
+_DECL_KW = {"const", "var", "val", "def", "action", "run", "temporal",
+            "type", "import", "export", "assume", "pure", "nondet"}
+_NAMED_ROOTS = {"init", "step"}
+_RECORD_NAME_KEYS = {"quint", "quint_name", "quint_ref", "quint_action",
+                     "quint_var", "quint_type", "quint_run", "predicate"}
+
+
+def _strip_comments(text):
+    out, i, n = [], 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            out.append(" ")
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def quint_tokens(text):
+    """The model as tokens: comments and layout gone. A trailing comma is
+    layout too (`all { a, b, }` is `all { a, b }`), and so is the optional
+    leading `|` of a sum type."""
+    toks = _TOKEN_RE.findall(_strip_comments(text or ""))
+    return [t for i, t in enumerate(toks)
+            if not (t == "," and i + 1 < len(toks) and toks[i + 1] in ("}", ")", "]"))
+            and not (t == "|" and i and toks[i - 1] == "=")]
+
+
+def _decl_name(toks):
+    kinds = [t for t in toks[:2] if t in _DECL_KW]
+    k = len(kinds)
+    return (" ".join(kinds), toks[k] if k < len(toks) and k else None)
+
+
+def quint_modules(tokens):
+    """[(header_tokens, [decl_tokens, ...])] — each module's top-level
+    declarations, split at depth 1 on a declaration keyword. Tokens outside
+    any module are kept as one header-only entry."""
+    out, i, n = [], 0, len(tokens)
+    loose = []
+    while i < n:
+        if tokens[i] == "module" and i + 2 < n and tokens[i + 2] == "{":
+            header = tokens[i:i + 3]
+            decls, cur, depth, j = [], [], 1, i + 3
+            while j < n and depth:
+                t = tokens[j]
+                if t in "{([":
+                    depth += 1
+                elif t in "})]":
+                    depth -= 1
+                    if not depth:
+                        break
+                if (depth == 1 and t in _DECL_KW and cur
+                        and not (cur[-1] == "pure" and len(cur) == 1)):
+                    decls.append(cur)
+                    cur = []
+                cur.append(t)
+                j += 1
+            if cur:
+                decls.append(cur)
+            out.append((header, decls))
+            i = j + 1
+        else:
+            loose.append(tokens[i])
+            i += 1
+    if loose:
+        out.insert(0, (loose, []))
+    return out
+
+
+def _record_names(area_data):
+    names = set()
+
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if k in _RECORD_NAME_KEYS and isinstance(v, str):
+                    names.update(re.findall(r"[A-Za-z_]\w*", v))
+                else:
+                    walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(area_data or {})
+    return names
+
+
+def canonical_quint(text, include_runs=False, roots=()):
+    """The canonical form model_sha hashes (see above). `roots`: names a
+    verdict can reach from outside this text — kept even when only runs name
+    them here."""
+    mods = quint_modules(quint_tokens(text))
+    if not include_runs:
+        named = {}
+        for _h, decls in mods:
+            for d in decls:
+                kind, name = _decl_name(d)
+                if name:
+                    named.setdefault(name, []).append((kind, d))
+        refs = {n: {t for _k, d in ds for t in d[1:]} - {n}
+                for n, ds in named.items()}
+        dropped = {n for n, ds in named.items() if all(k == "run" for k, _d in ds)}
+        keep = set(roots) | _NAMED_ROOTS
+        changed = True
+        while changed:
+            changed = False
+            for n in named:
+                if n in dropped or n in keep:
+                    continue
+                if any(k in ("var", "const", "type") for k, _d in named[n]):
+                    continue
+                by = [m for m, r in refs.items() if n in r]
+                if by and all(m in dropped for m in by):
+                    dropped.add(n)
+                    changed = True
+        mods = [(h, [d for d in decls if _decl_name(d)[1] not in dropped])
+                for h, decls in mods]
+    parts = []
+    for header, decls in mods:
+        body = sorted(" ".join(d) for d in decls)
+        parts.append(" ".join(header) + "\n" + "\n".join(body))
+    return "\n}\n".join(parts) + "\n"
+
+
+def compute_model_sha(root, area_name, area_data, include_runs=False):
+    """sha256 of the canonical model plus the canonical probe module. With
+    `include_runs`, runs count too — for evidence that runs produced (run
+    traces, the mutation run's examples)."""
     fm = area_data.get("formal_model") or {}
     quint_file = fm.get("quint_file") or f"{area_name}.qnt"
-    h = hashlib.sha256()
     sidecar = Path(root) / "specs" / quint_file
     if not sidecar.exists():
         return None
-    # The model WITHOUT its `///` records: a reworded description or EARS field
-    # changes what a reviewer reads, never what the checker explored, so it
-    # must not stale every trace. Everything else — every declaration, every
-    # witness predicate body — is hashed byte for byte.
-    h.update(strip_docs(sidecar.read_text(encoding="utf-8")).encode("utf-8"))
+    probes_text = None
     probes_file = fm.get("probes_file")
     if probes_file:
         probes = Path(root) / "specs" / probes_file
         if not probes.exists():
             return None
-        h.update(probes.read_bytes())
+        probes_text = probes.read_text(encoding="utf-8")
+    roots = _record_names(area_data)
+    if probes_text is not None:
+        roots |= {t for t in quint_tokens(probes_text) if t[:1].isalpha() or t[:1] == "_"}
+    h = hashlib.sha256()
+    h.update(canonical_quint(sidecar.read_text(encoding="utf-8"),
+                             include_runs, roots).encode("utf-8"))
+    if probes_text is not None:
+        h.update(b"\0")
+        h.update(canonical_quint(probes_text, include_runs).encode("utf-8"))
     return h.hexdigest()
 
 

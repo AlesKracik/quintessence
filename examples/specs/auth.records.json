@@ -926,13 +926,13 @@
         "checked_at": "2026-10-12T15:14:53+00:00",
         "steps": 1,
         "found_by": "simulator",
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:51:50+00:00",
         "steps": 3,
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       }
     },
     "REQ-002": {
@@ -942,13 +942,13 @@
         "checked_at": "2026-10-12T15:14:53+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       }
     },
     "REQ-003": {
@@ -958,13 +958,13 @@
         "checked_at": "2026-10-12T15:14:54+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       }
     },
     "REQ-004": {
@@ -974,13 +974,13 @@
         "checked_at": "2026-10-12T15:19:17+00:00",
         "steps": 10,
         "found_by": "apalache",
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       }
     },
     "REQ-005": {
@@ -991,7 +991,7 @@
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       }
     },
     "REQ-006": {
@@ -1001,13 +1001,13 @@
         "checked_at": "2026-10-12T15:15:02+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "2fa4ee4982ec468f0059adea2bba99e1a71cc2e98be0f35308d818bfdfe81429"
+        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
       }
     }
   }

@@ -189,7 +189,7 @@ run q_6b84d96d = init.then(tick.fail())
 
 **As specified (EARS):** When a registered user submits valid credentials, the system shall make `isActive(sid) and sessionOwner.get(sid) == uid and activeSessionsOf(uid).contains(sid) and attemptsOf(uid) == 0` hold.
 
-`specs/auth.qnt:L112-L125` · model `2fa4ee4982ec`
+`specs/auth.qnt:L112-L125` · model `a2f6619b36cb`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -255,7 +255,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `not(isLocked(uid))`, if a login attempt fails, then the system shall make `attemptsOf(uid) == before + 1 and (isLocked(uid) iff attemptsOf(uid) >= MAX_FAILED_ATTEMPTS (= 5, CON-001))` hold.
 
-`specs/auth.qnt:L183-L200` · model `2fa4ee4982ec`
+`specs/auth.qnt:L183-L200` · model `a2f6619b36cb`
 
 ```quint
   action login_failed(uid: UserId): bool = {
@@ -331,7 +331,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `isActive(sid)`, when the user requests logout, the system shall make `statusOf(sessions, sid) == LoggedOut` hold.
 
-`specs/auth.qnt:L134-L149` · model `2fa4ee4982ec`
+`specs/auth.qnt:L134-L149` · model `a2f6619b36cb`
 
 ```quint
   action logout(sid: SessionId): bool = {
@@ -397,7 +397,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `isActive(sid) and idleOf(sid) > MAX_SESSION_AGE (= 3 ticks, CON-002)`, when the session's idle time runs out, the system shall make `statusOf(sessions, sid) == Expired` hold.
 
-`specs/auth.qnt:L211-L227` · model `2fa4ee4982ec`
+`specs/auth.qnt:L211-L227` · model `a2f6619b36cb`
 
 ```quint
   action expire_session(sid: SessionId): bool = {
@@ -471,7 +471,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `isLocked(uid)`, if the user submits valid credentials, then the system shall never let it happen.
 
-`specs/auth.qnt:L112-L125` · model `2fa4ee4982ec`
+`specs/auth.qnt:L112-L125` · model `a2f6619b36cb`
 
 ```quint
   action login(uid: UserId, sid: SessionId): bool = all {
@@ -513,7 +513,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `not(isLocked(uid))`, if a failed login locks the account, then the system shall make `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))` hold.
 
-`specs/auth.qnt:L183-L200` · model `2fa4ee4982ec`
+`specs/auth.qnt:L183-L200` · model `a2f6619b36cb`
 
 ```quint
   action login_failed(uid: UserId): bool = {
