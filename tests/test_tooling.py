@@ -2087,9 +2087,9 @@ def test_partially_witnessed_permission_still_gates(tmp_path):
 def test_stale_outcome_trace_is_caught(tmp_path):
     outcomes = [
         {"name": "email", "predicate": "p", "status": "witnessed",
-         "trace": "a/traces/REQ-007.email.itf.json", "model_sha": "0" * 64},
+         "trace": "a/traces/REQ-007.email.itf.json", "model_sha": "cone:" + "0" * 64},
         {"name": "in-app", "predicate": "q", "status": "witnessed",
-         "trace": "a/traces/REQ-007.in-app.itf.json", "model_sha": "0" * 64},
+         "trace": "a/traces/REQ-007.in-app.itf.json", "model_sha": "cone:" + "0" * 64},
     ]
     area = _may_area(tmp_path, outcomes)
     findings = []

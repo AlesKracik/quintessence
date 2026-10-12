@@ -113,6 +113,11 @@ try:
     from itf_tools import stream_encodes as _stream_encodes, soften_stdout
     from itf_tools import brief_status as _brief_status
     from itf_tools import compute_model_sha as _compute_model_sha
+    from itf_tools import model_index as _model_index
+    from itf_tools import stale_changes as _stale_changes
+    from itf_tools import describe_changes as _describe_changes
+    from itf_tools import stamp_state as _stamp_state
+    from itf_tools import stale_checks as _stale_checks
     from itf_tools import compute_spec_sha as _compute_spec_sha
     from itf_tools import load_trace as _load_trace
     from itf_tools import is_hollow as _is_hollow
@@ -539,6 +544,49 @@ def check_completeness(root, area_data, area_name, findings):
         add(findings, FAIL, "completeness", code, area_name, msg, ref=c["id"])
 
 
+_UNSTAMPED = {
+    "unstamped": "has no model_sha — freshness can't be checked. Re-run "
+                 "/spec-check to pin it.",
+    "area-wide": "carries an older area-wide stamp, and the model has changed "
+                 "since, so which part it rested on is unknown. Re-run "
+                 "/spec-check to stamp it per verdict.",
+}
+
+
+def _stale_findings(root, area_name, area_data, stale, findings):
+    """One finding per cause, not one per requirement: an action edit stales
+    every proof that runs through it, and 28 identical lines hide the one
+    that is different. The cause is what moved since the last full check
+    (check_results.model_parts)."""
+    if not any(stale.values()):
+        return
+    stored = (area_data.get("check_results") or {}).get("model_parts")
+    index = _model_index(root, area_name, area_data)
+    noun = {"witness": ("witness", "witnesses", "."),
+            "obligation": ("obligation", "obligations", "."),
+            "check": ("check", "checks", " ")}
+    for kind, entries in stale.items():
+        groups = {}
+        for label, rid in entries:
+            keys = None
+            if index is not None:
+                keys = index.check_cone(rid) if kind == "check" else index.cone(rid)
+            cause = _describe_changes(_stale_changes(stored, index, keys))
+            groups.setdefault(cause, []).append((label, rid))
+        for cause, group in groups.items():
+            one, many, sep = noun[kind]
+            labels = [label for label, _rid in group]
+            head = (f"{labels[0]}{sep}{one} is stale" if len(group) == 1
+                    else f"{len(group)} {many} are stale")
+            add(findings, FAIL, "witness", f"{kind}-stale", area_name,
+                f"{head}: {cause}."
+                + (f" ({', '.join(labels)})" if len(group) > 1 else "")
+                + " One /spec-check refreshes "
+                + ("it." if len(group) == 1 else "them."),
+                ref=",".join(dict.fromkeys(
+                    label if kind == "check" else rid for label, rid in group)))
+
+
 def check_witnesses(root, area_data, area_name, findings):
     """Both halves of every formal requirement, as recorded by /spec-check:
     the WITNESS (its step can happen — the requirement is not vacuous) and
@@ -547,6 +595,7 @@ def check_witnesses(root, area_data, area_name, findings):
     this one."""
     approved = area_data.get("status") == "approved"
     current_sha = _compute_model_sha(root, area_name, area_data)
+    index = _model_index(root, area_name, area_data) if current_sha else None
     any_recorded = any(
         entry.get("status") == "witnessed"
         for r in area_data.get("requirements", []) or []
@@ -559,6 +608,10 @@ def check_witnesses(root, area_data, area_name, findings):
             "hashed (sidecar missing, or formal_model.probes_file recorded but "
             "absent). Freshness is unverifiable — every verdict is suspect. "
             "Restore the files or re-run /spec-check.")
+    stale = {"witness": [], "obligation": [], "check": []}
+    # A check's verdict (an invariant, a coverage or explanation probe)
+    # carries its own fingerprint too.
+    stale["check"] = _stale_checks(area_data, index)
     for req in area_data.get("requirements", []) or []:
         rid = req.get("id", "?")
         if req.get("status") == "deferred" or req.get("type") == "non-functional":
@@ -588,15 +641,12 @@ def check_witnesses(root, area_data, area_name, findings):
                 + ". The model contradicts the requirement — fix whichever is "
                   "wrong.", ref=rid)
         elif ostatus == "verified":
-            stamped = ob.get("model_sha")
-            if not stamped:
+            state = _stamp_state(ob.get("model_sha"), rid, index, current_sha)
+            if state in ("unstamped", "area-wide"):
                 add(findings, FAIL, "witness", "obligation-unstamped", area_name,
-                    f"{rid}.obligation has no model_sha — freshness can't be "
-                    f"checked. Re-run /spec-check to pin it.", ref=rid)
-            elif current_sha and stamped != current_sha:
-                add(findings, FAIL, "witness", "obligation-stale", area_name,
-                    f"{rid}.obligation was checked against an older model. "
-                    f"Re-run /spec-check.", ref=rid)
+                    f"{rid}.obligation " + _UNSTAMPED[state], ref=rid)
+            elif current_sha and state == "stale":
+                stale["obligation"].append((rid, rid))
         elif approved:
             add(findings, FAIL, "witness", "approved-unchecked", area_name,
                 f"Area is approved but {rid}'s every-step obligation is "
@@ -639,16 +689,13 @@ def check_witnesses(root, area_data, area_name, findings):
                         add(findings, FAIL, "witness", "witness-hollow", area_name,
                             f"{label}.witness.trace '{e_trace}' has ONE state — "
                             f"no step happened, so it witnesses nothing.", ref=rid)
-                    stamped = entry.get("model_sha")
-                    if not stamped:
+                    state = _stamp_state(entry.get("model_sha"), rid, index,
+                                         current_sha)
+                    if state in ("unstamped", "area-wide"):
                         add(findings, FAIL, "witness", "witness-unstamped", area_name,
-                            f"{label}.witness has no model_sha — freshness can't be "
-                            f"checked. Re-run /spec-check to pin it.", ref=rid)
-                    elif current_sha and stamped != current_sha:
-                        add(findings, FAIL, "witness", "witness-stale", area_name,
-                            f"{label}.witness.model_sha doesn't match the current "
-                            f"model (.qnt/.probes.qnt changed since the trace was "
-                            f"found). Re-run /spec-check.", ref=rid)
+                            f"{label}.witness " + _UNSTAMPED[state], ref=rid)
+                    elif current_sha and state == "stale":
+                        stale["witness"].append((label, rid))
             elif e_status == "witnessed":
                 add(findings, FAIL, "witness", "witnessed-without-trace", area_name,
                     f"{label}.witness.status is 'witnessed' but no trace file is "
@@ -659,6 +706,7 @@ def check_witnesses(root, area_data, area_name, findings):
                 f"`{req.get('quint_ref') or 'the model'}` starts where @while holds "
                 f"and ends where @shall holds, so its obligation holds of nothing. "
                 f"Fix the model or the requirement.", ref=rid)
+    _stale_findings(root, area_name, area_data, stale, findings)
 
 
 def check_constant_hosts(info, area_name, findings):

@@ -85,6 +85,13 @@
             }
           }
         },
+        "model_parts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The model as the last full check saw it: one short hash per canonical declaration (model, imported modules and probe module; runs left out). Written by spec-record check, read by spec-lint and the readback to say what moved when a stamp goes stale (itf_tools.stale_changes)."
+        },
         "max_steps": {
           "type": "integer",
           "minimum": 1,
@@ -492,6 +499,10 @@
               "quint_name": {
                 "type": "string"
               },
+              "model_sha": {
+                "type": "string",
+                "description": "The fingerprint this verdict rested on: the canonical transition relation plus the closure of its own predicate (itf_tools.ModelIndex.check_sha; an obligation's is its requirement's). Editing another verdict's predicate leaves it alone; editing an action moves every one."
+              },
               "over": {
                 "type": "string",
                 "enum": [
@@ -895,7 +906,7 @@
               },
               "model_sha": {
                 "type": "string",
-                "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one."
+                "description": "The requirement's own fingerprint the trace was found against: `cone:` + sha256 of the canonical transition relation plus the closure of its own predicate (itf_tools.ModelIndex.verdict_sha). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one. A bare sha256 is an older area-wide stamp: fresh while the whole model is unchanged, re-stamped by the next check."
               },
               "outcomes": {
                 "type": "object",
@@ -976,7 +987,7 @@
               },
               "model_sha": {
                 "type": "string",
-                "description": "sha256 of the model (.qnt + .probes.qnt) the obligation was verified against; stale when it no longer matches."
+                "description": "The requirement's own fingerprint the obligation was verified against (see witness.model_sha); stale when it no longer matches."
               }
             }
           },

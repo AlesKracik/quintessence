@@ -203,7 +203,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from itf_tools import (compute_model_sha, compute_spec_sha,  # noqa: E402
+from itf_tools import (compute_model_sha, compute_spec_sha, model_index,
+                       restamp_area_wide,  # noqa: E402
                        load_trace, witness_status, is_hollow,
                        area_json_path, is_rejection, witness_exempt,
                        owes_obligation, probe_name, outcome_probe_name,
@@ -851,7 +852,7 @@ def run_structural_check(item, iid, als_rel, als_file, root, area_name,
     return entry
 
 
-def roll_up_outcomes(witness, current_sha):
+def roll_up_outcomes(witness, verdict_sha):
     """Derive a `may` requirement's witness status from its outcomes.
 
     Extracted so it can be applied TWICE: once after the shallow pass and
@@ -860,8 +861,8 @@ def roll_up_outcomes(witness, current_sha):
     statuses = [oc.get("status") for oc in (witness.get("outcomes") or [])]
     if statuses and all(st == "witnessed" for st in statuses):
         witness["status"] = "witnessed"
-        if current_sha:
-            witness["model_sha"] = current_sha
+        if verdict_sha:
+            witness["model_sha"] = verdict_sha
     elif any(st == "hollow" for st in statuses):
         # Reported ahead of no-witness: an unreachable outcome and a vacuous
         # one need different fixes, and the vacuous one is the more dangerous
@@ -879,7 +880,7 @@ def outcome_trace_rel(area_name, rid, oname):
 
 
 def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_name,
-                        probe_run, steps, current_sha, deep_queue=None,
+                        probe_run, steps, verdict_sha, deep_queue=None,
                         stamp=None):
     """Prove each permitted outcome of a `may` requirement separately.
 
@@ -893,7 +894,8 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
     recorded as no-witness at that bound and, when `deep_queue` is given,
     queued for the deep pass — the caller re-runs it and calls
     roll_up_outcomes again. `stamp(oc, trace_path)` records which engine
-    found a witnessed outcome's trace."""
+    found a witnessed outcome's trace. `verdict_sha` is the requirement's own
+    fingerprint (ModelIndex.verdict_sha)."""
     outcomes = witness.get("outcomes") or []
     if not outcomes:
         print(f"{rid:<12} no-outcomes      (modality 'may' needs witness.outcomes[])")
@@ -909,8 +911,8 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
             print(f"{label:<24} no-predicate")
             bad += 1
             continue
-        if (oc.get("status") == "witnessed" and current_sha
-                and oc.get("model_sha") == current_sha):
+        if (oc.get("status") == "witnessed" and verdict_sha
+                and oc.get("model_sha") == verdict_sha):
             t_rel = oc.get("trace")
             t_path = root / "specs" / t_rel if t_rel else None
             if t_path and t_path.exists() and not load_trace(t_path)[1]:
@@ -947,8 +949,8 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
                 continue
             oc["status"] = "witnessed"
             oc["trace"] = trace_rel
-            if current_sha:
-                oc["model_sha"] = current_sha
+            if verdict_sha:
+                oc["model_sha"] = verdict_sha
             if stamp:
                 stamp(oc, trace_path)
             print(f"{label:<24} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s"
@@ -962,7 +964,7 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
                 # Provisional: recorded pessimistically at this bound so an
                 # interrupted run keeps the honest finding, and queued so the
                 # deep pass can still find the trace.
-                deep_queue.append({"oc": oc, "label": label, "pname": pname,
+                deep_queue.append({"oc": oc, "label": label, "pname": pname, "rid": rid,
                                    "trace_rel": trace_rel,
                                    "trace_path": trace_path,
                                    "witness": witness})
@@ -973,7 +975,7 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
             bad += 1
             print(f"{label:<24} {result:<16} {detail}")
 
-    roll_up_outcomes(witness, current_sha)
+    roll_up_outcomes(witness, verdict_sha)
     return bad
 
 
@@ -1169,6 +1171,17 @@ def cmd_check(args):
             event_probes[n] = (c["action"], pg)
 
     current_sha = compute_model_sha(root, args.area, area)
+    # Each verdict is stamped with its own fingerprint: the transition
+    # relation plus its own predicate (itf_tools.ModelIndex). A stamp an
+    # older tool wrote is area-wide; one that still matches the whole model
+    # is fresh by construction, so it is re-stamped here, not re-proven.
+    index = model_index(root, args.area, area) if current_sha else None
+
+    def sha_for(rid):
+        return index.verdict_sha(rid) if index is not None else None
+
+    if index is not None:
+        restamp_area_wide(area, current_sha, index)
 
     # ── 0. Simulator pre-gate (advisory — never a verdict) ───────────────
     # The pre-gate's findings are the only ORDERING signal in the run: an
@@ -1387,6 +1400,11 @@ def cmd_check(args):
             entry["kind"] = "obligation"
             item["checked_at"] = now_iso()
             item["steps"] = steps
+        # What this verdict rested on: the transition relation and its own
+        # predicate (an obligation's is its requirement's fingerprint).
+        if index is not None and result in ("verified", "counterexample"):
+            entry["model_sha"] = (sha_for(iid) if job.get("obligation")
+                                  else index.check_sha(job["quint_name"]))
         if batched:
             entry["batched"] = True
         notes = [n for n in ((detail if result == "counterexample" else None), note)
@@ -1416,7 +1434,7 @@ def cmd_check(args):
             if job.get("obligation"):
                 item.pop("trace", None)
                 if current_sha:
-                    item["model_sha"] = current_sha
+                    item["model_sha"] = sha_for(iid)
         else:
             bad += 1
             entry["error"] = detail
@@ -1579,7 +1597,7 @@ def cmd_check(args):
             ob = req.setdefault("obligation", {})
             oname = obligation_name(rid)
             if (ob.get("formal_status") == "verified" and current_sha
-                    and ob.get("model_sha") == current_sha):
+                    and ob.get("model_sha") == sha_for(rid)):
                 print(f"{rid:<12} {'obligation fresh':<26} (model unchanged — skipped)")
                 continue
             if not probes_file or oname not in probe_vals:
@@ -1756,11 +1774,11 @@ def cmd_check(args):
         return consume(("probe", pname, str(trace_path), steps),
                        run_probe, pname, trace_path, steps)
 
-    def is_fresh(block):
+    def is_fresh(block, rid):
         """Witnessed against this model, with its trace still on disk and
         valid — the probe will be skipped, so it is not planned."""
         if not (block.get("status") == "witnessed" and current_sha
-                and block.get("model_sha") == current_sha):
+                and block.get("model_sha") == sha_for(rid)):
             return False
         t_rel = block.get("trace")
         t_path = root / "specs" / t_rel if t_rel else None
@@ -1785,11 +1803,11 @@ def cmd_check(args):
                 for oc in w.get("outcomes") or []:
                     oname = oc.get("name") or "?"
                     pname = outcome_probe_name(rid, oname)
-                    if oc.get("predicate") and not is_fresh(oc) and pname in probe_vals:
+                    if oc.get("predicate") and not is_fresh(oc, rid) and pname in probe_vals:
                         tp = root / "specs" / outcome_trace_rel(args.area, rid, oname)
                         out.append((pname, tp))
                 continue
-            if witness_exempt(req) or not owes_obligation(req) or is_fresh(w):
+            if witness_exempt(req) or not owes_obligation(req) or is_fresh(w, rid):
                 continue
             pname = probe_name(rid)
             if pname in probe_vals:
@@ -2009,7 +2027,7 @@ def cmd_check(args):
                 bad += record_may_outcomes(
                     req, rid, witness, probes_ir if probes_rel_ok else None,
                     probes_file, root, args.area, probe_run, shallow_steps,
-                    current_sha,
+                    sha_for(rid),
                     deep_queue=may_deep if shallow_steps < max_steps else None,
                     stamp=stamp)
                 flush()
@@ -2029,7 +2047,7 @@ def cmd_check(args):
                 continue
             req["witness"] = witness  # persist only for reqs we actually process
             if (witness.get("status") == "witnessed"
-                    and current_sha and witness.get("model_sha") == current_sha):
+                    and current_sha and witness.get("model_sha") == sha_for(rid)):
                 # Fresh by sha — but only if the trace is actually present
                 # and valid; a deleted trace with a surviving stamp is not
                 # fresh, it's gone.
@@ -2086,7 +2104,7 @@ def cmd_check(args):
                 witness["status"] = "witnessed"
                 witness["trace"] = trace_rel
                 if current_sha:
-                    witness["model_sha"] = current_sha
+                    witness["model_sha"] = sha_for(rid)
                 stamp(witness, trace_path)
                 print(f"{rid:<12} WITNESSED        -> specs/{trace_rel} ({duration:.1f}s"
                       + (", simulator" if witness["found_by"] == "simulator" else "")
@@ -2180,7 +2198,7 @@ def cmd_check(args):
             witness["steps"] = max_steps
             witness["found_by"] = "apalache"
             if current_sha:
-                witness["model_sha"] = current_sha
+                witness["model_sha"] = sha_for(rid)
             bad -= 1   # the provisional no-witness the shallow pass counted
             print(f"{rid:<12} WITNESSED        -> specs/{job['trace_rel']} "
                   f"({duration:.1f}s, needed {max_steps} steps)")
@@ -2202,7 +2220,7 @@ def cmd_check(args):
     for job in may_deep:
         oc, label = job["oc"], job["label"]
         res = deepen_probe(job["pname"], job["trace_path"])
-        touched_may.setdefault(id(job["witness"]), job["witness"])
+        touched_may.setdefault(id(job["witness"]), (job["witness"], job["rid"]))
         if res is None:
             print(f"{label:<24} NO-WITNESS       (unreachable up to {shallow_steps} "
                   f"steps; the {budget_seconds}s run budget stopped the deep pass)")
@@ -2229,7 +2247,7 @@ def cmd_check(args):
             oc["steps"] = max_steps
             oc["found_by"] = "apalache"
             if current_sha:
-                oc["model_sha"] = current_sha
+                oc["model_sha"] = sha_for(job["rid"])
             bad -= 1
             print(f"{label:<24} WITNESSED        -> specs/{job['trace_rel']} "
                   f"({duration:.1f}s, needed {max_steps} steps)")
@@ -2240,10 +2258,10 @@ def cmd_check(args):
         else:
             print(f"{label:<24} NO-WITNESS       (unreachable up to {shallow_steps} "
                   f"steps; the deep pass at {max_steps} returned {result})")
-    for witness in touched_may.values():
+    for witness, rid in touched_may.values():
         # The roll-up the shallow pass wrote was derived from outcomes that
         # have since changed. Derive it again from what is now recorded.
-        roll_up_outcomes(witness, current_sha)
+        roll_up_outcomes(witness, sha_for(rid))
     if touched_may:
         flush()
 
@@ -2260,6 +2278,12 @@ def cmd_check(args):
     flush()
     cr = area["check_results"]
     cr["ran_at"] = now_iso()
+    # What the model looked like, part by part, so a later stale stamp can
+    # say what moved (itf_tools.stale_changes). A --only run re-derived only
+    # some verdicts; the rest still rest on the parts recorded before it.
+    index = model_index(root, args.area, area)
+    if index is not None and (not args.only or not cr.get("model_parts")):
+        cr["model_parts"] = dict(sorted(index.parts.items()))
     save_area(root, args.area, area)
     print(f"\nrecorded check_results + witness blocks in {area_path}")
 

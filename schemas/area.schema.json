@@ -373,7 +373,7 @@
               "checked_at": { "type": "string", "format": "date-time" },
               "steps":      { "type": "integer", "minimum": 1, "description": "Step bound the probe actually ran to. A 'no-witness' is only as strong as this number — unreachable within 3 steps is a very different claim from unreachable within 10, and when the run budget stops the deep pass the shallow bound is what stands. Absent on records written before the two-pass ladder existed." },
               "found_by":   { "type": "string", "enum": ["apalache", "simulator"], "description": "Which engine found the witness trace. A witness is existential: one concrete execution that fires the step from @while and ends in @shall IS the proof, so a trace the simulator (`quint run`) reached is as strong as one Apalache constructed — and costs seconds instead of minutes. For 'simulator', steps is the trace's own length, not a search bound. Only the positive answer is ever taken from the simulator: 'no-witness' always comes from Apalache, because not finding something by random search is not proof that it is unreachable." },
-              "model_sha":  { "type": "string", "description": "sha256 of the model the trace was found against (.qnt + .probes.qnt; see `tools/itf_tools.py sha <area>`). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one." }
+              "model_sha":  { "type": "string", "description": "The requirement's own fingerprint the trace was found against: `cone:` + sha256 of the canonical transition relation plus the closure of its own predicate (itf_tools.ModelIndex.verdict_sha). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one. A bare sha256 is an older area-wide stamp: fresh while the whole model is unchanged, re-stamped by the next check." }
             }
           },
           "old": {
@@ -399,7 +399,7 @@
               "trace":      { "type": "string", "description": "Counterexample ITF path relative to specs/, when violated." },
               "checked_at": { "type": "string", "format": "date-time" },
               "steps":      { "type": "integer", "minimum": 1, "description": "Step bound the check ran to. A verified obligation is valid only to this depth." },
-              "model_sha":  { "type": "string", "description": "sha256 of the model (.qnt + .probes.qnt) the obligation was verified against; stale when it no longer matches." }
+              "model_sha":  { "type": "string", "description": "The requirement's own fingerprint the obligation was verified against (see witness.model_sha); stale when it no longer matches." }
             }
           },
           "form": {
@@ -973,6 +973,10 @@
             "deep_skipped":     { "type": "integer", "minimum": 0, "description": "Checks the budget stopped before their deep run; each keeps its shallow verdict and bound." }
           }
         },
+        "model_parts": {
+          "type": "object", "additionalProperties": { "type": "string" },
+          "description": "The model as the last full check saw it: one short hash per canonical declaration (model, imported modules and probe module; runs left out). Written by spec-record check, read by spec-lint and the readback to say what moved when a stamp goes stale (itf_tools.stale_changes)."
+        },
         "max_steps": { "type": "integer", "minimum": 1, "description": "The CONFIGURED Apalache step ceiling for this run (apalache.max_steps). With the two-pass ladder it is no longer the depth every check reached — that is per check, in checks[].steps — so it serves as the fallback bound for records written before that field existed, and as the number a budget-stopped check is honest about NOT having reached." },
         "extraction": {
           "type": "object",
@@ -1119,6 +1123,7 @@
               "id":              { "type": "string", "description": "INV-NNN, PROP-NNN, the REQ id of an obligation, or a completeness check's id (cover-…, explain-…, verdict-…). Witness results live in requirements[].witness, not here." },
               "kind":            { "type": "string", "enum": ["invariant", "property", "obligation", "coverage", "explanation", "verdict"], "default": "invariant", "description": "coverage / explanation / verdict: a completeness check from the probe module (completeness.py), id cover-<action>, explain-<action>-<var> or verdict-<action>-<n>." },
               "quint_name":      { "type": "string" },
+              "model_sha":       { "type": "string", "description": "The fingerprint this verdict rested on: the canonical transition relation plus the closure of its own predicate (itf_tools.ModelIndex.check_sha; an obligation's is its requirement's). Editing another verdict's predicate leaves it alone; editing an action moves every one." },
               "over":            { "type": "string", "enum": ["model", "probes"], "default": "model", "description": "Which module produced this result \u2014 echoed from the invariant's `over`. A verdict from the probe module was checked against initP/stepP rather than the sidecar's own init/step, and a reader comparing two \u2713 marks should be able to see that." },
               "proof":           { "type": "string", "enum": ["bounded", "inductive", "structural", "smt"], "default": "bounded", "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps; 'structural' results come from the Alloy backend and are valid only within this entry's `scope`." },
               "backend":         { "type": "string", "enum": ["apalache", "tlc", "alloy", "z3"], "default": "apalache", "description": "Which validator produced this result. 'alloy' entries are scope-bounded, not step-bounded — their honesty suffix comes from `scope`, not check_results.max_steps. 'tlc' entries come from the temporal path (properties[], `quint verify --temporal`): explicit-state, so they are bounded by the model's own finite state space rather than by check_results.max_steps, and they carry no `trace` because --out-itf is Apalache-only." },

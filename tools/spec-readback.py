@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import (  # noqa: E402
     load_trace, mermaid_lines, render_value, state_vars,
     detect_action_var, witness_status, compute_model_sha,
+    model_index, stale_changes, describe_changes, stale_checks,
     area_json_path, changes_dir, journeys_dir,
     witness_exempt, owes_obligation, brief_status, action_params, step_ghosts,
     GHOST_PARAM_RE,
@@ -587,6 +588,14 @@ def decision_tables_section(root, area):
     return lines
 
 
+def stale_cause(root, area_name, area, rid=None, index=None):
+    """What moved since the last full check, in words."""
+    stored = (area.get("check_results") or {}).get("model_parts")
+    index = index or model_index(root, area_name, area)
+    keys = index.cone(rid) if index is not None and rid else None
+    return describe_changes(stale_changes(stored, index, keys))
+
+
 def attention_items(root, area_name, area):
     """The Needs-Your-Attention list — every entry derived from a field."""
     items = []
@@ -615,7 +624,26 @@ def attention_items(root, area_name, area):
                      f"cut the model's checking cost (spec-lint's cost/* "
                      f"warnings say where).")
     rows, _missing, _ok = witness_status(root, area_name, area)
+    # Stale proofs come grouped by what moved: one action edit stales every
+    # proof through it, and a line per requirement buries the one that
+    # stands out.
+    stale_groups = {}
+    index = model_index(root, area_name, area)
+    for rid, st, _trace, _detail in rows:
+        if st == "STALE":
+            stale_groups.setdefault(stale_cause(root, area_name, area, rid, index),
+                                    []).append(rid)
+    stored = cr.get("model_parts")
+    for cid, qname in stale_checks(area, index):
+        cause = describe_changes(stale_changes(stored, index, index.check_cone(qname)))
+        stale_groups.setdefault(cause, []).append(cid)
+    for cause, rids in stale_groups.items():
+        items.append(f"**{len(rids)} proof{'s' if len(rids) > 1 else ''} stale** — "
+                     f"{cause}: {', '.join(rids)}. One /spec-check refreshes "
+                     f"{'them' if len(rids) > 1 else 'it'}.")
     for rid, st, _trace, detail in rows:
+        if st == "STALE":
+            continue
         if st in ("not-run", "no-witness", "hollow", "HOLLOW", "STALE",
                   "UNSTAMPED", "UNVERIFIABLE",
                   "MISSING-FILE", "INVALID", "VIOLATED", "OBLIGATION-NOT-RUN",
@@ -1158,8 +1186,11 @@ def render_requirement(root, area, req, constraints, rendered_full,
     qref = req.get("quint_ref")
     if qref:
         excerpt, ln1, ln2, qnt_rel = quint_excerpt(root, area, qref)
-        sha = compute_model_sha(root, area.get("area"), area)
-        pin = f" · model `{sha[:12]}`" if sha else ""
+        # The requirement's own fingerprint (itf_tools.ModelIndex): it moves
+        # exactly when something its proofs rest on does.
+        index = model_index(root, area.get("area"), area)
+        sha = index.verdict_sha(req.get("id", "?")) if index is not None else None
+        pin = f" · model `{sha.split(':')[-1][:12]}`" if sha else ""
         if excerpt:
             details.append(f"`specs/{qnt_rel}:L{ln1}-L{ln2}`{pin}")
             details.append("")

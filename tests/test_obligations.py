@@ -247,7 +247,7 @@ def test_a_witness_alone_does_not_discharge(tmp_path, obligation, status):
 
 def test_a_stale_obligation_does_not_discharge(tmp_path):
     area = _discharge_area(tmp_path, {"formal_status": "verified"})
-    area["requirements"][0]["obligation"]["model_sha"] = "0" * 64
+    area["requirements"][0]["obligation"]["model_sha"] = "cone:" + "0" * 64
     rows, missing, _ok = itf.witness_status(tmp_path, "a", area)
     assert rows[0][1] == "STALE" and missing == 1
 

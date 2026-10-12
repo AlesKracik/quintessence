@@ -265,7 +265,7 @@ graph TB
 
 **As specified (EARS):** While `current == Home`, when the user clicks 'Sign in', the system shall make `current == Login and form == Idle` hold.
 
-`specs/auth-ui.qnt:L109-L115` · model `592a2d1af329`
+`specs/auth-ui.qnt:L109-L115` · model `bf77620b3a24`
 
 ```quint
   action click_sign_in: bool = all {
@@ -318,7 +318,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `current == Login`, when the user submits valid credentials, the system shall make `current == Dashboard and form == Idle and authenticated and mySession == s` hold.
 
-`specs/auth-ui.qnt:L132-L138` · model `592a2d1af329`
+`specs/auth-ui.qnt:L132-L138` · model `608841f3362a`
 
 ```quint
   action submit_success(u: UserId, s: SessionId): bool = all {
@@ -388,7 +388,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `current == Login`, if the user submits credentials for a Locked account, then the system shall make `current == LockedNotice and form == ErrorLocked and accountLocked(u)` hold.
 
-`specs/auth-ui.qnt:L175-L182` · model `592a2d1af329`
+`specs/auth-ui.qnt:L175-L182` · model `a6cc137426d7`
 
 ```quint
   action submit_locked(u: UserId): bool = all {
@@ -457,7 +457,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `current == Dashboard`, when the session expires, the system shall make `current == Login and form == Idle and not(authenticated)` hold.
 
-`specs/auth-ui.qnt:L216-L222` · model `592a2d1af329`
+`specs/auth-ui.qnt:L216-L222` · model `e192c072c24e`
 
 ```quint
   action session_expired: bool = all {
@@ -523,7 +523,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `current == Login`, if the user submits invalid credentials, then the system shall make `current == Login and form == ErrorBadCreds` hold.
 
-`specs/auth-ui.qnt:L153-L159` · model `592a2d1af329`
+`specs/auth-ui.qnt:L153-L159` · model `428933fcd490`
 
 ```quint
   action submit_invalid(u: UserId): bool = all {
@@ -572,7 +572,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `current == Dashboard`, when the user clicks logout, the system shall make `current == Home and form == Idle and mySession == ""` hold.
 
-`specs/auth-ui.qnt:L195-L201` · model `592a2d1af329`
+`specs/auth-ui.qnt:L195-L201` · model `ba1dcce1ac0f`
 
 ```quint
   action click_logout: bool = all {
@@ -630,7 +630,7 @@ sequenceDiagram
 
 **As specified (EARS):** While `current == LockedNotice`, when the user goes back to Home, the system shall make `current == Home and form == Idle` hold.
 
-`specs/auth-ui.qnt:L234-L240` · model `592a2d1af329`
+`specs/auth-ui.qnt:L234-L240` · model `32baa05fed39`
 
 ```quint
   action go_home: bool = all {

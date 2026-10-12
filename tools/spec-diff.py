@@ -335,7 +335,8 @@ def diff_evidence(old, new, out):
                 and wo["model_sha"] != wn["model_sha"]):
             out["evidence"].append({
                 "id": rid, "kind": "changed",
-                "was": f"model {wo['model_sha'][:12]}", "now": f"model {wn['model_sha'][:12]}",
+                "was": f"model {wo['model_sha'].split(':')[-1][:12]}",
+                "now": f"model {wn['model_sha'].split(':')[-1][:12]}",
                 "note": "re-proven against a changed model",
             })
 

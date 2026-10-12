@@ -615,9 +615,30 @@ def canonical_quint(text, include_runs=False, roots=()):
     return "\n}\n".join(parts) + "\n"
 
 
+_IMPORT_RE = re.compile(r'^\s*import\s+[\w:.*]+\s+from\s+"([^"]+)"', re.M)
+
+
+def _model_texts(sidecar):
+    """The sidecar's text, then every local module it imports (transitively),
+    in a stable order: a verdict depends on an imported action as much as on
+    one of its own."""
+    out, seen, todo = [], set(), [Path(sidecar)]
+    while todo:
+        f = todo.pop(0)
+        key = f.resolve()
+        if key in seen or not f.exists():
+            continue
+        seen.add(key)
+        text = f.read_text(encoding="utf-8")
+        out.append(text)
+        for rel in _IMPORT_RE.findall(_strip_comments(text)):
+            todo.append((f.parent / rel).with_suffix(".qnt"))
+    return out
+
+
 def compute_model_sha(root, area_name, area_data, include_runs=False):
-    """sha256 of the canonical model plus the canonical probe module. With
-    `include_runs`, runs count too — for evidence that runs produced (run
+    """sha256 of the canonical model (with every local module it imports)
+    plus the canonical probe module. With `include_runs`, runs count too — for evidence that runs produced (run
     traces, the mutation run's examples)."""
     fm = area_data.get("formal_model") or {}
     quint_file = fm.get("quint_file") or f"{area_name}.qnt"
@@ -631,16 +652,233 @@ def compute_model_sha(root, area_name, area_data, include_runs=False):
         if not probes.exists():
             return None
         probes_text = probes.read_text(encoding="utf-8")
+    roots = _verdict_roots(area_data, probes_text)
+    h = hashlib.sha256()
+    for text in _model_texts(sidecar):
+        h.update(canonical_quint(text, include_runs, roots).encode("utf-8"))
+        h.update(b"\0")
+    if probes_text is not None:
+        h.update(canonical_quint(probes_text, include_runs).encode("utf-8"))
+    return h.hexdigest()
+
+
+# ── What each verdict depends on ────────────────────────────────────────────
+#
+# A ModelIndex splits the canonical model (and its probe module) into parts,
+# one per declaration, each with its own hash and the names it reads. Two
+# uses:
+#   - why a stamp is stale: the parts whose hash moved since the last check
+#     (check_results.model_parts keeps them), named in lint and readback;
+#   - one fingerprint per verdict (verdict_sha): the transition relation's
+#     parts plus the parts of that verdict's own predicate.
+#
+# The transition relation is init/step (and initP/stepP) with everything
+# they reach, EXCEPT the probe module's own predicate defs (pre_/old_ and
+# the like): stepP only copies their values into ghosts, and a ghost is read
+# by its own requirement's checks, never by the step. So changing one
+# requirement's @while moves that requirement's fingerprint and no other;
+# changing an action moves every one.
+
+_TRANSITION = ("init", "step", "initP", "stepP")
+
+
+class ModelIndex:
+    def __init__(self, model_texts, probes_text=None, roots=()):
+        self.parts, self.refs, self.origin = {}, {}, {}
+        alias = {}
+        if isinstance(model_texts, str):
+            model_texts = [model_texts]
+        for origin, text in ([("model", t) for t in model_texts]
+                             + [("probes", probes_text)]):
+            if text is None:
+                continue
+            canon = canonical_quint(text, roots=roots)
+            for _h, decls in quint_modules(canon.split()):
+                for d in decls:
+                    kind, name = _decl_name(d)
+                    key = name if name and kind != "import" else " ".join(d[:6])
+                    body = " ".join(d)
+                    prev = self.parts.get(key)
+                    self.parts[key] = _h12((prev or "") + body)
+                    self.refs.setdefault(key, set()).update(t for t in d[1:])
+                    self.origin[key] = origin
+                    if kind.endswith("type") and "=" in d:
+                        for t in d[d.index("=") + 1:]:
+                            alias.setdefault(t, key)
+        for key in self.refs:
+            self.refs[key] = {alias.get(t, t) for t in self.refs[key]} - {key}
+        self._transition = None
+        self._vsha = {}
+
+    def closure(self, roots, stop=lambda key: False):
+        seen, todo = set(), [r for r in roots if r in self.parts]
+        while todo:
+            k = todo.pop()
+            if k in seen:
+                continue
+            seen.add(k)
+            todo.extend(r for r in self.refs.get(k, ()) if r in self.parts
+                        and r not in seen and not stop(r))
+        return seen
+
+    def transition(self):
+        if self._transition is None:
+            imports = {k for k in self.parts if k.startswith("import ")}
+            self._transition = self.closure(
+                list(_TRANSITION) + sorted(imports),
+                stop=lambda k: self.origin.get(k) == "probes" and k not in _TRANSITION)
+        return self._transition
+
+    def predicate_roots(self, rid):
+        slug = rid.replace("-", "_")
+        pat = re.compile(rf"(^|_){re.escape(slug)}($|_)")
+        return [k for k in self.parts if self.origin.get(k) == "probes" and pat.search(k)]
+
+    def cone(self, rid):
+        """Every part the verdicts of requirement `rid` depend on."""
+        return self.transition() | self.closure(self.predicate_roots(rid))
+
+    def verdict_sha(self, rid):
+        """The fingerprint requirement `rid`'s witness and obligation are
+        stamped with."""
+        if rid not in self._vsha:
+            self._vsha[rid] = self._sha_of(self.cone(rid))
+        return self._vsha[rid]
+
+    def check_cone(self, name):
+        """Every part a check of the predicate `name` (an invariant, a
+        coverage or explanation probe) depends on."""
+        return self.transition() | self.closure([name])
+
+    def check_sha(self, name):
+        key = ("check", name)
+        if key not in self._vsha:
+            self._vsha[key] = self._sha_of(self.check_cone(name))
+        return self._vsha[key]
+
+    def _sha_of(self, keys):
+        h = hashlib.sha256()
+        for k in sorted(keys):
+            h.update(f"{k}\0{self.parts[k]}\n".encode("utf-8"))
+        return VERDICT_SHA_PREFIX + h.hexdigest()
+
+
+VERDICT_SHA_PREFIX = "cone:"
+
+
+def stamp_state(stamp, rid, index, area_sha):
+    """'fresh', 'stale', 'unstamped', or 'area-wide': a stamp an older tool
+    wrote, one sha for the whole area, that no longer matches it. One that
+    still matches is fresh — nothing at all changed since — and the next
+    check re-stamps it per verdict (restamp_area_wide)."""
+    if not stamp:
+        return "unstamped"
+    if not stamp.startswith(VERDICT_SHA_PREFIX):
+        return "fresh" if area_sha and stamp == area_sha else "area-wide"
+    return "fresh" if index is not None and stamp == index.verdict_sha(rid) else "stale"
+
+
+def stale_checks(area_data, index):
+    """[(id, quint_name)] for every check verdict whose own fingerprint no
+    longer matches. A check without one predates it: its freshness is the
+    area's ran_at, as before."""
+    out = []
+    for c in (area_data.get("check_results") or {}).get("checks") or []:
+        stamp, qname = c.get("model_sha"), c.get("quint_name")
+        if (index is not None and qname and c.get("kind") != "obligation"
+                and c.get("result") in ("verified", "counterexample")
+                and stamp and stamp.startswith(VERDICT_SHA_PREFIX)
+                and stamp != index.check_sha(qname)):
+            out.append((c.get("id", qname), qname))
+    return out
+
+
+def _stamped_blocks(req):
+    w = req.get("witness") or {}
+    yield w
+    yield from (w.get("outcomes") or [])
+    yield req.get("obligation") or {}
+
+
+def restamp_area_wide(area_data, area_sha, index):
+    """Swap every area-wide stamp that still matches the whole model for the
+    verdict's own fingerprint. Returns how many moved."""
+    n = 0
+    for req in area_data.get("requirements") or []:
+        rid = req.get("id")
+        for block in _stamped_blocks(req) if rid else ():
+            if block.get("model_sha") and block["model_sha"] == area_sha:
+                block["model_sha"] = index.verdict_sha(rid)
+                n += 1
+    return n
+
+
+def _h12(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def model_index(root, area_name, area_data):
+    """The ModelIndex of an area's model and probe module, or None when the
+    files cannot be read (compute_model_sha says why)."""
+    fm = area_data.get("formal_model") or {}
+    sidecar = Path(root) / "specs" / (fm.get("quint_file") or f"{area_name}.qnt")
+    if not sidecar.exists():
+        return None
+    probes_text = None
+    if fm.get("probes_file"):
+        probes = Path(root) / "specs" / fm["probes_file"]
+        if not probes.exists():
+            return None
+        probes_text = probes.read_text(encoding="utf-8")
+    return ModelIndex(_model_texts(sidecar), probes_text,
+                      _verdict_roots(area_data, probes_text))
+
+
+def _verdict_roots(area_data, probes_text):
     roots = _record_names(area_data)
     if probes_text is not None:
         roots |= {t for t in quint_tokens(probes_text) if t[:1].isalpha() or t[:1] == "_"}
-    h = hashlib.sha256()
-    h.update(canonical_quint(sidecar.read_text(encoding="utf-8"),
-                             include_runs, roots).encode("utf-8"))
-    if probes_text is not None:
-        h.update(b"\0")
-        h.update(canonical_quint(probes_text, include_runs).encode("utf-8"))
-    return h.hexdigest()
+    return roots
+
+
+def stale_changes(stored, index, keys=None):
+    """What moved since `stored` (check_results.model_parts), restricted to
+    `keys` when given: [(name, "changed"|"added"|"removed")], or None when
+    nothing was stored to compare with."""
+    if not stored or index is None:
+        return None
+    now = index.parts
+    scope = set(keys) if keys is not None else set(now) | set(stored)
+    out = []
+    for k in sorted(scope):
+        if k in now and k in stored and now[k] != stored[k]:
+            out.append((k, "changed"))
+        elif k in now and k not in stored:
+            out.append((k, "added"))
+        elif k in stored and k not in now and keys is None:
+            out.append((k, "removed"))
+    return out
+
+
+def describe_changes(changes, limit=4):
+    """"`login` and `tick` changed since the last check", or a plain
+    fallback when nothing recorded says what moved."""
+    if changes is None:
+        return "the model changed"
+    if not changes:
+        return "the model changed before the last full check"
+    by = {}
+    for name, how in changes:
+        by.setdefault(how, []).append(f"`{name}`")
+    parts = []
+    for how in ("changed", "added", "removed"):
+        names = by.get(how) or []
+        if not names:
+            continue
+        shown = names[:limit] + ([f"{len(names) - limit} more"] if len(names) > limit else [])
+        text = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+        parts.append(f"{text} {how}")
+    return "; ".join(parts) + " since the last check"
 
 
 # ── ITF value rendering ───────────────────────────────────────────────────────
@@ -989,7 +1227,7 @@ def is_hollow(trace):
     return len(states) <= 1
 
 
-def _obligation_check(req, current_sha):
+def _obligation_check(req, current_sha, index=None):
     """(ok, status, detail) for a requirement's obligation verdict."""
     ob = req.get("obligation") or {}
     st = ob.get("formal_status", "not-run")
@@ -1000,12 +1238,19 @@ def _obligation_check(req, current_sha):
         return False, "OBLIGATION-NOT-RUN", "the every-step check has not run"
     if current_sha is None:
         return False, "UNVERIFIABLE", "model files can't be hashed"
-    if not ob.get("model_sha"):
+    state = stamp_state(ob.get("model_sha"), req.get("id", "?"), index, current_sha)
+    if state == "unstamped":
         return False, "UNSTAMPED", "obligation verdict has no model_sha"
-    if ob["model_sha"] != current_sha:
+    if state == "area-wide":
+        return False, "UNSTAMPED", AREA_WIDE_DETAIL
+    if state == "stale":
         return False, "STALE", "model changed since the obligation was checked"
     steps = ob.get("steps")
     return True, "verified", f"every step (≤{steps})" if steps else "every step"
+
+
+AREA_WIDE_DETAIL = ("stamped by an older /spec-check with one sha for the whole "
+                    "area, and the model has changed since — re-run /spec-check")
 
 
 def witness_status(root, area_name, area_data):
@@ -1024,6 +1269,7 @@ def witness_status(root, area_name, area_data):
     gate."""
     root = Path(root)
     current_sha = compute_model_sha(root, area_name, area_data)
+    index = model_index(root, area_name, area_data) if current_sha else None
     rows = []
     missing = 0
     discharged = 0
@@ -1084,16 +1330,20 @@ def witness_status(root, area_name, area_data):
                             e_status = "UNVERIFIABLE"
                             e_detail = ("model files can't be hashed (probes file "
                                         "missing?) — freshness unverifiable")
-                        elif not stamped:
-                            e_status = "UNSTAMPED"
-                            e_detail = ("no model_sha — freshness unverifiable; "
-                                        "re-run /spec-check to pin")
-                        elif stamped != current_sha:
-                            e_status = "STALE"
-                            e_detail = ("model changed since trace was found — "
-                                        "re-run /spec-check")
                         else:
-                            ok = True
+                            state = stamp_state(stamped, rid, index, current_sha)
+                            if state == "unstamped":
+                                e_status = "UNSTAMPED"
+                                e_detail = ("no model_sha — freshness unverifiable; "
+                                            "re-run /spec-check to pin")
+                            elif state == "area-wide":
+                                e_status, e_detail = "UNSTAMPED", AREA_WIDE_DETAIL
+                            elif state == "stale":
+                                e_status = "STALE"
+                                e_detail = ("model changed since trace was found — "
+                                            "re-run /spec-check")
+                            else:
+                                ok = True
             elif e_status == "witnessed":
                 e_status = "MISSING-FILE"
                 e_detail = "(status says witnessed but no trace recorded)"
@@ -1104,7 +1354,7 @@ def witness_status(root, area_name, area_data):
                     if multi:
                         worst_detail = f"{label}: {e_detail}" if e_detail else label
 
-        ob_ok, ob_status, ob_detail = _obligation_check(req, current_sha)
+        ob_ok, ob_status, ob_detail = _obligation_check(req, current_sha, index)
         if bad_entries:
             missing += 1
             status, detail = worst_status or "not-run", worst_detail

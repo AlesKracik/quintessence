@@ -162,3 +162,92 @@ def test_every_mutant_moves_the_sha(area):
     base = itf.canonical_quint(text)
     same = [m["label"] for m in sites if itf.canonical_quint(sq.apply(text, m)) == base]
     assert not same, same
+
+
+# ── One fingerprint per verdict, and why it went stale ─────────────────────
+
+readback = _load("spec_readback_sha", "spec-readback.py")
+lint = _load("spec_lint_sha", "spec-lint.py")
+
+
+def _lint_checks(root, area):
+    area_data = spec_source.load_area(root, area)
+    findings = []
+    lint.check_witnesses(root, area_data, area, findings)
+    return [f for f in findings if f.check.endswith("-stale") or f.check.endswith("-unstamped")]
+
+
+def _edit(path, before, after):
+    text = path.read_text(encoding="utf-8")
+    assert before in text, before
+    path.write_text(text.replace(before, after, 1), encoding="utf-8")
+
+
+def test_the_examples_are_stamped_per_verdict_and_fresh(root):
+    for area in ("auth", "auth-ui", "subscription"):
+        assert _lint_checks(root, area) == [], area
+        rows, _missing, _ok = itf.witness_status(root, area, spec_source.load_area(root, area))
+        assert not [r for r in rows if r[1] in ("STALE", "UNSTAMPED")], area
+
+
+def test_an_action_edit_stales_every_proof_in_one_grouped_entry(root):
+    _edit(root / "specs" / "auth.qnt", "    idleOf(sid) > MAX_SESSION_AGE,",
+          "    idleOf(sid) >= MAX_SESSION_AGE,")
+    found = _lint_checks(root, "auth")
+    kinds = sorted(f.check for f in found)
+    # Every verdict through the transition relation, one finding per kind.
+    assert kinds == ["check-stale", "obligation-stale", "witness-stale"], kinds
+    assert all("`expire_session` changed" in f.description for f in found)
+    area = spec_source.load_area(root, "auth")
+    items = readback.attention_items(root, "auth", area)
+    stale = [i for i in items if "stale**" in i]
+    assert len(stale) == 1, stale
+    assert "`expire_session` changed" in stale[0]
+    assert not [i for i in items if "Witness STALE" in i]
+
+
+def test_editing_one_invariant_stales_only_that_invariant(root):
+    area = spec_source.load_area(root, "auth")
+    inv = next(c for c in area["check_results"]["checks"]
+               if c.get("quint_name") == "noEarlyExpiry")
+    _edit(root / "specs" / "auth.qnt", "  val noEarlyExpiry: bool =",
+          "  val noEarlyExpiry: bool = true and")
+    found = _lint_checks(root, "auth")
+    assert [f.check for f in found] == ["check-stale"], found
+    assert found[0].ref == inv["id"]
+    assert "`noEarlyExpiry` changed" in found[0].description
+
+
+def test_editing_one_requirements_predicate_stales_only_that_requirement(root):
+    # What /spec-probes emits for REQ-002's @while: a def only its probes read.
+    _edit(root / "specs" / "auth.probes.qnt", "  def pre_REQ_002(sid: SessionId): bool =\n    isActive(sid)",
+          "  def pre_REQ_002(sid: SessionId): bool =\n    isActive(sid) and true")
+    found = _lint_checks(root, "auth")
+    assert found and {f.ref for f in found} == {"REQ-002"}, [(f.check, f.ref) for f in found]
+    assert all("`pre_REQ_002` changed" in f.description for f in found)
+
+
+def test_an_area_wide_stamp_is_fresh_until_the_model_moves_then_unstamped(root):
+    def area_wide():
+        area = spec_source.load_area(root, "auth")
+        sha = _sha(root, "auth")
+        for req in area["requirements"]:
+            for block in (req.get("witness") or {}, req.get("obligation") or {}):
+                if block.get("model_sha"):
+                    block["model_sha"] = sha
+        return area, sha
+
+    area, sha = area_wide()
+    spec_source.save_area(root, "auth", area)
+    assert _lint_checks(root, "auth") == []
+    # The next check swaps a still-matching area-wide stamp for the verdict's own.
+    index = itf.model_index(root, "auth", area)
+    assert itf.restamp_area_wide(area, sha, index) > 0
+    assert all(b["model_sha"].startswith("cone:")
+               for r in area["requirements"] for b in itf._stamped_blocks(r)
+               if b.get("model_sha"))
+    # Once the model moves, an area-wide stamp cannot say what it rested on.
+    _edit(root / "specs" / "auth.qnt", "    idleOf(sid) > MAX_SESSION_AGE,",
+          "    idleOf(sid) >= MAX_SESSION_AGE,")
+    found = [f for f in _lint_checks(root, "auth") if not f.check.startswith("check-")]
+    assert found and {f.check for f in found} == {"witness-unstamped", "obligation-unstamped"}

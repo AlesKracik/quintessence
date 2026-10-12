@@ -310,7 +310,7 @@ A requirement says what happens **every time**: "when a user signs in, the syste
 
 How the generator makes both sound without the author writing a ghost: in `stepP`, before the step, it evaluates `@while` and each `@old` expression over the action's own arguments and stores them in `_pre_<REQ>` / `_old_<REQ>_<name>`; `@shall` and each `@outcome` are emitted as `def post_<REQ>(<params>, <olds>)` and called with the step's argument ghosts after the step (one ghost per parameter *type position*, `_arg_<Type>_<k>`, so the cost of checking does not depend on what parameters are called; every trace is written back under `_last<Param>` names). `_lastAction == <quint_ref>` pins the step to the requirement's own action, so the claim is about *this call*, never a state an earlier call left behind, and `_pre_<REQ>` pins it to a step that started where the requirement applies, so a guard that already implies the postcondition cannot pass as a witness.
 
-- **Freshness.** Both verdicts record `model_sha` (sha256 of the canonical `.qnt` + `.probes.qnt`, `tools/itf_tools.py sha <area>`). A changed model stales them, and lint FAILs a stale one.
+- **Freshness.** Both verdicts record `model_sha`, the requirement's own fingerprint (`itf_tools.ModelIndex.verdict_sha`): the canonical transition relation (`init`/`step`, `initP`/`stepP` and everything they reach) plus the closure of that requirement's own predicate. An invariant's or completeness check's verdict carries the same kind of fingerprint over its own predicate (`check_results.checks[].model_sha`). Editing an action stales every verdict, as it must; editing one predicate stales only the verdicts that read it. Lint FAILs a stale one and names what moved since the last full check (`check_results.model_parts`), one finding per cause. A bare sha256 is an older area-wide stamp: fresh while the whole model is unchanged (the next check re-stamps it), UNSTAMPED once it moves.
 
 `tools/spec-probes.py` generates `specs/<area>.probes.qnt`. `tools/spec-record.py check <area>` runs every invariant, obligation and witness probe, saves ITF traces under `specs/<area>/traces/`, and writes every verdict to `requirements[].obligation` and `requirements[].witness`. **The agent never hand-edits a verdict.**
 
@@ -319,7 +319,7 @@ How the generator makes both sound without the author writing a ghost: in `stepP
 | Every INV holds | Apalache | counterexample |
 | Every REQ holds on every step of its action | `oblig_<REQ>` | the model breaks the requirement; the trace shows the step |
 | Every REQ can happen via its own action | path-constrained witness | `no-witness`: unreachable as specified |
-| Every verdict fresh | `model_sha` matches | stale |
+| Every verdict fresh | `model_sha` matches its fingerprint | stale |
 | Every action fires somewhere | witnesses + `orphan-action` | dead action |
 | Every action covered | `cover_<action>`: each step of the action is under some requirement's or verdict's `@while` | the action does something in a state no one specified |
 | Every observable change explained | `explain_<action>_<var>`: a step that changes the var is under a requirement that reads it, or an open GAP / OUT-OF-SCOPE | an unstated side effect |

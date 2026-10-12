@@ -636,7 +636,8 @@
         "duration_s": 6.8,
         "steps": 3,
         "batched": true,
-        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s",
+        "model_sha": "cone:274d5ffae38442aa9e1dec3ec31b35994ccce9fecd8611a468d1924009cbec18"
       },
       {
         "id": "INV-002",
@@ -646,7 +647,8 @@
         "duration_s": 6.8,
         "steps": 3,
         "batched": true,
-        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s",
+        "model_sha": "cone:ec1e800d7db15edd2b1f466739351bd80cec699aa57b411e5e62007de2cb378e"
       },
       {
         "id": "INV-003",
@@ -656,7 +658,8 @@
         "duration_s": 6.8,
         "steps": 3,
         "batched": true,
-        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s",
+        "model_sha": "cone:7d1e62c7416e473fd538b0c7845b84a527fd2ff322f38814a94e3459485ec2a8"
       },
       {
         "id": "INV-004",
@@ -666,7 +669,8 @@
         "duration_s": 6.8,
         "steps": 3,
         "batched": true,
-        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s",
+        "model_sha": "cone:3195e71e6e73e69d0ee6c6a10b1118c1627a4c7cd4f5da22c2aa41ebfe769556"
       },
       {
         "id": "INV-005",
@@ -676,7 +680,8 @@
         "duration_s": 6.8,
         "steps": 3,
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:fee5fd2ed369d15b25b2521eda4c53eed0c583e548eeda7dc18b34ab254e5eb0"
       },
       {
         "id": "REQ-001",
@@ -687,7 +692,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1",
+        "model_sha": "cone:ce7887a24d1e9d202a71803fb5ce679bd3a7791a531f36bac5f47533a6196eee"
       },
       {
         "id": "REQ-002",
@@ -698,7 +704,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned timeout: timed out after 120s"
+        "note": "deep pass at 10 steps returned timeout: timed out after 120s",
+        "model_sha": "cone:8367328746065fa7e79329d9c01ebd5554c6b674af2ccbacad6e337171a2f1fc"
       },
       {
         "id": "REQ-003",
@@ -709,7 +716,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:51:52.324\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release"
+        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:51:52.324\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release",
+        "model_sha": "cone:c7ba7b9d87b12eef89341a16e3581214500f18d09c2da0572fb4464fb275f975"
       },
       {
         "id": "REQ-004",
@@ -720,7 +728,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1",
+        "model_sha": "cone:8a378c9c6a671e0c032478499ca552bfb22e084510018d852acdbb85a1be7b28"
       },
       {
         "id": "REQ-005",
@@ -731,7 +740,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 300s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 300s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:ae0ddcfe96a91bdd8768977c8bd2546fc53598f2da8eb8b70548f7c051a51356"
       },
       {
         "id": "REQ-006",
@@ -742,7 +752,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 300s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 300s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:9ed9151fee6b379f9399fd3f1c4765186533243765a39564f90a83099b92767e"
       },
       {
         "id": "cover-logout",
@@ -753,7 +764,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:8212ca2217728642e0b08b2f8ad74264774f05d3c0d4de46546000f03de0fa13"
       },
       {
         "id": "explain-logout-sessions",
@@ -764,7 +776,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:b20cdb0608eb12f0acacf0a74e072d6de3ea6c4832c085588c78cda30ad25154"
       },
       {
         "id": "cover-login_failed",
@@ -775,7 +788,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:e595881a1c0729624a74594c6a3e4c6a3868cbe78c39e2e93968d9233f37a98f"
       },
       {
         "id": "explain-login_failed-sessions",
@@ -786,7 +800,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:59a9708738d8df8e1088f31673628346efe0be1b6ff34cb09d5c6ca09ddb936c"
       },
       {
         "id": "explain-login_failed-accountStatus",
@@ -797,7 +812,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:3a2f660abe0f75bb4b2d8fd99ff22ffa1a2aa43151f4dd69dcd7e30de67fa3d6"
       },
       {
         "id": "explain-login_failed-failedAttempts",
@@ -808,7 +824,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:d0fa485e8c7f6d8655a789427c0081250bf24a6d0e770b851696283b74f1d765"
       },
       {
         "id": "cover-expire_session",
@@ -819,7 +836,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:281faa92624628cdeca9e589d31636fa591c2b495fd039aa75c1841c3c010a37"
       },
       {
         "id": "explain-expire_session-sessions",
@@ -830,7 +848,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:c03ad4fa0e6e18758b4c183588030f1b95556d04672b4e3b911beb9ea8676020"
       },
       {
         "id": "verdict-tick-1",
@@ -841,7 +860,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10"
+        "note": "deep pass skipped: the run budget of 180s was spent, so this verdict is the shallow pass's ≤3 steps, not the configured 10",
+        "model_sha": "cone:872d399e7514aa221c72a1fb092fec4193265a3b364ad4acfee9bf8cd5e5ac82"
       }
     ],
     "max_steps": 10,
@@ -899,6 +919,90 @@
         "elapsed_s": 24
       },
       "deep_skipped": 10
+    },
+    "model_parts": {
+      "AccountStatus": "d4d6fcc076e0",
+      "MAX_FAILED_ATTEMPTS": "f5d3371d2c6b",
+      "MAX_SESSION_AGE": "9743fe8129c8",
+      "SessionId": "7abb937df791",
+      "SessionStatus": "eb3be5a589d4",
+      "UserId": "4255d1716fe8",
+      "_arg_SessionId_1": "5121088d5a99",
+      "_arg_UserId_1": "eeb0caeb10ee",
+      "_lastAction": "3c572c2a4a5a",
+      "_old_REQ_003_before": "50f2286c4b27",
+      "_pre_REQ_002": "a30f1a418a86",
+      "_pre_REQ_003": "07dd2e2ed9c0",
+      "_pre_REQ_004": "ddf49a8c0399",
+      "_pre_REQ_005": "fe3b98d3129f",
+      "_pre_REQ_006": "70eb71ad1e5c",
+      "_prevAccountStatus": "1f54f5c87536",
+      "_prevFailedAttempts": "c9383f71494a",
+      "_prevSessions": "525467663843",
+      "accountStatus": "d60d832a7f01",
+      "activeSessionsOf": "bcae318ca35e",
+      "atMostOneActiveSession": "8dc8c9a98c86",
+      "attemptsOf": "bff0659d352f",
+      "cover_expire_session": "186393ff8b72",
+      "cover_login_failed": "056b295169aa",
+      "cover_logout": "817adbc011a3",
+      "expire_session": "adcc028ab6c7",
+      "explain_expire_session_sessions": "fd98a39a525a",
+      "explain_login_failed_accountStatus": "655365c51a96",
+      "explain_login_failed_failedAttempts": "a30d89369444",
+      "explain_login_failed_sessions": "eab276b4afd3",
+      "explain_logout_sessions": "f61fe83ccaf9",
+      "failedAttempts": "b793af4b9c10",
+      "idleFor": "01a86ce16dc0",
+      "idleOf": "dd91ee098911",
+      "import auth . * from \"./auth\"": "b81c55e5c1af",
+      "init": "9803fb910d33",
+      "initP": "bdbdab70d121",
+      "isActive": "aee3cf42fa09",
+      "isLocked": "3fbef54f4dda",
+      "login": "863ca412bd1b",
+      "login_failed": "68b89c1c87a7",
+      "logout": "2e997593572c",
+      "noAccessWithInvalidToken": "cafd23cb5cd8",
+      "noEarlyExpiry": "a9cbe536ccd8",
+      "noEarlyLockout": "3c91829fe843",
+      "noSessionWhileLocked": "2dcefdc55527",
+      "oblig_REQ_001": "8834dca6bcce",
+      "oblig_REQ_002": "f4067584abec",
+      "oblig_REQ_003": "d6f57856b52d",
+      "oblig_REQ_004": "a336a4d6ee83",
+      "oblig_REQ_005": "f982f96ca578",
+      "oblig_REQ_006": "b3c3ff64a4dc",
+      "old_REQ_003_before": "98f91f3e6865",
+      "post_REQ_001": "0c87a2649a0f",
+      "post_REQ_002": "c5057e555450",
+      "post_REQ_003": "d6b62ebc9b94",
+      "post_REQ_004": "bc7f3f8f8f4d",
+      "post_REQ_006": "78c653fdd98b",
+      "pre_REQ_002": "81e7c2e0c3da",
+      "pre_REQ_003": "623f4c9d9213",
+      "pre_REQ_004": "6bc910f947fc",
+      "pre_REQ_005": "1c596c51b380",
+      "pre_REQ_006": "30bf2b474422",
+      "reached_REQ_001": "3cfb1e3085e5",
+      "reached_REQ_002": "1dad11e20689",
+      "reached_REQ_003": "3cf0cd00bbdb",
+      "reached_REQ_004": "b3159f6ff26a",
+      "reached_REQ_006": "b3172abf24f7",
+      "sessionOwner": "41ba21f18a2a",
+      "sessions": "bbe004f94fa5",
+      "statusOf": "4faf005f7f32",
+      "step": "0a958481fe8f",
+      "stepP": "341807ca07cc",
+      "tick": "8df4b475309b",
+      "unlock_account": "a44f814a3848",
+      "userActiveSession": "d8414b70e529",
+      "verdict_tick_1": "70469a237c3f",
+      "witness_REQ_001": "4f8704e3850b",
+      "witness_REQ_002": "b1bbe82fb50d",
+      "witness_REQ_003": "febd5515af4b",
+      "witness_REQ_004": "84245b34892a",
+      "witness_REQ_006": "676bcb7feb53"
     }
   },
   "verification_log": [],
@@ -926,13 +1030,13 @@
         "checked_at": "2026-10-12T15:14:53+00:00",
         "steps": 1,
         "found_by": "simulator",
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:ce7887a24d1e9d202a71803fb5ce679bd3a7791a531f36bac5f47533a6196eee"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:51:50+00:00",
         "steps": 3,
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:ce7887a24d1e9d202a71803fb5ce679bd3a7791a531f36bac5f47533a6196eee"
       }
     },
     "REQ-002": {
@@ -942,13 +1046,13 @@
         "checked_at": "2026-10-12T15:14:53+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:8367328746065fa7e79329d9c01ebd5554c6b674af2ccbacad6e337171a2f1fc"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:8367328746065fa7e79329d9c01ebd5554c6b674af2ccbacad6e337171a2f1fc"
       }
     },
     "REQ-003": {
@@ -958,13 +1062,13 @@
         "checked_at": "2026-10-12T15:14:54+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:c7ba7b9d87b12eef89341a16e3581214500f18d09c2da0572fb4464fb275f975"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:c7ba7b9d87b12eef89341a16e3581214500f18d09c2da0572fb4464fb275f975"
       }
     },
     "REQ-004": {
@@ -974,13 +1078,13 @@
         "checked_at": "2026-10-12T15:19:17+00:00",
         "steps": 10,
         "found_by": "apalache",
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:8a378c9c6a671e0c032478499ca552bfb22e084510018d852acdbb85a1be7b28"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:8a378c9c6a671e0c032478499ca552bfb22e084510018d852acdbb85a1be7b28"
       }
     },
     "REQ-005": {
@@ -991,7 +1095,7 @@
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:ae0ddcfe96a91bdd8768977c8bd2546fc53598f2da8eb8b70548f7c051a51356"
       }
     },
     "REQ-006": {
@@ -1001,13 +1105,13 @@
         "checked_at": "2026-10-12T15:15:02+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:9ed9151fee6b379f9399fd3f1c4765186533243765a39564f90a83099b92767e"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:53:50+00:00",
         "steps": 3,
-        "model_sha": "a2f6619b36cbd79e4b51228827c9236365847eaed48d303651c7c66408a53cc9"
+        "model_sha": "cone:9ed9151fee6b379f9399fd3f1c4765186533243765a39564f90a83099b92767e"
       }
     }
   }

@@ -640,7 +640,8 @@
         "quint_name": "noRefundIssued",
         "result": "verified",
         "duration_s": 8.0,
-        "steps": 10
+        "steps": 10,
+        "model_sha": "cone:330b134da20839172f1c95e1d050780353cb00c0b98b5b87561281db56b07c2b"
       },
       {
         "id": "INV-003",
@@ -648,7 +649,8 @@
         "quint_name": "unacceptedCancelLeavesActive",
         "result": "verified",
         "duration_s": 16.8,
-        "steps": 10
+        "steps": 10,
+        "model_sha": "cone:a8c49f8a072830143487427681152aaecd96864cca2694688de94f6123acdbc1"
       },
       {
         "id": "INV-004",
@@ -656,7 +658,8 @@
         "quint_name": "retriesWithinBudget",
         "result": "verified",
         "duration_s": 10.5,
-        "steps": 10
+        "steps": 10,
+        "model_sha": "cone:1dc37baf6b16e2aa9c1e6711786ac135526db926df2e01eb6b67a2e9545fe683"
       },
       {
         "id": "REQ-001",
@@ -665,7 +668,8 @@
         "result": "verified",
         "duration_s": 7.8,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:6400fc26380d5f675954343620ded4411f4d5073b9fcba6ad22be095138e5c34"
       },
       {
         "id": "REQ-002",
@@ -676,7 +680,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:54:37.545\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release"
+        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:54:37.545\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release",
+        "model_sha": "cone:c1a8aa39feb9c02adbb94aedad138673c1733ae73792d0de2a2fe1539e15e0f1"
       },
       {
         "id": "REQ-003",
@@ -687,7 +692,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1",
+        "model_sha": "cone:e07fa287ca32164947b32aab97605eed7f3ef99d8e04939040943f67df08d036"
       },
       {
         "id": "REQ-004",
@@ -696,7 +702,8 @@
         "result": "verified",
         "duration_s": 7.9,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:7597c18d0b46c10dc334666bea0eb0770bf9c1a08b4df36fd9f901389ece28e8"
       },
       {
         "id": "REQ-005",
@@ -707,7 +714,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:54:45.335\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release"
+        "note": "deep pass at 10 steps returned error: Error while starting Apalache server: Failed to bind to address 0.0.0.0/0.0.0.0:8822: Address already in use E@16:54:45.335\nWARNING: A terminally deprecated method in sun.misc.Unsafe has been called\nWARNING: sun.misc.Unsafe::arrayBaseOffset has been called by com.google.protobuf.UnsafeUtil$MemoryAccessor (file:/Users/akracik/.quint/apalache-dist-0.56.1/apalache/lib/apalache.jar)\nWARNING: Please consider reporting this to the maintainers of class com.google.protobuf.UnsafeUtil$MemoryAccessor\nWARNING: sun.misc.Unsafe::arrayBaseOffset will be removed in a future release",
+        "model_sha": "cone:00b11b580caa108f9b63c2d7b607abe84c47d2a54bde3578579787e44001d7d8"
       },
       {
         "id": "REQ-006",
@@ -716,7 +724,8 @@
         "result": "verified",
         "duration_s": 4.2,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:d6dde6772bc4342be4bd64ae313995d166d5e905a7712e38fe3e3281da4a5c16"
       },
       {
         "id": "REQ-007",
@@ -727,7 +736,8 @@
         "steps": 3,
         "over": "probes",
         "batched": true,
-        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1"
+        "note": "deep pass at 10 steps returned error:     options: {}\n  }\n}\n\nNode.js v24.13.1",
+        "model_sha": "cone:1559bf3069eebcebd8c26a98120d492338ab9928f5795a76126617021384c1e8"
       },
       {
         "id": "REQ-008",
@@ -736,7 +746,8 @@
         "result": "verified",
         "duration_s": 8.4,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:b2654cbe07f230f7e8cf493697d0d1c3e5da1f130ff9d680df54a6095c0ad27b"
       },
       {
         "id": "cover-cancel_subscription",
@@ -745,7 +756,8 @@
         "result": "verified",
         "duration_s": 7.7,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:335a9cd4cc8f646b75bd03748dda04fe7aa00be73fc9e98514fdae561667b95e"
       },
       {
         "id": "explain-cancel_subscription-status",
@@ -754,7 +766,8 @@
         "result": "verified",
         "duration_s": 7.8,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:bb444907fae5eea6f2654f8610a873da844ac710725a5b69f8770d5521fa7533"
       },
       {
         "id": "explain-cancel_subscription-billingEnabled",
@@ -763,7 +776,8 @@
         "result": "verified",
         "duration_s": 7.7,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:fe263ad9f48a0c38959557375ff716b6b617175fef0e4669251da43618c0c452"
       },
       {
         "id": "explain-cancel_subscription-accessUntilPeriodEnd",
@@ -772,7 +786,8 @@
         "result": "verified",
         "duration_s": 7.9,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:cf81cac98175a7a76d0320331b1659c15f4d0c7160ae4525f29d6e1a0b8cbdf7"
       },
       {
         "id": "explain-cancel_subscription-lastBillingResult",
@@ -781,7 +796,8 @@
         "result": "verified",
         "duration_s": 7.7,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:4876e60c7ea5334c5d4082d0089f406829beea75b4aeeedeb4743ff61ed2c36e"
       },
       {
         "id": "explain-cancel_subscription-notice",
@@ -790,7 +806,8 @@
         "result": "verified",
         "duration_s": 7.9,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:92770d1c5bfc50b3d5d5509d1bbfdf94e92d6437c48c787778bb758351da4b84"
       },
       {
         "id": "cover-cancel_declined",
@@ -799,7 +816,8 @@
         "result": "verified",
         "duration_s": 7.4,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:77a0d58273f46ad60805e5bbe2abb7d6098e1793c073f9096e60199e5e797560"
       },
       {
         "id": "explain-cancel_declined-lastBillingResult",
@@ -808,7 +826,8 @@
         "result": "verified",
         "duration_s": 7.7,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:986d4ba8cf7b342efa3404c2d1b0be97dd58e649fa582324fda5d17b48598273"
       },
       {
         "id": "cover-cancel_unanswered",
@@ -817,7 +836,8 @@
         "result": "verified",
         "duration_s": 7.4,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:33de1cbdd88402bfccec7cae0c4569278e12d9a756a0f8fac7d6ca299fddfac4"
       },
       {
         "id": "explain-cancel_unanswered-lastBillingResult",
@@ -826,7 +846,8 @@
         "result": "verified",
         "duration_s": 7.7,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:d4d00822df2035100a46a3f616e92466916d94cd7517b2f48dfc3c47f3e0dcdf"
       },
       {
         "id": "cover-cancel_again",
@@ -835,7 +856,8 @@
         "result": "verified",
         "duration_s": 7.6,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:efd0608cbe03a3f9a89a731a1fb9578f02e58a0f79ab5503f82490afcebb43f5"
       },
       {
         "id": "cover-expire_period",
@@ -844,7 +866,8 @@
         "result": "verified",
         "duration_s": 7.4,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:dd03092465add7cd88a28de0c725e6c5a20b7cb389aefed0de3e1bc300230755"
       },
       {
         "id": "explain-expire_period-status",
@@ -853,7 +876,8 @@
         "result": "verified",
         "duration_s": 7.5,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:bb6787bb7f4bacaa9c7abc9ef5784c4dd6f1134c237db7787b17040b33688f3c"
       },
       {
         "id": "explain-expire_period-accessUntilPeriodEnd",
@@ -862,7 +886,8 @@
         "result": "verified",
         "duration_s": 7.6,
         "steps": 10,
-        "over": "probes"
+        "over": "probes",
+        "model_sha": "cone:c739f50520cb982b9d7ea41525ff1be620fa108149df1a34e10193da95594e80"
       }
     ],
     "max_steps": 10,
@@ -934,6 +959,109 @@
         "budget_seconds": 180,
         "elapsed_s": 18
       }
+    },
+    "model_parts": {
+      "BillingResult": "40c42ed1c3de",
+      "CUSTOMERS": "d6637c190a30",
+      "CustomerId": "6b0bc3fb7c2e",
+      "MAX_CANCEL_RETRIES": "569a0dd01a5e",
+      "Notice": "763e1c0baa2f",
+      "SubStatus": "12b88933715e",
+      "_arg_CustomerId_1": "68e5a384d94a",
+      "_arg_Notice_1": "66290ba297b0",
+      "_arg_bool_1": "c32b2e2a0bc9",
+      "_lastAction": "3c572c2a4a5a",
+      "_old_REQ_003_billed": "1d387086da3a",
+      "_old_REQ_003_told": "9e9108b5b401",
+      "_pre_REQ_001": "3183b06defe9",
+      "_pre_REQ_002": "a30f1a418a86",
+      "_pre_REQ_003": "07dd2e2ed9c0",
+      "_pre_REQ_004": "ddf49a8c0399",
+      "_pre_REQ_005": "fe3b98d3129f",
+      "_pre_REQ_007": "e367f2393f20",
+      "_pre_REQ_008": "1cfb9fc5e07d",
+      "_prevAccessUntilPeriodEnd": "ab62c9dfbd5a",
+      "_prevBillingEnabled": "0feac1b9b53b",
+      "_prevLastBillingResult": "8bd01f1d8676",
+      "_prevNotice": "c7ac51ebf07d",
+      "_prevStatus": "a17adbb1460c",
+      "accessUntilPeriodEnd": "4e1013a49b4b",
+      "billingEnabled": "325a09ca2182",
+      "cancel_again": "c38d3d37b2fe",
+      "cancel_declined": "aec0a0de2631",
+      "cancel_subscription": "48fe40d048c6",
+      "cancel_unanswered": "1c7030cfa197",
+      "cover_cancel_again": "ef7df432a9bc",
+      "cover_cancel_declined": "37bd2ab7d0c0",
+      "cover_cancel_subscription": "589e60744e71",
+      "cover_cancel_unanswered": "df58241d1242",
+      "cover_expire_period": "a672a141ae02",
+      "expire_period": "aafaa0f4cd96",
+      "explain_cancel_declined_lastBillingResult": "93b8345478a4",
+      "explain_cancel_subscription_accessUntilPeriodEnd": "4d3b62d8ccf8",
+      "explain_cancel_subscription_billingEnabled": "5af829f0e8fa",
+      "explain_cancel_subscription_lastBillingResult": "42d20ebee4eb",
+      "explain_cancel_subscription_notice": "649e11d29346",
+      "explain_cancel_subscription_status": "92745386dfe9",
+      "explain_cancel_unanswered_lastBillingResult": "0f41066424b4",
+      "explain_expire_period_accessUntilPeriodEnd": "416f11b9e74d",
+      "explain_expire_period_status": "aff41e0eb853",
+      "import subscription . * from \"./subscription\"": "309075097285",
+      "init": "e68918f61651",
+      "initP": "0084f2b2ddd9",
+      "lastBillingResult": "efe1084ef24e",
+      "noBillingAfterCancel": "6e418734a12e",
+      "noRefundIssued": "b38d87fdce8a",
+      "notice": "7ae420ba1f3a",
+      "oblig_REQ_001": "ad9245f09ed2",
+      "oblig_REQ_002": "9e26fd956200",
+      "oblig_REQ_003": "6192c807420c",
+      "oblig_REQ_004": "34a444f631f8",
+      "oblig_REQ_005": "29937cb4d090",
+      "oblig_REQ_006": "f25d4a7086ba",
+      "oblig_REQ_007": "f6ae6bfd976d",
+      "oblig_REQ_008": "0d2b35bb0825",
+      "old_REQ_003_billed": "642f6026ccc5",
+      "old_REQ_003_told": "72c375072e10",
+      "outcome_REQ_007_email": "a2d35050f926",
+      "outcome_REQ_007_in_app": "b10c381c7120",
+      "post_REQ_001": "ad21b0f3b03d",
+      "post_REQ_002": "30f781afd124",
+      "post_REQ_003": "ce3c8ce801d1",
+      "post_REQ_004": "720f034f84c6",
+      "post_REQ_005": "4e3c9de3c382",
+      "post_REQ_008": "efc546e6e8e5",
+      "pre_REQ_001": "3ec00a015170",
+      "pre_REQ_002": "f5947a0a3096",
+      "pre_REQ_003": "f0b1f01a6722",
+      "pre_REQ_004": "e3fb0233c548",
+      "pre_REQ_005": "148dcc2fb694",
+      "pre_REQ_007": "c11bd3096b59",
+      "pre_REQ_008": "3bff7f8c2433",
+      "reached_REQ_001": "3cfb1e3085e5",
+      "reached_REQ_002": "1dad11e20689",
+      "reached_REQ_003": "3cf0cd00bbdb",
+      "reached_REQ_004": "b3159f6ff26a",
+      "reached_REQ_005": "1537b17a5dac",
+      "reached_REQ_007_email": "6c2e55b5871f",
+      "reached_REQ_007_in_app": "d894f334aa17",
+      "reached_REQ_008": "1a8ca12b91e8",
+      "request_refund": "980b032ae286",
+      "retriesWithinBudget": "169c7ad49e6e",
+      "status": "2723ce13ef9c",
+      "step": "4a813b41c93f",
+      "stepP": "712eb3772b6f",
+      "triesOf": "cdc6027f6edf",
+      "unacceptedCancelLeavesActive": "93412ca0c4d3",
+      "unansweredTries": "1d552b03ea18",
+      "witness_REQ_001": "219e598c6b8d",
+      "witness_REQ_002": "f8db4cf67ad2",
+      "witness_REQ_003": "814950fc4cfb",
+      "witness_REQ_004": "6fa6d70f5328",
+      "witness_REQ_005": "89e67f489816",
+      "witness_REQ_007_email": "b6e853bb53b7",
+      "witness_REQ_007_in_app": "7c2f080b6e92",
+      "witness_REQ_008": "03ea74b4e6d0"
     }
   },
   "by_id": {
@@ -956,13 +1084,13 @@
         "checked_at": "2026-10-12T15:19:51+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:6400fc26380d5f675954343620ded4411f4d5073b9fcba6ad22be095138e5c34"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:43+00:00",
         "steps": 10,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:6400fc26380d5f675954343620ded4411f4d5073b9fcba6ad22be095138e5c34"
       }
     },
     "REQ-002": {
@@ -972,13 +1100,13 @@
         "checked_at": "2026-10-12T15:19:51+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:c1a8aa39feb9c02adbb94aedad138673c1733ae73792d0de2a2fe1539e15e0f1"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:43+00:00",
         "steps": 3,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:c1a8aa39feb9c02adbb94aedad138673c1733ae73792d0de2a2fe1539e15e0f1"
       }
     },
     "REQ-003": {
@@ -988,13 +1116,13 @@
         "checked_at": "2026-10-12T15:19:52+00:00",
         "steps": 3,
         "found_by": "simulator",
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:e07fa287ca32164947b32aab97605eed7f3ef99d8e04939040943f67df08d036"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:43+00:00",
         "steps": 3,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:e07fa287ca32164947b32aab97605eed7f3ef99d8e04939040943f67df08d036"
       }
     },
     "REQ-004": {
@@ -1004,13 +1132,13 @@
         "checked_at": "2026-10-12T15:19:52+00:00",
         "steps": 1,
         "found_by": "simulator",
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:7597c18d0b46c10dc334666bea0eb0770bf9c1a08b4df36fd9f901389ece28e8"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:51+00:00",
         "steps": 10,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:7597c18d0b46c10dc334666bea0eb0770bf9c1a08b4df36fd9f901389ece28e8"
       }
     },
     "REQ-005": {
@@ -1020,13 +1148,13 @@
         "checked_at": "2026-10-12T15:19:52+00:00",
         "steps": 3,
         "found_by": "simulator",
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:00b11b580caa108f9b63c2d7b607abe84c47d2a54bde3578579787e44001d7d8"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:51+00:00",
         "steps": 3,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:00b11b580caa108f9b63c2d7b607abe84c47d2a54bde3578579787e44001d7d8"
       }
     },
     "REQ-006": {
@@ -1037,14 +1165,14 @@
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:51+00:00",
         "steps": 10,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:d6dde6772bc4342be4bd64ae313995d166d5e905a7712e38fe3e3281da4a5c16"
       }
     },
     "REQ-007": {
       "witness": {
         "status": "witnessed",
         "checked_at": "2026-10-12T15:19:53+00:00",
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377",
+        "model_sha": "cone:1559bf3069eebcebd8c26a98120d492338ab9928f5795a76126617021384c1e8",
         "outcomes": {
           "email": {
             "status": "witnessed",
@@ -1052,7 +1180,7 @@
             "checked_at": "2026-10-12T15:19:53+00:00",
             "steps": 2,
             "found_by": "simulator",
-            "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+            "model_sha": "cone:1559bf3069eebcebd8c26a98120d492338ab9928f5795a76126617021384c1e8"
           },
           "in-app": {
             "status": "witnessed",
@@ -1060,7 +1188,7 @@
             "checked_at": "2026-10-12T15:19:53+00:00",
             "steps": 3,
             "found_by": "simulator",
-            "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+            "model_sha": "cone:1559bf3069eebcebd8c26a98120d492338ab9928f5795a76126617021384c1e8"
           }
         }
       },
@@ -1068,7 +1196,7 @@
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:51+00:00",
         "steps": 3,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:1559bf3069eebcebd8c26a98120d492338ab9928f5795a76126617021384c1e8"
       }
     },
     "REQ-008": {
@@ -1078,13 +1206,13 @@
         "checked_at": "2026-10-12T15:19:52+00:00",
         "steps": 2,
         "found_by": "simulator",
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:b2654cbe07f230f7e8cf493697d0d1c3e5da1f130ff9d680df54a6095c0ad27b"
       },
       "obligation": {
         "formal_status": "verified",
         "checked_at": "2026-10-12T14:54:59+00:00",
         "steps": 10,
-        "model_sha": "bd433475086738008e6fc42530caaf7fedbac6c6e28a5d297bea4839e437b377"
+        "model_sha": "cone:b2654cbe07f230f7e8cf493697d0d1c3e5da1f130ff9d680df54a6095c0ad27b"
       }
     }
   }
