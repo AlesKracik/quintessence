@@ -908,6 +908,13 @@
                 "type": "string",
                 "description": "The requirement's own fingerprint the trace was found against: `cone:` + sha256 of the canonical transition relation plus the closure of its own predicate (itf_tools.ModelIndex.verdict_sha). spec-lint FAILs when this no longer matches — a trace from an older model proves nothing about the current one. A bare sha256 is an older area-wide stamp: fresh while the whole model is unchanged, re-stamped by the next check."
               },
+              "revalidated_by": {
+                "type": "string",
+                "enum": [
+                  "replay"
+                ],
+                "description": "Set when the model changed under a witness and its trace was replayed through the new initP/stepP (still every step taken, still ending where the probe is violated) instead of being found again: the stamp was renewed, found_by still says which engine found the trace. Cleared when the witness is found again. Witnesses only — an obligation is a claim about every step and is always re-proven."
+              },
               "outcomes": {
                 "type": "object",
                 "description": "Per permitted outcome of a `may` requirement, keyed by outcome name.",
@@ -949,6 +956,13 @@
                     },
                     "model_sha": {
                       "type": "string"
+                    },
+                    "revalidated_by": {
+                      "type": "string",
+                      "enum": [
+                        "replay"
+                      ],
+                      "description": "Same as witness.revalidated_by."
                     }
                   }
                 }

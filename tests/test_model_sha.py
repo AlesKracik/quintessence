@@ -251,3 +251,75 @@ def test_an_area_wide_stamp_is_fresh_until_the_model_moves_then_unstamped(root):
           "    idleOf(sid) >= MAX_SESSION_AGE,")
     found = [f for f in _lint_checks(root, "auth") if not f.check.startswith("check-")]
     assert found and {f.check for f in found} == {"witness-unstamped", "obligation-unstamped"}
+
+
+# ── A stale witness is replayed before it is re-proven ─────────────────────
+
+record = _load("spec_record_sha", "spec-record.py")
+replay = _load("witness_replay_sha", "witness_replay.py")
+needs_quint = pytest.mark.skipif(shutil.which("quint") is None, reason="needs quint")
+
+
+def _replay(root, area):
+    area_data = spec_source.load_area(root, area)
+    fm = area_data["formal_model"]
+    index = itf.model_index(root, area, area_data)
+    n = record.replay_stale_witnesses(
+        root, area, area_data, root / "specs" / fm["probes_file"],
+        root / "specs" / fm["quint_file"], index.verdict_sha, lambda r: True,
+        lambda: shutil.which("quint"), 120)
+    return n, area_data, index
+
+
+def test_a_replay_steps_through_stepP_and_ends_on_the_violated_probe(root):
+    area = spec_source.load_area(root, "auth")
+    probes = (root / "specs" / "auth.probes.qnt").read_text(encoding="utf-8")
+    nondets, branches = replay.step_branches(probes)
+    assert set(branches) >= {"login", "logout", "tick"}
+    trace = json.loads((root / "specs" / area["requirements"][1]["witness"]["trace"])
+                       .read_text(encoding="utf-8"))
+    run = replay.replay_run("r", trace, "witness_REQ_002", nondets, branches)
+    assert run.startswith("  run r = initP.expect(")
+    assert '.then(all { logout("s1"),' in run                  # stepP's own branch
+    assert 'Set("s1", "s2").contains("s1")' in run              # each pick in its domain
+    assert run.endswith(".expect(not(witness_REQ_002))")
+    # A trace whose step names no stepP branch is not replayed at all.
+    trace["states"][1]["_lastAction"] = "nosuchaction"
+    with pytest.raises(replay.Unreplayable):
+        replay.replay_run("r", trace, "witness_REQ_002", nondets, branches)
+
+
+@needs_quint
+def test_a_stale_witness_that_still_replays_is_restamped_without_apalache(root, monkeypatch):
+    calls = []
+    real = record.run_group
+    monkeypatch.setattr(record, "run_group",
+                        lambda cmd, **kw: calls.append(cmd[1]) or real(cmd, **kw))
+    # A guard every trace satisfies: every witness is stale, every one still holds.
+    _edit(root / "specs" / "auth.qnt", "      isActive(sid),\n      sessions'          = sessions.put(sid, LoggedOut),",
+          "      isActive(sid),\n      sid != \"\",\n      sessions'          = sessions.put(sid, LoggedOut),")
+    assert {f.check for f in _lint_checks(root, "auth")} >= {"witness-stale"}
+    n, area, index = _replay(root, "auth")
+    assert n == 5
+    assert set(calls) <= {"test"}, calls          # quint test only: no verify
+    for req in area["requirements"]:
+        w = req.get("witness") or {}
+        if w.get("status") == "witnessed":
+            assert w["model_sha"] == index.verdict_sha(req["id"])
+            assert w["revalidated_by"] == "replay"
+
+
+@needs_quint
+def test_a_stale_witness_that_no_longer_replays_stays_stale(root):
+    # logout now needs an inactive session: REQ-002's trace logs out an
+    # active one, so its replay fails; the others never call logout.
+    _edit(root / "specs" / "auth.qnt", "      isActive(sid),\n      sessions'          = sessions.put(sid, LoggedOut),",
+          "      not(isActive(sid)),\n      sessions'          = sessions.put(sid, LoggedOut),")
+    n, area, index = _replay(root, "auth")
+    req2 = next(r for r in area["requirements"] if r["id"] == "REQ-002")
+    assert req2["witness"]["model_sha"] != index.verdict_sha("REQ-002")
+    assert "revalidated_by" not in req2["witness"]
+    # ... so the witness pass sends it to the checker.
+    assert [c[0] for c in record.stale_witnesses(root, area, index.verdict_sha,
+                                                 lambda r: True)] == ["REQ-002"]
+    assert n == 4

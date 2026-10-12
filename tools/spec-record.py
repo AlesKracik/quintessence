@@ -942,6 +942,7 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
                 oc["status"] = "hollow"
                 oc.pop("model_sha", None)
                 oc.pop("found_by", None)
+                oc.pop("revalidated_by", None)
                 oc["trace"] = trace_rel
                 bad += 1
                 print(f"{label:<24} HOLLOW           (predicate already true in the "
@@ -959,6 +960,7 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
             oc["status"] = "no-witness"
             oc.pop("model_sha", None)
             oc.pop("found_by", None)
+            oc.pop("revalidated_by", None)
             bad += 1
             if deep_queue is not None:
                 # Provisional: recorded pessimistically at this bound so an
@@ -977,6 +979,99 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
 
     roll_up_outcomes(witness, verdict_sha)
     return bad
+
+
+def stale_witnesses(root, area, sha_for, selected):
+    """[(label, probe, trace, rid, block, witness)] for every witnessed
+    block whose stamp no longer matches its requirement's fingerprint and
+    whose trace is on disk, valid and not hollow."""
+    out = []
+    for req in area.get("requirements") or []:
+        rid = req.get("id")
+        if (not rid or not selected(req) or req.get("status") == "deferred"
+                or witness_exempt(req) or not owes_obligation(req)):
+            continue
+        w = req.get("witness") or {}
+        if req.get("modality") == "may":
+            blocks = [(f"{rid}/{oc.get('name')}", outcome_probe_name(rid, oc.get("name")), oc)
+                      for oc in w.get("outcomes") or []]
+        else:
+            blocks = [(rid, probe_name(rid), w)]
+        for label, probe, block in blocks:
+            stamp = block.get("model_sha")
+            if (block.get("status") != "witnessed" or not block.get("trace")
+                    or not stamp or stamp == sha_for(rid)):
+                continue
+            trace, errs = load_trace(root / "specs" / block["trace"])
+            if errs or is_hollow(trace):
+                continue
+            out.append((label, probe, trace, rid, block, w))
+    return out
+
+
+def replay_stale_witnesses(root, area_name, area, probes_file, qnt_file, sha_for,
+                           selected, need_quint, timeout):
+    """Replay every stale witness's trace through the current probe module
+    (tools/witness_replay.py) in one `quint test`; re-stamp each that still
+    holds. Returns how many were re-stamped. Whatever does not replay is
+    left stale, and the witness pass proves it again as before."""
+    cands = stale_witnesses(root, area, sha_for, selected)
+    if not cands:
+        return 0
+    wr = load_tool("witness_replay.py", "witness_replay")
+    sp = load_tool("spec-probes.py", "spec_probes_slicer")
+    text = probes_file.read_text(encoding="utf-8")
+    m = re.search(r"^module (\w+) \{$", text, re.MULTILINE)
+    out_dir = root / "specs" / area_name / "gen" / "replay"
+    name = f"{m.group(1) if m else area_name.replace('-', '_')}_replay"
+    prefix = Path(os.path.relpath(probes_file.parent, out_dir)).as_posix()
+
+    def rebase(t, mod, pre):
+        # Every val kept: every ghost stepP's branches assign must exist.
+        return sp.slice_text(t, re.findall(r"(?m)^  val (\w+)\s*:", t), mod, pre)
+
+    try:
+        module, runs, skipped = wr.build(text, qnt_file.read_text(encoding="utf-8"),
+                                         cands, name, prefix, rebase)
+    except (KeyError, ValueError, OSError) as e:
+        print(f"{'replay':<12} not run ({e}) — stale witnesses go to the checker")
+        return 0
+    for label, why in skipped:
+        print(f"{label:<24} not replayed     ({why})")
+    if module is None:
+        return 0
+    quint = need_quint()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / f"{name}.qnt"
+    target.write_text(module, encoding="utf-8")
+    cmd = [quint, "test", str(target), "--match", "^replay_"]
+    if quint_supports(quint, "test", "--max-samples"):
+        cmd.append("--max-samples=1")
+    try:
+        proc = run_group(cmd, timeout=timeout)
+        results = wr.parse_test_output((proc.stdout or "") + (proc.stderr or ""))
+    except subprocess.TimeoutExpired:
+        results = {}
+    if not results:
+        print(f"{'replay':<12} quint test gave no results — stale witnesses go "
+              f"to the checker")
+        return 0
+    n, may = 0, {}
+    for run, (label, _probe, _trace, rid, block, w) in runs.items():
+        if results.get(run) != "passed":
+            print(f"{label:<24} replay failed    (the trace no longer runs, or no "
+                  f"longer ends where the probe says — re-proving)")
+            continue
+        block["model_sha"] = sha_for(rid)
+        block["revalidated_by"] = "replay"
+        block["checked_at"] = now_iso()
+        if block is not w:
+            may[id(w)] = (w, rid)
+        n += 1
+        print(f"{label:<24} fresh            (trace replayed against the changed model)")
+    for w, rid in may.values():
+        roll_up_outcomes(w, sha_for(rid))
+    return n
 
 
 def cmd_check(args):
@@ -1040,6 +1135,9 @@ def cmd_check(args):
     # A probe the pre-screen HIT has a witness the simulator can hand over
     # directly; off, every witness is constructed by Apalache as before.
     sim_witnesses = quint_cfg.get("simulator_witnesses", True)
+    # A witness the model changed under is replayed before it is re-proven:
+    # a trace that still runs through the new initP/stepP still witnesses.
+    replay_witnesses = quint_cfg.get("replay_witnesses", True)
     temporal_backend = quint_cfg.get("temporal_backend", "tlc")
 
     # The completeness checks (coverage, explanation, verdicts), keyed by
@@ -1598,7 +1696,7 @@ def cmd_check(args):
             oname = obligation_name(rid)
             if (ob.get("formal_status") == "verified" and current_sha
                     and ob.get("model_sha") == sha_for(rid)):
-                print(f"{rid:<12} {'obligation fresh':<26} (model unchanged — skipped)")
+                print(f"{rid:<12} {'obligation fresh':<26} (nothing it rests on changed — skipped)")
                 continue
             if not probes_file or oname not in probe_vals:
                 print(f"{rid:<12} {'no-obligation':<26} ('{oname}' missing — "
@@ -1703,6 +1801,7 @@ def cmd_check(args):
     def stamp(block, trace_path):
         engine, n = found.get(str(trace_path), ("apalache", None))
         block["found_by"] = engine
+        block.pop("revalidated_by", None)
         if engine == "simulator":
             # The trace's own length: the simulator ran to no bound worth
             # recording, and this is the depth the witness actually needed.
@@ -1898,6 +1997,15 @@ def cmd_check(args):
               + f" → ~{fmt_secs(projected)} projected; budget "
               f"{fmt_secs(budget_seconds)} {cover}", flush=True)
 
+    # Stale witnesses first: one `quint test` replays every stored trace
+    # through the new probe module, and each that still holds is re-stamped
+    # here — so is_fresh() leaves it out of the plan below.
+    if (replay_witnesses and not args.no_witness and index is not None
+            and probes_file and probes_file.exists() and qnt_file.exists()):
+        if replay_stale_witnesses(root, args.area, area, probes_file, qnt_file,
+                                  sha_for, selected, need_quint, timeout):
+            flush()
+
     # Pass 1 (shallow). Never budget-gated: it is the cheap half AND the half
     # that carries the findings, so every selected check gets at least a
     # shallow verdict even when the budget is already spent.
@@ -2054,7 +2162,7 @@ def cmd_check(args):
                 t_rel = witness.get("trace")
                 t_path = root / "specs" / t_rel if t_rel else None
                 if t_path and t_path.exists() and not load_trace(t_path)[1]:
-                    print(f"{rid:<12} fresh            (model unchanged — probe skipped)")
+                    print(f"{rid:<12} fresh            (stamp current — probe skipped)")
                     continue
                 print(f"{rid:<12} re-proving       (stamp fresh but trace missing/invalid)")
             if probes_ir is None:
@@ -2094,6 +2202,7 @@ def cmd_check(args):
                     witness["status"] = "hollow"
                     witness.pop("model_sha", None)
                     witness.pop("found_by", None)
+                    witness.pop("revalidated_by", None)
                     witness["trace"] = trace_rel
                     bad += 1
                     print(f"{rid:<12} HOLLOW           (predicate already true in the "
@@ -2116,6 +2225,7 @@ def cmd_check(args):
                 witness["status"] = "no-witness"
                 witness.pop("model_sha", None)
                 witness.pop("found_by", None)
+                witness.pop("revalidated_by", None)
                 bad += 1
                 if shallow_steps < max_steps:
                     witness_deep.append({"req": req, "rid": rid, "witness": witness,
@@ -2185,6 +2295,7 @@ def cmd_check(args):
                 witness["status"] = "hollow"
                 witness.pop("model_sha", None)
                 witness.pop("found_by", None)
+                witness.pop("revalidated_by", None)
                 witness["trace"] = job["trace_rel"]
                 witness["steps"] = max_steps
                 print(f"{rid:<12} HOLLOW           (predicate already true in the "
@@ -2197,6 +2308,7 @@ def cmd_check(args):
             witness["trace"] = job["trace_rel"]
             witness["steps"] = max_steps
             witness["found_by"] = "apalache"
+            witness.pop("revalidated_by", None)
             if current_sha:
                 witness["model_sha"] = sha_for(rid)
             bad -= 1   # the provisional no-witness the shallow pass counted
@@ -2237,6 +2349,7 @@ def cmd_check(args):
                 oc["status"] = "hollow"
                 oc.pop("model_sha", None)
                 oc.pop("found_by", None)
+                oc.pop("revalidated_by", None)
                 oc["trace"] = job["trace_rel"]
                 oc["steps"] = max_steps
                 print(f"{label:<24} HOLLOW           (predicate already true in the "
@@ -2246,6 +2359,7 @@ def cmd_check(args):
             oc["trace"] = job["trace_rel"]
             oc["steps"] = max_steps
             oc["found_by"] = "apalache"
+            oc.pop("revalidated_by", None)
             if current_sha:
                 oc["model_sha"] = sha_for(job["rid"])
             bad -= 1
