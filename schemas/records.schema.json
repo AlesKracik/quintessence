@@ -518,7 +518,8 @@
                   "bounded",
                   "inductive",
                   "structural",
-                  "smt"
+                  "smt",
+                  "lean"
                 ],
                 "default": "bounded",
                 "description": "Echo of the invariant's proof mode for this check. 'inductive' verified results are unbounded proofs; 'bounded' are valid only to check_results.max_steps; 'structural' results come from the Alloy backend and are valid only within this entry's `scope`."
@@ -529,7 +530,8 @@
                   "apalache",
                   "tlc",
                   "alloy",
-                  "z3"
+                  "z3",
+                  "lean"
                 ],
                 "default": "apalache",
                 "description": "Which validator produced this result. 'alloy' entries are scope-bounded, not step-bounded — their honesty suffix comes from `scope`, not check_results.max_steps. 'tlc' entries come from the temporal path (properties[], `quint verify --temporal`): explicit-state, so they are bounded by the model's own finite state space rather than by check_results.max_steps, and they carry no `trace` because --out-itf is Apalache-only."
@@ -584,6 +586,51 @@
               "trace": {
                 "type": "string",
                 "description": "Counterexample ITF path relative to specs/, if any."
+              },
+              "theorem": {
+                "type": "string",
+                "description": "For backend 'lean': the theorem that was checked (the invariant's lean_theorem)."
+              },
+              "statement_sha": {
+                "type": "string",
+                "description": "For backend 'lean': what the proof means — sha256 of the elaborated statement and of every project definition it reaches (init, apply, the invariant, the types, the Quint prelude), under `toolchain`. Layout does not reach it; a changed definition does, and `tools/lean_backend.py audit` (CI) fails a recorded verdict whose sha has moved."
+              },
+              "axioms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "For backend 'lean': the axioms the proof rests on, as Lean reports them. A verified entry's are a subset of propext, Classical.choice, Quot.sound."
+              },
+              "toolchain": {
+                "type": "string",
+                "description": "For backend 'lean': the project's lean-toolchain."
+              },
+              "replay": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "For backend 'lean': the traces that link the Lean model to the Quint one.",
+                "properties": {
+                  "runs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Traces replayed as runs of apply from init."
+                  },
+                  "predicates": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "This invariant's counterexample / CTI traces whose first and last states the Lean invariant agreed on."
+                  },
+                  "skipped": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Traces that could not be encoded as Lean values."
+                  }
+                }
+              },
+              "cti_trace": {
+                "type": "string",
+                "description": "For proof 'inductive' that failed: the counterexample to INDUCTION, relative to specs/. It starts from a state satisfying the invariant, which need not be reachable, so it is kept apart from `trace` (a reachable violation found by the bounded re-check). With no `trace` beside it the result is not-checkable: not inductive as written, not shown false."
               },
               "counterexample": {
                 "type": "object",
@@ -1016,6 +1063,7 @@
               "verified",
               "verified-in-scope",
               "verified-inductive",
+              "verified-lean",
               "verified-smt"
             ]
           }

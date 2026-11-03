@@ -96,6 +96,7 @@ tag's value. A blank `///` line ends a continuation.
                                                  CON EX DEC ASM Q
         @evidence @confidence @inferred-by @fingerprint   extraction.*
   INV   @criticality @proof @over @alloy <command> @smt <file>
+        @lean <Module>.<theorem>
         @quint-name <name> @predicate <expr> @refs @source
         + extraction tags
   PROP  (host: a `temporal`)  @refs
@@ -247,6 +248,7 @@ TAGS = {
         "over": ("over", "text"),
         "alloy": ("alloy_command", "text"),
         "smt": ("smt_file", "text"),
+        "lean": ("lean_theorem", "text"),
         "quint-name": ("quint_name", "text"),
         "predicate": ("predicate", "text"),
         "refs": ("cross_refs", "list"),

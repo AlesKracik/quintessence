@@ -32,7 +32,7 @@ There is no workflow machinery on top: no propose, approve or sync commands, no 
 | Tier | What it gives | Tools needed | Commands |
 |---|---|---|---|
 | **1 — Precision core** | EARS requirements, a declared **scope**, state×event and external×outcome completeness, closed-world entities, modality, assumptions, the deterministic **readback**, the semantic **diff**, all gated by `spec-lint`. | Python 3 only | `/spec`, `/spec-readback` |
-| **2 — Formal proof** | Quint model, Apalache invariants (bounded or inductive), witness traces, conformance replay against code; optional Alloy (structure) and z3 (arithmetic). | + Java 17, Quint, Apalache | `/spec-check`, `/spec-code-generate`, `/spec-code-verify` |
+| **2 — Formal proof** | Quint model, Apalache invariants (bounded or inductive), witness traces, conformance replay against code; optional Alloy (structure), z3 (arithmetic) and Lean (proofs Apalache cannot give). | + Java 17, Quint, Apalache | `/spec-check`, `/spec-code-generate`, `/spec-code-verify` |
 
 Tier 1 is complete on its own. Tier 2 proves internal consistency, reachability and code conformance; it does not invent or correct intent. **The trust boundary is at elicitation** (NL → EARS fields): human + AI judgment, backstopped by lint (a functional requirement you can't write as a formal `@while` / `@shall` is too vague to verify), the completeness matrices and the questions model mutation raises. Everything downstream of a captured EARS field is mechanized.
 
@@ -505,11 +505,52 @@ UI areas: the navigation graph plays the same role (endpoints declared, isolated
 
 An invariant opts in by living on the Alloy assertion — a `///` record in the `.als` means `proof: "structural"`, `alloy_command: <name>` — with `formal_model.alloy_file` in the intent file and an explicit scope: `check noSharedSessions for 4 Session, 4 Account expect 0`. `spec-record check` runs `alloy exec` and reads the verdict from its `receipt.json`; no counterexample stamps `verified-in-scope` with the scope. Config: `"alloy": { "jar_path", "solver", "timeout_seconds" }` in `.spec/project.json` (`ALLOY_JAR` overrides); Alloy 6.2+ and JVM 17+. The runner enforces the wall clock and passes no `-y`/`-d` (ignored or surprising in the 6.2 CLI).
 
-Three kinds of ✓, never collapsed: `✓ proven` (inductive), `✓ (≤N steps)` (bounded, N per check), `✓ (scope: 4 Session, 4 Account)` (no counterexample among structures that size — not a proof).
+Five kinds of ✓, never collapsed: `✓ proven` (inductive), `✓ proven (Lean)` (a Lean theorem, below), `✓ (≤N steps)` (bounded, N per check), `✓ (scope: 4 Session, 4 Account)` (no counterexample among structures that size — not a proof), `✓ (smt)` (z3, modulo the encoding).
 
 Lint (no jar needed) FAILs: structural with no `alloy_command` or no `alloy_file`; an `alloy_command` naming no check, or naming a `run`. A check with no `for` scope WARNs, FAILs from `in-review`; an `alloy_file` no invariant uses WARNs. Counterexample instances go to gitignored `gen/alloy/` (Alloy's choice of instance is not stable); the verdict, scope and solver are committed.
 
 **z3 (also optional)** answers arithmetic and data questions. `proof: "smt"` + an `smt_file` asserting the invariant's **negation**: `unsat` → `verified-smt` (`✓ (smt)`); `sat` → `counterexample-found` (model in gitignored `gen/smt/`); `unknown` → `not-checkable` (`⊘`, never a pass). Config: `z3: { binary, timeout_seconds }`, `Z3_BIN` overrides.
+
+---
+
+## The Proof Backend: Lean (Optional)
+
+**For the load-bearing invariant Apalache cannot settle.** Apalache gives no proof when the invariant is true but **not inductive as written** (the inductive check fails from a state no run reaches — a counterexample to induction, recorded `not-checkable`, see below), when quint cannot even pose the inductive check ("x is used before it is assigned"), or when the claim only holds over a domain Apalache cannot bound. A human then proves it in Lean, adding the strengthening lemmas a solver would have to guess.
+
+**Quint stays the model. Lean proves; Apalache witnesses; never both as the verdict on one claim.** Witnesses, counterexamples, obligations and liveness stay Apalache's and TLC's. The simulator pre-gate still runs over a Lean invariant — it is advisory, never a verdict, and a violation it finds on an invariant Lean proved is drift, loudly.
+
+**Layout.** One Lake project (`lean.project_dir`, default `specs/lean`; copy `templates/lean/`): `lean-toolchain` and `lake-manifest.json` pin it, `Quint.lean` is the prelude (`QMap`/`QSet` in canonical sorted form so states compare by `=`, `Reachable`, the induction rule, the replay check), and per area two modules in namespace `Spec.<Area>`: the **model**, `Spec/<Area>/Model.lean`, generated from the Quint file, and the **proofs**, `Spec/<Area>.lean`, which `import Spec.<Area>.Model` and are the only Lean a person writes. Between them they hold:
+
+```lean
+structure State           -- one field per Quint var, same names
+inductive Action          -- one constructor per action, its parameters in order
+def init  : State
+def apply : Action → State → Option State   -- none = the guard is false
+def <quint_name> : State → Bool             -- the invariant, same name
+theorem <quint_name>_holds : ∀ s, Reachable init apply s → <quint_name> s = true
+```
+
+The invariant's record opts in on its Quint `val`:
+
+```quint
+  /// @inv INV-003
+  /// @proof lean
+  /// @lean Spec.Subscription.unacceptedCancelLeavesActive_holds
+  val unacceptedCancelLeavesActive: bool = ...
+```
+
+**What `spec-record check` does** (`tools/lean_backend.py`), each step a reason to refuse:
+
+0. **Generate** the model. When the proof module imports `<Module>.Model`, `tools/lean_gen.py` rewrites that file from the Quint compiler's typed IR (`quint typecheck --out`) before anything is built: sum types become inductives, records structures, `pure val`/`def` functions (taking the state when they read it), each `var` a field of `State` — an imported module's too, unqualified as the traces name it — each action a constructor of `Action` and a branch of `apply`, with calls to other actions inlined. The translation is an over-approximation where Quint and Lean differ: `m.get(k)` on a missing key, a Quint error, reads `default`, and `apply` takes every argument rather than only those `step` chooses (`step` must be a choice among the module's actions and nothing more), so a proof about every reachable Lean state covers every reachable Quint state. What it cannot translate — `nondet` inside an action, an action-level `any` or `if`, lists, `const`s — stops the check with the construct named: `not-checkable`, never a guessed model.
+1. **Build** the module. A proof that does not compile is not one.
+2. **Audit.** A generated file — never one in the repo — restates the theorem as `∀ s, Quint.Reachable M.init M.apply s → M.<quint_name> s = true`, so the author writes the proof and never the statement: a weaker theorem fails to elaborate. It reports the axioms the proof rests on; anything outside `propext`, `Classical.choice`, `Quot.sound` is refused (`sorryAx` is a `sorry`, `Lean.ofReduceBool` a `native_decide`). It hashes the statement's meaning — every project definition the statement reaches, elaborated, under the toolchain — into `statement_sha`: reformatting keeps it, a changed `init`, `apply` or invariant moves it.
+3. **Replay** — the drift defence, the anti-vacuity trick a third time. Every trace of the area that records its actions (witness traces, example and journey runs) is encoded as Lean values and run through `apply` from `init`, state for state; a call the run expects refused (`_refused`) must have a false guard. The invariant's own counterexample or CTI traces must agree on the predicate: true on the first state, false on the last — which is what catches an invariant redefined to `true`. A Lean model that disagrees with any trace is drift, and with no trace replayed nothing links the two models at all.
+
+All three pass → `verified-lean`, rendered `✓ proven (Lean)`, with `theorem`, `axioms`, `statement_sha`, `toolchain` and `replay` on the check entry and the Quint `model_sha` beside them (so a Quint edit stales it like any other check). Anything else → `not-checkable` with the reason — never a fallback to a bounded run, and a critical invariant stays blocking `approved` until someone proves it.
+
+**Lint** (pure Python, no Lean) FAILs a Lean invariant with no `@lean` theorem, no `quint_name`, or no module file; a Lake project missing its prelude or pins; a module, generated model or prelude using `sorry`, `admit`, `native_decide`, `axiom`, `implemented_by`, `extern`, `unsafe` or `debug.skipKernelTC`; and a `verified-lean` without an audit, on other axioms, or with nothing replayed. It WARNs a generated model whose header `source_sha` (the Quint sources it was made from, hashed) no longer matches them, `lean-model-stale`, or that does not exist yet. **CI** (`lean-proofs` in spec-ci.yml) has the toolchain lint lacks: `lake build`, `tools/lean_backend.py audit` (regenerates every model, recomputes every Lean verdict, FAILs one whose status or `statement_sha` moved and a committed model that is not what generation produces) and `lean4checker` over the built modules, which re-checks the environment against the kernel independently of the elaborator the audit reads.
+
+**Generated, and still replayed.** The generator is checked the same way a hand encoding would be: every trace still runs through the generated `apply`, so a translation bug is drift on the first trace it touches rather than a proof about the wrong model. A proof module that does not import `<Module>.Model` keeps a hand-written model and the same replay; that is the escape hatch for a construct the generator does not translate yet. A proof's lemmas read the generated definitions, so a Quint edit can break a proof without changing what it claims — rebuild, and strengthen where it broke. Config: `"lean": { "project_dir", "lake", "timeout_seconds" }`, `LAKE_BIN` overrides.
 
 ---
 
@@ -763,6 +804,7 @@ invariant.formal_status: specified | not-run → verified            (bounded, t
                                   → verified-inductive   (proven; proof: inductive)
                                   → verified-in-scope    (Alloy; proof: structural)
                                   → verified-smt         (z3; proof: smt)
+                                  → verified-lean        (proven in Lean; proof: lean)
                                   → not-checkable        (no verdict from the backend — never a pass)
                                   → counterexample-found
                                   → accepted-risk
@@ -772,7 +814,7 @@ area.status:          raw → structured → formalized → in-review → approv
 
 **`approved` is blocked by** an unwitnessed requirement, an open `Q-NNN` (`open-questions-on-approved`), an open assumption (`assumption-open-on-approved`), an open `GAP` verdict, or a `@criticality critical` invariant not verified by any backend or `accepted-risk` (`critical-not-verified`). `deferred` requirements are out of every gate.
 
-**`verified` is bounded, not proven**: no counterexample within N steps, N recorded per check (`check_results.checks[].steps`) and rendered `✓ (≤N steps)`. `spec-record` runs a **two-pass ladder**: every bounded check at `apalache.shallow_steps` (default 3), then the clean ones at `apalache.max_steps` (default 10) while `apalache.budget_seconds` (default 900) lasts; a check the budget stopped keeps its shallow verdict and says why. Pass 1 projects its own cost after the first few checks and records it (`check_results.cost`), so a deep pass the budget never reached is a named cause in the readback, not a silent bound. Checks run in parallel (`--parallel`), each probe-module check on a slice of the module that drops the ghosts it never reads, and a witness the simulator already reached is taken from the simulator (`witness.found_by: "simulator"`): a witness is existential, so one concrete run is the proof whoever found it. Only that positive answer comes from the simulator — `no-witness`, obligations and invariants are always Apalache's. For an unbounded proof mark the invariant `proof: "inductive"` (`quint verify --inductive-invariant`, rendered `✓ proven`); it must be constrained enough or quint errors — an honest non-proof. Upgrade the load-bearing invariants. A shallow pass is never silently upgraded: `check_results.max_steps` is the ceiling, not a claim. When TLC explodes on liveness, fall back to a witnessed `run` plus a fairness note.
+**`verified` is bounded, not proven**: no counterexample within N steps, N recorded per check (`check_results.checks[].steps`) and rendered `✓ (≤N steps)`. `spec-record` runs a **two-pass ladder**: every bounded check at `apalache.shallow_steps` (default 3), then the clean ones at `apalache.max_steps` (default 10) while `apalache.budget_seconds` (default 900) lasts; a check the budget stopped keeps its shallow verdict and says why. Pass 1 projects its own cost after the first few checks and records it (`check_results.cost`), so a deep pass the budget never reached is a named cause in the readback, not a silent bound. Checks run in parallel (`--parallel`), each probe-module check on a slice of the module that drops the ghosts it never reads, and a witness the simulator already reached is taken from the simulator (`witness.found_by: "simulator"`): a witness is existential, so one concrete run is the proof whoever found it. Only that positive answer comes from the simulator — `no-witness`, obligations and invariants are always Apalache's. For an unbounded proof mark the invariant `proof: "inductive"` (`quint verify --inductive-invariant`, rendered `✓ proven`); it must be constrained enough or quint errors — an honest non-proof. A failed inductive check is a **counterexample to induction**: its step case starts from any state satisfying the invariant, reachable or not, so it says "not inductive as written", not "false". `spec-record` keeps that trace as `<ID>.cti.itf.json` (`cti_trace`) and re-checks the invariant bounded: a reachable violation is `counterexample-found` with its own `trace`; a clean or inconclusive bounded run is `not-checkable` — strengthen the invariant, or prove it in Lean. Upgrade the load-bearing invariants. A shallow pass is never silently upgraded: `check_results.max_steps` is the ceiling, not a claim. When TLC explodes on liveness, fall back to a witnessed `run` plus a fairness note.
 
 ### Transition properties
 
@@ -792,7 +834,7 @@ Not `always(P(next(x)))` — quint compiles it to a form TLA+ rejects. The gener
 
 | Property | Verified? |
 |---|---|
-| Safety invariants | bounded by default (`✓ (≤N steps)`); proven only with `proof: inductive` |
+| Safety invariants | bounded by default (`✓ (≤N steps)`); proven only with `proof: inductive`, or in Lean with `proof: lean` |
 | Behavior reachability | yes — witness probes |
 | Liveness | **not by Apalache**: `properties[]` run as `quint verify --temporal` on **TLC** (`quint.temporal_backend`) — exhaustive over the model's finite state space, no trace on failure, rendered `✓ (TLC)` |
 | Dead actions | witnessed REQs + `orphan-action` |
@@ -806,7 +848,7 @@ Each tool's docstring (`--help`) is its manual. What each is for, and the rules 
 | Tool | Purpose |
 |---|---|
 | `spec-lint.py` | Every structural, EARS, witness, encoding, journey and manifest check above. Runs as a pre-commit hook on changes under `specs/` and `.spec/` (`setup-hooks.sh`). |
-| `spec-record.py` | The only writer of verdicts: `check` (simulator pre-gate, batched then per-id `quint verify`, `--temporal`, probes, Alloy/z3), `verify` (preflights, replay, tests, drift, `verification_log`), `stamp`, `changed`, `equiv`. |
+| `spec-record.py` | The only writer of verdicts: `check` (simulator pre-gate, batched then per-id `quint verify`, `--temporal`, probes, Alloy/z3/Lean), `verify` (preflights, replay, tests, drift, `verification_log`), `stamp`, `changed`, `equiv`. |
 | `spec-probes.py` | Generates the probe module; `--check` gates staleness. |
 | `spec-runs.py` | Example and journey runs as replayable traces; `--check` needs no quint. |
 | `spec-questions.py` | Model mutation and its questions; `--record`, `--summary`. |
@@ -817,8 +859,9 @@ Each tool's docstring (`--help`) is its manual. What each is for, and the rules 
 | `spec-route.py` | Which `/spec` beat a target enters. |
 | `spec-readback.py` | The readbacks; `status <slug> --json` is the derived phase grid. |
 | `spec_source.py` | The reader (derive, save, schemas). |
+| `lean_backend.py` | The optional Lean backend `spec-record` calls: build, audit (statement, axioms, `statement_sha`), trace replay; `audit` is the CI gate that recomputes every Lean verdict. |
 | `quint_ir.py`, `itf_tools.py` | Model IR; ITF validate / summarize / mermaid / status / sha / pin. |
-| `bootstrap.sh`, `check-tooling.sh`, `setup-hooks.sh` | New project from the template; what is installed (`--install` for jsonschema; Alloy optional); the pre-commit hook. |
+| `bootstrap.sh`, `check-tooling.sh`, `setup-hooks.sh` | New project from the template; what is installed (`--install` for jsonschema; Alloy and Lean optional); the pre-commit hook. |
 
 Rules that live in the tools:
 

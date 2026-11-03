@@ -178,6 +178,16 @@
         "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300, "description": "Wall-clock cap enforced by spec-record." }
       }
     },
+    "lean": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OPTIONAL Lean backend. Present only when some invariant declares proof: \"lean\". Absent = the defaults below, and nothing about the other paths changes.",
+      "properties": {
+        "project_dir":     { "type": "string", "default": "specs/lean", "description": "The Lake project holding the Lean models and proofs (lakefile.toml, lean-toolchain, the Quint prelude Quint.lean), relative to the repo root." },
+        "lake":            { "type": "string", "description": "Path to the `lake` executable. Overridden per-developer by LAKE_BIN; falls back to `lake` on PATH, then to `elan which lake`." },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "default": 600, "description": "Wall-clock cap on each Lean run (the build, each audit, the replay)." }
+      }
+    },
     "alloy": {
       "type": "object",
       "additionalProperties": false,

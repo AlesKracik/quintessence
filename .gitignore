@@ -47,3 +47,7 @@ specs/*/gen/
 
 # Apalache scratch output (regenerated on every run)
 _apalache-out/
+
+# Lake build output for the optional Lean backend (lean.project_dir).
+# lake-manifest.json and lean-toolchain ARE checked in: they pin the build.
+.lake/

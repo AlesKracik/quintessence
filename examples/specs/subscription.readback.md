@@ -4,7 +4,7 @@
 
 **⚠ NOT READY** — 8 of 8 requirement(s) not verified against code; 1 of 4 invariant(s) not holding; 1 open question(s).
 
-**Status:** formalized  |  **Requirements:** 0/8 verified, 7/8 witnessed  |  **Invariants:** 0 proven + 3 bounded (≤10) / 4  |  **Coverage:** 5/5 actions covered, 9/9 changes explained  |  **Extraction:** n/a (no code)  |  **Mutation:** 68% pinned by examples, 6 question(s) open  |  **Open questions:** 1  |  **Last verified:** never
+**Status:** formalized  |  **Requirements:** 0/8 verified, 7/8 witnessed  |  **Invariants:** 1 proven + 2 bounded (≤10) / 4  |  **Coverage:** 5/5 actions covered, 9/9 changes explained  |  **Extraction:** n/a (no code)  |  **Mutation:** 68% pinned by examples, 6 question(s) open  |  **Open questions:** 1  |  **Last verified:** never
 
 *Legend: ✓ verified — witness trace replayed green against real code · ◐ witnessed — proven possible in the model, not yet demonstrated in code · ✗ no witness — claimed behavior is UNREACHABLE in the model · ⏳ not checked yet · ⊘ nothing to witness (a forbidden step, whose proof is its obligation, or a computed value, checked by the unit test it names) · ∀ checked on every reachable step, ∀✗ a step that breaks it was found*
 
@@ -174,7 +174,7 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 |---|---|---|---|
 | EX-003 — Provider times out: nothing moves | the initial state | cancel_unanswered(alice, true) | `status.get("alice") == Active and billingEnabled.get("alice")` |
 
-> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ (≤10 steps) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
 > **Left open** · [68ef8975](#68ef8975) cancel_unanswered(bob, false) · [404d46eb](#404d46eb) cancel_unanswered(bob, true) — the model decides, no example does
 
@@ -231,7 +231,7 @@ sequenceDiagram
 |---|---|---|---|
 | EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice, Email) | `status.get("alice") == Cancelled and not(billingEnabled.get("alice")) and accessUntilPeriodEnd.get("alice") and notice.get("alice") == Email` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ (≤10 steps) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
@@ -293,7 +293,7 @@ sequenceDiagram
 |---|---|---|---|
 | EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice, Email) | `status.get("alice") == Cancelled and not(billingEnabled.get("alice")) and accessUntilPeriodEnd.get("alice") and notice.get("alice") == Email` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ (≤10 steps) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
@@ -415,7 +415,7 @@ sequenceDiagram
 |---|---|---|---|
 | EX-007 — The paid period ends: access stops | cancel_subscription(alice, InApp) | expire_period(alice) | `status.get("alice") == Expired and not(accessUntilPeriodEnd.get("alice"))` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ (≤10 steps) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
 > **Witness:** 4 steps: cancel_subscription(bob, Email) → cancel_subscription(alice, Email) → expire_period(bob) → accessUntilPeriodEnd = {"alice": true, "bob": false}; status = {"alice": Cancelled, "bob": Expired}
 
@@ -518,7 +518,7 @@ sequenceDiagram
 | EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice, Email) | `status.get("alice") == Cancelled and not(billingEnabled.get("alice")) and accessUntilPeriodEnd.get("alice") and notice.get("alice") == Email` |
 | EX-007 — The paid period ends: access stops | cancel_subscription(alice, InApp) | expire_period(alice) | `status.get("alice") == Expired and not(accessUntilPeriodEnd.get("alice"))` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ (≤10 steps) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
@@ -563,7 +563,7 @@ sequenceDiagram
 | EX-004 — Provider declines: the subscription stays Active | the initial state | cancel_declined(alice) | `status.get("alice") == Active and lastBillingResult.get("alice") == Declined` |
 | EX-008 — A decline after an unanswered try resets the retry count | cancel_unanswered(alice, false) | cancel_declined(alice) | `unansweredTries.get("alice") == 0` |
 
-> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ (≤10 steps) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
 > **Witness:** 3 steps: cancel_unanswered(alice, true) → cancel_declined(alice) → lastBillingResult = {"alice": Declined, "bob": Success}; unansweredTries = {"alice": 0, "bob": 0}
 
@@ -672,7 +672,7 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 - **INV-001** (`noBillingAfterCancel`) — A cancelled or expired subscription is never billed again. Criticality: critical. ⏳
 - **INV-002** (`noRefundIssued`) — A cancelled subscriber keeps access until the paid period ends. Criticality: high. ✓ (≤10 steps)
-- **INV-003** (`unacceptedCancelLeavesActive`) — A cancellation the provider did not accept leaves the subscription Active and billable. Criticality: critical. ✓ (≤10 steps) · under ASM-001
+- **INV-003** (`unacceptedCancelLeavesActive`) — A cancellation the provider did not accept leaves the subscription Active and billable. Criticality: critical. ✓ proven (Lean) · under ASM-001 _(Lean: `Spec.Subscription.unacceptedCancelLeavesActive_holds`; its model replays 9 Quint traces)_
 - **INV-004** (`retriesWithinBudget`) — Unanswered cancellation tries never exceed MAX_CANCEL_RETRIES. Criticality: high. ✓ (≤10 steps)
 
 ## What the Outside World Can Do

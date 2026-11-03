@@ -646,10 +646,23 @@
       {
         "id": "INV-003",
         "kind": "invariant",
-        "quint_name": "unacceptedCancelLeavesActive",
+        "backend": "lean",
+        "proof": "lean",
         "result": "verified",
-        "duration_s": 16.8,
-        "steps": 10,
+        "quint_name": "unacceptedCancelLeavesActive",
+        "theorem": "Spec.Subscription.unacceptedCancelLeavesActive_holds",
+        "toolchain": "leanprover/lean4:v4.22.0",
+        "axioms": [
+          "Quot.sound",
+          "propext"
+        ],
+        "statement_sha": "lean:415005edf2f0ee0c7a56f91362aaa239a1fb6e78dac753789676016063c10be7",
+        "replay": {
+          "runs": 9,
+          "predicates": 0,
+          "skipped": 0
+        },
+        "duration_s": 3.5,
         "model_sha": "cone:a8c49f8a072830143487427681152aaecd96864cca2694688de94f6123acdbc1"
       },
       {
@@ -891,7 +904,7 @@
       }
     ],
     "max_steps": 10,
-    "ran_at": "2026-10-12T15:21:06+00:00",
+    "ran_at": "2026-11-03T15:46:29+00:00",
     "simulation": {
       "ran_at": "2026-10-12T15:19:18+00:00",
       "max_samples": 10000,
@@ -1072,7 +1085,7 @@
       "formal_status": "verified"
     },
     "INV-003": {
-      "formal_status": "verified"
+      "formal_status": "verified-lean"
     },
     "INV-004": {
       "formal_status": "verified"

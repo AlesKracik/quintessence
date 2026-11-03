@@ -273,6 +273,8 @@ module subscription {
   /// A cancellation the provider did not accept leaves the subscription
   /// Active and billable.
   /// @criticality critical
+  /// @proof lean
+  /// @lean Spec.Subscription.unacceptedCancelLeavesActive_holds
   val unacceptedCancelLeavesActive: bool =
     status.keys().forall(c =>
       (lastBillingResult.get(c) != Success) implies

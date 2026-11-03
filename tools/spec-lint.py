@@ -1073,6 +1073,119 @@ def parse_als(text):
     return out
 
 
+def check_generated_model(root, area_data, area_name, iid, model, findings, seen):
+    """A proof module that imports `<Module>.Model` is about the model
+    tools/lean_gen.py generates from the area's Quint file. The generated
+    header names the sources it was made from by hash, so staleness is a
+    Python-only comparison; regenerating needs the Quint CLI, which is
+    spec-record's job."""
+    import lean_gen
+    if model in seen:
+        return
+    seen.add(model)
+    rel = model.relative_to(root) if model.is_relative_to(root) else model
+    if not model.exists():
+        add(findings, WARN, "lean", "lean-model-missing", area_name,
+            f"{iid}'s proof imports a generated model, but {rel} does not exist "
+            f"yet — `spec-record check` generates it.", ref=iid)
+        return
+    qnt = (area_data.get("formal_model") or {}).get("quint_file")
+    if not qnt or not (Path(root) / "specs" / qnt).exists():
+        return  # the missing Quint file is its own finding
+    have = lean_gen.header_sha(model.read_text(encoding="utf-8"))
+    want = lean_gen.source_sha(Path(root) / "specs" / qnt)
+    if have != want:
+        add(findings, WARN, "lean", "lean-model-stale", area_name,
+            f"{rel} was generated from an older {qnt} "
+            f"({'no source_sha' if not have else 'source_sha differs'}): the proof "
+            f"is about a model the Quint one no longer is. Re-run `spec-record "
+            f"check` (or tools/lean_gen.py) and commit the regenerated file.",
+            ref=iid)
+
+
+def check_lean_backend(root, area_data, area_name, findings):
+    """The optional Lean backend, gated in pure Python: spec-lint cannot
+    rebuild a proof, so it checks what a proof needs to exist, what it must
+    not contain, and that a recorded verdict carries its audit. Whether the
+    proof still builds and still means what was recorded is
+    `tools/lean_backend.py audit`, the CI job that has a Lean toolchain."""
+    import lean_backend
+    invs = [i for i in area_data.get("invariants", []) or [] if i.get("proof") == "lean"]
+    if not invs:
+        return
+    project = load_json(root / ".spec" / "project.json") or {}
+    if not isinstance(project, dict) or "__parse_error__" in project:
+        project = {}
+    pdir = lean_backend.config(project, root)["project_dir"]
+    rel_pdir = pdir.relative_to(root) if pdir.is_relative_to(root) else pdir
+    missing = [f for f in ("lakefile.toml", "lean-toolchain", "Quint.lean")
+               if not (pdir / f).exists()]
+    if missing:
+        add(findings, FAIL, "lean", "lean-project-missing", area_name,
+            f"proof: 'lean' needs the Lake project {rel_pdir}/ with "
+            f"{', '.join(missing)} (copy templates/lean/).")
+    checks = {c.get("id"): c for c in
+              ((area_data.get("check_results") or {}).get("checks") or [])}
+    scanned = {}
+    seen_models = set()
+
+    def forbidden(path):
+        if path not in scanned:
+            try:
+                scanned[path] = lean_backend.forbidden_in(path.read_text(encoding="utf-8"))
+            except OSError:
+                scanned[path] = []
+        return scanned[path]
+
+    for inv in invs:
+        iid = inv.get("id", "?")
+        thm = inv.get("lean_theorem")
+        module = lean_backend.module_of(thm)
+        if not module:
+            add(findings, FAIL, "lean", "lean-without-theorem", area_name,
+                f"{iid} has proof: 'lean' but no `@lean <Module>.<theorem>` naming "
+                f"its proof" + (f" ('{thm}' is not a qualified Lean name)" if thm else "")
+                + ".", ref=iid)
+            continue
+        if not inv.get("quint_name"):
+            add(findings, FAIL, "lean", "lean-without-quint-name", area_name,
+                f"{iid} has proof: 'lean' but no quint_name: the Lean invariant is "
+                f"found by that name, and the Quint one is what its traces replay "
+                f"against.", ref=iid)
+        mfile = lean_backend.module_file(pdir, module)
+        if not mfile.exists():
+            add(findings, FAIL, "lean", "lean-module-missing", area_name,
+                f"{iid}.lean_theorem lives in {module}, but {rel_pdir}/"
+                f"{module.replace('.', '/')}.lean does not exist.", ref=iid)
+            continue
+        model = None
+        if lean_backend.generated_model_of(mfile, module):
+            model = lean_backend.module_file(pdir, module + ".Model")
+            check_generated_model(root, area_data, area_name, iid, model, findings,
+                                  seen_models)
+        for path in (mfile, pdir / "Quint.lean", *([model] if model else [])):
+            bad = forbidden(path) if path.exists() else []
+            if bad:
+                add(findings, FAIL, "lean", "lean-forbidden", area_name,
+                    f"{iid}: {path.relative_to(pdir)} uses {', '.join(bad)} — not a "
+                    f"proof the kernel checked by itself.", ref=iid)
+        if inv.get("formal_status") == "verified-lean":
+            c = checks.get(iid) or {}
+            extra = [a for a in c.get("axioms") or [] if a not in lean_backend.ALLOWED_AXIOMS]
+            if c.get("backend") != "lean" or not c.get("statement_sha"):
+                add(findings, FAIL, "lean", "lean-verdict-unaudited", area_name,
+                    f"{iid} is verified-lean but check_results has no Lean audit for "
+                    f"it (statement_sha) — only spec-record writes this verdict.", ref=iid)
+            elif extra:
+                add(findings, FAIL, "lean", "lean-verdict-axioms", area_name,
+                    f"{iid} is verified-lean on axioms outside the kernel's own: "
+                    f"{', '.join(extra)}.", ref=iid)
+            elif not (c.get("replay") or {}).get("runs"):
+                add(findings, FAIL, "lean", "lean-verdict-unlinked", area_name,
+                    f"{iid} is verified-lean but no trace was replayed through the "
+                    f"Lean model, so nothing ties the proof to the Quint model.", ref=iid)
+
+
 def check_alloy_backend(root, area_data, area_name, findings):
     """The optional structural backend, gated so it can never silently
     half-work: an invariant claiming `proof: structural` must actually resolve
@@ -2319,7 +2432,7 @@ def check_critical_invariants(area_data, area_name, findings):
     if area_data.get("status") != "approved":
         return
     for inv in area_data.get("invariants", []) or []:
-        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "verified-inductive", "verified-in-scope", "verified-smt", "accepted-risk"):
+        if inv.get("criticality") == "critical" and inv.get("formal_status") not in ("verified", "verified-inductive", "verified-in-scope", "verified-smt", "verified-lean", "accepted-risk"):
             add(findings, FAIL, "invariants", "critical-not-verified", area_name,
                 f"Critical invariant {inv.get('id')} has formal_status '{inv.get('formal_status')}' — must be verified before approval.",
                 ref=inv.get("id"))
@@ -2939,6 +3052,7 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_extraction_coverage(area_data, area_name, findings)
     check_formal_model_consistency(area_data, sidecar, area_name, findings)
     check_alloy_backend(root, area_data, area_name, findings)
+    check_lean_backend(root, area_data, area_name, findings)
     check_scope(area_data, area_name, findings)
     check_externals(area_data, area_name, findings)
     check_assumptions(area_data, all_areas, area_name, findings)

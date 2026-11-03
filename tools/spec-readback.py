@@ -270,6 +270,8 @@ def invariant_mark(inv, bound, scope=None, steps=None):
         return f"✓ (scope: {scope})" if scope else "✓ (in scope)"
     if st == "verified-smt":
         return "✓ (smt)"
+    if st == "verified-lean":
+        return "✓ proven (Lean)"
     if st == "not-checkable":
         return "⊘ not checkable by this backend"
     if st == "counterexample-found":
@@ -873,7 +875,8 @@ def ship_verdict(area):
         blockers.append(f"{n_unver} of {len(reqs)} requirement(s) not verified against code")
     n_inv_bad = sum(1 for i in invs
                     if i.get("formal_status") not in ("verified", "verified-inductive",
-                                                      "verified-in-scope", "verified-smt"))
+                                                      "verified-in-scope", "verified-smt",
+                                                      "verified-lean"))
     if n_inv_bad:
         blockers.append(f"{n_inv_bad} of {len(invs)} invariant(s) not holding")
     n_q = sum(1 for q in area.get("open_questions", []) or []
@@ -929,7 +932,9 @@ def header_bar(area, area_name):
     n_ver = sum(1 for r in reqs if r.get("status") == "verified")
     n_wit = sum(1 for r in reqs if req_is_witnessed(r))
     invs = area.get("invariants", []) or []
-    n_inv_proven = sum(1 for i in invs if i.get("formal_status") == "verified-inductive")
+    # Both unbounded proofs: Quint's inductive check and a Lean theorem.
+    n_inv_proven = sum(1 for i in invs
+                       if i.get("formal_status") in ("verified-inductive", "verified-lean"))
     n_inv_bounded = sum(1 for i in invs if i.get("formal_status") == "verified")
     n_inv_scoped = sum(1 for i in invs if i.get("formal_status") == "verified-in-scope")
     bound = check_bound(area)
@@ -1405,6 +1410,9 @@ def invariants_section(area):
     bound = check_bound(area)
     scopes = check_scopes(area)
     steps = check_steps(area)
+    lean_checks = {c.get("id"): c for c in
+                   ((area.get("check_results") or {}).get("checks") or [])
+                   if c.get("backend") == "lean"}
     asms = assumption_index(area)
     legend = ("_Invariant legend: ✓ proven — inductive, holds in ALL reachable states · "
               "✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, "
@@ -1434,9 +1442,21 @@ def invariants_section(area):
         # the pre-state is a variable. Same bound, different module — and a
         # reader comparing two ✓ marks should be able to tell which is which.
         over = " _(transition property, checked over the probe module)_"             if (inv.get("over") or "model") == "probes" else ""
+        # A Lean ✓ is a proof about a Lean model. The reader is told which
+        # theorem, and how many Quint traces that model was replayed against —
+        # the link between the two is the evidence, not the proof alone.
+        lean = ""
+        if inv.get("proof") == "lean":
+            c = lean_checks.get(inv.get("id")) or {}
+            runs = (c.get("replay") or {}).get("runs")
+            lean = (f" _(Lean: `{inv.get('lean_theorem') or '—'}`"
+                    + (f"; its model replays {runs} Quint trace{'s' if runs != 1 else ''}"
+                       if runs else "")
+                    + (f"; {c['note'].splitlines()[0]}" if c.get("note") else "")
+                    + ")_")
         lines.append(f"- **{inv.get('id')}** (`{name}`) — "
                      f"{inv.get('description', '')} Criticality: "
-                     f"{inv.get('criticality', 'high')}. {mark}{tail}{over}")
+                     f"{inv.get('criticality', 'high')}. {mark}{tail}{over}{lean}")
     lines.append("")
     props = area.get("properties", []) or []
     if props:
@@ -2082,7 +2102,7 @@ def dimensions_section(area):
     n_inv_ok = sum(1 for i in invs
                    if i.get("formal_status") in ("verified", "verified-inductive",
                                                  "verified-in-scope", "verified-smt",
-                                                 "accepted-risk"))
+                                                 "verified-lean", "accepted-risk"))
 
     def row(name, ok, detail):
         mark = "\u2713" if ok is True else ("!" if ok is False else "\u2014")

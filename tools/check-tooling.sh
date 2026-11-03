@@ -163,6 +163,21 @@ else
   echo "— alloy      not configured  (optional; only needed for proof: \"structural\" invariants)"
 fi
 
+# -- Lean (OPTIONAL proof backend) ------------------------------------------
+# Never counted as missing, for the same reason as Alloy: opt-in per
+# invariant (proof: "lean"). elan installs the toolchain each Lake project's
+# lean-toolchain pins, so `lake` on PATH (or LAKE_BIN) is all that is needed.
+
+lake_bin="${LAKE_BIN:-$(command -v lake 2>/dev/null || true)}"
+if [ -z "$lake_bin" ] && command -v elan >/dev/null 2>&1; then
+  lake_bin="$(elan which lake 2>/dev/null || true)"
+fi
+if [ -n "$lake_bin" ]; then
+  echo "✓ lake       ${lake_bin}  (optional proof backend)"
+else
+  echo "— lake       not found  (optional; only needed for proof: \"lean\" invariants — install elan)"
+fi
+
 if [ ${#missing[@]} -eq 0 ] && [ ${#warn[@]} -eq 0 ]; then
   exit 0
 fi

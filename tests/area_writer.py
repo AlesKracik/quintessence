@@ -31,7 +31,7 @@ EMIT_ORDER = {
                      "outcome", "fit", "error", "verified-by", "refs",
                      "evidence", "confidence", "inferred-by", "fingerprint"),
     "invariants": ("criticality", "proof", "over", "quint-name", "predicate",
-                   "alloy", "smt", "refs", "source", "evidence", "confidence",
+                   "alloy", "smt", "lean", "refs", "source", "evidence", "confidence",
                    "inferred-by", "fingerprint"),
     "properties": ("quint-name", "refs"),
     "constraints": ("name", "unit", "pairs", "value", "source", "evidence",

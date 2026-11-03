@@ -82,8 +82,9 @@ What `check` does, in order:
      witnessed cheaply, a probe it never reached is the expensive tail.
      The ladder applies to bounded invariants and witness probes only.
      `proof: "inductive"` (unbounded), `proof: "structural"` (Alloy, finite
-     scope), `proof: "smt"` (z3) and temporal properties (TLC, no step
-     bound) stay single-pass — a step ladder is meaningless for all four.
+     scope), `proof: "smt"` (z3), `proof: "lean"` (unbounded) and temporal
+     properties (TLC, no step bound) stay single-pass — a step ladder is
+     meaningless for all five.
      1t. PROPERTIES ARE TEMPORAL, not state predicates: they run as
      `quint verify --temporal=<name> --backend=tlc`. Apalache's temporal
      support is partial (quint's docs: temporal properties can only be
@@ -101,6 +102,17 @@ What `check` does, in order:
      from the run's receipt.json (empty solution[] = no counterexample
      within the scope declared in the .als). Off unless an area
      declares alloy_file; nothing about the Apalache path changes.
+     1l. OPT-IN Lean backend: an invariant marked `proof: "lean"` is
+     proven by the theorem its `@lean` tag names, over a hand-written Lean
+     model in lean.project_dir (tools/lean_backend.py). The statement is
+     written here, not by the author; axioms beyond the kernel's own are
+     refused; the area's ITF traces are replayed through the Lean model,
+     and a trace it disagrees with is drift, not a pass. verified-lean
+     (`✓ proven (Lean)`) or not-checkable — never a bounded fallback.
+     1i. A FAILED INDUCTIVE CHECK is a counterexample to induction, which
+     may start in an unreachable state. It is kept as <ID>.cti.itf.json
+     and the invariant re-checked bounded: a reachable violation is
+     counterexample-found, anything else not-checkable (settle_cti).
   1r. Requirement OBLIGATIONS (unless --no-witness): for every formal
      requirement, `oblig_<ID>` from the probes module — every reachable step
      of its action from a state where @while held ends where @shall holds
@@ -218,6 +230,7 @@ from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 from completeness import (area_completeness, requirement_checks,  # noqa: E402
                           mirrored_actions)
 from proc import run_group, kill_all  # noqa: E402
+import lean_backend  # noqa: E402
 
 # How many checks pass 1 times before it projects what the rest will cost.
 PROJECT_AFTER = 3
@@ -610,6 +623,49 @@ def run_verify(quint, qnt_file, invariant, max_steps, timeout,
     # Non-zero without a violation trace: compile/CLI error.
     tail = "\n".join(out.strip().splitlines()[-5:])
     return "error", tail, duration
+
+
+def settle_cti(quint, target, qname, max_steps, timeout, init, step,
+               cex_path, root, area_name, iid, duration):
+    """Decide what a failed inductive check means. Returns
+    (result, detail, duration_s, cti_rel).
+
+    `--inductive-invariant` starts the step case from ANY state satisfying
+    the invariant, not only from reachable ones, so its counterexample is a
+    counterexample to INDUCTION: it may begin in a state no run ever reaches.
+    That says "not inductive as written", not "false". Stamping it
+    counterexample-found told a reviewer the invariant was violated when it
+    may hold on every real run.
+
+    So the trace is kept as the CTI (`<ID>.cti.itf.json`) and the same
+    invariant is re-checked bounded, from the model's own init:
+        counterexample -> a reachable violation: the ✗ is real
+        verified       -> not-checkable: not inductive, no violation within
+                          max_steps; strengthen the predicate
+        timeout/error  -> not-checkable: reachability of the CTI unknown
+    A bounded pass is never promoted to verified here — the invariant was
+    asked to be PROVEN, and it was not."""
+    cti_rel = f"{area_name}/traces/{iid}.cti.itf.json"
+    cti_path = root / "specs" / cti_rel
+    if cex_path.exists():
+        cex_path.replace(cti_path)
+    else:
+        cti_rel = None
+    result, detail, more = run_verify(quint, target, qname, max_steps, timeout,
+                                      init=init, step=step, out_itf=cex_path)
+    duration += more
+    if result == "counterexample":
+        return ("counterexample",
+                f"not inductive, and the bounded re-check reached a violation "
+                f"within {max_steps} steps", duration, cti_rel)
+    if result == "verified":
+        why = (f"not inductive: the counterexample to induction starts from a "
+               f"state the bounded re-check never reached within {max_steps} "
+               f"steps — strengthen the invariant")
+    else:
+        why = (f"not inductive, and the bounded re-check gave no verdict "
+               f"({result}{': ' + detail if detail else ''})")
+    return "not-checkable", why, duration, cti_rel
 
 
 def run_verify_batch(quint, qnt_file, names, max_steps, timeout,
@@ -1176,6 +1232,15 @@ def cmd_check(args):
             tools["z3"] = find_z3(project)
         return tools["z3"]
 
+    def need_lean():
+        """One AreaRun per check: the build and the trace replay are shared
+        by every Lean invariant of the area."""
+        if "lean" not in tools:
+            tools["lean"] = lean_backend.AreaRun(
+                area, args.area, root, project,
+                root / "specs" / args.area / "gen" / "lean", quint=need_quint)
+        return tools["lean"]
+
     traces_dir = root / "specs" / args.area / "traces"
     traces_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1295,6 +1360,9 @@ def cmd_check(args):
         sim_pool = [i for i in (area.get("invariants") or [])
                     if i.get("quint_name") and selected(i)
                     and i.get("proof") not in ("structural", "smt")]
+        # A `proof: "lean"` invariant stays in the pool: the simulator's answer
+        # is advisory and never a verdict, and a violation it finds on an
+        # invariant Lean proved is the loudest drift signal there is.
         # A transition invariant compares each step with the one before: it
         # reads the _prev* ghosts, which exist only in the probe module. So
         # it is simulated THERE, with initP/stepP — exactly as Apalache
@@ -1551,9 +1619,9 @@ def cmd_check(args):
               + (f"  {note}" if note else ""))
 
     def record_single(entry, item=None, status=None):
-        """Record one single-pass check (SMT, structural, inductive,
-        temporal). No `steps`: a step ladder is meaningless for all four —
-        two are unbounded, one is scope-bounded, one has no step bound."""
+        """Record one single-pass check (SMT, structural, inductive, Lean,
+        temporal). No `steps`: a step ladder is meaningless for all five —
+        three are unbounded, one is scope-bounded, one has no step bound."""
         nonlocal bad
         if entry.get("result") != "verified":
             bad += 1
@@ -1572,12 +1640,33 @@ def cmd_check(args):
             iid, qname = item.get("id"), item.get("quint_name")
             structural = (kind == "invariant" and item.get("proof") == "structural")
             smt = (kind == "invariant" and item.get("proof") == "smt")
+            lean = (kind == "invariant" and item.get("proof") == "lean")
             # A structural or SMT invariant is carried by its own sidecar, not
             # by a Quint val, so it legitimately has no quint_name — the
-            # presence gate applies only to the Apalache path.
-            if not iid or (not qname and not structural and not smt):
+            # presence gate applies only to the Apalache path. A Lean one
+            # needs it, and says so in its own entry rather than vanishing.
+            if not iid or (not qname and not structural and not smt and not lean):
                 continue
             if only and iid not in only:
+                continue
+            # Lean proves; Apalache witnesses. A `proof: "lean"` invariant gets
+            # its verdict from the Lean backend alone — never also from a
+            # bounded run, which would put two answers on one claim.
+            if lean:
+                try:
+                    entry, status = need_lean().check(item)
+                except lean_backend.LeanSetupError as e:
+                    fail_setup(str(e))
+                # The Quint side of what this verdict rests on: the traces it
+                # replayed are traces of this model. An edit that reaches the
+                # invariant's cone stales it like any other check.
+                if index is not None and qname and entry.get("result") == "verified":
+                    entry["model_sha"] = index.check_sha(qname)
+                record_single(entry, item, status)
+                shown = {"verified": "verified (lean)"}.get(entry["result"], entry["result"])
+                detail = entry.get("note") or entry.get("error") or ""
+                print(f"{iid:<12} {shown:<26} ({entry.get('duration_s', 0):.1f}s)"
+                      + (f"  {detail.splitlines()[0]}" if detail else ""))
                 continue
             # Structural proof is opt-in per invariant (proof: "structural")
             # and routes to Alloy instead of Apalache — a different question
@@ -1639,12 +1728,19 @@ def cmd_check(args):
                 out_itf=cex_path, inductive=inductive, temporal=temporal,
                 backend=temporal_backend if temporal else None,
             )
+            cti_rel = None
+            if inductive and result == "counterexample":
+                result, detail, duration, cti_rel = settle_cti(
+                    need_quint(), target, qname, max_steps, timeout,
+                    init, step, cex_path, root, args.area, iid, duration)
             entry = {
                 "id": iid, "kind": kind, "quint_name": qname,
                 "result": result, "duration_s": round(duration, 1),
             }
             if inductive:
                 entry["proof"] = "inductive"
+            if cti_rel:
+                entry["cti_trace"] = cti_rel
             if over == "probes":
                 entry["over"] = "probes"
             if temporal:
@@ -1665,8 +1761,18 @@ def cmd_check(args):
             elif result == "verified":
                 if cex_path.exists():
                     cex_path.unlink()  # stale counterexample of a now-green check
+                stale_cti = traces_dir / f"{iid}.cti.itf.json"
+                if stale_cti.exists():
+                    stale_cti.unlink()
                 record_single(entry, item,
                               "verified-inductive" if inductive else "verified")
+            elif result == "not-checkable":
+                # Not inductive, and no violation found where one is real.
+                # An honest non-answer: it must not inherit a previous green.
+                if cex_path.exists():
+                    cex_path.unlink()
+                entry["note"] = detail
+                record_single(entry, item, "not-checkable")
             else:
                 entry["error"] = detail
                 # timeout/error: keep the prior formal_status untouched.
@@ -1680,7 +1786,8 @@ def cmd_check(args):
                 elif temporal:
                     suffix = f" ({temporal_backend})"
             print(f"{iid:<12} {result + suffix:<26} ({duration:.1f}s)"
-                  + (f"  {detail}" if detail and result == "error" else ""))
+                  + (f"  {detail}" if detail and result in ("error", "not-checkable")
+                     else ""))
 
     # ── 1b. Requirement obligations ──────────────────────────────────────
     # The universal half of every requirement: each reachable step it governs

@@ -5661,3 +5661,64 @@ def test_ui_record_grammar_problems_are_reported(tmp_path):
     assert "duplicate screen Home" in text
 
 
+
+
+# ── A failed inductive check is a counterexample to INDUCTION ────────────────
+
+def _inductive_run(tmp_path, monkeypatch, bounded):
+    """One `proof: inductive` invariant whose inductive check fails; the
+    bounded re-check answers `bounded`. Returns (exit code, area, calls)."""
+    area_path = _quint_project(tmp_path, invariants=[
+        {"id": "INV-001", "description": "a", "quint_name": "invA",
+         "proof": "inductive", "formal_status": "verified-inductive"},
+    ])
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: True)
+    calls = []
+
+    def fake(quint, qnt, name, steps, timeout, out_itf=None, inductive=False, **k):
+        calls.append("inductive" if inductive else "bounded")
+        answer = "counterexample" if inductive else bounded
+        if answer == "counterexample" and out_itf:
+            Path(out_itf).write_text('{"states": []}', encoding="utf-8")
+        return answer, "", 0.1
+
+    monkeypatch.setattr(record, "run_verify", fake)
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(_Args(tmp_path, "auth"))
+    return exc.value.code, get_area(area_path), calls
+
+
+def test_a_cti_the_bounded_check_never_reaches_is_not_a_violation(
+        tmp_path, monkeypatch):
+    """`--inductive-invariant` starts the step case from any state satisfying
+    the invariant. A CTI from an unreachable state used to stamp
+    counterexample-found: a ✗ on an invariant that may hold on every run."""
+    code, area, calls = _inductive_run(tmp_path, monkeypatch, "verified")
+    assert code == 1, "not proven is still not a pass"
+    assert calls == ["inductive", "bounded"]
+    inv = area["invariants"][0]
+    assert inv["formal_status"] == "not-checkable", "and not the prior green"
+    entry = area["check_results"]["checks"][0]
+    assert entry["result"] == "not-checkable"
+    assert entry["cti_trace"] == "auth/traces/INV-001.cti.itf.json"
+    assert "trace" not in entry, "a CTI is not a reachable violation"
+    assert "strengthen" in entry["note"]
+    traces = tmp_path / "specs" / "auth" / "traces"
+    assert (traces / "INV-001.cti.itf.json").exists()
+    assert not (traces / "INV-001.cex.itf.json").exists()
+
+
+def test_a_cti_the_bounded_check_confirms_is_a_violation(tmp_path, monkeypatch):
+    code, area, _calls = _inductive_run(tmp_path, monkeypatch, "counterexample")
+    assert code == 1
+    assert area["invariants"][0]["formal_status"] == "counterexample-found"
+    entry = area["check_results"]["checks"][0]
+    assert entry["trace"] == "auth/traces/INV-001.cex.itf.json"
+    assert entry["cti_trace"] == "auth/traces/INV-001.cti.itf.json"
+
+
+def test_a_cti_with_no_bounded_verdict_stays_not_checkable(tmp_path, monkeypatch):
+    _code, area, _calls = _inductive_run(tmp_path, monkeypatch, "timeout")
+    assert area["invariants"][0]["formal_status"] == "not-checkable"
+    assert "timeout" in area["check_results"]["checks"][0]["note"]
