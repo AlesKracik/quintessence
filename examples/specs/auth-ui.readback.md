@@ -259,7 +259,7 @@ graph TB
 
 > **Witness:** 2 steps: click_sign_in → current = Login
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `click_sign_in`, formal claim + trace</summary>
 
@@ -312,7 +312,7 @@ sequenceDiagram
 
 > **Witness:** 4 steps: click_sign_in → submit_invalid(bob) → submit_success(alice, s1) → current = Dashboard; failedAttempts = {"alice": 0, "bob": 1}; form = Idle; idleFor = {"s1": 0}; mySession = "s1"; sessionOwner = {"s1": "alice"}; sessions = {"s1": Active}; userActiveSession = {"alice": {"s1"}}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `submit_success`, formal claim + trace</summary>
 
@@ -382,7 +382,7 @@ sequenceDiagram
 
 > **Witness:** 8 steps: click_sign_in → submit_invalid(alice) ×5 → submit_locked(alice) → current = LockedNotice({tag: "UNIT"}); form = ErrorLocked({tag: "UNIT"})
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `submit_locked`, formal claim + trace</summary>
 
@@ -451,7 +451,7 @@ sequenceDiagram
 
 > **Witness:** 8 steps: click_sign_in → submit_success(bob, s1) → time_passes(s1, bob) ×4 → session_expired(s1, bob) → current = Login({tag: "UNIT"}); mySession = ""; auth::sessions = {"s1": Expired({tag: "UNIT"})}; auth::userActiveSession = {"bob": {}}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `session_expired`, formal claim + trace</summary>
 
@@ -517,7 +517,7 @@ sequenceDiagram
 
 > **Witness:** 3 steps: click_sign_in → submit_invalid(bob) → accountStatus = {"bob": Unlocked}; failedAttempts = {"bob": 1}; form = ErrorBadCreds
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `submit_invalid`, formal claim + trace</summary>
 
@@ -566,7 +566,7 @@ sequenceDiagram
 
 > **Witness:** 4 steps: click_sign_in → submit_success(bob, s1) → click_logout(s1, bob) → current = Home; mySession = ""; sessions = {"s1": LoggedOut}; userActiveSession = {"bob": {}}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `click_logout`, formal claim + trace</summary>
 
@@ -624,7 +624,7 @@ sequenceDiagram
 
 > **Witness:** 9 steps: click_sign_in → submit_invalid(bob) ×5 → submit_locked(bob) → go_home(bob) → current = Home({tag: "UNIT"}); form = Idle({tag: "UNIT"})
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `go_home`, formal claim + trace</summary>
 

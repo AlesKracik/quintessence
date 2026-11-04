@@ -1046,6 +1046,30 @@
                 "minimum": 1,
                 "description": "Step bound the check ran to. A verified obligation is valid only to this depth."
               },
+              "shallow_reason": {
+                "type": "string",
+                "enum": [
+                  "budget",
+                  "deep-timeout",
+                  "deep-error"
+                ],
+                "description": "Why a verified obligation stopped short of apalache.max_steps. 'budget': the run budget was spent before its deep pass ran — the next check re-runs it at max_steps even when fresh. 'deep-timeout' / 'deep-error': the deep pass ran and did not answer — not retried until the model, or the limits in deep_attempt, change (or `check --deepen`). Absent when it reached max_steps; a missing reason with steps < max_steps is read as 'budget'."
+              },
+              "deep_attempt": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The limits a deep pass that did not answer ran under. Raising either one past these makes the next check retry it.",
+                "properties": {
+                  "steps": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
               "model_sha": {
                 "type": "string",
                 "description": "The requirement's own fingerprint the obligation was verified against (see witness.model_sha); stale when it no longer matches."

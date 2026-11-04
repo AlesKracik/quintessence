@@ -202,7 +202,7 @@ WITNESS_MACHINE = ("status", "trace", "checked_at", "steps", "found_by",
 # reachable: the requirement is not vacuous) and the OBLIGATION (every
 # reachable step it governs satisfies it). See itf_tools.obligation_name.
 OBLIGATION_MACHINE = ("formal_status", "trace", "checked_at", "steps",
-                      "model_sha")
+                      "model_sha", "shallow_reason", "deep_attempt")
 MACHINE_PATHS = {
     "requirements": ("witness.status", "witness.trace", "witness.checked_at",
                      "witness.steps", "witness.found_by", "witness.model_sha",

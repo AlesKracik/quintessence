@@ -4875,6 +4875,204 @@ def test_a_deep_pass_that_does_not_answer_keeps_the_shallow_verdict(
     assert exc.value.code == 0
 
 
+# ── Deepening what a budget left at the shallow bound ───────────────────────
+# Skip-if-fresh used to test freshness and status, never depth: an obligation
+# whose deep pass the budget stopped stayed `verified, steps: 3` forever,
+# because every later run skipped it as fresh. Downstream, 18 obligations sat
+# at <=3 steps through a 2,400s run with budget to spare. Why a verdict is
+# shallow decides whether running it again can help: a budget stop can, a
+# deep pass that timed out cannot until the model or the limits change.
+
+def _oblig_project(tmp_path, apalache=None):
+    """One obligation (REQ-008, a prohibition: no witness probe to run) and
+    the two completeness checks its action owes, batching off."""
+    project = {"project": "p", "quint": {"batch_invariants": False}}
+    if apalache:
+        project["apalache"] = apalache
+    (tmp_path / ".spec").mkdir()
+    (tmp_path / ".spec" / "project.json").write_text(json.dumps(project),
+                                                     encoding="utf-8")
+    (tmp_path / "specs" / "a" / "traces").mkdir(parents=True)
+    (tmp_path / "specs" / "a.qnt").write_text(
+        "module a {\n  var x: int\n  action f = x' = 1\n}\n", encoding="utf-8")
+    (tmp_path / "specs" / "a.probes.qnt").write_text(
+        "module a_probes {\n  val oblig_REQ_008: bool = true\n"
+        "  val cover_f: bool = true\n  val explain_f_x: bool = true\n}\n",
+        encoding="utf-8")
+    area_path = tmp_path / "specs" / "a.intent.json"
+    put_area(area_path, {
+        "kind": "area", "area": "a", "version": "1.0.0", "status": "formalized",
+        "formal_model": {"quint_file": "a.qnt", "probes_file": "a.probes.qnt"},
+        "requirements": [{"id": "REQ-008", "status": "specified",
+                          "modality": "forbidden", "quint_ref": "f",
+                          "ears": {"state": "x > 5", "unwanted": True}}],
+    })
+    return area_path
+
+
+def _oblig_run(tmp_path, monkeypatch, answer=None, budget=10_000, **opts):
+    """One `check` with a clock every Apalache call advances by 100s. Returns
+    the depths oblig_REQ_008 was run at, and the obligation as written."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(record.time, "monotonic", lambda: clock["t"])
+
+    def timed(name, steps):
+        clock["t"] += 100.0
+        return (answer or (lambda n, s: ("verified", "", 0.1)))(name, steps)
+
+    calls = _steps_recorder(monkeypatch, timed)
+    args = _Args(tmp_path, "a")
+    args.no_witness = False
+    args.budget = budget
+    for k, v in opts.items():
+        setattr(args, k, v)
+    with pytest.raises(SystemExit) as exc:
+        record.cmd_check(args)
+    assert exc.value.code == 0
+    area = get_area(tmp_path / "specs" / "a.intent.json")
+    return ([s for n, s in calls if n == "oblig_REQ_008"],
+            area["requirements"][0]["obligation"], area["check_results"])
+
+
+def _deep_times_out(name, steps):
+    if name == "oblig_REQ_008" and steps == 10:
+        return ("timeout", "timed out after 300s", 300.0)
+    return ("verified", "", 0.1)
+
+
+def test_a_budget_stopped_obligation_is_deepened_by_the_next_run(
+        tmp_path, monkeypatch):
+    _oblig_project(tmp_path)
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch, budget=50)
+    assert depths == [3]
+    assert (ob["formal_status"], ob["steps"], ob["shallow_reason"]) == (
+        "verified", 3, "budget")
+    # Nothing changed, and there is budget now: straight to the ceiling, with
+    # no second shallow pass against the same fingerprint.
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch)
+    assert depths == [10]
+    assert ob["steps"] == 10 and "shallow_reason" not in ob
+
+
+def test_a_deep_pass_that_timed_out_is_not_retried_while_nothing_changed(
+        tmp_path, monkeypatch):
+    _oblig_project(tmp_path)
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch, _deep_times_out)
+    assert depths == [3, 10]
+    assert (ob["steps"], ob["shallow_reason"]) == (3, "deep-timeout")
+    assert ob["deep_attempt"] == {"steps": 10, "timeout_seconds": 300}
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch, _deep_times_out)
+    assert depths == [], "a fresh deep timeout costs no Apalache call"
+    assert ob["shallow_reason"] == "deep-timeout"
+
+
+@pytest.mark.parametrize("raised", [{"timeout": 600}, {"steps": 12}])
+def test_a_deep_timeout_is_retried_once_the_limits_are_raised(
+        tmp_path, monkeypatch, raised):
+    _oblig_project(tmp_path)
+    _oblig_run(tmp_path, monkeypatch, _deep_times_out)
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch, **raised)
+    ceiling = raised.get("steps", 10)
+    assert depths == [ceiling]
+    assert ob["steps"] == ceiling and "shallow_reason" not in ob
+
+
+def test_deepen_retries_a_deep_timeout_without_raising_anything(
+        tmp_path, monkeypatch):
+    """The manual override: a deep timeout can be the Apalache server's
+    congestion rather than the check's own cost."""
+    _oblig_project(tmp_path)
+    _oblig_run(tmp_path, monkeypatch, _deep_times_out)
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch, deepen=True)
+    assert depths == [10] and ob["steps"] == 10
+
+
+def test_a_carried_obligation_the_budget_stops_again_keeps_its_shallow_verdict(
+        tmp_path, monkeypatch):
+    _oblig_project(tmp_path)
+    _oblig_run(tmp_path, monkeypatch, budget=50)
+    depths, ob, cr = _oblig_run(tmp_path, monkeypatch, budget=50)
+    assert depths == [], "neither re-run shallow nor reached deep"
+    assert (ob["formal_status"], ob["steps"], ob["shallow_reason"]) == (
+        "verified", 3, "budget")
+    entry = next(c for c in cr["checks"] if c["id"] == "REQ-008")
+    assert entry["steps"] == 3 and "budget" in entry["note"]
+    # Counted with the budget-stopped checks: cover-f, explain-f-x and the
+    # carried obligation.
+    assert cr["cost"]["deep_skipped"] == 3
+
+
+def test_a_legacy_shallow_obligation_with_no_reason_is_deepened(
+        tmp_path, monkeypatch):
+    _oblig_project(tmp_path)
+    _oblig_run(tmp_path, monkeypatch, budget=50)
+    records = tmp_path / "specs" / "a.records.json"
+
+    def strip(v):
+        if isinstance(v, dict):
+            v.pop("shallow_reason", None)
+            for x in v.values():
+                strip(x)
+        elif isinstance(v, list):
+            for x in v:
+                strip(x)
+    data = json.loads(records.read_text(encoding="utf-8"))
+    strip(data)
+    records.write_text(json.dumps(data), encoding="utf-8")
+    assert "shallow_reason" not in get_area(
+        tmp_path / "specs" / "a.intent.json")["requirements"][0]["obligation"]
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch)
+    assert depths == [10] and ob["steps"] == 10
+
+
+def test_a_one_pass_configuration_still_skips_a_fresh_obligation(
+        tmp_path, monkeypatch):
+    _oblig_project(tmp_path, apalache={"max_steps": 3, "shallow_steps": 3})
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch)
+    assert depths == [3] and ob["steps"] == 3 and "shallow_reason" not in ob
+    depths, _, _ = _oblig_run(tmp_path, monkeypatch)
+    assert depths == []
+
+
+def test_a_fresh_obligation_checked_to_the_ceiling_is_still_skipped(
+        tmp_path, monkeypatch):
+    _oblig_project(tmp_path)
+    depths, ob, _ = _oblig_run(tmp_path, monkeypatch)
+    assert depths == [3, 10] and ob["steps"] == 10
+    depths, _, _ = _oblig_run(tmp_path, monkeypatch)
+    assert depths == []
+
+
+def test_the_shallow_reason_validates_and_survives_a_save():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((TOOLS.parent / "schemas" / "area.schema.json")
+                        .read_text(encoding="utf-8"))
+    area = {"kind": "area", "area": "x", "version": "0.1.0",
+            "requirements": [{"id": "REQ-001", "description": "d",
+                              "obligation": {"formal_status": "verified",
+                                             "steps": 3,
+                                             "shallow_reason": "deep-timeout",
+                                             "deep_attempt": {"steps": 10,
+                                                              "timeout_seconds": 300}}}]}
+    assert not list(jsonschema.Draft7Validator(schema).iter_errors(area))
+    area["requirements"][0]["obligation"]["shallow_reason"] = "tired"
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(area))
+    paths = spec_source.MACHINE_PATHS["requirements"]
+    assert "obligation.shallow_reason" in paths and "obligation.deep_attempt" in paths
+
+
+def test_the_readback_says_which_kind_of_shallow_an_obligation_is():
+    area = {"check_results": {"max_steps": 10}}
+    assert "with budget to deepen" in readback.shallow_phrase(
+        {"steps": 3, "shallow_reason": "budget"}, area)
+    assert "with budget to deepen" in readback.shallow_phrase({"steps": 3}, area)
+    timed = readback.shallow_phrase(
+        {"steps": 3, "shallow_reason": "deep-timeout",
+         "deep_attempt": {"steps": 10}}, area)
+    assert "timed out at 10 steps" in timed and "--timeout" in timed
+    assert readback.shallow_phrase({"steps": 10}, area) == ""
+
+
 def test_the_first_pass_runs_what_the_simulator_already_falsified_first(
         tmp_path, monkeypatch):
     """The pre-gate's finding is the only information the run starts with: a

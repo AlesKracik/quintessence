@@ -299,7 +299,7 @@ sequenceDiagram
 
 > **Witness:** 3 steps: cancel_declined(bob) → cancel_subscription(bob, Email) → accessUntilPeriodEnd = {"alice": false, "bob": true}; billingEnabled = {"alice": true, "bob": false}; lastBillingResult = {"alice": Success, "bob": Success}; notice = {"alice": NoNotice, "bob": Email}; status = {"alice": Active, "bob": Cancelled}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
 
@@ -357,7 +357,7 @@ sequenceDiagram
 
 > **Witness:** 4 steps: cancel_subscription(alice, InApp) → cancel_subscription(bob, InApp) → cancel_again(bob)
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `cancel_again`, formal claim + trace</summary>
 
@@ -419,7 +419,7 @@ sequenceDiagram
 
 > **Witness:** 4 steps: cancel_subscription(bob, Email) → cancel_subscription(alice, Email) → expire_period(bob) → accessUntilPeriodEnd = {"alice": true, "bob": false}; status = {"alice": Cancelled, "bob": Expired}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `expire_period`, formal claim + trace</summary>
 
@@ -522,7 +522,7 @@ sequenceDiagram
 
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
 

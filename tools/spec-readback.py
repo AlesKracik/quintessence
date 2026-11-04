@@ -314,6 +314,24 @@ def req_sentence(req, constraints):
     return resolve_constraints(text or ears_sentence(req), constraints)
 
 
+def shallow_phrase(ob, area):
+    """Why a verified obligation stopped short of max_steps, and what to do
+    about it — '' when it reached the ceiling. The reason is the recorder's
+    (obligation.shallow_reason); a ledger without one reads as budget."""
+    ceiling = (area.get("check_results") or {}).get("max_steps")
+    steps = ob.get("steps")
+    if not (ceiling and steps and steps < ceiling):
+        return ""
+    reason = ob.get("shallow_reason") or "budget"
+    if reason == "budget":
+        return (f" — only the shallow bound: the budget stopped the deep pass; "
+                f"re-run `/spec-check` with budget to deepen")
+    tried = (ob.get("deep_attempt") or {}).get("steps") or ceiling
+    what = "timed out" if reason == "deep-timeout" else "errored"
+    return (f" — only the shallow bound: the deep pass {what} at {tried} steps; "
+            f"raise `--timeout`, or consider `proof: inductive`")
+
+
 def witness_one_liner(root, trace_rel):
     """'6 steps: login_failed(bob) ×5 → accountStatus = {bob: Locked}' —
     compressed action runs plus the final state delta."""
@@ -1179,7 +1197,8 @@ def render_requirement(root, area, req, constraints, rendered_full,
         lines.append("")
     elif owes_obligation(req) and ob.get("formal_status") == "verified":
         steps = f" (\u2264{ob['steps']} steps)" if ob.get("steps") else ""
-        lines.append(f"> **\u2200 Every step:** checked on every reachable step{steps}.")
+        lines.append(f"> **\u2200 Every step:** checked on every reachable step{steps}"
+                     f"{shallow_phrase(ob, area)}.")
         lines.append("")
     details = []
     if sentence != ears_rendered:

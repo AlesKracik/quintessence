@@ -20,7 +20,7 @@ runs uncovered.
 
 Subcommands:
   check  <area> [--root .] [--steps N] [--shallow-steps N] [--timeout S]
-                [--budget S] [--only INV-001,REQ-003] [--no-witness] [--json]
+                [--budget S] [--deepen] [--only INV-001,REQ-003] [--no-witness] [--json]
                 [--no-simulate] [--only-simulate] [--samples N] [--seed S]
   verify <area> [--root .] [--code-root PATH]
                 [--skip-conformance] [--skip-tests] [--json]
@@ -120,6 +120,13 @@ What `check` does, in order:
      transition invariant; the verdict goes to the requirement's
      obligation.formal_status (with steps and model_sha), a violation's
      trace to specs/<area>/traces/<ID>.violation.itf.json.
+     Skip-if-fresh checks depth too. A fresh obligation clean only to the
+     shallow bound records why (obligation.shallow_reason): "budget" (the
+     deep pass never ran — the next run takes it straight to the deep pass,
+     no shallow re-run) or "deep-timeout"/"deep-error" (the deep pass ran
+     and did not answer — not retried until its fingerprint changes or
+     --steps/--timeout rise past obligation.deep_attempt; --deepen forces
+     it). No reason recorded reads as "budget".
   2. Witness probes (unless --no-witness): for every formal requirement
      whose witness is not exempt (forbidden, computed, or holding in every
      state — itf_tools.witness_exempt), runs the probe `witness_<ID>` from
@@ -1130,6 +1137,33 @@ def replay_stale_witnesses(root, area_name, area, probes_file, qnt_file, sha_for
     return n
 
 
+def needs_deepening(ob, max_steps, timeout, force=False):
+    """Whether a FRESH, verified obligation still goes up the ladder.
+
+    Fresh means nothing it rests on changed; it does not mean the verdict
+    reached max_steps. Why it stopped short (obligation.shallow_reason)
+    decides whether running it again can buy depth:
+      budget        the deep pass never ran — yes, while there is budget.
+                    A ledger written before the field existed has no
+                    reason; it is read as budget, so a stuck area heals on
+                    its next run without a flag.
+      deep-timeout  the deep pass ran and did not answer — no: the same
+      deep-error    run would cost the same timeout and decide nothing.
+                    Yes once the limits it ran under (obligation.
+                    deep_attempt) were raised, or when `force` (--deepen).
+    One-pass configurations (shallow_steps == max_steps) record steps ==
+    max_steps, so they never reach here."""
+    steps = ob.get("steps") or 0
+    if not max_steps or steps >= max_steps:
+        return False
+    reason = ob.get("shallow_reason") or "budget"
+    if reason == "budget" or force:
+        return True
+    tried = ob.get("deep_attempt") or {}
+    return (max_steps > (tried.get("steps") or 0)
+            or (timeout or 0) > (tried.get("timeout_seconds") or 0))
+
+
 def cmd_check(args):
     root = Path(args.root)
     area_path = records_path(root, args.area)
@@ -1545,11 +1579,14 @@ def cmd_check(args):
         return result, detail, duration
 
     def record_bounded(job, result, detail, duration, steps,
-                       batched=False, note=None):
+                       batched=False, note=None, reason=None):
         """Write one bounded invariant's verdict, stamped with the depth it
         actually reached. `steps` is the honest half of the record: an
         invariant clean only to 3 and one clean to 10 are different claims,
-        and check_results.max_steps can no longer tell them apart."""
+        and check_results.max_steps can no longer tell them apart.
+        `reason` is why a clean verdict stopped short of max_steps (budget,
+        deep-timeout, deep-error); an obligation keeps it, structured, so the
+        next run's skip-if-fresh can read it (needs_deepening)."""
         nonlocal bad
         iid, item, over = job["id"], job["item"], job["over"]
         cex_path, cex_rel = job["cex_path"], job["cex_rel"]
@@ -1566,6 +1603,15 @@ def cmd_check(args):
             entry["kind"] = "obligation"
             item["checked_at"] = now_iso()
             item["steps"] = steps
+            if result in ("verified", "counterexample"):
+                # A timeout/error keeps the prior verdict, and its reason.
+                item.pop("shallow_reason", None)
+                item.pop("deep_attempt", None)
+            if result == "verified" and steps < max_steps:
+                item["shallow_reason"] = reason or "budget"
+                if reason in ("deep-timeout", "deep-error"):
+                    item["deep_attempt"] = {"steps": max_steps,
+                                            "timeout_seconds": timeout}
         # What this verdict rested on: the transition relation and its own
         # predicate (an obligation's is its requirement's fingerprint).
         if index is not None and result in ("verified", "counterexample"):
@@ -1794,6 +1840,7 @@ def cmd_check(args):
     # satisfies it. An obligation is an invariant of the probe module, so it
     # rides the same ladder as a transition invariant; its verdict is written
     # on the requirement (obligation.*), not on an invariant.
+    carried = []  # fresh obligations queued straight into the deep pass
     if not args.no_witness:
         for req in area.get("requirements") or []:
             rid = req.get("id")
@@ -1801,8 +1848,11 @@ def cmd_check(args):
                 continue
             ob = req.setdefault("obligation", {})
             oname = obligation_name(rid)
-            if (ob.get("formal_status") == "verified" and current_sha
-                    and ob.get("model_sha") == sha_for(rid)):
+            fresh = (ob.get("formal_status") == "verified" and current_sha
+                     and ob.get("model_sha") == sha_for(rid))
+            deepen = fresh and needs_deepening(
+                ob, max_steps, timeout, getattr(args, "deepen", False))
+            if fresh and not deepen:
                 print(f"{rid:<12} {'obligation fresh':<26} (nothing it rests on changed — skipped)")
                 continue
             if not probes_file or oname not in probe_vals:
@@ -1811,12 +1861,27 @@ def cmd_check(args):
                 bad += 1
                 continue
             cex_rel = f"{args.area}/traces/{rid}.violation.itf.json"
-            ladder.append({
+            job = {
                 "item": ob, "id": rid, "quint_name": oname, "over": "probes",
                 "target": probes_file, "init": "initP", "step": "stepP",
                 "cex_rel": cex_rel, "cex_path": root / "specs" / cex_rel,
                 "seq": len(ladder), "obligation": True,
-            })
+            }
+            if deepen:
+                # Already clean at the shallow bound against this very
+                # fingerprint: skip pass 1 and go straight to the deep pass,
+                # carrying the recorded shallow verdict — so a budget that
+                # runs out again re-writes the same verdict and loses nothing.
+                prior = prior_checks.get(rid) or {}
+                job["shallow"] = ("verified", "", prior.get("duration_s") or 0.0,
+                                  bool(prior.get("batched")))
+                job["shallow_steps"] = ob.get("steps")
+                carried.append(job)
+                print(f"{rid:<12} {'obligation deepening':<26} (fresh, but only "
+                      f"checked to ≤{ob.get('steps')} steps — "
+                      f"{ob.get('shallow_reason') or 'budget'})")
+                continue
+            ladder.append(job)
 
     # ── 1c. Completeness: coverage, explanation, verdicts ────────────────
     # Every step of every action is under some requirement or verdict; every
@@ -2116,7 +2181,10 @@ def cmd_check(args):
     # Pass 1 (shallow). Never budget-gated: it is the cheap half AND the half
     # that carries the findings, so every selected check gets at least a
     # shallow verdict even when the budget is already spent.
-    deep_queue = []
+    # Carried-over obligations lead the deep pass: they have already waited
+    # a run for depth, and behind this run's new checks a budget that runs
+    # out again would starve them again.
+    deep_queue = list(carried)
     pass1["started"] = time.monotonic()
     witness_plan = planned_probes() if not args.no_witness else []
     clean_ids = batch_pass(ladder, shallow_steps)[0] if ladder else {}
@@ -2150,10 +2218,15 @@ def cmd_check(args):
     # says so — a shallow pass is never silently upgraded to a deep one.
     # Run AFTER every shallow witness probe (below): pass 1 is the whole
     # shallow sweep, and the budget pays for depth only once it is done.
-    def budget_note():
+    def held_at(job):
+        """The depth a job's shallow verdict rests on: this run's pass 1, or
+        the earlier run's for an obligation carried straight to depth."""
+        return job.get("shallow_steps") or shallow_steps
+
+    def budget_note(steps=None):
         return (f"deep pass skipped: the run budget of {budget_seconds}s was "
-                f"spent, so this verdict is the shallow pass's ≤{shallow_steps} "
-                f"steps, not the configured {max_steps}")
+                f"spent, so this verdict is the shallow pass's "
+                f"≤{steps or shallow_steps} steps, not the configured {max_steps}")
 
     def deep_or_none(job):
         """The deep run of one ladder check, or None when the budget was
@@ -2172,8 +2245,8 @@ def cmd_check(args):
             cost["deep_skipped"] = cost.get("deep_skipped", 0) + len(deep_queue)
             for job in deep_queue:
                 r, d, dur, wb = job["shallow"]
-                record_bounded(job, r, d, dur, shallow_steps, batched=wb,
-                               note=budget_note())
+                record_bounded(job, r, d, dur, held_at(job), batched=wb,
+                               note=budget_note(held_at(job)), reason="budget")
             return
         # No batch at depth when checks run in parallel: one run of the whole
         # module to the full depth is the slowest query this runner can make,
@@ -2194,8 +2267,8 @@ def cmd_check(args):
             res = consume(("ladder", job["id"], max_steps), deep_or_none, job)
             if res is None:
                 stopped += 1
-                record_bounded(job, sr, sd, sdur, shallow_steps,
-                               batched=swb, note=budget_note())
+                record_bounded(job, sr, sd, sdur, held_at(job), batched=swb,
+                               note=budget_note(held_at(job)), reason="budget")
                 continue
             r, d, dur = res
             if r in ("verified", "counterexample"):
@@ -2205,8 +2278,10 @@ def cmd_check(args):
                 # THAT would discard a verdict already held — clean to
                 # shallow_steps. Keep the shallow one and say what the
                 # deep pass did instead.
-                record_bounded(job, sr, sd, sdur, shallow_steps,
+                record_bounded(job, sr, sd, sdur, held_at(job),
                                batched=swb,
+                               reason=("deep-timeout" if r == "timeout"
+                                       else "deep-error"),
                                note=(f"deep pass at {max_steps} steps "
                                      f"returned {r}"
                                      + (f": {d}" if d else "")))
@@ -3076,6 +3151,12 @@ def main():
                     help="Checks to run at once (default apalache.parallel, "
                          "else half the CPUs). 1 runs them one at a time.")
     pc.add_argument("--only", help="Comma-separated IDs (INV/PROP/REQ) to run.")
+    pc.add_argument("--deepen", action="store_true",
+                    help="Also re-run fresh requirement obligations whose deep "
+                         "pass timed out or errored last time, without raising "
+                         "--steps/--timeout (e.g. after Apalache server "
+                         "congestion). Ones the budget stopped are re-run "
+                         "without it.")
     pc.add_argument("--no-witness", action="store_true",
                     help="Skip the requirement checks (obligations and witness probes).")
     pc.add_argument("--no-simulate", action="store_true",
