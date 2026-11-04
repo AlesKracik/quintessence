@@ -183,7 +183,7 @@ run q_6b84d96d = init.then(tick.fail())
 
 > **Witness:** 2 steps: login(bob, s1) → failedAttempts = {"bob": 0}; idleFor = {"s1": 0}; sessionOwner = {"s1": "bob"}; sessions = {"s1": Active}; userActiveSession = {"bob": {"s1"}}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `login`, formal claim + trace</summary>
 
@@ -249,7 +249,7 @@ sequenceDiagram
 
 > **Witness:** 3 steps: login(bob, s1) → login_failed(alice) → accountStatus = {"alice": Unlocked}; failedAttempts = {"alice": 1, "bob": 0}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `login_failed`, formal claim + trace</summary>
 
@@ -325,7 +325,7 @@ sequenceDiagram
 
 > **Witness:** 3 steps: login(bob, s1) → logout(s1) → sessions = {"s1": LoggedOut}; userActiveSession = {"bob": {}}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `logout`, formal claim + trace</summary>
 
@@ -391,7 +391,7 @@ sequenceDiagram
 
 > **Witness:** 7 steps: login(alice, s1) → tick(s1, alice) ×4 → expire_session(s1) → sessions = {"s1": Expired({tag: "UNIT"})}; userActiveSession = {"alice": {}}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `expire_session`, formal claim + trace</summary>
 
@@ -465,7 +465,7 @@ sequenceDiagram
 
 > **Left open** · [3b71c867](#3b71c867) login(charlie, s3) — the model decides, no example does
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `login`, formal claim + trace</summary>
 
@@ -507,7 +507,7 @@ sequenceDiagram
 
 > **Witness:** 3 steps: login(bob, s1) → login_failed(alice) → accountStatus = {"alice": Unlocked}; failedAttempts = {"alice": 1, "bob": 0}
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **∀ Every step:** checked on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen.
 
 <details><summary>EARS sentence, Quint action `login_failed`, formal claim + trace</summary>
 
