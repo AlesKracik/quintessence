@@ -5978,3 +5978,25 @@ def test_a_title_longer_than_a_label_is_rejected_by_the_schema():
     assert not list(v.iter_errors(area("x" * 36)))
     assert any("too long" in e.message for e in v.iter_errors(area("x" * 37)))
 
+
+# ── A fresh obligation the budget left shallow is deepened next run ──────────
+
+def test_a_budget_stopped_obligation_is_re_run_even_when_fresh():
+    assert record.wants_deepening({"steps": 3, "shallow": "budget"}, 10)
+    # Recorded before the field existed: treated as a budget stop, once.
+    assert record.wants_deepening({"steps": 3}, 10)
+
+
+def test_a_deep_timeout_is_retried_only_when_asked():
+    ob = {"steps": 3, "shallow": "deep-pass"}
+    assert not record.wants_deepening(ob, 10)
+    assert record.wants_deepening(ob, 10, deepen=True)
+
+
+def test_an_obligation_at_the_ceiling_is_never_re_run():
+    assert not record.wants_deepening({"steps": 10}, 10)
+    assert not record.wants_deepening({"steps": 10, "shallow": "budget"}, 10, deepen=True)
+
+
+def test_the_shallow_reason_survives_a_save():
+    assert "obligation.shallow" in spec_source.MACHINE_PATHS["requirements"]

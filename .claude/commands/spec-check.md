@@ -14,6 +14,7 @@ Three obligation classes (rationale: METHODOLOGY.md → "Witness Obligations"):
 /spec-check [target] --steps 20                # override max_steps (the deep pass's ceiling)
 /spec-check [target] --shallow-steps 5         # override shallow_steps (the first pass's bound)
 /spec-check [target] --budget 1800             # override budget_seconds (cap on the WHOLE run)
+/spec-check [target] --deepen                  # also retry obligations whose deep pass timed out
 /spec-check [target] --no-cascade              # skip contract cascade
 /spec-check [target] --no-witness              # skip witness probes
 /spec-check [target] --reality                 # ALSO run the adversarial red-team pass
@@ -97,6 +98,7 @@ The runner does, deterministically: an advisory `quint run` pre-gate (seconds, w
 
 - **Pass 1 (shallow, `shallow_steps`)** runs every bounded invariant and every witness probe at the shallow bound. A counterexample here is **final**: its trace is recorded and it is never re-run, because depth cannot unfind it. A timeout or error is final for the same reason — running the same check deeper will not make it answer.
 - **Pass 2 (deep, `max_steps`)** re-runs only what came back clean, for as long as `budget_seconds` lasts. Pass 1 itself is never budget-gated: it is the cheap half *and* the half that carries the findings, so every selected check always gets at least a shallow verdict.
+- **A fresh obligation the budget left shallow is deepened next run.** A requirement's obligation records why it stopped short of `max_steps` (`obligation.shallow`): `budget` — its deep pass never ran — is re-run even when nothing it rests on changed, so a larger `--budget` actually buys depth; `deep-pass` — the deep run itself timed out or errored — is not retried every run (it would cost a timeout each time) unless you pass `--deepen`.
 - **Ordering:** pass 1 runs the invariants the pre-gate already falsified first (`check_results.simulation.invariants.falsified`) — guaranteed counterexamples, cheaply. Witness probes are ordered by the same signal inverted: a probe the simulator *hit* is about to be witnessed in milliseconds, a probe it never reached is the expensive tail. A run with `--no-simulate` has no such signal and keeps declaration order.
 - **The ladder does not apply** to `proof: "inductive"` (unbounded), `proof: "structural"` (Alloy, finite scope), `proof: "smt"` (z3), or temporal properties (TLC, no step bound). A step ladder is meaningless for all four, and each keeps its existing single-pass path.
 - **Pass 1 says what it will cost.** After the first few checks the runner prints a projection (`pass 1: 9/48 checks, ~3.5m/check × 5 parallel → ~6m projected; budget 15m …`) and records it in `check_results.cost`; when the budget stops the deep pass, `check_results.cost.deep_skipped` says how many checks rest on the shallow bound and the readback names the cause. Report the projection to the user when it exceeds the budget, and point at `tools/spec-lint.py <target> --cost` for where the cost comes from.
