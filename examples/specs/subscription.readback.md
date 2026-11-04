@@ -21,7 +21,11 @@ flowchart LR
     end
     X_BillingProvider(["BillingProvider<br/>4 outcomes"])
     AREA --> X_BillingProvider
+    O_signup[["signup<br/><small>reactivation</small>"]]
+    AREA -. owned elsewhere .- O_signup
 ```
+
+*Boxes outside the area: what other areas own (this one only reads them) and what is deferred to a later pass — the scope list below, drawn.*
 
 *Rounded nodes are outside systems this area depends on; each declared outcome needs an answer: a requirement's or a verdict's @error.*
 
@@ -139,16 +143,24 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 
 ## At a Glance
 
-| | ID | Behavior | Modality |
+```mermaid
+pie showData title 8 requirements
+    "proven to ≤10 steps" : 4
+    "proven, only to ≤3 steps" : 4
+```
+
+| | ID | Behavior | Kind |
 |---|---|---|---|
-| ◐ | [REQ-001](#req-001) | When a customer cancels an Active subscription, the system shall stop future billing. | must |
-| ◐ | [REQ-002](#req-002) | When a cancellation succeeds, the system shall keep access available until the paid per… | must |
-| ◐ | [REQ-003](#req-003) | When a customer cancels an already-Cancelled subscription, the system shall make no fur… | must |
-| ◐ | [REQ-004](#req-004) | If the billing provider does not answer a cancellation, then the system shall leave the… | must |
-| ◐ | [REQ-005](#req-005) | When the paid period ends for a cancelled subscription, the system shall withdraw acces… | must |
-| ⊘ | [REQ-006](#req-006) | The system shall never issue a refund for the unused part of a paid period. | forbidden |
-| ◐ | [REQ-007](#req-007) | When a cancellation succeeds, the system shall confirm it to the customer by email or b… | may |
-| ◐ | [REQ-008](#req-008) | If the billing provider declines a cancellation, then the system shall leave the subscr… | must |
+| | | **Cancel a subscription** — 5 · ◐5 | |
+| ◐ | [REQ-004](#req-004) | **Provider silent: stays Active** — If the billing provider does not answer a cancellation, then the system shall leave the… | refusal |
+| ◐ | [REQ-001](#req-001) | **Cancel stops billing** — When a customer cancels an Active subscription, the system shall stop future billing. | happy path |
+| ◐ | [REQ-002](#req-002) | **Access lasts to period end** — When a cancellation succeeds, the system shall keep access available until the paid per… | happy path |
+| ◐ | [REQ-003](#req-003) | **Repeat cancel changes nothing** — When a customer cancels an already-Cancelled subscription, the system shall make no fur… | happy path |
+| ◐ | [REQ-005](#req-005) | **Access ends with the period** — When the paid period ends for a cancelled subscription, the system shall withdraw acces… | happy path |
+| | | **Not in any journey** — 3 | |
+| ⊘ | [REQ-006](#req-006) | **Never refund unused time** — The system shall never issue a refund for the unused part of a paid period. | forbidden · refusal |
+| ◐ | [REQ-007](#req-007) | **Confirm the cancellation** — When a cancellation succeeds, the system shall confirm it to the customer by email or b… | may |
+| ◐ | [REQ-008](#req-008) | **Provider declines: stays Active** — If the billing provider declines a cancellation, then the system shall leave the subscr… | refusal |
 
 ## What the System Does
 
@@ -156,8 +168,24 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 
 > **Who** · Customer<br>
 > **Story** · Customer cancels mid-period. The first try goes unanswered and changes nothing; the retry succeeds, billing stops and access stays; a second cancel is harmless; the paid period ends and access stops.<br>
-> **Route** · ◐ [REQ-004](#req-004) → ◐ [REQ-001](#req-001) → ◐ [REQ-002](#req-002) → ◐ [REQ-003](#req-003) → ◐ [REQ-005](#req-005)<br>
+> **Route** · ◐ [REQ-004 Provider silent: stays Active](#req-004) → ◐ [REQ-001 Cancel stops billing](#req-001) → ◐ [REQ-002 Access lasts to period end](#req-002) → ◐ [REQ-003 Repeat cancel changes nothing](#req-003) → ◐ [REQ-005 Access ends with the period](#req-005)<br>
 > **Runs as** · ✓ `subscription.cancelJourney` — `quint test` runs it; it walks 5 of 5 step(s) in order.
+
+```mermaid
+flowchart LR
+    S1["1 · Provider silent: stays Active<br/><small>REQ-004</small>"]:::ok
+    S2["2 · Cancel stops billing<br/><small>REQ-001</small>"]:::ok
+    S1 --> S2
+    S3["3 · Access lasts to period end<br/><small>REQ-002</small>"]:::ok
+    S2 --> S3
+    S4["4 · Repeat cancel changes nothing<br/><small>REQ-003</small>"]:::ok
+    S3 --> S4
+    S5["5 · Access ends with the period<br/><small>REQ-005</small>"]:::ok
+    S4 --> S5
+    classDef ok fill:#e8f1ff,stroke:#4a78c2
+```
+
+<details open><summary><b>Steps</b> — 5 steps</summary>
 
 **Step 1 of 5**
 
@@ -165,7 +193,7 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 
 #### REQ-004
 
-◐ ∀  *(failure path)* If the billing provider does not answer a cancellation, then the system shall leave the subscription Active.
+◐ ∀  *(failure path)* **Provider silent: stays Active** — If the billing provider does not answer a cancellation, then the system shall leave the subscription Active.
 
 > **On BillingProvider/TIMEOUT:** NO_CHANGE — the subscription stays Active and billable; retry (safe to retry)
 > **On BillingProvider/NETWORK_ERROR:** NO_CHANGE — the request never landed; retry (safe to retry)
@@ -174,19 +202,19 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 |---|---|---|---|
 | EX-003 — Provider times out: nothing moves | the initial state | cancel_unanswered(alice, true) | `status.get("alice") == Active and billingEnabled.get("alice")` |
 
-> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
-
 > **Left open** · [68ef8975](#68ef8975) cancel_unanswered(bob, false) · [404d46eb](#404d46eb) cancel_unanswered(bob, true) — the model decides, no example does
 
-> **Witness:** 2 steps: cancel_unanswered(alice, true) → lastBillingResult = {"alice": Timeout, "bob": Success}; unansweredTries = {"alice": 1, "bob": 0}
+> **Proof** · reachable (1-step trace) · ∀ holds on every reachable step (≤10 steps)
 
-> **∀ Every step:** checked on every reachable step (≤10 steps).
+<details><summary>guarded by, witness, EARS sentence, Quint action `cancel_unanswered`, formal claim + trace</summary>
 
-<details><summary>EARS sentence, Quint action `cancel_unanswered`, formal claim + trace</summary>
+> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+
+> **Witness:** 2 steps: cancel_unanswered(alice, true) → `lastBillingResult[alice] = Timeout` · `unansweredTries[alice] = 1`
 
 **As specified (EARS):** While `status.get(c) == Active`, if the billing provider does not answer the cancellation, then the system shall make `(lastBillingResult.get(c) == Timeout or lastBillingResult.get(c) == NetworkError) and status.get(c) == Active and billingEnabled.get(c)` hold.
 
-`specs/subscription.qnt:L170-L179` · model `7597c18d0b46`
+`specs/subscription.qnt:L175-L184` · model `7597c18d0b46`
 
 ```quint
   action cancel_unanswered(c: CustomerId, timedOut: bool): bool = all {
@@ -205,16 +233,15 @@ run q_ce72947e = init.expect(notice.get("alice") == NoNotice and notice.get("bob
 - **while** `status.get(c) == Active`
 - **shall** `(lastBillingResult.get(c) == Timeout or lastBillingResult.get(c) == NetworkError) and status.get(c) == Active and billingEnabled.get(c)`
 
-**Record:** `specs/subscription.qnt:155` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:159` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
     title REQ-004 witness
     participant E as Env
     participant S as System
-    E->>S: cancel_unanswered
-    Note over S: lastBillingResult = {"alice": Timeout, "bob": Success}
-    Note over S: unansweredTries = {"alice": 1, "bob": 0}
+    E->>S: cancel_unanswered(alice, true)
+    Note over S: lastBillingResult[alice] = Timeout<br/>unansweredTries[alice] = 1
 ```
 
 </details>
@@ -223,7 +250,7 @@ sequenceDiagram
 
 #### REQ-001
 
-◐ ∀ When a customer cancels an Active subscription, the system shall stop future billing.
+◐ ∀ **Cancel stops billing** — When a customer cancels an Active subscription, the system shall stop future billing.
 
 > **On BillingProvider/SUCCESS:** Cancelled (safe to retry)
 
@@ -231,19 +258,19 @@ sequenceDiagram
 |---|---|---|---|
 | EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice, Email) | `status.get("alice") == Cancelled and not(billingEnabled.get("alice")) and accessUntilPeriodEnd.get("alice") and notice.get("alice") == Email` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
-
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
-> **Witness:** 3 steps: cancel_declined(bob) → cancel_subscription(bob, Email) → accessUntilPeriodEnd = {"alice": false, "bob": true}; billingEnabled = {"alice": true, "bob": false}; lastBillingResult = {"alice": Success, "bob": Success}; notice = {"alice": NoNotice, "bob": Email}; status = {"alice": Active, "bob": Cancelled}
+> **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤10 steps)
 
-> **∀ Every step:** checked on every reachable step (≤10 steps).
+<details><summary>guarded by, witness, EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
 
-<details><summary>EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+
+> **Witness:** 3 steps: cancel_declined(bob) → cancel_subscription(bob, Email) → `accessUntilPeriodEnd[bob] = true` · `billingEnabled[bob] = false` · `lastBillingResult[bob] = Success` · `notice[bob] = Email` · `status[bob] = Cancelled`
 
 **As specified (EARS):** While `status.get(c) == Active`, when the customer cancels and the provider accepts, the system shall make `status.get(c) == Cancelled and not(billingEnabled.get(c)) and lastBillingResult.get(c) == Success` hold.
 
-`specs/subscription.qnt:L114-L123` · model `6400fc26380d`
+`specs/subscription.qnt:L117-L126` · model `6400fc26380d`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -269,14 +296,10 @@ sequenceDiagram
     title REQ-001 witness
     participant E as Env
     participant S as System
-    E->>S: cancel_declined
-    Note over S: lastBillingResult = {"alice": Success, "bob": Declined}
-    E->>S: cancel_subscription
-    Note over S: accessUntilPeriodEnd = {"alice": false, "bob": true}
-    Note over S: billingEnabled = {"alice": true, "bob": false}
-    Note over S: lastBillingResult = {"alice": Success, "bob": Success}
-    Note over S: notice = {"alice": NoNotice, "bob": Email}
-    Note over S: status = {"alice": Active, "bob": Cancelled}
+    E->>S: cancel_declined(bob)
+    Note over S: lastBillingResult[bob] = Declined
+    E->>S: cancel_subscription(bob, Email)
+    Note over S: accessUntilPeriodEnd[bob] = true<br/>billingEnabled[bob] = false<br/>lastBillingResult[bob] = Success<br/>notice[bob] = Email<br/>status[bob] = Cancelled
 ```
 
 </details>
@@ -287,25 +310,25 @@ sequenceDiagram
 
 #### REQ-002
 
-◐ ∀ When a cancellation succeeds, the system shall keep access available until the paid period ends.
+◐ ∀ **Access lasts to period end** — When a cancellation succeeds, the system shall keep access available until the paid period ends.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice, Email) | `status.get("alice") == Cancelled and not(billingEnabled.get("alice")) and accessUntilPeriodEnd.get("alice") and notice.get("alice") == Email` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
-
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
-> **Witness:** 3 steps: cancel_declined(bob) → cancel_subscription(bob, Email) → accessUntilPeriodEnd = {"alice": false, "bob": true}; billingEnabled = {"alice": true, "bob": false}; lastBillingResult = {"alice": Success, "bob": Success}; notice = {"alice": NoNotice, "bob": Email}; status = {"alice": Active, "bob": Cancelled}
+> **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤3 steps)
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+<details><summary>guarded by, witness, EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
 
-<details><summary>EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+
+> **Witness:** 3 steps: cancel_declined(bob) → cancel_subscription(bob, Email) → `accessUntilPeriodEnd[bob] = true` · `billingEnabled[bob] = false` · `lastBillingResult[bob] = Success` · `notice[bob] = Email` · `status[bob] = Cancelled`
 
 **As specified (EARS):** While `status.get(c) == Active`, when the customer cancels and the provider accepts, the system shall make `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c)` hold.
 
-`specs/subscription.qnt:L114-L123` · model `c1a8aa39feb9`
+`specs/subscription.qnt:L117-L126` · model `c1a8aa39feb9`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -324,21 +347,17 @@ sequenceDiagram
 - **while** `status.get(c) == Active`
 - **shall** `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c)`
 
-**Record:** `specs/subscription.qnt:94` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:95` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
     title REQ-002 witness
     participant E as Env
     participant S as System
-    E->>S: cancel_declined
-    Note over S: lastBillingResult = {"alice": Success, "bob": Declined}
-    E->>S: cancel_subscription
-    Note over S: accessUntilPeriodEnd = {"alice": false, "bob": true}
-    Note over S: billingEnabled = {"alice": true, "bob": false}
-    Note over S: lastBillingResult = {"alice": Success, "bob": Success}
-    Note over S: notice = {"alice": NoNotice, "bob": Email}
-    Note over S: status = {"alice": Active, "bob": Cancelled}
+    E->>S: cancel_declined(bob)
+    Note over S: lastBillingResult[bob] = Declined
+    E->>S: cancel_subscription(bob, Email)
+    Note over S: accessUntilPeriodEnd[bob] = true<br/>billingEnabled[bob] = false<br/>lastBillingResult[bob] = Success<br/>notice[bob] = Email<br/>status[bob] = Cancelled
 ```
 
 </details>
@@ -347,7 +366,7 @@ sequenceDiagram
 
 #### REQ-003
 
-◐ ∀ When a customer cancels an already-Cancelled subscription, the system shall make no further change.
+◐ ∀ **Repeat cancel changes nothing** — When a customer cancels an already-Cancelled subscription, the system shall make no further change.
 
 | Example | Given | When | Then |
 |---|---|---|---|
@@ -355,15 +374,15 @@ sequenceDiagram
 
 > **Left open** · [909c2265](#909c2265) cancel_again(alice) — the model decides, no example does
 
+> **Proof** · reachable (3-step trace) · ∀ holds on every reachable step (≤3 steps)
+
+<details><summary>witness, EARS sentence, Quint action `cancel_again`, formal claim + trace</summary>
+
 > **Witness:** 4 steps: cancel_subscription(alice, InApp) → cancel_subscription(bob, InApp) → cancel_again(bob)
-
-> **∀ Every step:** checked on every reachable step (≤3 steps).
-
-<details><summary>EARS sentence, Quint action `cancel_again`, formal claim + trace</summary>
 
 **As specified (EARS):** While `status.get(c) == Cancelled`, when the customer cancels again, the system shall make `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c) and billingEnabled.get(c) == billed and notice.get(c) == told` hold.
 
-`specs/subscription.qnt:L195-L203` · model `e07fa287ca32`
+`specs/subscription.qnt:L201-L209` · model `e07fa287ca32`
 
 ```quint
   action cancel_again(c: CustomerId): bool = all {
@@ -383,24 +402,18 @@ sequenceDiagram
 - **while** `status.get(c) == Cancelled`
 - **shall** `status.get(c) == Cancelled and accessUntilPeriodEnd.get(c) and billingEnabled.get(c) == billed and notice.get(c) == told`
 
-**Record:** `specs/subscription.qnt:183` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:188` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
     title REQ-003 witness
     participant E as Env
     participant S as System
-    E->>S: cancel_subscription
-    Note over S: accessUntilPeriodEnd = {"alice": true, "bob": false}
-    Note over S: billingEnabled = {"alice": false, "bob": true}
-    Note over S: notice = {"alice": InApp, "bob": NoNotice}
-    Note over S: status = {"alice": Cancelled, "bob": Active}
-    E->>S: cancel_subscription
-    Note over S: accessUntilPeriodEnd = {"alice": true, "bob": true}
-    Note over S: billingEnabled = {"alice": false, "bob": false}
-    Note over S: notice = {"alice": InApp, "bob": InApp}
-    Note over S: status = {"alice": Cancelled, "bob": Cancelled}
-    E->>S: cancel_again
+    E->>S: cancel_subscription(alice, InApp)
+    Note over S: accessUntilPeriodEnd[alice] = true<br/>billingEnabled[alice] = false<br/>notice[alice] = InApp<br/>status[alice] = Cancelled
+    E->>S: cancel_subscription(bob, InApp)
+    Note over S: accessUntilPeriodEnd[bob] = true<br/>billingEnabled[bob] = false<br/>notice[bob] = InApp<br/>status[bob] = Cancelled
+    E->>S: cancel_again(bob)
 ```
 
 </details>
@@ -409,23 +422,23 @@ sequenceDiagram
 
 #### REQ-005
 
-◐ ∀ When the paid period ends for a cancelled subscription, the system shall withdraw access.
+◐ ∀ **Access ends with the period** — When the paid period ends for a cancelled subscription, the system shall withdraw access.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-007 — The paid period ends: access stops | cancel_subscription(alice, InApp) | expire_period(alice) | `status.get("alice") == Expired and not(accessUntilPeriodEnd.get("alice"))` |
 
+> **Proof** · reachable (3-step trace) · ∀ holds on every reachable step (≤3 steps)
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `expire_period`, formal claim + trace</summary>
+
 > **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
-> **Witness:** 4 steps: cancel_subscription(bob, Email) → cancel_subscription(alice, Email) → expire_period(bob) → accessUntilPeriodEnd = {"alice": true, "bob": false}; status = {"alice": Cancelled, "bob": Expired}
-
-> **∀ Every step:** checked on every reachable step (≤3 steps).
-
-<details><summary>EARS sentence, Quint action `expire_period`, formal claim + trace</summary>
+> **Witness:** 4 steps: cancel_subscription(bob, Email) → cancel_subscription(alice, Email) → expire_period(bob) → `accessUntilPeriodEnd[bob] = false` · `status[bob] = Expired`
 
 **As specified (EARS):** While `status.get(c) == Cancelled`, when the paid period ends, the system shall make `status.get(c) == Expired and not(accessUntilPeriodEnd.get(c))` hold.
 
-`specs/subscription.qnt:L214-L222` · model `00b11b580caa`
+`specs/subscription.qnt:L221-L229` · model `00b11b580caa`
 
 ```quint
   action expire_period(c: CustomerId): bool = all {
@@ -443,27 +456,22 @@ sequenceDiagram
 - **while** `status.get(c) == Cancelled`
 - **shall** `status.get(c) == Expired and not(accessUntilPeriodEnd.get(c))`
 
-**Record:** `specs/subscription.qnt:206` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:212` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
     title REQ-005 witness
     participant E as Env
     participant S as System
-    E->>S: cancel_subscription
-    Note over S: accessUntilPeriodEnd = {"alice": false, "bob": true}
-    Note over S: billingEnabled = {"alice": true, "bob": false}
-    Note over S: notice = {"alice": NoNotice, "bob": Email}
-    Note over S: status = {"alice": Active, "bob": Cancelled}
-    E->>S: cancel_subscription
-    Note over S: accessUntilPeriodEnd = {"alice": true, "bob": true}
-    Note over S: billingEnabled = {"alice": false, "bob": false}
-    Note over S: notice = {"alice": Email, "bob": Email}
-    Note over S: status = {"alice": Cancelled, "bob": Cancelled}
-    E->>S: expire_period
-    Note over S: accessUntilPeriodEnd = {"alice": true, "bob": false}
-    Note over S: status = {"alice": Cancelled, "bob": Expired}
+    E->>S: cancel_subscription(bob, Email)
+    Note over S: accessUntilPeriodEnd[bob] = true<br/>billingEnabled[bob] = false<br/>notice[bob] = Email<br/>status[bob] = Cancelled
+    E->>S: cancel_subscription(alice, Email)
+    Note over S: accessUntilPeriodEnd[alice] = true<br/>billingEnabled[alice] = false<br/>notice[alice] = Email<br/>status[alice] = Cancelled
+    E->>S: expire_period(bob)
+    Note over S: accessUntilPeriodEnd[bob] = false<br/>status[bob] = Expired
 ```
+
+</details>
 
 </details>
 
@@ -473,7 +481,7 @@ sequenceDiagram
 
 #### REQ-006
 
-⊘ ∀  *(failure path)* The system shall never issue a refund for the unused part of a paid period.
+⊘ ∀  *(failure path)* **Never refund unused time** — The system shall never issue a refund for the unused part of a paid period.
 
 > **Forbidden** — this must never happen, so there is no trace to find. The proof is the check that no reachable step of the action starts where it is forbidden. The examples below show the call being refused.
 
@@ -481,13 +489,13 @@ sequenceDiagram
 |---|---|---|---|
 | EX-006 — A refund request after cancelling is refused | cancel_subscription(alice, InApp), so `status.get("alice") == Cancelled and accessUntilPeriodEnd.get("alice")` | request_refund(alice) — refused | refused — nothing changes |
 
-> **∀ Every step:** checked on every reachable step (≤10 steps).
+> **Proof** · ∀ holds on every reachable step (≤10 steps)
 
 <details><summary>EARS sentence, Quint action `request_refund`</summary>
 
 **As specified (EARS):** If the customer asks for a refund, then the system shall never let it happen.
 
-`specs/subscription.qnt:L235-L243` · model `d6dde6772bc4`
+`specs/subscription.qnt:L243-L251` · model `d6dde6772bc4`
 
 ```quint
   action request_refund(c: CustomerId): bool = all {
@@ -501,34 +509,34 @@ sequenceDiagram
   }
 ```
 
-**Record:** `specs/subscription.qnt:228` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:235` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-007
 
-◐ ∀ When a cancellation succeeds, the system shall confirm it to the customer by email or by an in-app notice.
+◐ ∀ **Confirm the cancellation** — When a cancellation succeeds, the system shall confirm it to the customer by email or by an in-app notice.
 
 > **Permitted, not required** — the system MAY do any of the following, and the choice is not this spec's to make. Each needs its own witness, found with the other outcomes false, or the permission has quietly become a rule:
->   - ◐ **email**: `notice.get(c) == Email` — 3 steps: cancel_declined(bob) → cancel_subscription(bob, Email) → accessUntilPeriodEnd = {"alice": false, "bob": true}; billingEnabled = {"alice": true, "bob": false}; lastBillingResult = {"alice": Success, "bob": Success}; notice = {"alice": NoNotice, "bob": Email}; status = {"alice": Active, "bob": Cancelled}
->   - ◐ **in-app**: `notice.get(c) == InApp` — 4 steps: cancel_declined(bob) → cancel_unanswered(alice, true) → cancel_subscription(bob, InApp) → accessUntilPeriodEnd = {"alice": false, "bob": true}; billingEnabled = {"alice": true, "bob": false}; lastBillingResult = {"alice": Timeout, "bob": Success}; notice = {"alice": NoNotice, "bob": InApp}; status = {"alice": Active, "bob": Cancelled}
+>   - ◐ **email**: `notice.get(c) == Email` — 3 steps: cancel_declined(bob) → cancel_subscription(bob, Email) → `accessUntilPeriodEnd[bob] = true` · `billingEnabled[bob] = false` · `lastBillingResult[bob] = Success` · `notice[bob] = Email` · `status[bob] = Cancelled`
+>   - ◐ **in-app**: `notice.get(c) == InApp` — 4 steps: cancel_declined(bob) → cancel_unanswered(alice, true) → cancel_subscription(bob, InApp) → `accessUntilPeriodEnd[bob] = true` · `billingEnabled[bob] = false` · `lastBillingResult[bob] = Success` · `notice[bob] = InApp` · `status[bob] = Cancelled`
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-001 — Cancel mid-period: billing stops, access stays | the initial state | cancel_subscription(alice, Email) | `status.get("alice") == Cancelled and not(billingEnabled.get("alice")) and accessUntilPeriodEnd.get("alice") and notice.get("alice") == Email` |
 | EX-007 — The paid period ends: access stops | cancel_subscription(alice, InApp) | expire_period(alice) | `status.get("alice") == Expired and not(accessUntilPeriodEnd.get("alice"))` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
-
 > **Left open** · [1d0a35d2](#1d0a35d2) cancel_subscription(alice, Email) — the model decides, no example does
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+> **Proof** · ∀ holds on every reachable step (≤3 steps)
 
-<details><summary>EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
+<details><summary>guarded by, EARS sentence, Quint action `cancel_subscription`, formal claim + trace</summary>
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
 **As specified (EARS):** While `notice.get(c) == NoNotice`, when the customer cancels and the provider accepts, the system shall end in one of: `notice.get(c) == Email`; `notice.get(c) == InApp`.
 
-`specs/subscription.qnt:L114-L123` · model `1559bf3069ee`
+`specs/subscription.qnt:L117-L126` · model `1559bf3069ee`
 
 ```quint
   action cancel_subscription(c: CustomerId, n: Notice): bool = all {
@@ -548,13 +556,13 @@ sequenceDiagram
 - **outcome email** `notice.get(c) == Email`
 - **outcome in-app** `notice.get(c) == InApp`
 
-**Record:** `specs/subscription.qnt:104` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:106` — the doc comment this requirement is read from.
 
 </details>
 
 #### REQ-008
 
-◐ ∀  *(failure path)* If the billing provider declines a cancellation, then the system shall leave the subscription Active.
+◐ ∀  *(failure path)* **Provider declines: stays Active** — If the billing provider declines a cancellation, then the system shall leave the subscription Active.
 
 > **On BillingProvider/DECLINED:** NO_CHANGE — the provider refused the change; the subscription stays Active and billable (safe to retry)
 
@@ -563,17 +571,17 @@ sequenceDiagram
 | EX-004 — Provider declines: the subscription stays Active | the initial state | cancel_declined(alice) | `status.get("alice") == Active and lastBillingResult.get("alice") == Declined` |
 | EX-008 — A decline after an unanswered try resets the retry count | cancel_unanswered(alice, false) | cancel_declined(alice) | `unansweredTries.get("alice") == 0` |
 
+> **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤10 steps)
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `cancel_declined`, formal claim + trace</summary>
+
 > **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
 
-> **Witness:** 3 steps: cancel_unanswered(alice, true) → cancel_declined(alice) → lastBillingResult = {"alice": Declined, "bob": Success}; unansweredTries = {"alice": 0, "bob": 0}
-
-> **∀ Every step:** checked on every reachable step (≤10 steps).
-
-<details><summary>EARS sentence, Quint action `cancel_declined`, formal claim + trace</summary>
+> **Witness:** 3 steps: cancel_unanswered(alice, true) → cancel_declined(alice) → `lastBillingResult[alice] = Declined` · `unansweredTries[alice] = 0`
 
 **As specified (EARS):** While `status.get(c) == Active`, if the billing provider declines the cancellation, then the system shall make `lastBillingResult.get(c) == Declined and status.get(c) == Active and billingEnabled.get(c)` hold.
 
-`specs/subscription.qnt:L140-L148` · model `b2654cbe07f2`
+`specs/subscription.qnt:L144-L152` · model `b2654cbe07f2`
 
 ```quint
   action cancel_declined(c: CustomerId): bool = all {
@@ -591,19 +599,17 @@ sequenceDiagram
 - **while** `status.get(c) == Active`
 - **shall** `lastBillingResult.get(c) == Declined and status.get(c) == Active and billingEnabled.get(c)`
 
-**Record:** `specs/subscription.qnt:127` — the doc comment this requirement is read from.
+**Record:** `specs/subscription.qnt:130` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
     title REQ-008 witness
     participant E as Env
     participant S as System
-    E->>S: cancel_unanswered
-    Note over S: lastBillingResult = {"alice": Timeout, "bob": Success}
-    Note over S: unansweredTries = {"alice": 1, "bob": 0}
-    E->>S: cancel_declined
-    Note over S: lastBillingResult = {"alice": Declined, "bob": Success}
-    Note over S: unansweredTries = {"alice": 0, "bob": 0}
+    E->>S: cancel_unanswered(alice, true)
+    Note over S: lastBillingResult[alice] = Timeout<br/>unansweredTries[alice] = 1
+    E->>S: cancel_declined(alice)
+    Note over S: lastBillingResult[alice] = Declined<br/>unansweredTries[alice] = 0
 ```
 
 </details>
@@ -614,51 +620,83 @@ _One table per step the model can take. Each row is a requirement or verdict on 
 
 ### `cancel_subscription`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+
+<details><summary>Decision table — 3 rows</summary>
+
 | Row | Applies when | `status` | `billingEnabled` | `accessUntilPeriodEnd` | `lastBillingResult` | `notice` |
 |---|---|---|---|---|---|---|
 | REQ-001 | `status.get(c) == Active` | `status.get(c) == Cancelled` | `not(billingEnabled.get(c))` |  | `lastBillingResult.get(c) == Success` |  |
 | REQ-002 | `status.get(c) == Active` | `status.get(c) == Cancelled` |  | `accessUntilPeriodEnd.get(c)` |  |  |
 | REQ-007 | `notice.get(c) == NoNotice` |  |  |  |  | `notice.get(c) == Email` _or_ `notice.get(c) == InApp` |
 
+</details>
+
 _✓ coverage (≤10) · ✓ `status` explained (≤10) · ✓ `billingEnabled` explained (≤10) · ✓ `accessUntilPeriodEnd` explained (≤10) · ✓ `lastBillingResult` explained (≤10) · ✓ `notice` explained (≤10)_
 
 ### `cancel_declined`
+
+> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+
+<details><summary>Decision table — 1 row</summary>
 
 | Row | Applies when | `lastBillingResult` |
 |---|---|---|
 | REQ-008 | `status.get(c) == Active` | `lastBillingResult.get(c) == Declined` |
 
+</details>
+
 _✓ coverage (≤10) · ✓ `lastBillingResult` explained (≤10)_
 
 ### `cancel_unanswered`
+
+> **Guarded by** · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+
+<details><summary>Decision table — 1 row</summary>
 
 | Row | Applies when | `lastBillingResult` |
 |---|---|---|
 | REQ-004 | `status.get(c) == Active` | `(lastBillingResult.get(c) == Timeout or lastBillingResult.get(c) == NetworkError)` |
 
+</details>
+
 _✓ coverage (≤10) · ✓ `lastBillingResult` explained (≤10)_
 
 ### `cancel_again`
+
+<details><summary>Decision table — 1 row</summary>
 
 | Row | Applies when |
 |---|---|
 | REQ-003 | `status.get(c) == Cancelled` |  |
 
+</details>
+
 _✓ coverage (≤10)_
 
 ### `expire_period`
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `noBillingAfterCancel` ⏳ · [INV-002](#what-must-always-be-true) `noRefundIssued` ✓ (≤10 steps) · [INV-003](#what-must-always-be-true) `unacceptedCancelLeavesActive` ✓ proven (Lean) · [INV-004](#what-must-always-be-true) `retriesWithinBudget` ✓ (≤10 steps)
+
+<details><summary>Decision table — 1 row</summary>
 
 | Row | Applies when | `status` | `accessUntilPeriodEnd` |
 |---|---|---|---|
 | REQ-005 | `status.get(c) == Cancelled` | `status.get(c) == Expired` | `not(accessUntilPeriodEnd.get(c))` |
 
+</details>
+
 _✓ coverage (≤10) · ✓ `status` explained (≤10) · ✓ `accessUntilPeriodEnd` explained (≤10)_
 
 ### `request_refund`
 
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when |
 |---|---|
 | REQ-006 | always |  |
+
+</details>
 
 _✓ coverage: REQ-006 applies to every step_
 
@@ -691,6 +729,8 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 ## Examples
 
+<details><summary>9 worked examples</summary>
+
 _Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
 
 | Example | Given | When | Then | Illustrates |
@@ -704,6 +744,8 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 | EX-007 — The paid period ends: access stops | cancel_subscription(alice, InApp) | expire_period(alice) | `status.get("alice") == Expired and not(accessUntilPeriodEnd.get("alice"))` | REQ-005, REQ-007 |
 | EX-008 — A decline after an unanswered try resets the retry count | cancel_unanswered(alice, false) | cancel_declined(alice) | `unansweredTries.get("alice") == 0` | REQ-008, INV-004 |
 | EX-009 — A successful cancel after an unanswered try resets the retry count | cancel_unanswered(alice, true) | cancel_subscription(alice, InApp) | `unansweredTries.get("alice") == 0` | REQ-001, INV-004 |
+
+</details>
 
 ## Limits and Bounds
 

@@ -81,6 +81,12 @@ tag's value. A blank `///` line ends a continuation.
         @when <text>  @where <text>  @unwanted   ears.trigger/feature/unwanted
                                                  (words: the trigger IS the
                                                  host action)
+        @title <text>                            title: a short name (≤36
+                                                 chars) for charts, routes
+                                                 and folds. Put it AFTER the
+                                                 description lines: right
+                                                 after @req it would swallow
+                                                 them as its continuation
         @type @status @modality @determinism @source
         @fit <metric> | <target> | <measurement>
         @error <External>.<OUTCOME> [idempotent|not-idempotent]: <effect>
@@ -227,6 +233,7 @@ EXTRACTION_TAGS = {
 }
 TAGS = {
     "requirements": {
+        "title": ("title", "text"),
         "while": ("ears.state", "text"),
         "when": ("ears.trigger", "text"),
         "where": ("ears.feature", "text"),

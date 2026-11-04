@@ -224,15 +224,17 @@ graph TB
 
 ## At a Glance
 
-| | ID | Behavior | Modality |
+| | ID | Behavior | Kind |
 |---|---|---|---|
-| ◐ | [UI-001](#ui-001) | While on Home, when the user clicks 'Sign in', the system shall navigate to Login. | must |
-| ◐ | [UI-002](#ui-002) | While on Login, when the user submits valid credentials, the system shall navigate to D… | must |
-| ◐ | [UI-003](#ui-003) | If the user submits credentials for a Locked account, then the system shall navigate to… | must |
-| ◐ | [UI-004](#ui-004) | While on Dashboard, when the session expires, the system shall return to Login. | must |
-| ◐ | [UI-005](#ui-005) | If the user submits invalid credentials, then the system shall stay on Login and show t… | must |
-| ◐ | [UI-006](#ui-006) | While on Dashboard, when the user clicks logout, the system shall sign the user out and… | must |
-| ◐ | [UI-007](#ui-007) | While on LockedNotice, when the user goes back, the system shall show Home with the for… | must |
+| | | **Sign in** — 3 · ◐3 | |
+| ◐ | [UI-001](#ui-001) | **Open the sign-in form** — While on Home, when the user clicks 'Sign in', the system shall navigate to Login. | happy path |
+| ◐ | [UI-002](#ui-002) | **Land on the Dashboard** — While on Login, when the user submits valid credentials, the system shall navigate to D… | happy path |
+| ◐ | [UI-003](#ui-003) | **Show the locked notice** — If the user submits credentials for a Locked account, then the system shall navigate to… | refusal |
+| | | **Not in any journey** — 4 | |
+| ◐ | [UI-004](#ui-004) | **Expired session returns to Login** — While on Dashboard, when the session expires, the system shall return to Login. | happy path |
+| ◐ | [UI-005](#ui-005) | **Bad credentials stay on Login** — If the user submits invalid credentials, then the system shall stay on Login and show t… | refusal |
+| ◐ | [UI-006](#ui-006) | **Log out to Home** — While on Dashboard, when the user clicks logout, the system shall sign the user out and… | happy path |
+| ◐ | [UI-007](#ui-007) | **Leave the locked notice** — While on LockedNotice, when the user goes back, the system shall show Home with the for… | happy path |
 
 ## What the System Does
 
@@ -240,32 +242,50 @@ graph TB
 
 > **Who** · User<br>
 > **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
-> **Route** · ◐ [UI-001](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ◐ [UI-002](#ui-002) → [auth.REQ-003](auth.readback.md#req-003) → ◐ [UI-003](#ui-003)<br>
+> **Route** · ◐ [UI-001 Open the sign-in form](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ◐ [UI-002 Land on the Dashboard](#ui-002) → [auth.REQ-003](auth.readback.md#req-003)<br>
 > **Runs as** · ✓ `auth-ui.signInJourney` — `quint test` runs it; it walks 5 of 5 step(s) in order.
 
-**Step 1 of 5**
+```mermaid
+flowchart LR
+    S1["1 · Open the sign-in form<br/><small>UI-001</small>"]:::ok
+    S2["2 · auth.REQ-001"]:::ext
+    S1 --> S2
+    S3["3 · Land on the Dashboard<br/><small>UI-002</small>"]:::ok
+    S2 --> S3
+    S4["4 · auth.REQ-003"]:::ext
+    S3 --> S4
+    S4r(["1 refusal"]):::ref
+    S4 -.- S4r
+    classDef ext fill:#fff,stroke:#999,stroke-dasharray:4 3
+    classDef ok fill:#e8f1ff,stroke:#4a78c2
+    classDef ref fill:#fff8e6,stroke:#c99a2e
+```
+
+<details open><summary><b>Steps</b> — 4 steps, 1 refusal folded under them</summary>
+
+**Step 1 of 4**
 
 #### UI-001
 
-◐ ∀ While on Home, when the user clicks 'Sign in', the system shall navigate to Login.
+◐ ∀ **Open the sign-in form** — While on Home, when the user clicks 'Sign in', the system shall navigate to Login.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-001 — Sign in opens the login page | the initial state | click_sign_in | `current == Login and form == Idle` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
-
 > **Left open** · [b79923fe](#b79923fe) click_sign_in — the model decides, no example does
 
-> **Witness:** 2 steps: click_sign_in → current = Login
+> **Proof** · reachable (1-step trace) · ∀ holds on every reachable step (≤3 steps)
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+<details><summary>guarded by, witness, EARS sentence, Quint action `click_sign_in`, formal claim + trace</summary>
 
-<details><summary>EARS sentence, Quint action `click_sign_in`, formal claim + trace</summary>
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Witness:** 2 steps: click_sign_in → `current = Login`
 
 **As specified (EARS):** While `current == Home`, when the user clicks 'Sign in', the system shall make `current == Login and form == Idle` hold.
 
-`specs/auth-ui.qnt:L109-L115` · model `bf77620b3a24`
+`specs/auth-ui.qnt:L110-L116` · model `bf77620b3a24`
 
 ```quint
   action click_sign_in: bool = all {
@@ -294,31 +314,31 @@ sequenceDiagram
 
 </details>
 
-**Step 2 of 5** · [auth.REQ-001](auth.readback.md#req-001) — specified in area *auth*
+**Step 2 of 4** · [auth.REQ-001](auth.readback.md#req-001) — specified in area *auth*
 
-**Step 3 of 5**
+**Step 3 of 4**
 
 #### UI-002
 
-◐ ∀ While on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
+◐ ∀ **Land on the Dashboard** — While on Login, when the user submits valid credentials, the system shall navigate to Dashboard.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-002 — Valid credentials land on the Dashboard | click_sign_in | submit_success(alice, s1) | `current == Dashboard and authenticated` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
-
 > **Left open** · [d5442974](#d5442974) submit_success(alice, s1) · [f8263eaa](#f8263eaa) submit_success(bob, s1) · [e20334a7](#e20334a7) submit_success(bob, s2) — the model decides, no example does
 
-> **Witness:** 4 steps: click_sign_in → submit_invalid(bob) → submit_success(alice, s1) → current = Dashboard; failedAttempts = {"alice": 0, "bob": 1}; form = Idle; idleFor = {"s1": 0}; mySession = "s1"; sessionOwner = {"s1": "alice"}; sessions = {"s1": Active}; userActiveSession = {"alice": {"s1"}}
+> **Proof** · reachable (3-step trace) · ∀ holds on every reachable step (≤3 steps)
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+<details><summary>guarded by, witness, EARS sentence, Quint action `submit_success`, formal claim + trace</summary>
 
-<details><summary>EARS sentence, Quint action `submit_success`, formal claim + trace</summary>
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Witness:** 4 steps: click_sign_in → submit_invalid(bob) → submit_success(alice, s1) → `current = Dashboard` · `failedAttempts[alice] = 0` · `form = Idle` · `idleFor[s1] = 0` · `mySession = "s1"` · `sessionOwner[s1] = "alice"` · `sessions[s1] = Active` · `userActiveSession[alice] = {"s1"}`
 
 **As specified (EARS):** While `current == Login`, when the user submits valid credentials, the system shall make `current == Dashboard and form == Idle and authenticated and mySession == s` hold.
 
-`specs/auth-ui.qnt:L132-L138` · model `608841f3362a`
+`specs/auth-ui.qnt:L134-L140` · model `608841f3362a`
 
 ```quint
   action submit_success(u: UserId, s: SessionId): bool = all {
@@ -334,7 +354,7 @@ sequenceDiagram
 - **while** `current == Login`
 - **shall** `current == Dashboard and form == Idle and authenticated and mySession == s`
 
-**Record:** `specs/auth-ui.qnt:124` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:125` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -343,52 +363,43 @@ sequenceDiagram
     participant S as System
     E->>S: click_sign_in
     Note over S: current = Login
-    E->>S: submit_invalid
-    Note over S: accountStatus = {"bob": Unlocked}
-    Note over S: failedAttempts = {"bob": 1}
-    Note over S: form = ErrorBadCreds
-    E->>S: submit_success
-    Note over S: current = Dashboard
-    Note over S: failedAttempts = {"alice": 0, "bob": 1}
-    Note over S: form = Idle
-    Note over S: idleFor = {"s1": 0}
-    Note over S: mySession = "s1"
-    Note over S: sessionOwner = {"s1": "alice"}
-    Note over S: sessions = {"s1": Active}
-    Note over S: userActiveSession = {"alice": {"s1"}}
+    E->>S: submit_invalid(bob)
+    Note over S: accountStatus[bob] = Unlocked<br/>failedAttempts[bob] = 1<br/>form = ErrorBadCreds
+    E->>S: submit_success(alice, s1)
+    Note over S: current = Dashboard<br/>failedAttempts[alice] = 0<br/>form = Idle<br/>idleFor[s1] = 0<br/>mySession = "s1"<br/>sessionOwner[s1] = "alice"<br/>… +2 more
 ```
 
 </details>
 
-**Step 4 of 5** · [auth.REQ-003](auth.readback.md#req-003) — specified in area *auth*
+**Step 4 of 4** · [auth.REQ-003](auth.readback.md#req-003) — specified in area *auth*
 
 *failure branch: repeated bad credentials lock the account*
 
-**Step 5 of 5**
+<details><summary>↳ Step 4 is refused in 1 case: UI-003 Show the locked notice</summary>
 
 *locked-account counterpart of the submit step*
 
 #### UI-003
 
-◐ ∀  *(failure path)* If the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
+◐ ∀  *(failure path)* **Show the locked notice** — If the user submits credentials for a Locked account, then the system shall navigate to LockedNotice.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-003 — Five bad passwords lock the account; the next submit shows the locked notice | click_sign_in; then submit_invalid(bob) × 5 | submit_locked(bob) | `current == LockedNotice and form == ErrorLocked` |
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
-
 > **Left open** · [aaa2ce5e](#aaa2ce5e) submit_locked(bob) — the model decides, no example does
 
-> **Witness:** 8 steps: click_sign_in → submit_invalid(alice) ×5 → submit_locked(alice) → current = LockedNotice({tag: "UNIT"}); form = ErrorLocked({tag: "UNIT"})
+> **Proof** · reachable (7-step trace) · ∀ holds on every reachable step (≤3 steps)
 
-> **∀ Every step:** checked on every reachable step (≤3 steps).
+<details><summary>guarded by, witness, EARS sentence, Quint action `submit_locked`, formal claim + trace</summary>
 
-<details><summary>EARS sentence, Quint action `submit_locked`, formal claim + trace</summary>
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Witness:** 8 steps: click_sign_in → submit_invalid(alice) ×5 → submit_locked(alice) → `current = LockedNotice` · `form = ErrorLocked`
 
 **As specified (EARS):** While `current == Login`, if the user submits credentials for a Locked account, then the system shall make `current == LockedNotice and form == ErrorLocked and accountLocked(u)` hold.
 
-`specs/auth-ui.qnt:L175-L182` · model `a6cc137426d7`
+`specs/auth-ui.qnt:L179-L186` · model `a6cc137426d7`
 
 ```quint
   action submit_locked(u: UserId): bool = all {
@@ -405,7 +416,7 @@ sequenceDiagram
 - **while** `current == Login`
 - **shall** `current == LockedNotice and form == ErrorLocked and accountLocked(u)`
 
-**Record:** `specs/auth-ui.qnt:167` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:170` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -413,25 +424,24 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: click_sign_in
-    Note over S: current = Login({tag: "UNIT"})
-    E->>S: submit_invalid
-    Note over S: form = ErrorBadCreds({tag: "UNIT"})
-    Note over S: auth::accountStatus = {"alice": Unlocked({tag: "UNIT"})}
-    Note over S: auth::failedAttempts = {"alice": 1}
-    E->>S: submit_invalid
-    Note over S: auth::failedAttempts = {"alice": 2}
-    E->>S: submit_invalid
-    Note over S: auth::failedAttempts = {"alice": 3}
-    E->>S: submit_invalid
-    Note over S: auth::failedAttempts = {"alice": 4}
-    E->>S: submit_invalid
-    Note over S: auth::accountStatus = {"alice": Locked({tag: "UNIT"})}
-    Note over S: auth::failedAttempts = {"alice": 5}
-    Note over S: auth::userActiveSession = {"alice": {}}
-    E->>S: submit_locked
-    Note over S: current = LockedNotice({tag: "UNIT"})
-    Note over S: form = ErrorLocked({tag: "UNIT"})
+    Note over S: current = Login
+    E->>S: submit_invalid(alice)
+    Note over S: form = ErrorBadCreds<br/>auth::accountStatus[alice] = Unlocked<br/>auth::failedAttempts[alice] = 1
+    E->>S: submit_invalid(alice)
+    Note over S: auth::failedAttempts[alice] = 2
+    E->>S: submit_invalid(alice)
+    Note over S: auth::failedAttempts[alice] = 3
+    E->>S: submit_invalid(alice)
+    Note over S: auth::failedAttempts[alice] = 4
+    E->>S: submit_invalid(alice)
+    Note over S: auth::accountStatus[alice] = Locked<br/>auth::failedAttempts[alice] = 5<br/>auth::userActiveSession[alice] = {}
+    E->>S: submit_locked(alice)
+    Note over S: current = LockedNotice<br/>form = ErrorLocked
 ```
+
+</details>
+
+</details>
 
 </details>
 
@@ -441,23 +451,23 @@ sequenceDiagram
 
 #### UI-004
 
-◐ ∀ While on Dashboard, when the session expires, the system shall return to Login.
+◐ ∀ **Expired session returns to Login** — While on Dashboard, when the session expires, the system shall return to Login.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-004 — An idle session on the Dashboard expires back to the login form | click_sign_in; then submit_success(alice, s1); then time_passes × 4 | session_expired | `current == Login and not(authenticated)` |
 
+> **Proof** · reachable (7-step trace) · ∀ holds on every reachable step (≤3 steps)
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `session_expired`, formal claim + trace</summary>
+
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-> **Witness:** 8 steps: click_sign_in → submit_success(bob, s1) → time_passes(s1, bob) ×4 → session_expired(s1, bob) → current = Login({tag: "UNIT"}); mySession = ""; auth::sessions = {"s1": Expired({tag: "UNIT"})}; auth::userActiveSession = {"bob": {}}
-
-> **∀ Every step:** checked on every reachable step (≤3 steps).
-
-<details><summary>EARS sentence, Quint action `session_expired`, formal claim + trace</summary>
+> **Witness:** 8 steps: click_sign_in → submit_success(bob, s1) → time_passes(s1, bob) ×4 → session_expired(s1, bob) → `current = Login` · `mySession = ""` · `auth::sessions[s1] = Expired` · `auth::userActiveSession[bob] -= {"s1"}`
 
 **As specified (EARS):** While `current == Dashboard`, when the session expires, the system shall make `current == Login and form == Idle and not(authenticated)` hold.
 
-`specs/auth-ui.qnt:L216-L222` · model `e192c072c24e`
+`specs/auth-ui.qnt:L222-L228` · model `e192c072c24e`
 
 ```quint
   action session_expired: bool = all {
@@ -473,7 +483,7 @@ sequenceDiagram
 - **while** `current == Dashboard`
 - **shall** `current == Login and form == Idle and not(authenticated)`
 
-**Record:** `specs/auth-ui.qnt:209` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:214` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -481,49 +491,40 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: click_sign_in
-    Note over S: current = Login({tag: "UNIT"})
-    E->>S: submit_success
-    Note over S: current = Dashboard({tag: "UNIT"})
-    Note over S: mySession = "s1"
-    Note over S: auth::sessions = {"s1": Active({tag: "UNIT"})}
-    Note over S: auth::sessionOwner = {"s1": "bob"}
-    Note over S: auth::failedAttempts = {"bob": 0}
-    Note over S: auth::userActiveSession = {"bob": {"s1"}}
-    Note over S: auth::idleFor = {"s1": 0}
-    E->>S: time_passes
-    Note over S: auth::idleFor = {"s1": 1}
-    E->>S: time_passes
-    Note over S: auth::idleFor = {"s1": 2}
-    E->>S: time_passes
-    Note over S: auth::idleFor = {"s1": 3}
-    E->>S: time_passes
-    Note over S: auth::idleFor = {"s1": 4}
-    E->>S: session_expired
-    Note over S: current = Login({tag: "UNIT"})
-    Note over S: mySession = ""
-    Note over S: auth::sessions = {"s1": Expired({tag: "UNIT"})}
-    Note over S: auth::userActiveSession = {"bob": {}}
+    Note over S: current = Login
+    E->>S: submit_success(bob, s1)
+    Note over S: current = Dashboard<br/>mySession = "s1"<br/>auth::sessions[s1] = Active<br/>auth::sessionOwner[s1] = "bob"<br/>auth::failedAttempts[bob] = 0<br/>auth::userActiveSession[bob] = {"s1"}<br/>… +1 more
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 1
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 2
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 3
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 4
+    E->>S: session_expired(s1, bob)
+    Note over S: current = Login<br/>mySession = ""<br/>auth::sessions[s1] = Expired<br/>auth::userActiveSession[bob] -= {"s1"}
 ```
 
 </details>
 
 #### UI-005
 
-◐ ∀  *(failure path)* If the user submits invalid credentials, then the system shall stay on Login and show the bad-credentials error.
+◐ ∀  *(failure path)* **Bad credentials stay on Login** — If the user submits invalid credentials, then the system shall stay on Login and show the bad-credentials error.
 
 > _No example rows yet — nothing concrete shows this behavior._
 
+> **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤3 steps)
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `submit_invalid`, formal claim + trace</summary>
+
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-> **Witness:** 3 steps: click_sign_in → submit_invalid(bob) → accountStatus = {"bob": Unlocked}; failedAttempts = {"bob": 1}; form = ErrorBadCreds
-
-> **∀ Every step:** checked on every reachable step (≤3 steps).
-
-<details><summary>EARS sentence, Quint action `submit_invalid`, formal claim + trace</summary>
+> **Witness:** 3 steps: click_sign_in → submit_invalid(bob) → `accountStatus[bob] = Unlocked` · `failedAttempts[bob] = 1` · `form = ErrorBadCreds`
 
 **As specified (EARS):** While `current == Login`, if the user submits invalid credentials, then the system shall make `current == Login and form == ErrorBadCreds` hold.
 
-`specs/auth-ui.qnt:L153-L159` · model `428933fcd490`
+`specs/auth-ui.qnt:L156-L162` · model `428933fcd490`
 
 ```quint
   action submit_invalid(u: UserId): bool = all {
@@ -539,7 +540,7 @@ sequenceDiagram
 - **while** `current == Login`
 - **shall** `current == Login and form == ErrorBadCreds`
 
-**Record:** `specs/auth-ui.qnt:145` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:147` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -548,31 +549,29 @@ sequenceDiagram
     participant S as System
     E->>S: click_sign_in
     Note over S: current = Login
-    E->>S: submit_invalid
-    Note over S: accountStatus = {"bob": Unlocked}
-    Note over S: failedAttempts = {"bob": 1}
-    Note over S: form = ErrorBadCreds
+    E->>S: submit_invalid(bob)
+    Note over S: accountStatus[bob] = Unlocked<br/>failedAttempts[bob] = 1<br/>form = ErrorBadCreds
 ```
 
 </details>
 
 #### UI-006
 
-◐ ∀ While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
+◐ ∀ **Log out to Home** — While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
 
 > _No example rows yet — nothing concrete shows this behavior._
 
+> **Proof** · reachable (3-step trace) · ∀ holds on every reachable step (≤3 steps)
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `click_logout`, formal claim + trace</summary>
+
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-> **Witness:** 4 steps: click_sign_in → submit_success(bob, s1) → click_logout(s1, bob) → current = Home; mySession = ""; sessions = {"s1": LoggedOut}; userActiveSession = {"bob": {}}
-
-> **∀ Every step:** checked on every reachable step (≤3 steps).
-
-<details><summary>EARS sentence, Quint action `click_logout`, formal claim + trace</summary>
+> **Witness:** 4 steps: click_sign_in → submit_success(bob, s1) → click_logout(s1, bob) → `current = Home` · `mySession = ""` · `sessions[s1] = LoggedOut` · `userActiveSession[bob] -= {"s1"}`
 
 **As specified (EARS):** While `current == Dashboard`, when the user clicks logout, the system shall make `current == Home and form == Idle and mySession == ""` hold.
 
-`specs/auth-ui.qnt:L195-L201` · model `ba1dcce1ac0f`
+`specs/auth-ui.qnt:L200-L206` · model `ba1dcce1ac0f`
 
 ```quint
   action click_logout: bool = all {
@@ -588,7 +587,7 @@ sequenceDiagram
 - **while** `current == Dashboard`
 - **shall** `current == Home and form == Idle and mySession == ""`
 
-**Record:** `specs/auth-ui.qnt:188` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:192` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -597,40 +596,31 @@ sequenceDiagram
     participant S as System
     E->>S: click_sign_in
     Note over S: current = Login
-    E->>S: submit_success
-    Note over S: current = Dashboard
-    Note over S: failedAttempts = {"bob": 0}
-    Note over S: idleFor = {"s1": 0}
-    Note over S: mySession = "s1"
-    Note over S: sessionOwner = {"s1": "bob"}
-    Note over S: sessions = {"s1": Active}
-    Note over S: userActiveSession = {"bob": {"s1"}}
-    E->>S: click_logout
-    Note over S: current = Home
-    Note over S: mySession = ""
-    Note over S: sessions = {"s1": LoggedOut}
-    Note over S: userActiveSession = {"bob": {}}
+    E->>S: submit_success(bob, s1)
+    Note over S: current = Dashboard<br/>failedAttempts[bob] = 0<br/>idleFor[s1] = 0<br/>mySession = "s1"<br/>sessionOwner[s1] = "bob"<br/>sessions[s1] = Active<br/>… +1 more
+    E->>S: click_logout(s1, bob)
+    Note over S: current = Home<br/>mySession = ""<br/>sessions[s1] = LoggedOut<br/>userActiveSession[bob] -= {"s1"}
 ```
 
 </details>
 
 #### UI-007
 
-◐ ∀ While on LockedNotice, when the user goes back, the system shall show Home with the form cleared.
+◐ ∀ **Leave the locked notice** — While on LockedNotice, when the user goes back, the system shall show Home with the form cleared.
 
 > _No example rows yet — nothing concrete shows this behavior._
 
+> **Proof** · reachable (8-step trace) · ∀ holds on every reachable step (≤3 steps)
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `go_home`, formal claim + trace</summary>
+
 > **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
 
-> **Witness:** 9 steps: click_sign_in → submit_invalid(bob) ×5 → submit_locked(bob) → go_home(bob) → current = Home({tag: "UNIT"}); form = Idle({tag: "UNIT"})
-
-> **∀ Every step:** checked on every reachable step (≤3 steps).
-
-<details><summary>EARS sentence, Quint action `go_home`, formal claim + trace</summary>
+> **Witness:** 9 steps: click_sign_in → submit_invalid(bob) ×5 → submit_locked(bob) → go_home(bob) → `current = Home` · `form = Idle`
 
 **As specified (EARS):** While `current == LockedNotice`, when the user goes back to Home, the system shall make `current == Home and form == Idle` hold.
 
-`specs/auth-ui.qnt:L234-L240` · model `32baa05fed39`
+`specs/auth-ui.qnt:L241-L247` · model `32baa05fed39`
 
 ```quint
   action go_home: bool = all {
@@ -646,7 +636,7 @@ sequenceDiagram
 - **while** `current == LockedNotice`
 - **shall** `current == Home and form == Idle`
 
-**Record:** `specs/auth-ui.qnt:227` — the doc comment this requirement is read from.
+**Record:** `specs/auth-ui.qnt:233` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
@@ -654,27 +644,21 @@ sequenceDiagram
     participant E as Env
     participant S as System
     E->>S: click_sign_in
-    Note over S: current = Login({tag: "UNIT"})
-    E->>S: submit_invalid
-    Note over S: form = ErrorBadCreds({tag: "UNIT"})
-    Note over S: auth::accountStatus = {"bob": Unlocked({tag: "UNIT"})}
-    Note over S: auth::failedAttempts = {"bob": 1}
-    E->>S: submit_invalid
-    Note over S: auth::failedAttempts = {"bob": 2}
-    E->>S: submit_invalid
-    Note over S: auth::failedAttempts = {"bob": 3}
-    E->>S: submit_invalid
-    Note over S: auth::failedAttempts = {"bob": 4}
-    E->>S: submit_invalid
-    Note over S: auth::accountStatus = {"bob": Locked({tag: "UNIT"})}
-    Note over S: auth::failedAttempts = {"bob": 5}
-    Note over S: auth::userActiveSession = {"bob": {}}
-    E->>S: submit_locked
-    Note over S: current = LockedNotice({tag: "UNIT"})
-    Note over S: form = ErrorLocked({tag: "UNIT"})
-    E->>S: go_home
-    Note over S: current = Home({tag: "UNIT"})
-    Note over S: form = Idle({tag: "UNIT"})
+    Note over S: current = Login
+    E->>S: submit_invalid(bob)
+    Note over S: form = ErrorBadCreds<br/>auth::accountStatus[bob] = Unlocked<br/>auth::failedAttempts[bob] = 1
+    E->>S: submit_invalid(bob)
+    Note over S: auth::failedAttempts[bob] = 2
+    E->>S: submit_invalid(bob)
+    Note over S: auth::failedAttempts[bob] = 3
+    E->>S: submit_invalid(bob)
+    Note over S: auth::failedAttempts[bob] = 4
+    E->>S: submit_invalid(bob)
+    Note over S: auth::accountStatus[bob] = Locked<br/>auth::failedAttempts[bob] = 5<br/>auth::userActiveSession[bob] = {}
+    E->>S: submit_locked(bob)
+    Note over S: current = LockedNotice<br/>form = ErrorLocked
+    E->>S: go_home(bob)
+    Note over S: current = Home<br/>form = Idle
 ```
 
 </details>
@@ -685,65 +669,111 @@ _One table per step the model can take. Each row is a requirement or verdict on 
 
 ### `click_sign_in`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when | `current` | `form` |
 |---|---|---|---|
 | UI-001 | `current == Home` | `current == Login` | `form == Idle` |
+
+</details>
 
 _✓ coverage (≤3) · ✓ `current` explained (≤3) · ✓ `form` explained (≤3)_
 
 ### `submit_success`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when | `current` | `form` | `mySession` |
 |---|---|---|---|---|
 | UI-002 | `current == Login` | `current == Dashboard` | `form == Idle` | `authenticated` ∧ `mySession == s` |
+
+</details>
 
 _✓ coverage (≤3) · ✓ `current` explained (≤3) · ✓ `form` explained (≤3) · ✓ `mySession` explained (≤3)_
 
 ### `submit_invalid`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when | `current` | `form` |
 |---|---|---|---|
 | UI-005 | `current == Login` | `current == Login` | `form == ErrorBadCreds` |
+
+</details>
 
 _✓ coverage (≤3) · ✓ `current` explained (≤3) · ✓ `form` explained (≤3)_
 
 ### `submit_locked`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when | `current` | `form` |
 |---|---|---|---|
 | UI-003 | `current == Login` | `current == LockedNotice` | `form == ErrorLocked` |
+
+</details>
 
 _✓ coverage (≤3) · ✓ `current` explained (≤3) · ✓ `form` explained (≤3)_
 
 ### `click_logout`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when | `current` | `form` | `mySession` |
 |---|---|---|---|---|
 | UI-006 | `current == Dashboard` | `current == Home` | `form == Idle` | `mySession == ""` |
+
+</details>
 
 _✓ coverage (≤3) · ✓ `current` explained (≤3) · ✓ `form` explained (≤3) · ✓ `mySession` explained (≤3)_
 
 ### `session_expired`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when | `current` | `form` | `mySession` |
 |---|---|---|---|---|
 | UI-004 | `current == Dashboard` | `current == Login` | `form == Idle` | `not(authenticated)` |
+
+</details>
 
 _✓ coverage (≤3) · ✓ `current` explained (≤3) · ✓ `form` explained (≤3) · ✓ `mySession` explained (≤3)_
 
 ### `go_home`
 
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when | `current` | `form` |
 |---|---|---|---|
 | UI-007 | `current == LockedNotice` | `current == Home` | `form == Idle` |
+
+</details>
 
 _✓ coverage (≤3) · ✓ `current` explained (≤3) · ✓ `form` explained (≤3)_
 
 ### `time_passes`
 
+<details><summary>Decision table — 1 row</summary>
+
 | Row | Applies when |
 |---|---|
 | NO-OP #1 | always |  |
+
+</details>
 
 _✓ coverage: time_passes #1 NO-OP applies to every step · ✓ verdict #1 (≤3)_
 
@@ -755,6 +785,8 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 ## Examples
 
+<details><summary>4 worked examples</summary>
+
 _Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
 
 | Example | Given | When | Then | Illustrates |
@@ -763,6 +795,8 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 | EX-002 — Valid credentials land on the Dashboard | click_sign_in | submit_success(alice, s1) | `current == Dashboard and authenticated` | UI-002 |
 | EX-003 — Five bad passwords lock the account; the next submit shows the locked notice | click_sign_in; then submit_invalid(bob) × 5 | submit_locked(bob) | `current == LockedNotice and form == ErrorLocked` | UI-003 |
 | EX-004 — An idle session on the Dashboard expires back to the login form | click_sign_in; then submit_success(alice, s1); then time_passes × 4 | session_expired | `current == Login and not(authenticated)` | UI-004 |
+
+</details>
 
 ## Completeness by Dimension
 

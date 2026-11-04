@@ -45,13 +45,15 @@ from itf_tools import (  # noqa: E402
     witness_exempt, owes_obligation, brief_status, action_params, step_ghosts,
     GHOST_PARAM_RE,
     compute_spec_sha, is_rejection, is_computed, witness_entries,
-    GHOST_PREFIXES,
+    GHOST_PREFIXES, changed_leaves, format_leaves, model_prefix,
 )
 from quint_ir import _strip_noise  # noqa: E402
 import spec_source  # noqa: E402
 from completeness import area_completeness  # noqa: E402
 
 MAX_DIAGRAM_STEPS = 12
+MAX_WITNESS_LEAVES = 8
+MAX_FLOW_STEPS = 16
 CHANGED_HINT = " — `spec-record changed <area>` says what has moved since."
 
 
@@ -317,9 +319,16 @@ def req_sentence(req, constraints):
 def witness_one_liner(root, trace_rel):
     """'6 steps: login_failed(bob) ×5 → accountStatus = {bob: Locked}' —
     compressed action runs plus the final state delta."""
+    return witness_summary(root, trace_rel)[1]
+
+
+def witness_summary(root, trace_rel):
+    """(actions taken, one-liner): the count the Proof line needs, read from
+    the trace rather than back out of the rendered text. None when the trace
+    does not load."""
     trace, errs = load_trace(Path(root) / "specs" / trace_rel)
     if errs:
-        return f"trace invalid: {errs[0]}"
+        return None, f"trace invalid: {errs[0]}"
     states = trace["states"]
     action_var = detect_action_var(trace)
     ghosts = [v for v in state_vars(trace) if GHOST_PARAM_RE.match(v)]
@@ -341,17 +350,17 @@ def witness_one_liner(root, trace_rel):
             compressed.append([lbl, 1])
     seq = " → ".join(f"{lb} ×{n}" if n > 1 else lb for lb, n in compressed)
 
-    model_vars = [v for v in state_vars(trace)
-                  if v != action_var and not v.startswith(GHOST_PREFIXES)]
-    final_delta = [
-        f"{v} = {render_value(states[-1].get(v))}"
-        for v in model_vars
-        if len(states) > 1 and states[-2].get(v) != states[-1].get(v)
-    ]
+    # Only the leaves the last step moved: a whole record var rendered after
+    # every witness is hundreds of characters the reader has to diff by eye.
+    final_delta = []
+    if len(states) > 1:
+        final_delta = format_leaves(
+            changed_leaves(states[-2], states[-1], state_vars(trace), action_var),
+            limit=MAX_WITNESS_LEAVES, drop_prefix=model_prefix(trace, action_var))
     out = f"{len(states)} steps: {seq}"
     if final_delta:
-        out += " → " + "; ".join(final_delta)
-    return out
+        out += " → " + " · ".join(f"`{d}`" for d in final_delta)
+    return len(states) - 1, out
 
 
 def quint_excerpt(root, area, quint_ref):
@@ -511,6 +520,165 @@ def _top_and(expr):
     return parts
 
 
+# ── Refusal chains: the order an action checks its guards in ────────────────
+# Every route answers with the FIRST refusal that applies, so the order is
+# behavior — and it is invisible in a decision table. Read it from the
+# model's own `if (c) refuse(st, R) else if ...` chain and draw it.
+
+
+def _read_group(b, i):
+    """b[i] is an opener; return (inner text, index after its closer)."""
+    pairs = {"(": ")", "{": "}", "[": "]"}
+    depth, j = 0, i
+    while j < len(b):
+        c = b[j]
+        if c in pairs:
+            depth += 1
+        elif c in ")}]":
+            depth -= 1
+            if depth == 0:
+                return b[i + 1:j], j + 1
+        j += 1
+    return b[i + 1:], len(b)
+
+
+def _read_branch(b, i):
+    """One branch of an if/else: up to the depth-0 ` else `, a depth-0 comma,
+    or the closer of whatever encloses it."""
+    depth, j = 0, i
+    while j < len(b):
+        c = b[j]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and (c == "," or b.startswith(" else ", j)):
+            break
+        j += 1
+    return b[i:j].strip(), j
+
+
+def _parse_if(b, i):
+    """[(cond, then)], else — an `if (c) x else if (d) y else z` chain at i."""
+    arms = []
+    while True:
+        k = b.index("(", i)
+        cond, j = _read_group(b, k)
+        then, j = _read_branch(b, j)
+        arms.append((" ".join(cond.split()), then))
+        if not b.startswith(" else ", j):
+            return arms, None
+        j += len(" else ")
+        if re.match(r"if\s*\(", b[j:]):
+            i = j
+            continue
+        other, _ = _read_branch(b, j)
+        return arms, other
+
+
+REFUSE_RE = re.compile(r"^refuse\(\s*[A-Za-z_]\w*\s*,\s*(.+)\)$", re.S)
+IDENT_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*$")
+CALL_RE = re.compile(r"^([A-Za-z_]\w*)\(.*\)$", re.S)
+
+
+def _first_chain(body):
+    b = " ".join((body or "").split())
+    for m in re.finditer(r"\bif\s*\(", b):
+        try:
+            return _parse_if(b, m.start())
+        except ValueError:
+            continue
+    return None
+
+
+def refusal_chain(action, decls):
+    """[(cond, outcome)] + final outcome for an action written as a chain of
+    guarded refusals, where an outcome is ('refuse', Result) or
+    ('accept', None). A refusal that delegates to a helper returning the
+    Result through its own chain (`refuse(st, runRefusal(g))`) is expanded
+    in place. None when the action has no refusal chain."""
+    decls = decls or {}
+    found = _first_chain((decls.get(action) or {}).get("body"))
+    if not found:
+        return None
+    arms, other = found
+
+    def literal(t):
+        return ("accept", None) if t == "Ok" else ("refuse", t)
+
+    def helper_chain(expr):
+        """A `def` whose body is a chain of Result literals, as outcomes."""
+        m = CALL_RE.match((expr or "").strip())
+        if not m or (decls.get(m.group(1)) or {}).get("kind") != "def":
+            return None
+        sub = _first_chain(decls[m.group(1)].get("body"))
+        if not sub or not IDENT_RE.match(sub[1] or "") \
+                or not all(IDENT_RE.match(t) for _, t in sub[0]):
+            return None
+        return [(c, literal(t)) for c, t in sub[0]], literal(sub[1])
+
+    def outcome(expr):
+        m = REFUSE_RE.match((expr or "").strip())
+        if not m:
+            return ("accept", None)
+        arg = m.group(1).strip()
+        return ("refuse", arg) if IDENT_RE.match(arg) else ("refuse-via", arg)
+
+    # `if (helper(..) == Ok) <accept> else refuse(st, helper(..))`
+    if len(arms) == 1:
+        m = re.match(r"^(.+?)\s*==\s*Ok$", arms[0][0])
+        sub = helper_chain(m.group(1)) if m else None
+        if sub:
+            return sub
+    out = [(c, outcome(t)) for c, t in arms]
+    final = outcome(other) if other is not None else ("accept", None)
+    if not any(o[0] != "accept" for _, o in out + [("", final)]):
+        return None
+    return out, final
+
+
+MERMAID_ENTITIES = (('"', "#quot;"), ("<", "#lt;"), (">", "#gt;"))
+
+
+def _mermaid_label(text, limit=70):
+    """One line of text, safe inside a quoted Mermaid label: a raw `"` ends
+    the label, and `n<MAX` is read as an HTML tag and eaten."""
+    text = " ".join(str(text).split())
+    if len(text) > limit:
+        text = text[:limit - 1] + "…"
+    for raw, entity in MERMAID_ENTITIES:
+        text = text.replace(raw, entity)
+    return text
+
+
+def refusal_flowchart(action, decls):
+    """Mermaid flowchart of an action's refusal chain, or [] when it has none."""
+    found = refusal_chain(action, decls)
+    if not found:
+        return []
+    arms, final = found
+    out = ["```mermaid", "flowchart TD", f'    A(["{action}"])']
+    prev, edge = "A", ""
+    for i, (cond, (kind, res)) in enumerate(arms, 1):
+        out.append(f'    C{i}{{"{_mermaid_label(cond)}"}}')
+        out.append(f"    {prev} -->{edge} C{i}")
+        if kind == "accept":
+            out.append(f'    C{i} -->|yes| K{i}(["applied"]):::ok')
+        else:
+            label = "Ok — nothing changes" if res == "Ok" else _mermaid_label(res, 40)
+            out.append(f'    C{i} -->|yes| R{i}["{label}"]:::refuse')
+        prev, edge = f"C{i}", "|no|"
+    if final[0] == "accept":
+        out.append(f'    {prev} -->{edge} OK(["applied"]):::ok')
+    else:
+        out.append(f'    {prev} -->{edge} RF["{_mermaid_label(final[1], 40)}"]:::refuse')
+    out += ["    classDef refuse fill:#fdecea,stroke:#c0392b",
+            "    classDef ok fill:#e6f4ea,stroke:#3c8d4f", "```", ""]
+    return out
+
+
 def decision_tables_section(root, area):
     """One table per action: a row per requirement or verdict on it, a
     column per observable var it changes. A row's cell is the part of its
@@ -539,7 +707,23 @@ def decision_tables_section(root, area):
         a = e["action"]
         vars_ = [ch["var"] for ch in e["changes"]]
         head = ["Row", "Applies when"] + [f"`{v}`" for v in vars_]
-        lines += [f"### `{a}`", "", "| " + " | ".join(head) + " |",
+        lines += [f"### `{a}`", ""]
+        flow = refusal_flowchart(a, decls)
+        if flow:
+            lines += ["_Checked top to bottom; the first refusal that applies is the answer, "
+                      "and a refused call changes nothing._", ""] + flow
+        guards = guarding_invariants(area, {"quint_ref": a}, decls)
+        if guards:
+            bound, scopes, steps = check_bound(area), check_scopes(area), check_steps(area)
+            lines += ["> **Guarded by** · " + " · ".join(
+                f"[{g['id']}](#what-must-always-be-true)"
+                + (f" `{g['quint_name']}`" if g.get("quint_name") else "")
+                + f" {invariant_mark(g, bound, scopes.get(g['id']), steps.get(g['id']))}"
+                for g in guards), ""]
+        n_rows = len(e["reqs"]) + len(e["verdicts"])
+        lines += [f"<details><summary>Decision table — {n_rows} row"
+                  f"{'s' if n_rows != 1 else ''}</summary>", "",
+                  "| " + " | ".join(head) + " |",
                   "|" + "---|" * len(head)]
         for c in e["reqs"]:
             shall = c["shall"] or ""
@@ -581,7 +765,7 @@ def decision_tables_section(root, area):
             notes.append(f"{mark} {what}{tail}{trace}")
         if e["everywhere"]:
             notes.insert(0, f"✓ coverage: {e['everywhere']} applies to every step")
-        lines += ["", "_" + " · ".join(notes) + "_" if notes else "", ""]
+        lines += ["", "</details>", "", "_" + " · ".join(notes) + "_" if notes else "", ""]
     internal = area.get("internal_vars") or []
     if internal:
         lines += ["**Bookkeeping, not behavior** (`@internal`, not explained):", ""]
@@ -1079,18 +1263,29 @@ def render_requirement(root, area, req, constraints, rendered_full,
     ears_rendered = resolve_constraints(ears_sentence(req), constraints)
     sentence = req_sentence(req, constraints)
     oblig = obligation_mark(req)
-    lines.append(f"{mark}{(' ' + oblig) if oblig else ''}{tag} {sentence}")
+    title = (req.get("title") or "").strip()
+    lead = f" **{title}** —" if title else ""
+    lines.append(f"{mark}{(' ' + oblig) if oblig else ''}{tag}{lead} {sentence}")
     lines.append("")
+    # What a reviewer needs to judge the sentence stays in view: the sentence,
+    # its examples, one line of proof status, anything broken or uncertain.
+    # Provenance, guarding invariants, the full witness, the Quint and the
+    # trace go behind one fold — they are evidence, consulted on demand.
+    evidence, kinds = [], []
     prov = req.get("extraction") or {}
     if prov.get("evidence"):
         conf = prov.get("confidence")
         # A low-confidence extraction is a guess about ambiguous code. Saying so
         # is the difference between a reviewable draft and a plausible-looking
-        # assertion.
+        # assertion — so that one stays outside the fold.
         flag = " \u26a0 **low confidence** \u2014 the code was ambiguous here" \
             if conf == "low" else (f" ({conf} confidence)" if conf else "")
-        lines.append(f"> _Extracted from `{prov['evidence']}`{flag}._")
-        lines.append("")
+        note = f"> _Extracted from `{prov['evidence']}`{flag}._"
+        if conf == "low":
+            lines += [note, ""]
+        else:
+            evidence += [note, ""]
+            kinds.append("provenance")
     if req.get("type") == "non-functional":
         fc = req.get("fit_criterion") or {}
         lines.append(f"> **Fit:** {fc.get('metric', '?')} — {fc.get('target', '?')} — "
@@ -1151,8 +1346,8 @@ def render_requirement(root, area, req, constraints, rendered_full,
                  + (f" `{g['quint_name']}`" if g.get("quint_name") else "")
                  + f" {invariant_mark(g, bound, scopes.get(g['id']), steps.get(g['id']))}"
                  for g in guards]
-        lines.append("> **Guarded by** · " + " · ".join(parts))
-        lines.append("")
+        evidence += ["> **Guarded by** · " + " · ".join(parts), ""]
+        kinds.append("guarded by")
     open_qs = [q for q in ((area.get("check_results") or {}).get("mutation") or {})
                .get("questions") or [] if req.get("id") in (q.get("refs") or [])]
     if open_qs:
@@ -1167,9 +1362,12 @@ def render_requirement(root, area, req, constraints, rendered_full,
                      "refuse. " + (f"Verified by {tests}." if tests else
                                    "**No test named yet** (`@verified-by`)."))
         lines.append("")
-    elif w.get("trace") and w.get("status") == "witnessed":
-        lines.append(f"> **Witness:** {witness_one_liner(root, w['trace'])}")
-        lines.append("")
+    proof = []
+    if not is_computed(req) and w.get("trace") and w.get("status") == "witnessed":
+        k, one = witness_summary(root, w["trace"])
+        proof.append(f"reachable ({k}-step trace)" if k else "reachable")
+        evidence += [f"> **Witness:** {one}", ""]
+        kinds.append("witness")
     ob = req.get("obligation") or {}
     if owes_obligation(req) and ob.get("formal_status") == "counterexample-found":
         where = f" Trace: `specs/{ob['trace']}`." if ob.get("trace") else ""
@@ -1179,9 +1377,10 @@ def render_requirement(root, area, req, constraints, rendered_full,
         lines.append("")
     elif owes_obligation(req) and ob.get("formal_status") == "verified":
         steps = f" (\u2264{ob['steps']} steps)" if ob.get("steps") else ""
-        lines.append(f"> **\u2200 Every step:** checked on every reachable step{steps}.")
-        lines.append("")
-    details = []
+        proof.append(f"\u2200 holds on every reachable step{steps}")
+    if proof:
+        lines += ["> **Proof** · " + " · ".join(proof), ""]
+    details = list(evidence)
     if sentence != ears_rendered:
         # The headline is prose. What was actually specified — identifiers,
         # exception names and all — has to stay reachable, or the readback
@@ -1228,7 +1427,7 @@ def render_requirement(root, area, req, constraints, rendered_full,
     if details:
         # Name what is actually behind the fold, so the summary never promises
         # a trace that isn't there or hides the EARS text without saying so.
-        parts = []
+        parts = list(kinds)
         if sentence != ears_rendered:
             parts.append("EARS sentence")
         if qref:
@@ -1282,14 +1481,15 @@ def journey_card(area_name, j, reqs, run=None):
     if j.get("description"):
         card.append(f"> **Story** · {j['description']}")
     hops = []
-    for s in journey_steps(j):
+    for s, refusals in group_steps(area_name, reqs, j):
         a, rid = s["ref"].split(".", 1)
+        folded = f" (+{len(refusals)} refusal{'s' if len(refusals) > 1 else ''})" if refusals else ""
         if a != area_name:
             # Qualified, because the same ID can exist in both areas and the
             # route is the one place the two sit side by side.
             hops.append(f"[{a}.{rid}]({a}.readback.md#{rid.lower()})")
         elif rid in reqs:
-            hops.append(f"{status_mark(reqs[rid])} [{rid}](#{rid.lower()})")
+            hops.append(f"{status_mark(reqs[rid])} [{req_label(reqs[rid])}](#{rid.lower()}){folded}")
         else:
             hops.append(f"⚠ {rid}")
     if hops:
@@ -1350,6 +1550,71 @@ def _views_for(root, area_name, area, journeys):
     return views
 
 
+def _is_refusal(area_name, reqs, ref):
+    """A step that only says how the step before it is refused: an own-area
+    requirement on the failure path (`@unwanted`)."""
+    a, rid = ref.split(".", 1)
+    return a == area_name and bool(((reqs.get(rid) or {}).get("ears") or {}).get("unwanted"))
+
+
+def group_steps(area_name, reqs, j):
+    """[(main_step, [refusal_steps])] — each refusal folded under the step it
+    refuses. A journey lists a step's refusals right after it; reading them
+    as peers makes a 5-step flow look like a 19-step one."""
+    groups = []
+    for step in journey_steps(j):
+        if groups and _is_refusal(area_name, reqs, step["ref"]):
+            groups[-1][1].append(step)
+        else:
+            groups.append((step, []))
+    return groups
+
+
+STATUS_CLASS = {"✓": "done", "◐": "ok", "✗": "bad", "⏳": "todo", "⊘": "ok"}
+
+
+def journey_flowchart(area_name, j, reqs):
+    """The journey as a picture: one box per step (its action and ID),
+    coloured by status, with its refusals hanging off it. Mermaid cannot
+    link out on every viewer, so the Route line above stays the index."""
+    groups = group_steps(area_name, reqs, j)
+    if len(groups) < 2 or len(groups) > MAX_FLOW_STEPS:
+        return []
+    out = ["```mermaid", "flowchart LR"]
+    used = set()
+    for i, (step, refusals) in enumerate(groups, 1):
+        a, rid = step["ref"].split(".", 1)
+        req = reqs.get(rid) if a == area_name else None
+        if req:
+            title = (req.get("title") or "").strip()
+            action = req.get("quint_ref") or ""
+            if title:
+                label = f"{i} · {_mermaid_label(title, 36)}<br/><small>{rid}</small>"
+            else:
+                label = f"{i} · {action}<br/>{rid}" if action else f"{i} · {rid}"
+            cls = STATUS_CLASS.get(status_mark(req)[:1], "todo")
+        else:
+            label, cls = f"{i} · {a}.{rid}", "ext"
+        used.add(cls)
+        out.append(f'    S{i}["{label}"]:::{cls}')
+        if i > 1:
+            out.append(f"    S{i - 1} --> S{i}")
+        if refusals:
+            bad = sum(1 for r in refusals if status_mark(reqs.get(r["ref"].split(".", 1)[1]) or {})[:1] == "✗")
+            tail = f", {bad} ✗" if bad else ""
+            word = "refusal" if len(refusals) == 1 else "refusals"
+            out.append(f'    S{i}r(["{len(refusals)} {word}{tail}"]):::ref')
+            out.append(f"    S{i} -.- S{i}r")
+            used.add("ref")
+    styles = {"ok": "fill:#e8f1ff,stroke:#4a78c2", "done": "fill:#e6f4ea,stroke:#3c8d4f",
+              "bad": "fill:#fdecea,stroke:#c0392b", "todo": "fill:#f4f4f4,stroke:#999",
+              "ext": "fill:#fff,stroke:#999,stroke-dasharray:4 3",
+              "ref": "fill:#fff8e6,stroke:#c99a2e"}
+    out += [f"    classDef {c} {styles[c]}" for c in sorted(used)]
+    out += ["```", ""]
+    return out
+
+
 def what_the_system_does(root, area_name, area, journeys):
     lines = ["## What the System Does", ""]
     constraints = area.get("constraints", []) or []
@@ -1361,31 +1626,57 @@ def what_the_system_does(root, area_name, area, journeys):
                 if any(s.get("ref", "").startswith(f"{area_name}.")
                        for s in j.get("steps", []) or [])]
     views = _views_for(root, area_name, area, touching)
-    for j in touching:
+
+    def render_step(step, idx, total, marker=True):
+        ref = step["ref"]
+        a, rid = ref.split(".", 1)
+        note = step.get("note")
+        out = []
+        if a != area_name:
+            out.extend(step_marker(idx, total, ref, note, elsewhere=a))
+        elif rid in reqs:
+            # A repeat of an already-rendered requirement keeps its step
+            # marker but not its note: the note belongs to the block, and
+            # the block is upstream.
+            n = note if rid not in rendered_full else None
+            if marker:
+                out.extend(step_marker(idx, total, ref, n))
+            elif n:
+                out += [f"*{n}*", ""]
+            out.extend(render_requirement(
+                root, area, reqs[rid], constraints, rendered_full,
+                shown=spec_source.step_examples(step, views), decls=decls))
+        else:
+            out.extend(step_marker(idx, total, ref, note))
+            out.append("⚠ _Requirement not found in this area._")
+            out.append("")
+        return out
+
+    for jn, j in enumerate(touching):
         run = spec_source.journey_run(
             j, views, lambda a: spec_source.model_declarations(root, a, views.get(a)))
         lines.extend(journey_card(area_name, j, reqs, run))
-        steps = journey_steps(j)
-        total = len(steps)
-        for idx, step in enumerate(steps, 1):
-            ref = step["ref"]
-            a, rid = ref.split(".", 1)
-            note = step.get("note")
-            if a != area_name:
-                lines.extend(step_marker(idx, total, ref, note, elsewhere=a))
-            elif rid in reqs:
-                # A repeat of an already-rendered requirement keeps its step
-                # marker but not its note: the note belongs to the block, and
-                # the block is upstream.
-                lines.extend(step_marker(idx, total, ref,
-                                         note if rid not in rendered_full else None))
-                lines.extend(render_requirement(
-                    root, area, reqs[rid], constraints, rendered_full,
-                    shown=spec_source.step_examples(step, views), decls=decls))
-            else:
-                lines.extend(step_marker(idx, total, ref, note))
-                lines.append("⚠ _Requirement not found in this area._")
-                lines.append("")
+        lines.extend(journey_flowchart(area_name, j, reqs))
+        groups = group_steps(area_name, reqs, j)
+        total = len(groups)
+        n_ref = sum(len(r) for _, r in groups)
+        # The first journey opens; the rest are one line each until wanted.
+        summary = (f"{total} step" + ("s" if total != 1 else "")
+                   + (f", {n_ref} refusal{'s' if n_ref != 1 else ''} folded under "
+                      f"{'them' if total != 1 else 'it'}" if n_ref else ""))
+        lines += [f"<details{' open' if jn == 0 else ''}><summary><b>Steps</b> — {summary}</summary>", ""]
+        for idx, (step, refusals) in enumerate(groups, 1):
+            lines.extend(render_step(step, idx, total))
+            if refusals:
+                rids = [r["ref"].split(".", 1)[1] for r in refusals]
+                names = [req_label(reqs.get(r)) if r in reqs else r for r in rids]
+                lines += [f"<details><summary>↳ Step {idx} is refused in {len(rids)} "
+                          f"case{'s' if len(rids) != 1 else ''}: "
+                          f"{' · '.join(names)}</summary>", ""]
+                for r in refusals:
+                    lines.extend(render_step(r, idx, total, marker=False))
+                lines += ["</details>", ""]
+        lines += ["</details>", ""]
     leftover = [r for rid, r in reqs.items() if rid not in rendered_full]
     if leftover:
         if touching:
@@ -1519,7 +1810,11 @@ def limits_section(root, area_name, area):
     return lines
 
 
-def state_machines_section(area):
+def state_machines_section(area, produced=None):
+    """One state diagram per machine. `produced` (the variants some
+    assignment in the model builds, quint_ir) marks the states nothing can
+    enter as dashed: legacy or unreachable, so every claim about them holds
+    vacuously — the same finding as lint's state-never-produced, drawn."""
     machines = area.get("state_machines", []) or []
     if not machines:
         return []
@@ -1540,8 +1835,20 @@ def state_machines_section(area):
             lines.append(f"  {t.get('from')} --> {t.get('to')}: {t.get('trigger')}{actor}")
         for s in sorted(terminal):
             lines.append(f"  {s} --> [*]")
+        never = []
+        if produced is not None:
+            never = sorted(st.get("name") for st in sm.get("states", []) or []
+                           if st.get("name") and st["name"] not in produced)
+        if never:
+            lines.append("  classDef never stroke-dasharray:5 5,color:#888,fill:#f7f7f7")
+            lines.append(f"  class {','.join(never)} never")
         lines.append("```")
         lines.append("")
+        if never:
+            lines.append(f"_Dashed: {', '.join(never)} — no step of the model produces "
+                         f"{'it' if len(never) == 1 else 'them'}; nothing can "
+                         f"enter {'it' if len(never) == 1 else 'them'}._")
+            lines.append("")
     return lines
 
 
@@ -1790,30 +2097,107 @@ def brief_section(area):
     return lines
 
 
-def at_a_glance(area):
+def req_label(req, with_id=True):
+    """'REQ-001 Create a group' — the requirement's `@title` where it has one.
+    An ID alone tells a reader nothing; charts and routes, which have room
+    only for a label, use this."""
+    rid = (req or {}).get("id", "?")
+    title = ((req or {}).get("title") or "").strip()
+    if not title:
+        return rid
+    return f"{rid} {title}" if with_id else title
+
+
+def proof_bucket(req, ceiling):
+    """Which slice of the status pie a requirement falls in."""
+    if is_computed(req):
+        return "unit test (computed)"
+    ob = req.get("obligation") or {}
+    w = req.get("witness") or {}
+    if ob.get("formal_status") == "counterexample-found" or w.get("status") in ("no-witness", "hollow"):
+        return "broken in the model"
+    if not req_is_witnessed(req) and req.get("modality") != "forbidden":
+        return "not checked yet"
+    steps = ob.get("steps")
+    if steps and ceiling and steps < ceiling:
+        return f"proven, only to ≤{steps} steps"
+    return f"proven to ≤{steps or ceiling} steps" if (steps or ceiling) else "proven"
+
+
+def status_pie(area, reqs):
+    """Requirement status as a pie — derived from the same marks the table
+    shows, ordered by slice name so the output is stable."""
+    ceiling = (area.get("check_results") or {}).get("max_steps")
+    counts = {}
+    for r in reqs:
+        b = proof_bucket(r, ceiling)
+        counts[b] = counts.get(b, 0) + 1
+    # One slice is a full circle that says what the table already does.
+    if len(reqs) < 2 or len(counts) < 2:
+        return []
+    out = ["```mermaid", f"pie showData title {len(reqs)} requirements"]
+    out += [f'    "{k}" : {v}' for k, v in sorted(counts.items())]
+    out += ["```", ""]
+    return out
+
+
+def _glance_row(r):
+    rid = r.get("id", "?")
+    # The description is the plain-words claim; a formal @shall is
+    # Quint, and reads as code rather than as behavior.
+    response = (r.get("description")
+                or (r.get("ears") or {}).get("response") or "").strip()
+    if len(response) > 88:
+        response = response[:87].rstrip() + "…"
+    if (r.get("title") or "").strip():
+        response = f"**{r['title'].strip()}** — {response}"
+    # Almost everything is a `must`, so the column names what differs.
+    parts = [] if (r.get("modality") or "must") == "must" else [r["modality"]]
+    if is_computed(r):
+        parts.append("computed")
+    elif (r.get("ears") or {}).get("unwanted"):
+        parts.append("refusal")
+    kind = " · ".join(parts) or "happy path"
+    return f"| {status_mark(r)} | [{rid}](#{rid.lower()}) | {response or '—'} | {kind} |"
+
+
+def at_a_glance(area, journeys=None):
     """A one-screen index of the requirements before the per-REQ detail.
 
     The detail sections are complete but flat: a reviewer meets Quint
     excerpts and formal clauses before knowing how many requirements
-    there are or which ones are in trouble. This is the layer between.
+    there are or which ones are in trouble. This is the layer between:
+    a status pie, then the requirements grouped by the journey that first
+    walks them, in the order the journey does.
     """
     reqs = [r for r in area.get("requirements", []) or []
             if isinstance(r, dict) and r.get("status") != "deferred"]
     if len(reqs) < 2:
         return []
-    lines = ["## At a Glance", "",
-             "| | ID | Behavior | Modality |", "|---|---|---|---|"]
-    for r in reqs:
-        rid = r.get("id", "?")
-        # The description is the plain-words claim; a formal @shall is
-        # Quint, and reads as code rather than as behavior.
-        response = (r.get("description")
-                    or (r.get("ears") or {}).get("response") or "").strip()
-        if len(response) > 88:
-            response = response[:87].rstrip() + "…"
-        modality = r.get("modality") or "must"
-        anchor = rid.lower()
-        lines.append(f"| {status_mark(r)} | [{rid}](#{anchor}) | {response or '—'} | {modality} |")
+    by_id = {r.get("id"): r for r in reqs}
+    name = area.get("area")
+    lines = ["## At a Glance", ""] + status_pie(area, reqs)
+    lines += ["| | ID | Behavior | Kind |", "|---|---|---|---|"]
+    placed = set()
+    for j in journeys or []:
+        ids = [s["ref"].split(".", 1)[1] for s in journey_steps(j)
+               if s["ref"].split(".", 1)[0] == name]
+        ids = [i for i in dict.fromkeys(ids) if i in by_id and i not in placed]
+        if not ids:
+            continue
+        marks = {}
+        for i in ids:
+            m = status_mark(by_id[i])[:1]
+            marks[m] = marks.get(m, 0) + 1
+        tally = " ".join(f"{m}{n}" for m, n in sorted(marks.items()))
+        lines.append(f"| | | **{j.get('name', j.get('_file'))}** — {len(ids)} · {tally} | |")
+        for i in ids:
+            lines.append(_glance_row(by_id[i]))
+            placed.add(i)
+    rest = [r for r in reqs if r.get("id") not in placed]
+    if rest and placed:
+        lines.append(f"| | | **Not in any journey** — {len(rest)} | |")
+    lines += [_glance_row(r) for r in rest]
     lines.append("")
     return lines
 
@@ -1849,12 +2233,38 @@ def shape_diagram(area):
     for sp in spans:
         lines.append(f'    S_{_slug(sp)}[["{sp}"]]')
         lines.append(f'    S_{_slug(sp)} --> AREA')
+    # The boundary, drawn: what other areas own (scope.excluded[].owner) and
+    # what a later pass of this one still has to cover.
+    owners, deferred = {}, []
+    for e in (area.get("scope") or {}).get("excluded") or []:
+        if not isinstance(e, dict):
+            continue
+        if e.get("owner"):
+            owners.setdefault(e["owner"], []).append(e.get("item") or "?")
+        elif e.get("pass"):
+            deferred.append(e.get("item") or "?")
+    for owner in sorted(owners):
+        items = "<br/>".join(_shape_item(i) for i in owners[owner])
+        lines.append(f'    O_{_slug(owner)}[["{owner}<br/><small>{items}</small>"]]')
+        lines.append(f'    AREA -. owned elsewhere .- O_{_slug(owner)}')
+    if deferred:
+        items = "<br/>".join(_shape_item(i) for i in deferred)
+        lines.append(f'    D_later["later pass<br/><small>{items}</small>"]:::later')
+        lines.append("    AREA -.- D_later")
+        lines.append("    classDef later stroke-dasharray:4 3,fill:#f7f7f7")
     lines += ["```", ""]
+    if owners or deferred:
+        lines += ["*Boxes outside the area: what other areas own (this one only reads "
+                  "them) and what is deferred to a later pass — the scope list below, drawn.*", ""]
     if externals:
         lines += ["*Rounded nodes are outside systems this area depends on; "
                   "each declared outcome needs an answer: a requirement's or a "
                   "verdict's @error.*", ""]
     return lines
+
+
+def _shape_item(text, limit=44):
+    return _mermaid_label(text, limit)
 
 
 def _slug(name):
@@ -1968,6 +2378,13 @@ def extraction_section(area):
     buckets = {}
     for row in rows:
         buckets.setdefault(row.get("verdict", "?"), []).append(row)
+    slices = {k: len(v) for k, v in buckets.items()}
+    if stats.get("unclaimed"):
+        slices["unclaimed"] = stats["unclaimed"]
+    if len(slices) > 1:
+        lines += ["```mermaid", f"pie showData title {sum(slices.values())} code decision sites"]
+        lines += [f'    "{k}" : {v}' for k, v in sorted(slices.items())]
+        lines += ["```", ""]
     for verdict in ("GAP", "DEAD", "OUT-OF-SCOPE", "DEFENSIVE", "NOT-BEHAVIOR"):
         hits = buckets.get(verdict) or []
         if not hits:
@@ -2207,6 +2624,30 @@ def dimensions_section(area):
             "| Dimension | | Obligations |", "|---|---|---|"] + rows + [""]
 
 
+def produced_variants(root, area):
+    """Variants some assignment in the model builds, or None without a model."""
+    rel = (area.get("formal_model") or {}).get("quint_file")
+    if not rel or not (Path(root) / "specs" / rel).exists():
+        return None
+    try:
+        from quint_ir import parse_qnt
+        return set(parse_qnt(str(Path(root) / "specs" / rel)).get("produced_variants") or [])
+    except Exception:  # noqa: BLE001 — a model that does not parse is lint's to report
+        return None
+
+
+def fold(section, summary):
+    """Keep a section's heading, put its body behind a <details>."""
+    if not section:
+        return []
+    head, body = section[0], section[1:]
+    while body and body[0] == "":
+        body = body[1:]
+    while body and body[-1] == "":
+        body = body[:-1]
+    return [head, "", f"<details><summary>{summary}</summary>", ""] + body + ["", "</details>", ""]
+
+
 def emit_area(root, area_name):
     area = load_area(root, area_name)
     if area is None:
@@ -2248,16 +2689,22 @@ def emit_area(root, area_name):
     lines.append("")
     lines += questions_section(root, area_name, area)
     lines += ui_sections(area)
-    lines += at_a_glance(area)
+    lines += at_a_glance(area, [j for j in journeys if any(
+        st.get("ref", "").startswith(f"{area_name}.") for st in j.get("steps", []) or [])])
     lines += what_the_system_does(root, area_name, area, journeys)
     lines += decision_tables_section(root, area)
     lines += invariants_section(area)
     lines += externals_section(area)
-    lines += examples_section(root, area_name, area)
-    lines += extraction_section(area)
+    ex = examples_section(root, area_name, area)
+    n_ex = len(area.get("examples") or [])
+    lines += fold(ex, f"{n_ex} worked example{'s' if n_ex != 1 else ''}")
+    stats = (area.get("check_results") or {}).get("extraction") or {}
+    lines += fold(extraction_section(area),
+                  f"{stats.get('sites', '?')} code sites — {stats.get('unclaimed', '?')} unclaimed"
+                  if stats else "Triage ledger")
     lines += limits_section(root, area_name, area)
     if not area.get("screens"):
-        lines += state_machines_section(area)
+        lines += state_machines_section(area, produced_variants(root, area))
     lines += dimensions_section(area)
     lines += reference_section(root, area, project)
     write_doc(Path(root) / "specs" / f"{area_name}.readback.md", lines)
