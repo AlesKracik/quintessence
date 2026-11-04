@@ -102,6 +102,7 @@ module authUi {
   /// @req UI-001
   /// While on Home, when the user clicks 'Sign in', the system shall
   /// navigate to Login.
+  /// @title Open the sign-in form
   /// @status specified
   /// @when the user clicks 'Sign in'
   /// @while current == Home
@@ -124,6 +125,7 @@ module authUi {
   /// @req UI-002
   /// While on Login, when the user submits valid credentials, the system
   /// shall navigate to Dashboard.
+  /// @title Land on the Dashboard
   /// @status specified
   /// @when the user submits valid credentials
   /// @while current == Login
@@ -145,6 +147,7 @@ module authUi {
   /// @req UI-005
   /// If the user submits invalid credentials, then the system shall stay
   /// on Login and show the bad-credentials error.
+  /// @title Bad credentials stay on Login
   /// @status specified
   /// @unwanted
   /// @when the user submits invalid credentials
@@ -167,6 +170,7 @@ module authUi {
   /// @req UI-003
   /// If the user submits credentials for a Locked account, then the system
   /// shall navigate to LockedNotice.
+  /// @title Show the locked notice
   /// @status specified
   /// @unwanted
   /// @when the user submits credentials for a Locked account
@@ -188,6 +192,7 @@ module authUi {
   /// @req UI-006
   /// While on Dashboard, when the user clicks logout, the system shall sign
   /// the user out and return to Home.
+  /// @title Log out to Home
   /// @status specified
   /// @when the user clicks logout
   /// @while current == Dashboard
@@ -209,6 +214,7 @@ module authUi {
   /// @req UI-004
   /// While on Dashboard, when the session expires, the system shall return
   /// to Login.
+  /// @title Expired session returns to Login
   /// @status specified
   /// @when the session expires
   /// @while current == Dashboard
@@ -227,6 +233,7 @@ module authUi {
   /// @req UI-007
   /// While on LockedNotice, when the user goes back, the system shall show
   /// Home with the form cleared.
+  /// @title Leave the locked notice
   /// @status specified
   /// @when the user goes back to Home
   /// @while current == LockedNotice

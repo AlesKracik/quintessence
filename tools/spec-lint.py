@@ -2832,6 +2832,39 @@ def check_journeys(root, all_areas, findings, validator=None):
         check_journey_run(root, data, all_areas, jname, findings)
 
 
+def check_journey_titles(root, all_areas, findings):
+    """A journey's flowchart, Route line and refusal folds label each step
+    with its requirement's @title, and fall back to the bare ID — which a
+    reader cannot follow. A suggestion, never a gate: one WARN per area,
+    naming the walked requirements that have no title, in declaration order.
+    (check_journeys reports a journey file that does not parse.)"""
+    jdir = journeys_dir(root)
+    walked = {}  # area -> requirement IDs some journey walks
+    for p in sorted(jdir.glob("*.journey.json")) if jdir.exists() else []:
+        data = load_json(p)
+        if not isinstance(data, dict) or "__parse_error__" in data:
+            continue
+        for step in data.get("steps", []) or []:
+            ref = step.get("ref") or ""
+            if "." in ref:
+                area, rid = ref.split(".", 1)
+                walked.setdefault(area, set()).add(rid)
+    for area in sorted(walked):
+        view = all_areas.get(area)
+        if not isinstance(view, dict) or "__parse_error__" in view:
+            continue
+        reqs = view.get("requirements") or []
+        missing = [r["id"] for r in reqs
+                   if isinstance(r, dict) and r.get("id") in walked[area]
+                   and not (r.get("title") or "").strip()]
+        if missing:
+            add(findings, WARN, "journeys", "requirement-without-title", area,
+                f"{len(missing)} requirement(s) a journey walks have no @title, "
+                f"so the readback's journey charts label them by ID alone: "
+                f"{', '.join(missing)}. Add `@title <3-4 words>` after each "
+                f"one's description.")
+
+
 def _usable_views(all_areas):
     return {a: v for a, v in all_areas.items()
             if isinstance(v, dict) and "__parse_error__" not in v}
@@ -3286,6 +3319,7 @@ def main():
                   build_schema_validator(root, "change.schema.json"))
     check_journeys(root, all_areas, findings,
                    build_schema_validator(root, "journey.schema.json"))
+    check_journey_titles(root, all_areas, findings)
 
     if args.emit_json:
         print(json.dumps({

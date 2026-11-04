@@ -5920,3 +5920,270 @@ def test_a_cti_with_no_bounded_verdict_stays_not_checkable(tmp_path, monkeypatch
     _code, area, _calls = _inductive_run(tmp_path, monkeypatch, "timeout")
     assert area["invariants"][0]["formal_status"] == "not-checkable"
     assert "timeout" in area["check_results"]["checks"][0]["note"]
+
+
+# ── Readback readability: leaf diffs, refusal chains, folded journeys ────────
+# On a 42-requirement area the readback ran to 3,250 lines, most of it the
+# same record dumped after every step and refusals read as journey steps.
+# These pin the pieces that made it scannable without dropping anything:
+# only the fields that moved, the order an action checks its refusals in,
+# refusals folded under the step they refuse — and the same bytes every run.
+
+def _rec(**kw):
+    return dict(kw)
+
+
+def _map(*pairs):
+    return {"#map": [list(p) for p in pairs]}
+
+
+def _set(*items):
+    return {"#set": list(items)}
+
+
+def test_value_changes_reports_the_record_field_that_moved():
+    prev = _rec(groups=_map(["g1", _rec(name="SILVER", size=1)]))
+    cur = _rec(groups=_map(["g1", _rec(name="GOLD", size=1)]))
+    assert itf.value_changes(prev, cur, "st") == [("st.groups[g1].name", '"GOLD"')]
+
+
+def test_value_changes_reports_a_map_entry_added_and_one_removed():
+    prev = _map(["a", 1], ["b", 2])
+    cur = _map(["a", 1], ["c", 3])
+    assert itf.value_changes(prev, cur, "m") == [("m[c]", "3"), ("m[b]", "(removed)")]
+
+
+def test_value_changes_reports_what_joined_and_left_a_set():
+    prev = _map(["awsSlp", _set("g0", "g2")])
+    cur = _map(["awsSlp", _set("g0", "g1")])
+    assert itf.value_changes(prev, cur, "slpMembers") == [
+        ("slpMembers[awsSlp] +=", '{"g1"}'), ("slpMembers[awsSlp] -=", '{"g2"}')]
+    assert itf.format_leaves(itf.value_changes(prev, cur, "slpMembers")) == [
+        'slpMembers[awsSlp] += {"g1"}', 'slpMembers[awsSlp] -= {"g2"}']
+
+
+def test_value_changes_of_an_unchanged_value_is_empty():
+    v = _rec(groups=_map(["g1", _rec(name="GOLD")]), ids=_set(1, 2))
+    assert itf.value_changes(v, json.loads(json.dumps(v)), "st") == []
+
+
+def test_value_changes_follows_the_values_own_order_not_hashing():
+    """Byte-identical output is what the readback exists for: the order is
+    the new value's, then the removed keys in the old value's order — never
+    a dict or set iteration over unordered input."""
+    prev = _map(["z", 1], ["y", 2], ["x", 3])
+    cur = _map(["x", 30], ["w", 4], ["z", 10])
+    want = [("m[x]", "30"), ("m[w]", "4"), ("m[z]", "10"), ("m[y]", "(removed)")]
+    assert itf.value_changes(prev, cur, "m") == want
+    for seed in ("1", "2", "3"):
+        code = ("import sys, json; sys.path.insert(0, %r); import itf_tools as t; "
+                "print(json.dumps(t.value_changes(%r, %r, 'm')))"
+                % (str(TOOLS), prev, cur))
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                             text=True, env={"PYTHONHASHSEED": seed}, check=True)
+        assert [tuple(p) for p in json.loads(out.stdout)] == want
+
+
+def test_format_leaves_caps_and_drops_the_single_state_vars_prefix():
+    leaves = [(f"st.f{i}", str(i)) for i in range(5)]
+    assert itf.format_leaves(leaves, limit=2, drop_prefix="st.") == [
+        "f0 = 0", "f1 = 1", "… +3 more"]
+
+
+def test_model_prefix_only_for_a_model_with_one_state_var():
+    one = {"vars": ["st", "mbt::actionTaken"], "states": [{"st": {}, "mbt::actionTaken": ""}]}
+    two = {"vars": ["a", "b"], "states": [{"a": 1, "b": 2}]}
+    assert itf.model_prefix(one) == "st."
+    assert itf.model_prefix(two) is None
+
+
+def test_a_nullary_variant_written_as_unit_renders_as_its_tag():
+    assert itf.render_value({"tag": "Enabled", "value": {"tag": "UNIT"}}) == "Enabled"
+    assert itf.render_value({"tag": "Some", "value": 3}) == "Some(3)"
+
+
+def test_a_sequence_diagram_step_carries_its_arguments_and_only_moved_fields():
+    trace = {"vars": ["st", "mbt::actionTaken", "_lastG"], "states": [
+        {"st": _rec(groups=_map(), n=0), "mbt::actionTaken": "init", "_lastG": "g0"},
+        {"st": _rec(groups=_map(["g1", _rec(name="GOLD")]), n=0),
+         "mbt::actionTaken": "create_group", "_lastG": "g1"},
+    ]}
+    lines = itf.mermaid_lines(trace)
+    note = [ln for ln in lines if "Note over S" in ln]
+    assert len(note) == 1, "one note per step"
+    assert "groups[g1] = " in note[0] and "n =" not in note[0]
+    assert "st." not in note[0], "the single state var's prefix is dropped"
+
+
+CHAIN_MODEL = '''module m {
+  type Result = Ok | NotFound | Busy
+  var st: int
+  def refuse(s: int, r: Result): bool = all { st' = s }
+  def runRefusal(g: int): Result =
+    if (g < 0) NotFound
+    else if (g > 5) Busy
+    else Ok
+  action create(g: int): bool =
+    if (g < 0) refuse(st, NotFound)
+    else if (g > 5 and "x" != "y") refuse(st, Busy)
+    else all { st' = g }
+  action start(g: int): bool =
+    if (runRefusal(g) == Ok) all { st' = g } else refuse(st, runRefusal(g))
+  action plain(g: int): bool = all { st' = g }
+  action noop(g: int): bool = if (g == 0) refuse(st, Ok) else all { st' = g }
+}
+'''
+
+
+def _chain_decls():
+    return spec_source.declarations(CHAIN_MODEL)
+
+
+def test_refusal_chain_reads_the_guards_in_the_order_the_model_checks_them():
+    arms, final = readback.refusal_chain("create", _chain_decls())
+    assert arms == [("g < 0", ("refuse", "NotFound")),
+                    ('g > 5 and "x" != "y"', ("refuse", "Busy"))]
+    assert final == ("accept", None)
+    flow = "\n".join(readback.refusal_flowchart("create", _chain_decls()))
+    assert flow.index("NotFound") < flow.index("Busy")
+    assert "#quot;x#quot;" in flow and '"x"' not in flow.split("C2{", 1)[1].split("}")[0]
+
+
+def test_refusal_chain_expands_a_helper_that_answers_with_a_result():
+    """`if (helper(..) == Ok) apply else refuse(st, helper(..))`: the order
+    lives in the helper, so the helper's chain is what is drawn."""
+    arms, final = readback.refusal_chain("start", _chain_decls())
+    assert arms == [("g < 0", ("refuse", "NotFound")), ("g > 5", ("refuse", "Busy"))]
+    assert final == ("accept", None)
+
+
+def test_an_action_that_never_refuses_has_no_chain():
+    assert readback.refusal_chain("plain", _chain_decls()) is None
+    assert readback.refusal_flowchart("plain", _chain_decls()) == []
+    assert readback.refusal_chain("missing", _chain_decls()) is None
+    assert readback.refusal_chain("plain", None) is None
+
+
+def test_a_mermaid_label_escapes_what_would_end_it_or_read_as_a_tag():
+    # Unescaped, `n<MAX` renders as "n" — the rest is taken for a tag.
+    assert readback._mermaid_label('n<MAX and s == "x"') == \
+        "n#lt;MAX and s == #quot;x#quot;"
+
+
+def test_refusing_with_ok_is_drawn_as_a_deliberate_no_op():
+    flow = "\n".join(readback.refusal_flowchart("noop", _chain_decls()))
+    assert '"Ok — nothing changes"' in flow
+
+
+def _steps_area():
+    return {"area": "auth", "requirements": [
+        {"id": "REQ-001", "title": "Sign in", "quint_ref": "login",
+         "ears": {"response": "x"}},
+        {"id": "REQ-002", "ears": {"response": "x", "unwanted": True}},
+        {"id": "REQ-003", "ears": {"response": "x", "unwanted": True}},
+        {"id": "REQ-004", "quint_ref": "logout", "ears": {"response": "x"}},
+    ]}
+
+
+def _reqs(area):
+    return {r["id"]: r for r in area["requirements"]}
+
+
+def test_a_refusal_folds_under_the_step_it_refuses():
+    area = _steps_area()
+    j = {"name": "J", "steps": [{"ref": "auth.REQ-001"}, {"ref": "auth.REQ-002"},
+                                {"ref": "auth.REQ-003"}, {"ref": "auth.REQ-004"}]}
+    groups = readback.group_steps("auth", _reqs(area), j)
+    assert [(s["ref"], [r["ref"] for r in rs]) for s, rs in groups] == [
+        ("auth.REQ-001", ["auth.REQ-002", "auth.REQ-003"]), ("auth.REQ-004", [])]
+
+
+def test_a_journey_that_starts_with_a_refusal_keeps_it_as_a_step():
+    area = _steps_area()
+    j = {"name": "J", "steps": [{"ref": "auth.REQ-002"}, {"ref": "auth.REQ-001"}]}
+    groups = readback.group_steps("auth", _reqs(area), j)
+    assert [s["ref"] for s, _ in groups] == ["auth.REQ-002", "auth.REQ-001"]
+
+
+def test_the_journey_flowchart_labels_by_title_and_counts_refusals():
+    area = _steps_area()
+    j = {"name": "J", "steps": [{"ref": "auth.REQ-001"}, {"ref": "auth.REQ-002"},
+                                {"ref": "auth.REQ-004"}]}
+    flow = "\n".join(readback.journey_flowchart("auth", j, _reqs(area)))
+    assert '"1 · Sign in<br/><small>REQ-001</small>"' in flow, "title, then the ID"
+    assert '"2 · logout<br/>REQ-004"' in flow, "no title: the action and bare ID"
+    assert "1 refusal" in flow
+    one = {"name": "J", "steps": [{"ref": "auth.REQ-001"}]}
+    assert readback.journey_flowchart("auth", one, _reqs(area)) == [], \
+        "a one-step journey is not drawn"
+
+
+def test_at_a_glance_groups_rows_by_the_journey_that_first_walks_them():
+    area = _steps_area()
+    j1 = {"name": "Second", "steps": [{"ref": "auth.REQ-004"}, {"ref": "auth.REQ-001"}]}
+    j2 = {"name": "Again", "steps": [{"ref": "auth.REQ-001"}, {"ref": "auth.REQ-002"}]}
+    out = "\n".join(readback.at_a_glance(area, [j1, j2]))
+    order = [out.index(s) for s in ("**Second** — 2", "[REQ-004]", "[REQ-001]",
+                                    "**Again** — 1", "[REQ-002]",
+                                    "**Not in any journey** — 1", "[REQ-003]")]
+    assert order == sorted(order)
+    assert out.count("[REQ-001]") == 1, "a requirement sits under its first journey only"
+    assert "| refusal |" in out and "| happy path |" in out
+    flat = "\n".join(readback.at_a_glance(area))
+    assert "Not in any journey" not in flat and "**Second**" not in flat
+
+
+def test_the_status_pie_separates_a_deep_timeout_from_a_budget_stop():
+    def req(rid, **ob):
+        return {"id": rid, "witness": {"status": "witnessed"},
+                "obligation": dict({"formal_status": "verified", "steps": 3}, **ob)}
+    assert readback.proof_bucket(req("REQ-001", shallow_reason="budget"), 10) == \
+        "proven, only to ≤3 steps"
+    assert readback.proof_bucket(req("REQ-002"), 10) == "proven, only to ≤3 steps"
+    assert readback.proof_bucket(req("REQ-003", shallow_reason="deep-timeout"), 10) == \
+        "proven, only to ≤3 steps (deep pass did not answer)"
+
+
+def test_the_status_pie_needs_two_slices():
+    one = {"requirements": [{"id": "REQ-001"}, {"id": "REQ-002"}]}
+    assert "pie" not in "\n".join(readback.at_a_glance(one))
+    two = {"requirements": [{"id": "REQ-001"},
+                            {"id": "REQ-002", "witness": {"status": "no-witness"}}]}
+    assert "pie showData" in "\n".join(readback.at_a_glance(two))
+
+
+def test_a_state_nothing_produces_is_drawn_dashed():
+    area = {"state_machines": [{"entity": "Session", "initial_state": "Active",
+                                "states": [{"name": "Active"}, {"name": "Legacy"},
+                                           {"name": "Expired", "terminal": True}],
+                                "transitions": [{"from": "Active", "to": "Expired",
+                                                 "trigger": "expire"}]}]}
+    out = "\n".join(readback.state_machines_section(area, {"Active", "Expired"}))
+    assert "  class Legacy never" in out
+    assert "_Dashed: Legacy" in out
+    clean = "\n".join(readback.state_machines_section(area, {"Active", "Expired", "Legacy"}))
+    assert "never" not in clean
+    assert "never" not in "\n".join(readback.state_machines_section(area)), \
+        "no model, no claim"
+
+
+def test_fold_keeps_the_heading_and_folds_the_body():
+    out = readback.fold(["## Examples", "", "body", ""], "2 worked examples")
+    assert out == ["## Examples", "", "<details><summary>2 worked examples</summary>",
+                   "", "body", "", "</details>", ""]
+    assert readback.fold([], "x") == []
+
+
+def test_a_title_longer_than_a_label_is_rejected_by_the_schema():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((TOOLS.parent / "schemas" / "area.schema.json")
+                        .read_text(encoding="utf-8"))
+
+    def area(title):
+        return {"kind": "area", "area": "x", "version": "0.1.0",
+                "requirements": [{"id": "REQ-001", "description": "d",
+                                  "title": title}]}
+    v = jsonschema.Draft7Validator(schema)
+    assert not list(v.iter_errors(area("x" * 36)))
+    assert any("too long" in e.message for e in v.iter_errors(area("x" * 37)))
+

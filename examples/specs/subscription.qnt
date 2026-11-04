@@ -82,6 +82,7 @@ module subscription {
   /// @req REQ-001
   /// When a customer cancels an Active subscription, the system shall stop
   /// future billing.
+  /// @title Cancel stops billing
   /// @status specified
   /// @modality must
   /// @determinism deterministic
@@ -94,6 +95,7 @@ module subscription {
   /// @req REQ-002
   /// When a cancellation succeeds, the system shall keep access available
   /// until the paid period ends.
+  /// @title Access lasts to period end
   /// @status specified
   /// @modality must
   /// @when the customer cancels and the provider accepts
@@ -104,6 +106,7 @@ module subscription {
   /// @req REQ-007
   /// When a cancellation succeeds, the system shall confirm it to the
   /// customer by email or by an in-app notice.
+  /// @title Confirm the cancellation
   /// @status specified
   /// @modality may
   /// @determinism nondeterministic
@@ -127,6 +130,7 @@ module subscription {
   /// @req REQ-008
   /// If the billing provider declines a cancellation, then the system shall
   /// leave the subscription Active.
+  /// @title Provider declines: stays Active
   /// @status specified
   /// @modality must
   /// @determinism deterministic
@@ -155,6 +159,7 @@ module subscription {
   /// @req REQ-004
   /// If the billing provider does not answer a cancellation, then the
   /// system shall leave the subscription Active.
+  /// @title Provider silent: stays Active
   /// @status specified
   /// @modality must
   /// @unwanted
@@ -183,6 +188,7 @@ module subscription {
   /// @req REQ-003
   /// When a customer cancels an already-Cancelled subscription, the system
   /// shall make no further change.
+  /// @title Repeat cancel changes nothing
   /// @status specified
   /// @modality must
   /// @determinism deterministic
@@ -206,6 +212,7 @@ module subscription {
   /// @req REQ-005
   /// When the paid period ends for a cancelled subscription, the system
   /// shall withdraw access.
+  /// @title Access ends with the period
   /// @status specified
   /// @modality must
   /// @when the paid period ends
@@ -228,6 +235,7 @@ module subscription {
   /// @req REQ-006
   /// The system shall never issue a refund for the unused part of a paid
   /// period.
+  /// @title Never refund unused time
   /// @status specified
   /// @modality forbidden
   /// @unwanted

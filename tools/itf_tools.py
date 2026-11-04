@@ -48,6 +48,7 @@ from spec_source import (intent_path, load_area, save_area,  # noqa: E402
 
 ACTION_VAR_CANDIDATES = ("mbt::actionTaken", "_lastAction", "lastAction")
 MAX_NOTE_LEN = 60
+MAX_NOTES_PER_STEP = 6
 # Ghost vars that carry replay bookkeeping, not model state. Underscore
 # prefix is the convention precisely so model vars ("lastLoginTime") are
 # never silently dropped from summaries/diagrams.
@@ -902,7 +903,9 @@ def render_value(v, depth=0):
             return str(v["#unserializable"])
         if set(v.keys()) == {"tag", "value"}:  # variant constructor
             inner = render_value(v["value"], depth + 1)
-            return v["tag"] if inner in ("()", "{}", "") else f"{v['tag']}({inner})"
+            # Apalache writes a nullary variant's payload as {tag: "UNIT"}.
+            unit = inner in ("()", "{}", "", '{tag: "UNIT"}')
+            return v["tag"] if unit else f"{v['tag']}({inner})"
         pairs = ", ".join(f"{k}: {render_value(val, depth + 1)}"
                           for k, val in v.items() if not k.startswith("#"))
         return "{" + pairs + "}"
@@ -1026,6 +1029,93 @@ def changed_vars(prev, cur, var_names, action_var):
     return out
 
 
+def _is_record(v):
+    return (isinstance(v, dict) and not any(k.startswith("#") for k in v)
+            and set(v.keys()) != {"tag", "value"})
+
+
+def _key_label(k):
+    return render_value(k).strip('"')
+
+
+def value_changes(prev, cur, path):
+    """[(path, rendered)] for the leaves of an ITF value that differ.
+
+    A state var that is a record of maps of records (`st.groups.g1.name`)
+    rendered whole is hundreds of characters for one field that moved, and
+    the reader has to diff it by eye. Descend through records and maps to
+    the leaves that changed; a set reports what joined and what left. Order
+    follows the new value, so the output is deterministic."""
+    if prev == cur:
+        return []
+    if _is_record(prev) and _is_record(cur):
+        out = []
+        for k in list(cur.keys()) + [k for k in prev if k not in cur]:
+            out += value_changes(prev.get(k), cur.get(k), f"{path}.{k}")
+        return out
+    if isinstance(prev, dict) and isinstance(cur, dict) and "#map" in prev and "#map" in cur:
+        old = {json.dumps(k, sort_keys=True): (k, v) for k, v in prev["#map"]}
+        out, seen = [], set()
+        for k, v in cur["#map"]:
+            key = json.dumps(k, sort_keys=True)
+            seen.add(key)
+            if key in old:
+                out += value_changes(old[key][1], v, f"{path}[{_key_label(k)}]")
+            else:
+                out.append((f"{path}[{_key_label(k)}]", render_value(v)))
+        out += [(f"{path}[{_key_label(k)}]", "(removed)")
+                for key, (k, _) in old.items() if key not in seen]
+        return out
+    if isinstance(prev, dict) and isinstance(cur, dict) and "#set" in prev and "#set" in cur:
+        before = [json.dumps(x, sort_keys=True) for x in prev["#set"]]
+        after = [json.dumps(x, sort_keys=True) for x in cur["#set"]]
+        added = [render_value(x) for x, s in zip(cur["#set"], after) if s not in before]
+        gone = [render_value(x) for x, s in zip(prev["#set"], before) if s not in after]
+        out = []
+        if added:
+            out.append((f"{path} +=", "{" + ", ".join(added) + "}"))
+        if gone:
+            out.append((f"{path} -=", "{" + ", ".join(gone) + "}"))
+        return out
+    return [(path, render_value(cur))]
+
+
+def changed_leaves(prev, cur, var_names, action_var):
+    """Like changed_vars, but down to the leaf that moved: [(path, value)]."""
+    out = []
+    for v in var_names:
+        if v == action_var or v.startswith(GHOST_PREFIXES):
+            continue
+        if prev is None:
+            out.append((v, render_value(cur.get(v))))
+        else:
+            out += value_changes(prev.get(v), cur.get(v), v)
+    return out
+
+
+def model_prefix(trace, action_var=None):
+    """'st.' when the model keeps its whole state in one record var — the
+    prefix every changed path would repeat, so format_leaves drops it."""
+    action_var = detect_action_var(trace, action_var)
+    model = [v for v in state_vars(trace)
+             if v != action_var and not v.startswith(GHOST_PREFIXES)]
+    return f"{model[0]}." if len(model) == 1 else None
+
+
+def format_leaves(leaves, limit=None, drop_prefix=None):
+    """'groups[g1].name = "GOLD"', 'slpMembers[awsSlp] += {"g1"}' — one
+    string per changed leaf. `limit` caps how many are listed; `drop_prefix`
+    strips the single state var's name (model_prefix)."""
+    shown = leaves if limit is None else leaves[:limit]
+    if drop_prefix:
+        shown = [(p[len(drop_prefix):] if p.startswith(drop_prefix) else p, v)
+                 for p, v in shown]
+    parts = [f"{p} {v}" if p.endswith(("+=", "-=")) else f"{p} = {v}" for p, v in shown]
+    if limit is not None and len(leaves) > limit:
+        parts.append(f"… +{len(leaves) - limit} more")
+    return parts
+
+
 # ── Subcommands ───────────────────────────────────────────────────────────────
 
 def cmd_validate(args):
@@ -1107,16 +1197,25 @@ def mermaid_lines(trace, title=None, actor="Env", action_var=None, show_init=Fal
         lines.append(f"    title {title}")
     lines.append(f"    participant E as {actor}")
     lines.append("    participant S as System")
+    ghosts = [v for v in var_names if GHOST_PARAM_RE.match(v)]
+    prefix = model_prefix(trace, action_var)
     prev = None
     for i, s in enumerate(trace["states"]):
         label = step_label(s, i, action_var)
-        delta = changed_vars(prev, s, var_names, action_var)
         if i == 0 and not show_init:
             prev = s
             continue
+        # The call with its arguments, and only the fields it moved: a note
+        # per whole state var is a truncated dump that shows nothing.
+        params = action_params(s, step_ghosts(trace, s, action_var) or ghosts) if i else []
+        if params:
+            label = f"{label}({', '.join(params)})"
         lines.append(f"    E->>S: {_mermaid_escape(label)}")
-        for n, v in delta:
-            lines.append(f"    Note over S: {_mermaid_escape(_truncate(f'{n} = {v}'))}")
+        delta = changed_leaves(prev if i else None, s, var_names, action_var)
+        texts = [_mermaid_escape(_truncate(t)) for t in
+                 format_leaves(delta, limit=MAX_NOTES_PER_STEP, drop_prefix=prefix)]
+        if texts:
+            lines.append(f"    Note over S: {'<br/>'.join(texts)}")
         prev = s
     return lines
 

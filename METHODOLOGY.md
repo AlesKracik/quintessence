@@ -281,7 +281,7 @@ A requirement that is about state alone, not a step (no trigger), sits on the `m
 
 ### What a reviewer reads
 
-Each requirement leads with its EARS sentence rendered from the fields, then its **example rows** (Given / When / Then, derived from runs), then **Guarded by** (the invariants that read what its action changes). Nothing a reviewer agrees to is prose written beside the model; the one authored prose section is the area's brief.
+Each requirement leads with its EARS sentence rendered from the fields (after its `@title`, a short name the readback's charts and routes label it by), then its **example rows** (Given / When / Then, derived from runs), then one **Proof** line (reachable, and holds on every reachable step to ≤N). The evidence — provenance, **Guarded by** (the invariants that read what its action changes), the witness, the Quint — sits behind a fold that names what it holds; anything broken or uncertain stays in view. Nothing a reviewer agrees to is prose written beside the model; the one authored prose section is the area's brief.
 
 ### Modality: MUST, MAY, FORBIDDEN
 
@@ -652,7 +652,7 @@ A **journey** (`specs/journeys/<slug>.journey.json`) is a named user-visible flo
 
 **A journey is executable.** Its `run` (`"run": "auth-ui.signInJourney"`) names the Quint run that walks it: `quint test` executes it, `tools/spec-runs.py` makes it a trace the code replays, and lint checks it calls each step's action in order (`journey-run-order`, FAIL). One call may cover consecutive steps, and a call covers a step in another area through the imported action it performs (`auth::login` inside a UI action). With no run, `journey-not-executable` WARNs, FAILs once any of its areas is `in-review`.
 
-**Each step carries example rows** (explicit `examples`, or every example whose `@refs` names the step); `journey-example-off-step` (an example whose last call is not the step's own action) and `journey-step-without-example` report the gaps. The area readback groups requirements as journey slices — who/story/route, a **Runs as** line, then each step's EARS sentence, rows and **Guarded by** invariants; the project readback shows each journey as a step table.
+**Each step carries example rows** (explicit `examples`, or every example whose `@refs` names the step); `journey-example-off-step` (an example whose last call is not the step's own action) and `journey-step-without-example` report the gaps. The area readback groups requirements as journey slices — who/story/route, a **Runs as** line, a flowchart of the steps, then each step's EARS sentence and rows, with the `@unwanted` steps that refuse it folded beneath it; the project readback shows each journey as a step table.
 
 ---
 
