@@ -842,16 +842,40 @@ def check_cited_constants(area_data, decls, area_name, findings):
                     f"the sentence.", ref=rid)
 
 
-def check_unread_constants(area_data, decls, area_name, findings):
-    """A constant the model declares but no action, invariant or property
-    reads states a rule nothing enforces. (One a requirement cites is
-    reported by check_cited_constants, against that requirement.)"""
-    if not decls:
-        return
-    severity = FAIL if at_review(area_data) else WARN
+def _model_roots(area_data, decls):
+    """What the model checks: its actions and temporals, and the vals its
+    invariants and properties name."""
     roots = [n for n, d in decls.items() if d.get("kind") in ("action", "temporal")]
     roots += [i.get("quint_name") for i in area_data.get("invariants", []) or []]
     roots += [p.get("quint_name") for p in area_data.get("properties", []) or []]
+    return [r for r in roots if r]
+
+
+def _tested_computed_defs(area_data):
+    """The pure defs/vals hosting a computed requirement that names its
+    @verified-by test. That unit test is what checks such a def — both sides
+    of every threshold it reads included — not any step of the model."""
+    return sorted({r["quint_def"] for r in area_data.get("requirements", []) or []
+                   if isinstance(r, dict) and r.get("form") == "computed"
+                   and r.get("quint_def") and r.get("verified_by")})
+
+
+def _roots_reaching(decls, roots, name):
+    """The roots whose name closure (helpers included) reaches `name`."""
+    return [r for r in roots
+            if r != name and name in spec_source.name_closure(decls, [r])]
+
+
+def check_unread_constants(area_data, decls, area_name, findings):
+    """A constant the model declares but no action, invariant or property
+    reads states a rule nothing enforces. (One a requirement cites is
+    reported by check_cited_constants, against that requirement.) A def a
+    computed requirement's unit test checks is a root too: the test reads
+    what it reads."""
+    if not decls:
+        return
+    severity = FAIL if at_review(area_data) else WARN
+    roots = _model_roots(area_data, decls) + _tested_computed_defs(area_data)
     cited = {c.get("name") for c in area_data.get("constraints", []) or []
              for r in area_data.get("requirements", []) or []
              if _cites(_ears_text(r), c.get("name"))}
@@ -1629,14 +1653,19 @@ def check_examples(area_data, sidecar, all_areas, area_name, findings):
                     f"{eid}.refs references '{target}', which does not exist.", ref=eid)
 
 
-def check_paired_invariants(root, area_data, sidecar, area_name, findings):
+def check_paired_invariants(root, area_data, sidecar, area_name, findings,
+                            decls=None):
     """Rule 3. Reachability is one-sided.
 
     A witness shows a threshold CAN fire; nothing shows it cannot fire EARLY.
     With MAX_FAILED_ATTEMPTS = 5, changing the guard to `>= 1` leaves every
     invariant holding, the witness still found (in one step, which nothing
     looks at), and lint clean. Every numeric constant an action reads needs an
-    invariant bounding it from the other side."""
+    invariant bounding it from the other side.
+
+    Except one only a unit-tested computed requirement reaches: when every
+    root that reaches the constant (`decls` given) is a tested computed def,
+    its @verified-by test pins both sides and no model invariant is owed."""
     inv_ids_early = {i.get("id") for i in (area_data.get("invariants") or []) if i.get("id")}
     # The dangling-reference half needs no sidecar, so it runs first: an area
     # with no Quint model yet (a fresh brownfield extraction, for instance)
@@ -1660,6 +1689,8 @@ def check_paired_invariants(root, area_data, sidecar, area_name, findings):
         return
     inv_ids = {i.get("id") for i in (area_data.get("invariants") or []) if i.get("id")}
     review = at_review(area_data)
+    model_roots = _model_roots(area_data, decls) if decls else []
+    tested = _tested_computed_defs(area_data) if decls else []
     for con in area_data.get("constraints", []) or []:
         name, cid = con.get("name"), con.get("id", "?")
         if not name or not isinstance(con.get("value"), (int, float)):
@@ -1674,13 +1705,19 @@ def check_paired_invariants(root, area_data, sidecar, area_name, findings):
         paired = con.get("paired_invariant")
         if paired and paired not in inv_ids:
             continue          # already reported above, before the sidecar guard
-        if used and not paired:
-            add(findings, FAIL if review else WARN, "constraints",
-                "constraint-without-paired-invariant", area_name,
-                f"{cid} ({name}) is read by an action guard but names no "
-                f"paired_invariant. A witness proves the threshold CAN fire; nothing "
-                f"proves it cannot fire early \u2014 loosening the guard to `>= 1` would "
-                f"pass every gate here.", ref=cid)
+        if not used or paired:
+            continue
+        readers = _roots_reaching(decls, model_roots, name) if decls else []
+        if decls and not readers and _roots_reaching(decls, tested, name):
+            continue          # only a unit-tested computed requirement reads it
+        shown = ", ".join(f"`{r}`" for r in readers[:3]) + (
+            f" and {len(readers) - 3} more" if len(readers) > 3 else "")
+        add(findings, FAIL if review else WARN, "constraints",
+            "constraint-without-paired-invariant", area_name,
+            f"{cid} ({name}) is read by {shown or 'the model'} but names no "
+            f"paired_invariant. A witness proves the threshold CAN fire; nothing "
+            f"proves it cannot fire early \u2014 loosening the guard to `>= 1` would "
+            f"pass every gate here.", ref=cid)
 
 
 def check_refusal_examples(area_data, area_name, findings):
@@ -3097,7 +3134,8 @@ def lint_area(root, area_name, area_data, sidecar, all_areas, catalog, findings,
     check_cost(root, area_data, sidecar, area_name, findings)
     check_builtin_names(sidecar, area_name, findings)
     check_transition_invariant_names(area_data, sidecar, info, area_name, findings)
-    check_paired_invariants(root, area_data, sidecar, area_name, findings)
+    check_paired_invariants(root, area_data, sidecar, area_name, findings,
+                            decls=decls)
     check_refusal_examples(area_data, area_name, findings)
     check_run_traces(root, area_data, area_name, findings)
     check_boundary(area_data, area_name, findings)
