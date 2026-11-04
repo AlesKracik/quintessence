@@ -1370,6 +1370,99 @@ def test_paired_invariant_must_exist(tmp_path):
     assert (lint.FAIL, "paired-invariant-dangling") in codes
 
 
+# A constant only a unit-tested computed requirement reads is covered by that
+# test: it pins both sides of the threshold. Neither "nothing reads it" nor
+# "an action guard reads it, pair it" is true of it.
+
+RPO_MODEL = """module rpo {
+  var t: int
+  /// @con CON-001
+  /// Minutes in a day: the RPO grid wraps over it.
+  pure val MINUTES_PER_DAY: int = 1440
+  pure def wrap(m: int): int = m % MINUTES_PER_DAY
+  /// @req REQ-050
+  /// When a group is due.
+  /// @status specified
+  /// @verified-by tests/test_rpo.py
+  pure def shouldRun(now: int, rpo: int): bool = {READS} % rpo == 0
+  action init = t' = 0
+  action tick = all { {GUARD}, t' = t + 1 }
+  action step = tick
+}
+"""
+
+
+def _rpo_findings(tmp_path, reads="now % MINUTES_PER_DAY", guard="t >= 0",
+                  tested=True):
+    model = RPO_MODEL.replace("{READS}", reads).replace("{GUARD}", guard)
+    if not tested:
+        model = model.replace("  /// @verified-by tests/test_rpo.py\n", "")
+    specs = tmp_path / "specs"
+    specs.mkdir(parents=True, exist_ok=True)
+    (specs / "rpo.qnt").write_text(model, encoding="utf-8")
+    (specs / "rpo.intent.json").write_text(json.dumps(
+        {"kind": "area", "area": "rpo", "version": "0.1.0", "status": "formalized"}),
+        encoding="utf-8")
+    area = spec_source.load_area(tmp_path, "rpo")
+    decls = spec_source.declarations(model)
+    findings = []
+    lint.check_unread_constants(area, decls, "rpo", findings)
+    lint.check_paired_invariants(tmp_path, area, {"vars": {"t"}}, "rpo", findings,
+                                 decls=decls)
+    lint.check_witnesses(tmp_path, area, "rpo", findings)
+    return area, findings
+
+
+def _checks(findings):
+    return {f.check for f in findings}
+
+
+def test_a_computed_requirement_records_the_def_it_sits_on(tmp_path):
+    area, _ = _rpo_findings(tmp_path)
+    req = area["requirements"][0]
+    assert (req["form"], req["quint_def"]) == ("computed", "shouldRun")
+    assert "quint_ref" not in req, "quint_ref names an action, always"
+
+
+def test_a_constant_only_a_unit_tested_computed_requirement_reads_is_covered(tmp_path):
+    _, findings = _rpo_findings(tmp_path)
+    assert not _checks(findings) & {"constant-unread",
+                                    "constraint-without-paired-invariant"}
+
+
+def test_without_a_test_the_constant_is_still_unread(tmp_path):
+    _, findings = _rpo_findings(tmp_path, tested=False)
+    assert {"constant-unread", "computed-without-verified-by"} <= _checks(findings)
+
+
+def test_an_action_guard_reading_it_too_still_owes_the_paired_invariant(tmp_path):
+    _, findings = _rpo_findings(tmp_path, guard="t < MINUTES_PER_DAY")
+    hit = [f for f in findings if f.check == "constraint-without-paired-invariant"]
+    assert len(hit) == 1
+    assert "read by `tick`" in hit[0].description, "names the real reader"
+    assert "action guard" not in hit[0].description
+
+
+def test_through_a_helper_only_the_tested_def_reaches_it_is_covered(tmp_path):
+    _, findings = _rpo_findings(tmp_path, reads="wrap(now)")
+    assert not _checks(findings) & {"constant-unread",
+                                    "constraint-without-paired-invariant"}
+
+
+def test_through_a_helper_an_action_also_reaches_it_is_not(tmp_path):
+    _, findings = _rpo_findings(tmp_path, reads="wrap(now)", guard="wrap(t) >= 0")
+    hit = [f for f in findings if f.check == "constraint-without-paired-invariant"]
+    assert len(hit) == 1 and "read by `tick`" in hit[0].description
+
+
+def test_a_constant_read_outside_every_root_says_the_model_reads_it(tmp_path):
+    """No root reaches it (a helper nothing calls), yet the text reads it:
+    the message must not invent an action guard."""
+    _, findings = _rpo_findings(tmp_path, reads="now", tested=True)
+    hit = [f for f in findings if f.check == "constraint-without-paired-invariant"]
+    assert len(hit) == 1 and "read by the model" in hit[0].description
+
+
 def test_declared_but_unused_constant_needs_no_pairing(tmp_path):
     # Declared and never read by any action: no threshold to get wrong.
     qnt = "module auth {\n  pure val MAX_SESSION_AGE: int = 24\n}\n"

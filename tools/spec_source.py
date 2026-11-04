@@ -127,8 +127,9 @@ Hosting — what the declaration under the block means for the record:
                                    (must), where one @outcome holds (may),
                                    or must not happen at all (forbidden).
                                    Several requirements may share an action.
-  REQ on a `pure def|pure val`     form "computed": a derived value no step
-                                   carries, verified by @verified-by tests.
+  REQ on a `pure def|pure val`     form "computed": quint_def = the def. A
+                                   derived value no step carries, verified
+                                   by @verified-by tests.
   REQ on the `module` with @shall  form "state": in every reachable state
                                    where @while holds, @shall holds.
   REQ on the `module`, no @shall   no form yet: raw, or non-functional.
@@ -1445,6 +1446,7 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
                 item["quint_ref"] = hn
                 item["form"] = "event"
             elif hk in ("val", "def") and host.get("pure"):
+                item["quint_def"] = hn
                 item["form"] = "computed"
             elif hk in (None, "module"):
                 # Only a formal requirement has a form: a raw one's @shall
