@@ -769,7 +769,7 @@ def test_duplicate_navigation_ids_are_a_grammar_problem(tmp_path):
 def test_the_readback_draws_a_sidebar_edge_once(tmp_path):
     area, _ = _ui(tmp_path)
     text = "\n".join(readback.ui_sections(area))
-    assert "ANY((every screen)) --> |click \"Settings\" in the sidebar| Settings" in text
+    assert "ANY((every screen)) --> |\"click #quot;Settings#quot; in the sidebar\"| Settings" in text
     assert "| NAV-003 | _every screen_ | Settings |" in text
 
 

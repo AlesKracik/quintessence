@@ -1858,13 +1858,15 @@ def ui_sections(area):
         return []
     lines = ["## Navigation", "", "```mermaid", "graph TB"]
     for nav in area.get("navigation", []) or []:
-        trig = nav.get("trigger", "").replace("|", "/")
+        # Quoted: an unquoted `(` in an edge label is Mermaid syntax, and
+        # "submit invalid credentials (stays, shows error)" does not parse.
+        trig = _mermaid_label(nav.get("trigger", "").replace("|", "/"), limit=10**6)
         frm = nav.get("from")
         if frm == "*":
             # A sidebar edge: drawn once, from a node that stands for every
             # screen, rather than as N copies of the same arrow.
             frm = "ANY((every screen))"
-        lines.append(f"  {frm} --> |{trig}| {nav.get('to')}")
+        lines.append(f'  {frm} --> |"{trig}"| {nav.get('to')}')
     gated = [s["name"] for s in screens if s.get("auth_required")]
     if gated:
         lines.append("  classDef auth_required fill:#fff5b1")

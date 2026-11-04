@@ -187,13 +187,13 @@ run q_7ef96d74 = init.expect(form == Idle)
 
 ```mermaid
 graph TB
-  Home --> |click 'Sign in'| Login
-  Login --> |submit valid credentials| Dashboard
-  Login --> |submit invalid credentials (stays, shows error)| Login
-  Login --> |submit when account locked| LockedNotice
-  Dashboard --> |click logout| Home
-  Dashboard --> |the session expires (sign in again)| Login
-  LockedNotice --> |back to Home| Home
+  Home --> |"click 'Sign in'"| Login
+  Login --> |"submit valid credentials"| Dashboard
+  Login --> |"submit invalid credentials (stays, shows error)"| Login
+  Login --> |"submit when account locked"| LockedNotice
+  Dashboard --> |"click logout"| Home
+  Dashboard --> |"the session expires (sign in again)"| Login
+  LockedNotice --> |"back to Home"| Home
   classDef auth_required fill:#fff5b1
   class Dashboard auth_required
 ```
