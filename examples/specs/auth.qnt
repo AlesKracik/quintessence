@@ -95,6 +95,7 @@ module auth {
   /// @req REQ-001
   /// When a registered user submits valid credentials, the system shall
   /// create an Active session owned by that user.
+  /// @title Sign in with valid credentials
   /// @status specified
   /// @when a registered user submits valid credentials
   /// @shall isActive(sid) and sessionOwner.get(sid) == uid
@@ -103,6 +104,7 @@ module auth {
   /// @req REQ-005
   /// While the account is Locked, if the user submits valid credentials,
   /// then the system shall refuse the login.
+  /// @title Refuse sign-in while locked
   /// @status specified
   /// @modality forbidden
   /// @unwanted
@@ -127,6 +129,7 @@ module auth {
   /// @req REQ-002
   /// While a user's session is Active, when the user requests logout, the
   /// system shall transition that session to LoggedOut.
+  /// @title Log out
   /// @status specified
   /// @when the user requests logout
   /// @while isActive(sid)
@@ -162,6 +165,7 @@ module auth {
   /// If a login attempt fails while the account is Unlocked, then the system
   /// shall increment failedAttempts and lock the account when it reaches
   /// MAX_FAILED_ATTEMPTS.
+  /// @title Lock after repeated failures
   /// @status specified
   /// @unwanted
   /// @when a login attempt fails
@@ -173,6 +177,7 @@ module auth {
   /// @req REQ-006
   /// If a failed login locks the account, then the system shall end the
   /// user's Active sessions.
+  /// @title Lockout ends active sessions
   /// @status specified
   /// @unwanted
   /// @when a failed login locks the account
@@ -204,6 +209,7 @@ module auth {
   /// @req REQ-004
   /// While a session is Active and has been inactive for longer than
   /// MAX_SESSION_AGE, the system shall transition it to Expired.
+  /// @title Expire an idle session
   /// @status specified
   /// @when the session's idle time runs out
   /// @while isActive(sid) and idleOf(sid) > MAX_SESSION_AGE

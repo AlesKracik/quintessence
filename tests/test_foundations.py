@@ -15,6 +15,7 @@ Pure Python, like the rest of the suite: no quint/Apalache/Java needed.
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -611,3 +612,73 @@ def test_strict_simulation_fails_when_the_quint_cannot_screen_probes(
     with pytest.raises(SystemExit) as exc:
         record.cmd_check(_SimArgs(tmp_path, True))
     assert exc.value.code == 1
+
+
+# ── @title: a short name wherever the readback has room only for a label ─────
+
+TITLED = SHOP.replace(
+    "  /// @req REQ-001\n  /// @status specified\n",
+    "  /// @req REQ-001\n  /// A customer orders one item.\n  /// @title Order an item\n"
+    "  /// @status specified\n").replace(
+    "  /// @req REQ-003\n  /// @status specified\n",
+    "  /// @req REQ-003\n  /// @title Refuse past the limit\n  /// @status specified\n")
+
+
+def _refusal_journey():
+    return {"_file": "j0", "name": "Buy", "run": "shop.journeyRun",
+            "steps": [{"ref": "shop.REQ-001"}, {"ref": "shop.REQ-003"},
+                      {"ref": "shop.REQ-002"}]}
+
+
+def test_a_title_parses_after_the_description_and_does_not_swallow_it(tmp_path):
+    area = _project(tmp_path, model=TITLED)
+    req = {r["id"]: r for r in area["requirements"]}
+    assert req["REQ-001"]["title"] == "Order an item"
+    assert req["REQ-001"]["description"] == "A customer orders one item."
+    assert "title" not in req["REQ-002"]
+
+
+def test_the_title_labels_the_route_the_flowchart_and_the_refusal_fold(tmp_path):
+    area = _project(tmp_path, model=TITLED)
+    out = "\n".join(readback.what_the_system_does(
+        tmp_path, "shop", area, [_refusal_journey()]))
+    route = next(ln for ln in out.splitlines() if ln.startswith("> **Route**"))
+    assert "[REQ-001 Order an item](#req-001) (+1 refusal)" in route
+    # No title: the bare ID, which is what every label falls back to.
+    assert "[REQ-002](#req-002)" in route
+    assert route.count("→") == 1, "the refusal is folded, not a hop"
+    assert '"1 · Order an item<br/><small>REQ-001</small>"' in out
+    assert '"2 · restock<br/>REQ-002"' in out
+    assert ("<details><summary>↳ Step 1 is refused in 1 case: "
+            "REQ-003 Refuse past the limit</summary>") in out
+    assert "**Step 2 of 2**" in out and "**Step 3 of" not in out
+    # The heading keeps the ID, so anchors still resolve.
+    assert "#### REQ-001\n" in out
+    assert "**Order an item** — " in out
+
+
+def test_lint_suggests_a_title_for_what_a_journey_walks(tmp_path):
+    area = _project(tmp_path, model=TITLED, journeys=[_refusal_journey()])
+    findings = []
+    lint.check_journey_titles(tmp_path, {"shop": area}, findings)
+    hits = [f for f in findings if f.check == "requirement-without-title"]
+    assert len(hits) == len(findings)
+    assert [(f.severity, f.area) for f in hits] == [("warn", "shop")]
+    assert "REQ-002" in hits[0].description and "REQ-001" not in hits[0].description
+
+
+def test_the_whole_readback_is_the_same_bytes_every_run(tmp_path):
+    """The readback is reviewed as a git diff. Every ordering the folds,
+    pies and flowcharts introduce must come from the data — two runs in
+    separate interpreters (different hash seeds) give identical output."""
+    _project(tmp_path, model=TITLED, journeys=[_refusal_journey()])
+    out = tmp_path / "specs" / "shop.readback.md"
+    seen = []
+    for seed in ("1", "2"):
+        subprocess.run([sys.executable, str(TOOLS / "spec-readback.py"), "area", "shop"],
+                       cwd=tmp_path, env={"PYTHONHASHSEED": seed, "PATH": ""},
+                       check=True, capture_output=True)
+        seen.append(out.read_bytes())
+    assert seen[0] == seen[1]
+    text = seen[0].decode()
+    assert "flowchart LR" in text and "<details open><summary><b>Steps</b>" in text

@@ -21,7 +21,11 @@ flowchart LR
     end
     X_PaymentGateway(["PaymentGateway<br/>3 outcomes"])
     AREA --> X_PaymentGateway
+    O_billing[["billing<br/><small>pricing</small>"]]
+    AREA -. owned elsewhere .- O_billing
 ```
+
+*Boxes outside the area: what other areas own (this one only reads them) and what is deferred to a later pass — the scope list below, drawn.*
 
 *Rounded nodes are outside systems this area depends on; each declared outcome needs an answer: a requirement's or a verdict's @error.*
 
@@ -67,12 +71,18 @@ flowchart LR
 
 ## At a Glance
 
-| | ID | Behavior | Modality |
+```mermaid
+pie showData title 4 requirements
+    "not checked yet" : 3
+    "proven" : 1
+```
+
+| | ID | Behavior | Kind |
 |---|---|---|---|
-| ⏳ | [REQ-001](#req-001) | While the cart is Open, when a shopper adds a SKU already in the cart, the system shall… | must |
-| ⏳ | [REQ-002](#req-002) | While the cart is Open and holds fewer than MAX_ITEMS lines, when a shopper adds a new… | must |
-| ⊘ | [REQ-003](#req-003) | If a shopper adds an item to a CheckedOut cart, then the system shall refuse the call a… | forbidden |
-| ⏳ | [REQ-004](#req-004) | If the payment gateway is unavailable during checkout, then the system shall leave the… | must |
+| ⏳ | [REQ-001](#req-001) | While the cart is Open, when a shopper adds a SKU already in the cart, the system shall… | happy path |
+| ⏳ | [REQ-002](#req-002) | While the cart is Open and holds fewer than MAX_ITEMS lines, when a shopper adds a new… | happy path |
+| ⊘ | [REQ-003](#req-003) | If a shopper adds an item to a CheckedOut cart, then the system shall refuse the call a… | forbidden · refusal |
+| ⏳ | [REQ-004](#req-004) | If the payment gateway is unavailable during checkout, then the system shall leave the… | refusal |
 
 ## What the System Does
 
@@ -82,13 +92,13 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 ⏳ When a shopper adds a SKU already present, the system shall ….
 
-> _Extracted from `code/legacy-cart/cart.js:31-35` (high confidence)._
-
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | cart.items = [{sku: 'a', qty: 3}] |
 
-<details><summary>Details</summary>
+<details><summary>provenance</summary>
+
+> _Extracted from `code/legacy-cart/cart.js:31-35` (high confidence)._
 
 **Record:** `specs/cart.qnt:5` — the doc comment this requirement is read from.
 
@@ -98,9 +108,9 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 ⏳ When a shopper adds a new SKU, the system shall ….
 
-> _Extracted from `code/legacy-cart/cart.js:26-36` (high confidence)._
+<details><summary>provenance</summary>
 
-<details><summary>Details</summary>
+> _Extracted from `code/legacy-cart/cart.js:26-36` (high confidence)._
 
 **Record:** `specs/cart.qnt:16` — the doc comment this requirement is read from.
 
@@ -110,15 +120,15 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 ⊘  *(failure path)* If a shopper adds an item, then the system shall ….
 
-> _Extracted from `code/legacy-cart/cart.js:22-24` (high confidence)._
-
 > **Forbidden** — this must never happen, so there is no trace to find. The proof is the check that no reachable step of the action starts where it is forbidden. The examples below show the call being refused.
 
 | Example | Given | When | Then |
 |---|---|---|---|
 | EX-002 — Adding to a checked-out cart is refused and the cart is untouched | cart.status = CheckedOut, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = b, qty = 1) | result = refused, cart.items = [{sku: 'a', qty: 1}] |
 
-<details><summary>Details</summary>
+<details><summary>provenance</summary>
+
+> _Extracted from `code/legacy-cart/cart.js:22-24` (high confidence)._
 
 **Record:** `specs/cart.qnt:27` — the doc comment this requirement is read from.
 
@@ -128,13 +138,13 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 ⏳  *(failure path)* If the payment gateway throws during checkout, then the system shall ….
 
-> _Extracted from `code/legacy-cart/cart.js:58-62` (medium confidence)._
-
 > **On PaymentGateway/OK:** CheckedOut
 > **On PaymentGateway/DECLINED:** NO_CHANGE — the cart stays Open; reason 'declined' (safe to retry)
 > **On PaymentGateway/UNAVAILABLE:** NO_CHANGE — the cart stays Open; reason 'unavailable'; caller retries (safe to retry)
 
-<details><summary>Details</summary>
+<details><summary>provenance</summary>
+
+> _Extracted from `code/legacy-cart/cart.js:58-62` (medium confidence)._
 
 **Record:** `specs/cart.qnt:39` — the doc comment this requirement is read from.
 
@@ -161,6 +171,8 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 ## Examples
 
+<details><summary>2 worked examples</summary>
+
 _Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
 
 | Example | Given | When | Then | Illustrates |
@@ -168,11 +180,25 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 | EX-001 — Adding a SKU twice merges the lines | cart.status = Open, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = a, qty = 2) | cart.items = [{sku: 'a', qty: 3}] | REQ-001 |
 | EX-002 — Adding to a checked-out cart is refused and the cart is untouched | cart.status = CheckedOut, cart.items = [{sku: 'a', qty: 1}] | add_item(sku = b, qty = 1) | result = refused, cart.items = [{sku: 'a', qty: 1}] | REQ-003 |
 
+</details>
+
 ## What the Code Does That the Spec Does Not
+
+<details><summary>18 code sites — 0 unclaimed</summary>
 
 _The only check here that runs code → spec. A branch nobody wrote down cannot be regenerated, cannot be witnessed, and cannot be missed by any spec-shaped check — because nothing spec-shaped knows it exists._
 
 **9 mapped · 9 triaged · 0 unclaimed** of 18 decision site(s).
+
+```mermaid
+pie showData title 18 code decision sites
+    "DEAD" : 1
+    "DEFENSIVE" : 1
+    "GAP" : 5
+    "MAPPED" : 9
+    "NOT-BEHAVIOR" : 1
+    "OUT-OF-SCOPE" : 1
+```
 
 **GAP** (5)
 
@@ -199,6 +225,8 @@ _The only check here that runs code → spec. A branch nobody wrote down cannot 
 - `code/legacy-cart/cart.js:39` Returns the updated cart the caller already holds; the observable change is the stored cart, covered by REQ-001/REQ-002.
 
 _9 site(s) MAPPED to spec elements — listed in the ledger, not repeated here._
+
+</details>
 
 ## Limits and Bounds
 

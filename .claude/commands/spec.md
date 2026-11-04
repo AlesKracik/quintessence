@@ -29,6 +29,7 @@ There are no other authoring subcommands — this command subsumes every authori
   /// @req REQ-003
   /// When a sign-in fails, the system shall count it and lock the account
   /// once the count reaches MAX_FAILED_ATTEMPTS.
+  /// @title Lock after repeated failures
   /// @status specified
   /// @when a login attempt fails
   /// @unwanted
@@ -39,6 +40,7 @@ There are no other authoring subcommands — this command subsumes every authori
   action login_failed(uid: UserId): bool = all { ... }
 ```
 
+- **Short name** → `@title <3-4 words>` (≤36 characters, schema-enforced): what the readback shows wherever it has room only for a label — journey flowcharts, the Route line, refusal folds, At a Glance. Without it those show the bare ID. Write it **after** the description lines: a tag's value continues onto the untagged lines below it, so an `@title` right after `@req` swallows the sentence. Lint suggests one (`requirement-without-title`, WARN) once the area has a journey.
 - **Requirement on a step (event form)** → on the `action` it governs. `@while` and `@shall` are Quint booleans over the action's own parameter names: `@while` is read in the state BEFORE the step, `@shall` in the state AFTER. `@old <name>: <Type> = <expr>` snapshots a pre-state value `@shall` may name (JML's `old()`); write "shall increment" as `== before + 1`, never with `_prev`/`_last` ghosts (lint: `requirement-reads-ghost`). `/spec-check` proves two things from this: every reachable step of the action from `@while` ends in `@shall` (the obligation), and some such step happens (the witness). Several requirements may share one action. Past `raw`, a functional requirement without formal `@while`/`@shall` FAILs (`requirement-not-formal`).
 - **Permission (`may`)** → on the action, `@modality may` and one `@outcome <name>: <expr>` per permitted outcome (no `@shall`). Every step must end in one of them; each is witnessed with the others false.
 - **Prohibition (`forbidden`)** → on the action, `@modality forbidden` and `@while <when it is forbidden>`, no `@shall`. The proof is the obligation: no reachable step of the action starts where `@while` holds.

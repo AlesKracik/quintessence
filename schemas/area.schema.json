@@ -411,6 +411,7 @@
             "enum": ["event", "computed", "state"],
             "description": "DERIVED from where the record sits, never authored. 'event': on the action it governs. 'computed': on the pure def or val it computes; owes verified_by instead of a witness. 'state': on the module, a condition over state alone."
           },
+          "title": { "type": "string", "maxLength": 36, "description": "Short name (3-4 words) for the requirement, used wherever the readback has room only for a label: journey flowcharts, routes, folds. `@title` in the record." },
           "quint_ref": { "type": "string", "description": "Name of the Quint action this requirement governs: the declaration it sits on." },
           "cross_refs": { "type": "array", "items": { "type": "string" }, "description": "References to other records: '<area>.<ID>' for another area, or a bare ID for this one (qualified to '<this-area>.<ID>' when the view is derived). Any declared ID kind resolves — REQ, INV, PROP, CON, EX, DEC, ASM, Q." },
           "verified_by": { "type": "array", "items": { "type": "string" }, "description": "For a COMPUTED requirement (one sitting on a pure def or val: a score, a total, a formula): the test file(s) that verify it, as paths in the code repo. Written `@verified-by <path>`." }
