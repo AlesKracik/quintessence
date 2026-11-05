@@ -1333,6 +1333,10 @@ def _obligation_check(req, current_sha, index=None):
     if st == "counterexample-found":
         return False, "VIOLATED", (f"a reachable step breaks it — "
                                    f"{ob.get('trace') or 'see check_results'}")
+    if st in ("timeout", "error"):
+        return False, "OBLIGATION-NO-ANSWER", (f"the every-step check ran and "
+                                               f"returned {st}: no verdict about "
+                                               f"this model")
     if st != "verified":
         return False, "OBLIGATION-NOT-RUN", "the every-step check has not run"
     if current_sha is None:

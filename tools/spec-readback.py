@@ -71,6 +71,7 @@ LEGEND = ("*Legend: ✓ verified — witness trace replayed green against real c
           "◐ witnessed — proven possible in the model, not yet demonstrated in code · "
           "✗ no witness — claimed behavior is UNREACHABLE in the model · "
           "⏳ not checked yet · "
+          "⏱ the last check timed out or errored: no verdict about this model · "
           "⊘ nothing to witness (a forbidden step, whose proof is its obligation, or "
           "a computed value, checked by the unit test it names) · "
           "∀ checked on every reachable step, ∀✗ a step that breaks it was found*")
@@ -165,6 +166,9 @@ def status_mark(req):
     # as demonstrated rather than as untouched.
     if req_is_witnessed(req):
         return "◐"
+    if (w.get("status") in ("timeout", "error")
+            or (req.get("obligation") or {}).get("formal_status") in ("timeout", "error")):
+        return "⏱"
     if w.get("status") in ("no-witness", "hollow"):
         # Both are failures to demonstrate the behavior, so both render as
         # a cross. Which one it is comes from the Needs-Your-Attention
@@ -280,6 +284,8 @@ def invariant_mark(inv, bound, scope=None, steps=None):
         return "✗"
     if st == "accepted-risk":
         return "⚠ accepted-risk"
+    if st in ("timeout", "error"):
+        return f"⏱ no verdict ({st})"
     return "⏳"
 
 
@@ -865,12 +871,16 @@ def attention_items(root, area_name, area):
         if st in ("not-run", "no-witness", "hollow", "HOLLOW", "STALE",
                   "UNSTAMPED", "UNVERIFIABLE",
                   "MISSING-FILE", "INVALID", "VIOLATED", "OBLIGATION-NOT-RUN",
-                  "NOT-FORMAL", "COMPUTED-UNTESTED"):
+                  "NOT-FORMAL", "COMPUTED-UNTESTED", "timeout", "error",
+                  "OBLIGATION-NO-ANSWER"):
             hollow_label = ("HOLLOW witness — the trace shows nothing "
                             "happening")
             label = {"not-run": "Unchecked requirement",
                      "VIOLATED": "Requirement BROKEN on some step",
                      "OBLIGATION-NOT-RUN": "Not checked on every step yet",
+                     "OBLIGATION-NO-ANSWER": "Every-step check gave no answer",
+                     "timeout": "Witness check timed out — no verdict",
+                     "error": "Witness check failed to run — no verdict",
                      "NOT-FORMAL": "Requirement not formal yet",
                      "COMPUTED-UNTESTED": "Computed requirement with no test",
                      "no-witness": "UNREACHABLE behavior (no witness)",
@@ -1341,7 +1351,8 @@ def render_requirement(root, area, req, constraints, rendered_full,
                      "permission has quietly become a rule:")
         for oc in (w.get("outcomes") or []):
             ocm = {"witnessed": "◐", "no-witness": "✗",
-                   "hollow": "✗"}.get(oc.get("status"), "⏳")
+                   "hollow": "✗", "timeout": "⏱",
+                   "error": "⏱"}.get(oc.get("status"), "⏳")
             trace = ""
             if oc.get("trace") and oc.get("status") == "witnessed":
                 trace = f" — {witness_one_liner(root, oc['trace'])}"
@@ -1603,7 +1614,7 @@ def group_steps(area_name, reqs, j):
     return groups
 
 
-STATUS_CLASS = {"✓": "done", "◐": "ok", "✗": "bad", "⏳": "todo", "⊘": "ok"}
+STATUS_CLASS = {"✓": "done", "◐": "ok", "✗": "bad", "⏳": "todo", "⏱": "todo", "⊘": "ok"}
 
 
 def journey_flowchart(area_name, j, reqs):
@@ -1740,7 +1751,8 @@ def invariants_section(area):
     asms = assumption_index(area)
     legend = ("_Invariant legend: ✓ proven — inductive, holds in ALL reachable states · "
               "✓ (≤N steps) — bounded model check to depth N; no counterexample found within N, "
-              "NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked. Upgrade a "
+              "NOT a proof · ✗ counterexample · ⚠ accepted-risk · ⏳ not checked · "
+              "⏱ no verdict (the last check timed out or errored). Upgrade a "
               "bounded ✓ by raising the bound or marking the invariant `proof: inductive`._")
     if len({n for n in steps.values()}) > 1:
         legend = legend[:-1] + (" · N is PER INVARIANT: the checker runs a shallow "

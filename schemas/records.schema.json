@@ -925,10 +925,12 @@
                   "witnessed",
                   "no-witness",
                   "hollow",
-                  "skipped"
+                  "skipped",
+                  "timeout",
+                  "error"
                 ],
                 "default": "not-run",
-                "description": "'witnessed' = a trace shows the behavior happening. 'no-witness' = UNREACHABLE (impossible guard or missing action). 'hollow' = the predicate was ALREADY TRUE before anything happened: the checker returned a single-state counterexample, so the trace shows the initial state satisfying the predicate, not the behavior occurring. A hollow witness is a false proof and gates exactly like a missing one."
+                "description": "'witnessed' = a trace shows the behavior happening. 'timeout' / 'error' = the probe ran and did not answer; whatever was on record was about an older model (fresh witnesses are not re-run), so it is dropped, trace and stamp included. 'no-witness' = UNREACHABLE (impossible guard or missing action). 'hollow' = the predicate was ALREADY TRUE before anything happened: the checker returned a single-state counterexample, so the trace shows the initial state satisfying the predicate, not the behavior occurring. A hollow witness is a false proof and gates exactly like a missing one."
               },
               "trace": {
                 "type": "string",
@@ -975,7 +977,9 @@
                         "not-run",
                         "witnessed",
                         "no-witness",
-                        "hollow"
+                        "hollow",
+                        "timeout",
+                        "error"
                       ],
                       "default": "not-run",
                       "description": "Same values as witness.status; 'hollow' means this outcome's predicate already held in the initial state."
@@ -1031,7 +1035,7 @@
                   "timeout"
                 ],
                 "default": "not-run",
-                "description": "'counterexample-found' means the checker found a step of the action, from @while, that does not end in @shall; `trace` shows it."
+                "description": "'counterexample-found' means the checker found a step of the action, from @while, that does not end in @shall; `trace` shows it. 'timeout' / 'error': the last check did not answer and the verdict on record was about an older model, so it was dropped (stamp, trace and steps with it); a verdict still about the current model survives a later timeout."
               },
               "trace": {
                 "type": "string",
@@ -1081,9 +1085,11 @@
             "enum": [
               "accepted-risk",
               "counterexample-found",
+              "error",
               "not-checkable",
               "not-run",
               "specified",
+              "timeout",
               "verified",
               "verified-in-scope",
               "verified-inductive",

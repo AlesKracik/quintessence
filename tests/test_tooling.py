@@ -4968,6 +4968,88 @@ def test_a_deep_pass_that_does_not_answer_keeps_the_shallow_verdict(
     assert exc.value.code == 0
 
 
+# ── A run that does not answer is not a verdict ─────────────────────────────
+# A timeout used to leave the verdict on record untouched. Against the same
+# model that is right: the earlier answer still holds. Against a changed one
+# the ledger kept reading `verified` (an obligation even got a new
+# checked_at), and only the readback, which recomputes the stamp, said
+# stale: a tool handed records.json alone took it for a pass.
+
+def _timeout_project(tmp_path):
+    area_path = _no_batch(tmp_path, [
+        {"id": "INV-001", "description": "a", "quint_name": "invA"}])
+    (tmp_path / "specs" / "auth.qnt").write_text(
+        "module auth {\n  var x: int\n  action init = x' = 0\n"
+        "  action step = x' = x + 1\n  /// @inv INV-001\n  /// a\n"
+        "  val invA = x >= 0\n}\n", encoding="utf-8")
+    return area_path
+
+
+def _run(tmp_path, area="auth", **opts):
+    args = _Args(tmp_path, area)
+    for k, v in opts.items():
+        setattr(args, k, v)
+    with pytest.raises(SystemExit):
+        record.cmd_check(args)
+
+
+def test_a_timeout_keeps_a_verdict_only_while_it_is_about_this_model(
+        tmp_path, monkeypatch):
+    area_path = _timeout_project(tmp_path)
+    answer = {"r": ("verified", "", 0.1)}
+    calls = _steps_recorder(monkeypatch, lambda n, s: answer["r"])
+    _run(tmp_path)
+    assert get_area(area_path)["invariants"][0]["formal_status"] == "verified"
+
+    answer["r"] = ("timeout", "timed out after 300s", 300.0)
+    calls.clear()
+    _run(tmp_path)
+    assert calls and calls[-1][0] == "invA", "the timeout run did run"
+    assert get_area(area_path)["invariants"][0]["formal_status"] == "verified", \
+        "same model: the earlier answer still holds"
+
+    qnt = tmp_path / "specs" / "auth.qnt"
+    qnt.write_text(qnt.read_text().replace("x >= 0", "x >= -1"), encoding="utf-8")
+    _run(tmp_path)
+    written = get_area(area_path)
+    assert written["invariants"][0]["formal_status"] == "timeout"
+    assert written["check_results"]["checks"][0]["result"] == "timeout"
+
+
+def test_an_obligation_that_times_out_on_a_changed_model_drops_its_verdict(
+        tmp_path, monkeypatch):
+    _oblig_project(tmp_path)
+    _steps_recorder(monkeypatch, lambda n, s: ("verified", "", 0.1))
+    args = dict(no_witness=False, budget=10_000)
+    _run(tmp_path, "a", **args)
+    ob = get_area(tmp_path / "specs" / "a.intent.json")["requirements"][0]["obligation"]
+    assert ob["formal_status"] == "verified" and ob.get("model_sha")
+
+    probes = tmp_path / "specs" / "a.probes.qnt"
+    probes.write_text(probes.read_text().replace(
+        "oblig_REQ_008: bool = true", "oblig_REQ_008: bool = 1 == 1"), encoding="utf-8")
+    _steps_recorder(monkeypatch, lambda n, s: (
+        ("timeout", "timed out after 300s", 300.0) if n == "oblig_REQ_008"
+        else ("verified", "", 0.1)))
+    _run(tmp_path, "a", **args)
+    ob = get_area(tmp_path / "specs" / "a.intent.json")["requirements"][0]["obligation"]
+    assert ob["formal_status"] == "timeout"
+    assert not {"model_sha", "steps", "trace"} & set(ob)
+    from itf_tools import _obligation_check
+    assert _obligation_check({"obligation": ob}, "sha")[1] == "OBLIGATION-NO-ANSWER"
+
+
+def test_a_witness_probe_that_does_not_answer_drops_the_old_trace():
+    w = {"status": "witnessed", "trace": "a/traces/REQ-001.itf.json",
+         "model_sha": "old", "steps": 3, "found_by": "apalache"}
+    record.witness_no_answer(w, "timeout")
+    assert w == {"status": "timeout"}
+    may = {"outcomes": [{"status": "witnessed"}, {"status": "timeout"}],
+           "model_sha": "old"}
+    record.roll_up_outcomes(may, "new")
+    assert may["status"] == "timeout" and "model_sha" not in may
+
+
 # ── Deepening what a budget left at the shallow bound ───────────────────────
 # Skip-if-fresh used to test freshness and status, never depth: an obligation
 # whose deep pass the budget stopped stayed `verified, steps: 3` forever,

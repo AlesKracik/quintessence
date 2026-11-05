@@ -908,11 +908,25 @@ def run_structural_check(item, iid, als_rel, als_file, root, area_name,
         print(f"{iid:<12} {'counterexample':<26} ({duration:.1f}s)  "
               f"instance in specs/{area_name}/gen/alloy/{command}/")
     else:
-        # timeout/error: leave the prior formal_status untouched, exactly as
-        # the Apalache path does — an unfinished run is not a new verdict.
+        # timeout/error: not a new verdict. The caller's record_single keeps
+        # the prior one only while it is about this model (no_answer).
         entry["error"] = detail
         print(f"{iid:<12} {result:<26} {detail}")
     return entry
+
+
+# What a check that ran and did not answer records. Never a verdict: a
+# timeout says nothing about the model, so it must not read as one.
+NO_ANSWER = ("timeout", "error")
+
+
+def witness_no_answer(block, result):
+    """A witness probe (or one `may` outcome) that did not answer. Witnesses
+    are re-run only when not fresh, so the status on record is about an older
+    model, or its trace is gone: it gives way to this run's non-answer."""
+    block["status"] = result
+    for k in ("model_sha", "trace", "steps", "found_by", "revalidated_by"):
+        block.pop(k, None)
 
 
 def roll_up_outcomes(witness, verdict_sha):
@@ -933,6 +947,9 @@ def roll_up_outcomes(witness, verdict_sha):
         witness["status"] = "hollow"
     elif any(st == "no-witness" for st in statuses):
         witness["status"] = "no-witness"
+    elif any(st in NO_ANSWER for st in statuses):
+        witness["status"] = next(st for st in statuses if st in NO_ANSWER)
+        witness.pop("model_sha", None)
     else:
         witness["status"] = "not-run"
     witness["checked_at"] = now_iso()
@@ -1038,6 +1055,8 @@ def record_may_outcomes(req, rid, witness, probes_ir, probes_file, root, area_na
                   f"written)")
         else:
             bad += 1
+            witness_no_answer(oc, result)
+            oc["checked_at"] = now_iso()
             print(f"{label:<24} {result:<16} {detail}")
 
     roll_up_outcomes(witness, verdict_sha)
@@ -1578,6 +1597,38 @@ def cmd_check(args):
             restore_names(job["cex_path"])
         return result, detail, duration
 
+    items_by_id = {it.get("id"): it
+                   for lst in ("invariants", "properties")
+                   for it in area.get(lst, []) or [] if it.get("id")}
+
+    def prior_is_current(iid, qname, item, obligation):
+        """True when the verdict already on record was reached against the
+        model as it is now: a run that did not answer leaves it standing."""
+        if obligation:
+            return bool(current_sha and item.get("model_sha")
+                        and item.get("model_sha") == sha_for(iid)
+                        and item.get("formal_status") in ("verified",
+                                                          "counterexample-found"))
+        prior = prior_checks.get(iid) or {}
+        return bool(index is not None and qname and prior.get("model_sha")
+                    and prior.get("model_sha") == index.check_sha(qname)
+                    and prior.get("result") in ("verified", "counterexample"))
+
+    def no_answer(item, iid, qname, result, obligation=False):
+        """A check that ran and did not answer (timeout, error). The verdict
+        on record stands only while it is about the current model. One about
+        an older model gives way to this run's non-answer: left in place, the
+        ledger reads `verified` for a model nobody verified, and only the
+        readback (which recomputes the stamp) would say otherwise."""
+        if item is None or prior_is_current(iid, qname, item, obligation):
+            return
+        item["formal_status"] = result
+        if obligation:
+            item["checked_at"] = now_iso()
+            for k in ("model_sha", "trace", "steps", "shallow_reason",
+                      "deep_attempt"):
+                item.pop(k, None)
+
     def record_bounded(job, result, detail, duration, steps,
                        batched=False, note=None, reason=None):
         """Write one bounded invariant's verdict, stamped with the depth it
@@ -1601,10 +1652,9 @@ def cmd_check(args):
             entry["kind"] = job["kind"]
         if job.get("obligation"):
             entry["kind"] = "obligation"
-            item["checked_at"] = now_iso()
-            item["steps"] = steps
             if result in ("verified", "counterexample"):
-                # A timeout/error keeps the prior verdict, and its reason.
+                item["checked_at"] = now_iso()
+                item["steps"] = steps
                 item.pop("shallow_reason", None)
                 item.pop("deep_attempt", None)
             if result == "verified" and steps < max_steps:
@@ -1650,7 +1700,8 @@ def cmd_check(args):
         else:
             bad += 1
             entry["error"] = detail
-            # timeout/error: keep the prior formal_status untouched.
+            no_answer(item, iid, job["quint_name"], result,
+                      obligation=bool(job.get("obligation")))
         checks.append(entry)
         flush()
         suffix = ""
@@ -1673,6 +1724,9 @@ def cmd_check(args):
             bad += 1
         if item is not None and status:
             item["formal_status"] = status
+        elif entry.get("result") in NO_ANSWER:
+            no_answer(item if item is not None else items_by_id.get(entry.get("id")),
+                      entry.get("id"), entry.get("quint_name"), entry["result"])
         checks.append(entry)
         flush()
         return entry
@@ -1821,7 +1875,8 @@ def cmd_check(args):
                 record_single(entry, item, "not-checkable")
             else:
                 entry["error"] = detail
-                # timeout/error: keep the prior formal_status untouched.
+                # timeout/error: record_single keeps the prior verdict only
+                # while it is about this model (no_answer).
                 record_single(entry)
             suffix = ""
             if result == "verified":
@@ -2419,6 +2474,7 @@ def cmd_check(args):
                           f"action, or bound too small)")
             else:
                 bad += 1
+                witness_no_answer(witness, result)
                 print(f"{rid:<12} {result:<16} {detail}")
             flush()
 

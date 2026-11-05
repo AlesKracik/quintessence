@@ -350,7 +350,7 @@
             "additionalProperties": false,
             "properties": {
               "trace":      { "type": "string", "description": "ITF trace path relative to specs/, e.g. 'auth/traces/REQ-003.itf.json'. Written by /spec-check." },
-              "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow", "skipped"], "default": "not-run", "description": "'witnessed' = a trace shows the behavior happening. 'no-witness' = UNREACHABLE (impossible guard or missing action). 'hollow' = the predicate was ALREADY TRUE before anything happened: the checker returned a single-state counterexample, so the trace shows the initial state satisfying the predicate, not the behavior occurring. A hollow witness is a false proof and gates exactly like a missing one." },
+              "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow", "skipped", "timeout", "error"], "default": "not-run", "description": "'witnessed' = a trace shows the behavior happening. 'timeout' / 'error' = the probe ran and did not answer; whatever was on record was about an older model (fresh witnesses are not re-run), so it is dropped, trace and stamp included. 'no-witness' = UNREACHABLE (impossible guard or missing action). 'hollow' = the predicate was ALREADY TRUE before anything happened: the checker returned a single-state counterexample, so the trace shows the initial state satisfying the predicate, not the behavior occurring. A hollow witness is a false proof and gates exactly like a missing one." },
               "outcomes": {
                 "type": "array",
                 "description": "For modality 'may': one entry per PERMITTED outcome (`@outcome <name>: <Quint boolean>`), each with its own machine-found trace in which it holds while the others do not. A single trace would only prove that one of the allowed behaviors is reachable, which is exactly how a MAY silently degrades into a MUST.",
@@ -362,7 +362,7 @@
                     "name":       { "type": "string", "description": "Short label for this permitted outcome (used to name its probe)." },
                     "predicate":  { "type": "string", "description": "Quint boolean over the post-state (parameters and @old snapshots in scope), true exactly when THIS outcome happened." },
                     "trace":      { "type": "string", "description": "ITF trace path relative to specs/." },
-                    "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow"], "default": "not-run", "description": "Same values as witness.status; 'hollow' means this outcome's predicate already held in the initial state." },
+                    "status":     { "type": "string", "enum": ["not-run", "witnessed", "no-witness", "hollow", "timeout", "error"], "default": "not-run", "description": "Same values as witness.status; 'hollow' means this outcome's predicate already held in the initial state." },
                     "checked_at": { "type": "string", "format": "date-time" },
                     "steps":      { "type": "integer", "minimum": 1, "description": "Step bound this outcome's probe actually ran to — same honesty rule as witness.steps." },
                     "found_by":   { "type": "string", "enum": ["apalache", "simulator"], "description": "Same as witness.found_by." },
@@ -397,7 +397,7 @@
             "description": "The universal half, written by /spec-check: the invariant `oblig_<REQ>` over the probe module, which says every reachable step of the governing action from a state where @while holds ends in @shall (for 'may': in one of the outcomes; for 'forbidden': never happens). A witness alone only proves the behavior CAN happen; this proves it ALWAYS does.",
             "additionalProperties": false,
             "properties": {
-              "formal_status": { "type": "string", "enum": ["not-run", "verified", "counterexample-found", "error", "timeout"], "default": "not-run", "description": "'counterexample-found' means the checker found a step of the action, from @while, that does not end in @shall; `trace` shows it." },
+              "formal_status": { "type": "string", "enum": ["not-run", "verified", "counterexample-found", "error", "timeout"], "default": "not-run", "description": "'counterexample-found' means the checker found a step of the action, from @while, that does not end in @shall; `trace` shows it. 'timeout' / 'error': the last check did not answer and the verdict on record was about an older model, so it was dropped (stamp, trace and steps with it); a verdict still about the current model survives a later timeout." },
               "trace":      { "type": "string", "description": "Counterexample ITF path relative to specs/, when violated." },
               "checked_at": { "type": "string", "format": "date-time" },
               "steps":      { "type": "integer", "minimum": 1, "description": "Step bound the check ran to. A verified obligation is valid only to this depth." },
@@ -455,9 +455,9 @@
           },
           "formal_status": {
             "type": "string",
-            "enum": ["specified", "verified", "verified-inductive", "verified-in-scope", "verified-smt", "verified-lean", "counterexample-found", "accepted-risk", "not-checkable", "not-run"],
+            "enum": ["specified", "verified", "verified-inductive", "verified-in-scope", "verified-smt", "verified-lean", "counterexample-found", "accepted-risk", "not-checkable", "not-run", "timeout", "error"],
             "default": "specified",
-            "description": "Written mechanically by spec-record. 'verified' = bounded ✓ (≤max_steps). 'verified-inductive' = proven via inductive invariant (unbounded). 'verified-in-scope' = Alloy found no counterexample within the declared finite scope — bounded by structure, not by steps. 'verified-smt' = an SMT solver proved the negation unsatisfiable, valid modulo the encoding. 'verified-lean' = a Lean proof of the fixed statement, kernel axioms only, over a Lean model the area's traces replay through. 'not-checkable' = the chosen backend returned no verdict (SMT 'unknown'; an inductive check that failed where the bounded re-check found no reachable violation; a Lean proof that is missing, rests on another axiom, or drifted from the traces); an absent answer, never a pass."
+            "description": "Written mechanically by spec-record. 'verified' = bounded ✓ (≤max_steps). 'verified-inductive' = proven via inductive invariant (unbounded). 'verified-in-scope' = Alloy found no counterexample within the declared finite scope — bounded by structure, not by steps. 'verified-smt' = an SMT solver proved the negation unsatisfiable, valid modulo the encoding. 'verified-lean' = a Lean proof of the fixed statement, kernel axioms only, over a Lean model the area's traces replay through. 'not-checkable' = the chosen backend returned no verdict (SMT 'unknown'; an inductive check that failed where the bounded re-check found no reachable violation; a Lean proof that is missing, rests on another axiom, or drifted from the traces); an absent answer, never a pass. 'timeout' / 'error' = the last check ran and did not answer, and no verdict about the current model was on record: an earlier verdict about an older model is not kept. A verdict still about the current model survives a later timeout."
           },
           "criticality":   { "type": "string", "enum": ["critical", "high", "medium", "low"], "default": "high" },
           "extraction": {
@@ -488,7 +488,7 @@
           "id":            { "type": "string", "pattern": "^PROP(-CONTRACT)?-\\d{3}$" },
           "description":   { "type": "string" },
           "quint_name":    { "type": "string" },
-          "formal_status": { "type": "string", "enum": ["specified", "verified", "counterexample-found", "not-run"], "default": "specified" }
+          "formal_status": { "type": "string", "enum": ["specified", "verified", "counterexample-found", "not-run", "timeout", "error"], "default": "specified", "description": "'timeout' / 'error': the last check did not answer and no verdict about the current model was on record." }
         }
       }
     },
