@@ -56,6 +56,9 @@ comment and are ignored.
                                                  action, no id)
                      @internal <why>             (a `var` no requirement has
                                                  to explain; on the var)
+                     @env <why>                  (an action that only sets the
+                                                 environment's configuration;
+                                                 on the action, no id)
 
 Untagged lines right after the record tag are the record's DESCRIPTION
 (invariant statement, constant description, example title, a requirement's
@@ -162,6 +165,11 @@ Hosting — what the declaration under the block means for the record:
                                    and a GAP blocks approval.
   INTERNAL on `var <name>`         internal_vars[].var = name: the
                                    explanation check skips it.
+  ENV on `action <name>`           env_actions[].action = name: the action
+                                   sets configuration the environment
+                                   chooses, not behavior the system owes.
+                                   Lets formal_model.env_at_init fold it
+                                   into initP (spec-probes).
 
 Usage:
   tools/spec_source.py derive <area> [--root .]        # print the derived view
@@ -194,7 +202,7 @@ UI_KEYS = ("screens", "navigation")
 # Completeness records on the model, also positional: a verdict says what an
 # action does where no requirement does (spec-probes compiles it into a
 # check), and an internal var is bookkeeping no requirement has to explain.
-ACTION_KEYS = ("verdicts", "internal_vars")
+ACTION_KEYS = ("verdicts", "internal_vars", "env_actions")
 POSITIONAL_KEYS = UI_KEYS + ACTION_KEYS
 VERDICTS = ("IMPOSSIBLE", "NO-OP", "GAP", "OUT-OF-SCOPE")
 RECORD_KEYS = ("check_results", "verification_log", "traceability",
@@ -223,7 +231,7 @@ MACHINE_PATHS = {
 
 ID_KIND = {"req": "requirements", "inv": "invariants", "prop": "properties",
            "con": "constraints", "example": "examples"}
-RECORD_TAGS = tuple(ID_KIND) + ("screen", "nav", "verdict", "internal")
+RECORD_TAGS = tuple(ID_KIND) + ("screen", "nav", "verdict", "internal", "env")
 
 # tag -> (dotted path, value kind). Kinds: text, flag, list, json.
 EXTRACTION_TAGS = {
@@ -297,6 +305,7 @@ TAGS = {
         # special: error
     },
     "internal_vars": {},
+    "env_actions": {},
 }
 SPECIAL_TAGS = {"requirements": ("fit", "error", "error-note", "outcome", "old"),
                 "examples": ("when",),
@@ -1362,12 +1371,23 @@ def _derive_ui(rec, out, seen, problems):
 
 
 def _derive_completeness(rec, out, counters, problems):
-    """One @verdict or @internal record -> a verdicts[] / internal_vars[]
-    entry, in source order. A verdict sits on the action it is about; it is
+    """One @verdict, @internal or @env record -> a verdicts[] /
+    internal_vars[] / env_actions[] entry, in source order. A verdict sits on the action it is about; it is
     numbered per action (1, 2, ...) in source order, which is what its
     generated check is named after (itf_tools.verdict_name)."""
     host = rec["host"] or {}
     desc = " ".join(rec["desc"]).strip()
+    if rec["tag"] == "env":
+        reason = " ".join(x for x in (rec["id"], rec["extra"], desc) if x).strip()
+        if host.get("kind") != "action":
+            problems.append(f"{_where(rec)}: @env sits on the action that sets "
+                            f"the configuration, not on a {host.get('kind') or 'module'}")
+            return
+        if not reason:
+            problems.append(f"{_where(rec)}: @env {host['name']}: say what "
+                            f"configuration it sets and why the environment owns it")
+        out["env_actions"].append({"action": host["name"], "reason": reason})
+        return
     if rec["tag"] == "internal":
         reason = " ".join(x for x in (rec["id"], rec["extra"], desc) if x).strip()
         if host.get("kind") != "var":
@@ -1417,7 +1437,7 @@ def derive_records(model_text, model_name, als_text=None, als_name=None,
         if rec["tag"] in ("screen", "nav"):
             _derive_ui(rec, out, screens_seen, problems)
             continue
-        if rec["tag"] in ("verdict", "internal"):
+        if rec["tag"] in ("verdict", "internal", "env"):
             _derive_completeness(rec, out, verdict_counts, problems)
             continue
         kind = ID_KIND[rec["tag"]]

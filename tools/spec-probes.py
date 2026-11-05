@@ -28,7 +28,10 @@ What it emits, per the convention in templates/probes.qnt.template:
              assigns it from the state BEFORE the step), and one _prev<Var>
              per state var a transition invariant reads
   initP      init plus explicit ghost initial values (never `= <var>`:
-             before init there is no prior state to read)
+             before init there is no prior state to read); with
+             formal_model.env_at_init, init inlined and each listed env
+             action applied once per key (see env_init), and that action
+             left out of stepP
   stepP      the area module's step, mirrored, one branch per action it
              calls, tagging _lastAction and the param ghosts, and setting
              each _pre_<REQ> of a requirement on that action
@@ -80,9 +83,16 @@ from itf_tools import (area_json_path, param_slots,  # noqa: E402
                        witness_exempt, is_computed, verdict_ghost,
                        verdict_label)
 from quint_ir import parse_qnt, zero_value as _ir_zero  # noqa: E402
-from completeness import (mirrored_actions, requirement_checks,  # noqa: E402
+from completeness import (requirement_checks,  # noqa: E402
+                          env_at_init, step_actions, env_blockers,
+                          action_writes,
                           completeness, completeness_vals,
                           explained_everywhere)
+
+# stepP's step that changes nothing, present only when env_at_init took the
+# always-enabled env action out of it.
+IDLE_ACTION = "_idle"
+
 
 def fail(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
@@ -184,18 +194,191 @@ def probe_requirements(area):
     return out
 
 
-def build(area, area_name, ir, quint_rel):
+# ── Environment settings fixed at init ──────────────────────────────────────
+#
+# An env_* action that only sets configuration costs a step in every trace and
+# a branch in every step. formal_model.env_at_init moves it into initP: init,
+# then the action once per key of its first parameter, the other arguments
+# chosen nondeterministically. Quint has no sequencing inside one step, so
+# initP cannot call init and then the action; it inlines init's flat
+# `all { v' = ... }` and replaces each var the action writes with a fold of the
+# action's own assignments over the keys. When either body is not flat the
+# author names the value set per var instead (`values`), and initP draws it.
+
+def _flat_all(body):
+    """The conjuncts of a flat `all { ... }` body (a `{ all { ... } }`
+    wrapper allowed), or None for any other shape."""
+    b = (body or "").strip()
+    while b.startswith("{") and b.endswith("}"):
+        inner = b[1:-1].strip()
+        if not inner.startswith("all"):
+            return None
+        b = inner
+    m = re.match(r"all\s*\{", b)
+    if not m:
+        return None
+    depth = 0
+    for k in range(m.end() - 1, len(b)):
+        depth += b[k] == "{"
+        depth -= b[k] == "}"
+        if depth == 0:
+            if b[k + 1:].strip():
+                return None
+            return [x for x in spec_source._split_top(b[m.end():k]) if x]
+    return None
+
+
+_ASSIGN_ITEM = re.compile(r"([A-Za-z_]\w*)'\s*=(?![=>])\s*(.+)", re.S)
+
+
+def _assignment(item):
+    m = _ASSIGN_ITEM.fullmatch(item.strip())
+    return (m.group(1), m.group(2).strip()) if m else None
+
+
+def _substitute(expr, mapping):
+    """`expr` with each free identifier in `mapping` replaced. Skips string
+    literals, field access (`.name`), record labels (`name:`) and primed
+    names."""
+    out, i = [], 0
+    pat = re.compile(r'"(?:\\.|[^"\\])*"|[A-Za-z_]\w*')
+    for m in pat.finditer(expr):
+        out.append(expr[i:m.start()])
+        tok = m.group(0)
+        before = expr[:m.start()].rstrip()
+        after = expr[m.end():]
+        if (tok in mapping and not tok.startswith('"')
+                and not before.endswith(".")
+                and not re.match(r"\s*:(?!:)", after)
+                and not after.startswith("'")):
+            tok = mapping[tok]
+        out.append(tok)
+        i = m.end()
+    out.append(expr[i:])
+    return "".join(out)
+
+
+def env_init(area, ir, text, domains):
+    """(lines to open initP with, {var: value it is assigned in initP}) for
+    formal_model.env_at_init, and init's conjuncts; ([], {}, None) when it
+    lists nothing. Fails on an
+    action that cannot be fixed per trace without hiding behavior."""
+    env = env_at_init(area)
+    if not env:
+        return [], {}, None
+    tagged = {e.get("action") for e in area.get("env_actions") or []}
+    oos = {v.get("action") for v in area.get("verdicts") or []
+           if v.get("verdict") == "OUT-OF-SCOPE"}
+    decls = spec_source.declarations(text)
+    params = ir.get("action_param_types") or {}
+
+    init_items = _flat_all((decls.get("init") or {}).get("body"))
+    if init_items is None:
+        fail("formal_model.env_at_init needs `init` written as a flat "
+             "`all { v' = ..., }`: initP inlines it, because Quint cannot run "
+             "init and then another action inside one step.")
+    init_vals = dict(filter(None, (_assignment(x) for x in init_items)))
+
+    lines, overrides = [], {}
+    for action, values in env.items():
+        where = f"formal_model.env_at_init: {action}"
+        if action not in tagged and action not in oos:
+            fail(f"{where} is neither tagged `/// @env <why>` nor OUT-OF-SCOPE "
+                 f"(`/// @verdict OUT-OF-SCOPE` + `@scope <item>`). Fixing an "
+                 f"action per trace says no requirement cares how it moves "
+                 f"mid-trace; say so on the action first.")
+        blockers = env_blockers(area, ir, action)
+        if blockers:
+            fail(f"{where} cannot be fixed per trace: " + "; ".join(blockers) + ".")
+        own = action_writes(ir, action)
+        unset = sorted(v for v in own if v not in init_vals)
+        if unset:
+            fail(f"{where}: init assigns no value to {', '.join(unset)}.")
+        tag = re.sub(r"\W", "_", action)
+
+        if values:
+            missing = sorted(own - set(values))
+            extra = sorted(set(values) - own)
+            if missing or extra:
+                fail(f"{where}.values must name exactly the vars it writes ("
+                     + ", ".join(sorted(own)) + ")"
+                     + (f"; missing {', '.join(missing)}" if missing else "")
+                     + (f"; not written: {', '.join(extra)}" if extra else "")
+                     + ".")
+            for var in sorted(own):
+                g = f"_env_{tag}_{var}"
+                lines.append(f"    nondet {g} = oneOf({values[var]})")
+                overrides[var] = g
+            continue
+
+        body_items = _flat_all((decls.get(action) or {}).get("body"))
+        hint = ("Declare what it can leave behind instead:\n\n"
+                + json.dumps({"env_at_init": [{"action": action, "values": {
+                    v: "/* Quint set of values after setup */" for v in sorted(own)}}]},
+                    indent=2))
+        if body_items is None:
+            fail(f"{where}: its body is not a flat `all {{ v' = ..., }}`, so "
+                 f"the fold cannot be read off it. " + hint)
+        assigns, guards = {}, []
+        for item in body_items:
+            asg = _assignment(item)
+            if asg is None:
+                if re.search(r"\b\w+'", item):
+                    fail(f"{where}: `{item}` assigns state inside a nested "
+                         f"form. " + hint)
+                guards.append(item)
+            elif asg[1] != asg[0]:
+                assigns[asg[0]] = asg[1]
+        if set(assigns) != own:
+            fail(f"{where}: its body assigns {', '.join(sorted(assigns)) or 'nothing'}"
+                 f" but it writes {', '.join(sorted(own))} (through a helper?). "
+                 + hint)
+        ps = params.get(action) or []
+        mapping = {v: f"_acc.{v}" for v in own}
+        for i, (pname, ptype) in enumerate(ps):
+            dom = domain_for(pname, ptype, domains)
+            if dom is None:
+                fail(f"{where}: no probe domain for parameter {pname} ({ptype}).")
+            if i == 0:
+                mapping[pname] = "_k"
+                keydom = dom
+            else:
+                g = f"_env_{tag}_{pname}"
+                lines.append(f"    nondet {g} = oneOf(setOfMaps({keydom}, {dom}))")
+                mapping[pname] = f"{g}.get(_k)"
+        start = "{ " + ", ".join(f"{v}: {init_vals[v]}" for v in sorted(own)) + " }"
+        after = "{ " + ", ".join(f"{v}: {_substitute(assigns[v], mapping)}"
+                                for v in sorted(own)) + " }"
+        if guards:
+            cond = " and ".join(f"({_substitute(g, mapping)})" for g in guards)
+            after = f"if ({cond}) {after} else _acc"
+        val = f"_env_{tag}"
+        if ps:
+            lines.append(f"    val {val} = {keydom}.fold({start}, "
+                         f"(_acc, _k) => {after})")
+        else:
+            lines.append(f"    val {val} = {{ val _acc = {start} {after} }}")
+        for var in sorted(own):
+            overrides[var] = f"{val}.{var}"
+    return lines, overrides, init_items
+
+
+def build(area, area_name, ir, quint_rel, text=None):
     """The whole module as a list of lines. Pure: same inputs, same bytes."""
     module = ir.get("module_name") or area_name
-    actions = mirrored_actions(ir)
+    actions = step_actions(area, ir)
     if not actions:
-        fail(f"{quint_rel} declares no actions besides init/step — there is "
-             f"nothing for stepP to mirror.")
+        fail(f"{quint_rel} declares no actions besides init/step"
+             + (" and the ones env_at_init fixes" if env_at_init(area) else "")
+             + " — there is nothing for stepP to mirror.")
 
     param_types = ir.get("action_param_types") or {}
     var_type_strs = ir.get("var_type_strs") or {}
     domains = ((area.get("formal_model") or {}).get("probe_domains")) or {}
     overrides = ghost_zeros(area)
+    if text is None and env_at_init(area):
+        fail("internal: env_at_init needs the model text")
+    env_lines, env_vals, init_items = env_init(area, ir, text or "", domains)
 
     def zero(type_str):
         return _ir_zero(type_str, ir, overrides)
@@ -243,7 +426,8 @@ def build(area, area_name, ir, quint_rel):
 
     stray = sorted({(verdict_label(v), v.get("action"))
                     for v in area.get("verdicts") or []
-                    if v.get("action") not in actions})
+                    if v.get("action") not in actions
+                    and v.get("action") not in env_at_init(area)})
     if stray:
         fail("verdict on an action step never calls: "
              + ", ".join(lbl for lbl, _a in stray)
@@ -376,6 +560,13 @@ def build(area, area_name, ir, quint_rel):
             if slots[action]:
                 a(f"//   {action}: " + ", ".join(f"{n} -> {sl}"
                                             for n, _t, sl in slots[action]))
+    env = env_at_init(area)
+    if env:
+        a("//")
+        a("// Fixed per trace (formal_model.env_at_init): applied once in")
+        a("// initP, to every key, never a step of stepP:")
+        for name, values in env.items():
+            a(f"//   {name}" + (" (value sets declared)" if values else ""))
     a("// " + "=" * 58)
     a("")
     a(f"module {module}_probes {{")
@@ -417,8 +608,18 @@ def build(area, area_name, ir, quint_rel):
         a(head(verdict_ghost(v["action"], v["index"])[1:], v["action"]))
         a(f"    {v['while'].strip()}")
     a("")
-    a("  action initP = all {")
-    a("    init,")
+    if env_lines:
+        a("  action initP = {")
+        L.extend(env_lines)
+        a("    all {")
+        for item in init_items:
+            asg = _assignment(item)
+            if asg and asg[0] in env_vals:
+                item = f"{asg[0]}' = {env_vals[asg[0]]}"
+            a(f"    {item},")
+    else:
+        a("  action initP = all {")
+        a("    init,")
     a('    _lastAction\' = "init",')
     for slot in sorted(slot_types):
         a(f"    {slot}' = {zero(slot_types[slot])},")
@@ -431,6 +632,8 @@ def build(area, area_name, ir, quint_rel):
     for var in delta_vars:
         a(f"    {ghost_for_var(var)}' = "
           f"{zero(var_type_strs.get(var, ''))},")
+    if env_lines:
+        a("    }")
     a("  }")
     a("")
     a("  action stepP = {")
@@ -465,6 +668,27 @@ def build(area, area_name, ir, quint_rel):
             value = (call(g[1:], ", ".join(args)) if v["action"] == action
                      else "false")
             a(f"            {g}' = {value},")
+        for var in delta_vars:
+            a(f"            {ghost_for_var(var)}' = {var},")
+        a("      },")
+    if env_lines:
+        # The env action was the branch always enabled; without it a model
+        # can run out of steps, and Apalache reports that deadlock as a
+        # violation of whatever it was checking. An idle step keeps every
+        # var: it takes no argument, so it adds one branch, and a shortest
+        # trace never contains it.
+        a(f'      all {{ _lastAction\' = "{IDLE_ACTION}",')
+        for v in ir.get("vars") or []:
+            a(f"            {v}' = {v},")
+        for slot in sorted(slot_types):
+            a(f"            {slot}' = {slot},")
+        for c in pre_reqs:
+            a(f"            {pre_ghost(c['rid'])}' = false,")
+        for c, o in old_vals:
+            g = old_ghost(c["rid"], o["name"])
+            a(f"            {g}' = {g},")
+        for v in verdict_pres:
+            a(f"            {verdict_ghost(v['action'], v['index'])}' = false,")
         for var in delta_vars:
             a(f"            {ghost_for_var(var)}' = {var},")
         a("      },")
@@ -758,7 +982,8 @@ def main():
     if ir is None:
         fail(f"{quint_path} did not parse as a Quint module.")
 
-    lines = build(area, args.area, ir, quint_rel)
+    lines = build(area, args.area, ir, quint_rel,
+                  text=quint_path.read_text(encoding="utf-8"))
     text = "\n".join(lines).rstrip() + "\n"
 
     if args.stdout:
@@ -787,7 +1012,8 @@ def main():
     probes_path.write_text(text, encoding="utf-8")
     n_probes = sum(1 for ln in lines if ln.startswith("  val witness_"))
     n_obl = sum(1 for ln in lines if ln.startswith("  val oblig_"))
-    n_actions = sum(1 for ln in lines if "_lastAction' = \"" in ln) - 1
+    n_actions = sum(1 for ln in lines if "_lastAction' = \"" in ln
+                    and IDLE_ACTION not in ln) - 1
     print(f"wrote {probes_path}: {n_obl} obligation(s), {n_probes} witness "
           f"probe(s), {n_actions} action branch(es) in stepP")
     return 0

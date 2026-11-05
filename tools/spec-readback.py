@@ -789,6 +789,20 @@ def decision_tables_section(root, area):
         lines += ["**Bookkeeping, not behavior** (`@internal`, not explained):", ""]
         lines += [f"- `{i.get('var')}` — {i.get('reason', '')}" for i in internal]
         lines.append("")
+    env = ((area.get("formal_model") or {}).get("env_at_init")) or []
+    if env:
+        why = {e.get("action"): e.get("reason") for e in area.get("env_actions") or []}
+        for v in area.get("verdicts") or []:
+            if v.get("verdict") == "OUT-OF-SCOPE":
+                why.setdefault(v.get("action"), v.get("reason")
+                               or f"out of scope ({v.get('scope_ref') or '?'})")
+        lines += ["**Fixed per trace** (`formal_model.env_at_init`): set once, "
+                  "for every key, before the first step. No check sees this "
+                  "configuration change mid-trace.", ""]
+        for item in env:
+            name = item if isinstance(item, str) else item.get("action")
+            lines.append(f"- `{name}`" + (f" — {why[name]}" if why.get(name) else ""))
+        lines.append("")
     return lines
 
 

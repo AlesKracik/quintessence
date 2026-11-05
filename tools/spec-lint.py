@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from itf_tools import area_json_path, changes_dir, journeys_dir  # noqa: E402
 import spec_source  # noqa: E402
+import completeness as completeness_mod  # noqa: E402
 
 # Severity constants.
 PASS = "pass"
@@ -2196,6 +2197,53 @@ def _assignments(text, var):
     return out
 
 
+_FOLD_CALL_RE = re.compile(r"(\.)?\bfold(?:l|r)?\s*\(")
+
+
+def _is_set_valued(expr, bodies, depth=0):
+    """True when an accumulator's initial value is a Set, or a record with a
+    Set field: `Set()`, `Set(a, b)`, `{ seen: Set(), n: 0 }`, or the name of
+    a val that is one of those."""
+    e = (expr or "").strip()
+    if depth > 6 or not e:
+        return False
+    if re.match(r"Set\s*\(", e):
+        return True
+    if e.startswith("{") and e.endswith("}"):
+        return any(_is_set_valued(f.partition(":")[2], bodies, depth + 1)
+                   for f in spec_source._split_top(e[1:-1]) if ":" in f)
+    if re.fullmatch(r"\w+", e) and e in bodies:
+        return _is_set_valued(bodies[e], bodies, depth + 1)
+    return False
+
+
+def fold_set_builders(text):
+    """[(declaration, accumulator)] for every fold, reachable from an action,
+    whose accumulator is set-valued and whose body unions into it. The
+    solver unrolls such a fold on every step it is evaluated in; filtering a
+    constant candidate set says the same with no unrolling."""
+    decls = spec_source.declarations(text)
+    roots = [n for n, d in decls.items() if d.get("kind") == "action"]
+    reach = spec_source.name_closure(decls, roots)
+    bodies = {n: (d.get("body") or "") for n, d in decls.items()}
+    out = []
+    for name in sorted(reach):
+        body = spec_source.strip_docs(bodies.get(name) or "")
+        for m in _FOLD_CALL_RE.finditer(body):
+            open_at = m.end() - 1
+            close = spec_source._balanced(body, open_at)
+            args = spec_source._split_top(body[open_at + 1:close - 1])
+            if not m.group(1):        # fold(coll, init, f): the function form
+                args = args[1:]
+            if len(args) < 2:
+                continue
+            init, fn = args[0], args[1]
+            lam = fn.partition("=>")[2]
+            if _is_set_valued(init, bodies) and re.search(r"\bunion\s*\(", lam):
+                out.append((name, init.strip()))
+    return out
+
+
 def cost_report(root, area_data, sidecar):
     """The numbers the cost/* rules judge, computed once. None when the area
     has no model to measure."""
@@ -2209,7 +2257,18 @@ def cost_report(root, area_data, sidecar):
     fm = area_data.get("formal_model") or {}
     consts = _decl_bodies(text)
     rep = {"ghosts": None, "largest_slice": None, "branching": None,
-           "factors": [], "growing_maps": [], "powerset": [], "counters": []}
+           "factors": [], "growing_maps": [], "powerset": [], "counters": [],
+           "fold_sets": fold_set_builders(text), "env_eligible": []}
+
+    # An environment setting that could be fixed per trace and is not: a
+    # step in every trace and a branch in every step, for nothing.
+    listed = completeness_mod.env_at_init(area_data)
+    tagged = {e.get("action") for e in area_data.get("env_actions") or []}
+    for action in completeness_mod.mirrored_actions(ir):
+        if action in listed or not (action.startswith("env_") or action in tagged):
+            continue
+        if not completeness_mod.env_blockers(area_data, ir, action):
+            rep["env_eligible"].append((action, action in tagged))
 
     # Probe module: its ghost count, and the largest per-check slice.
     if fm.get("probes_file"):
@@ -2238,7 +2297,9 @@ def cost_report(root, area_data, sidecar):
     # Branching: per action stepP takes, the product of its parameters'
     # probe domains; a step is any one of them, so the sum.
     domains = fm.get("probe_domains") or {}
-    calls = (sidecar.get("action_calls") or {}).get("step") or []
+    env = completeness_mod.env_at_init(area_data)
+    calls = [a for a in (sidecar.get("action_calls") or {}).get("step") or []
+             if a not in env]
     param_types = sidecar.get("action_param_types") or {}
     actions = [a for a in calls if a in param_types] or \
         [a for a in param_types if a not in PLUMBING_ACTIONS]
@@ -2336,6 +2397,22 @@ def check_cost(root, area_data, sidecar, area_name, findings, report=None):
             f"`{var}: int` is only ever kept or incremented, and requirements only "
             f"ask whether it went up by one. A bool \"changed by the last step\" "
             f"says that without an unbounded int.", ref=var)
+    for action, tagged in rep["env_eligible"]:
+        add(findings, WARN, "cost", "env-at-init-eligible", area_name,
+            f"`{action}` only sets configuration nothing else writes, yet it is "
+            f"a step of every trace and a branch of every step. List it in "
+            f"formal_model.env_at_init to apply it once per key in initP"
+            + ("" if tagged else ", after tagging it `/// @env <why>` (or an "
+               "OUT-OF-SCOPE verdict)")
+            + ". Examples and journeys still call it as a setup step.", ref=action)
+    for decl, init in rep["fold_sets"]:
+        add(findings, WARN, "cost", "fold-builds-set", area_name,
+            f"`{decl}` builds a set with a fold (accumulator `{init}`, body "
+            f"unions into it), reachable from an action: the solver unrolls "
+            f"the whole fold on every step. Declare the constant set of "
+            f"candidates (ALL_X) and filter it: `ALL_X.filter(x => on(cfg, x))` "
+            f"— the candidates must cover everything the fold can emit, which "
+            f"an example run checks (template: CHECKING COST).", ref=decl)
 
 
 def print_cost(rep, area_name):
@@ -2355,6 +2432,10 @@ def print_cost(rep, area_name):
                   + " × ".join(f"{n} ({t}) {k}" for n, t, k in parts))
     else:
         print("  branching: unknown (a probe domain is not a literal set)")
+    for decl, init in rep.get("fold_sets") or []:
+        print(f"  set built by fold: {decl} (accumulator {init})")
+    for action, _t in rep.get("env_eligible") or []:
+        print(f"  env setting taken every step: {action} (env_at_init would fix it per trace)")
 
 
 def check_builtin_names(sidecar, area_name, findings):

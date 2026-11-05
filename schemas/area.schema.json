@@ -738,6 +738,24 @@
           "description": "Sidecar path, e.g. 'auth.qnt' (relative to this JSON). The Quint module is the source of truth for the formal spec; module name and imports are read from it directly via tools/quint_ir.py — never mirrored here."
         },
         "probe_domains": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Finite domain each action PARAMETER TYPE is drawn from in the generated stepP, as a Quint set expression: {\"UserId\": \"Set(\\\"alice\\\", \\\"bob\\\")\"}. Keyed by type rather than by parameter name because types are stable while parameter names vary per action. Required by tools/spec-probes.py and deliberately not inferred: how much of the state space the probes explore is a scope decision \u2014 too small and a probe cannot fire, too large and every check pays for it \u2014 so it is stated in the spec rather than guessed by a generator. A key of the form `param:<name>` targets one parameter by name and wins over its type's key — for a model whose parameters all share one type (every id a `str`). Prefer a type alias per value domain (`type Role = str`); use `param:` where an alias would be noise." },
+        "env_at_init": {
+          "type": "array",
+          "description": "Environment actions fixed per trace. tools/spec-probes.py applies each once, to every key of its first parameter with the other arguments chosen nondeterministically, inside the generated initP, and leaves it out of stepP: no trace spends a step on it and no later step branches on it. The model is untouched, so examples, journeys and conformance replay still call it as a setup step. Allowed only for an action `step` calls that carries `/// @env` or an OUT-OF-SCOPE verdict, hosts no requirement, and writes only vars no other action writes — otherwise a check could miss the configuration changing mid-trace, and the generator refuses. A bare name: the generator derives the fold from the flat `all { v' = ... }` bodies of init and the action. An object: `values` names, per var the action writes, the Quint set its value after setup is drawn from (`{\"vmConfig\": \"setOfMaps(VMS, CFGS)\"}`) — for an action whose body is not flat; the author owns that set matching what the action can produce.",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "required": ["action"],
+                "additionalProperties": false,
+                "properties": {
+                  "action": { "type": "string" },
+                  "values": { "type": "object", "additionalProperties": { "type": "string" } }
+                }
+              }
+            ]
+          }
+        },
         "ghost_zeros": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Explicit initial value of a probe ghost, keyed by TYPE as written in the model: {\"Result\": \"Ok\"}. tools/spec-probes.py builds the zero of base types, maps, sets, lists, tuples, records (field by field, aliases resolved) and sum types (their first variant) on its own; this is for a type it cannot build (parameterized, recursive) or whose first variant is the wrong zero. Wins over the synthesized value." },
         "probes_file": {
           "type": "string",
@@ -850,6 +868,20 @@
         "additionalProperties": false,
         "properties": {
           "var":    { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+
+    "env_actions": {
+      "type": "array",
+      "description": "Actions that only set configuration the environment chooses, derived from `/// @env <why>` on the action. Such an action may be listed in formal_model.env_at_init, which applies it once per key in the generated initP instead of as a step.",
+      "items": {
+        "type": "object",
+        "required": ["action"],
+        "additionalProperties": false,
+        "properties": {
+          "action": { "type": "string" },
           "reason": { "type": "string" }
         }
       }

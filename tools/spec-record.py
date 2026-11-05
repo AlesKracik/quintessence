@@ -235,7 +235,7 @@ import spec_source  # noqa: E402
 from quint_ir import parse_qnt  # noqa: E402
 from quint_ir import cli_available, DEFAULT_ENGINE  # noqa: E402
 from completeness import (area_completeness, requirement_checks,  # noqa: E402
-                          mirrored_actions)
+                          step_actions)
 from proc import run_group, kill_all  # noqa: E402
 import lean_backend  # noqa: E402
 
@@ -1336,7 +1336,7 @@ def cmd_check(args):
     # _last<Param> names before anything reads it.
     model_ir = parse_qnt(qnt_file) if qnt_file.exists() else None
     slots = (param_slots(model_ir.get("action_param_types") or {},
-                         mirrored_actions(model_ir)) if model_ir else {})
+                         step_actions(area, model_ir)) if model_ir else {})
 
     def restore_names(trace_path):
         path = Path(trace_path)

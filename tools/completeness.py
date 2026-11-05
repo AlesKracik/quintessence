@@ -46,6 +46,74 @@ def mirrored_actions(ir):
     return called or actions
 
 
+def env_at_init(area):
+    """{action: values-or-None} from formal_model.env_at_init, in order. A
+    bare name is None (the generator derives the fold); an object carries
+    the author's per-var value sets."""
+    out = {}
+    for item in ((area or {}).get("formal_model") or {}).get("env_at_init") or []:
+        if isinstance(item, str):
+            out[item] = None
+        elif isinstance(item, dict) and item.get("action"):
+            out[item["action"]] = item.get("values") or None
+    return out
+
+
+def step_actions(area, ir):
+    """The actions stepP takes: the ones `step` calls, minus the environment
+    settings formal_model.env_at_init moves into initP."""
+    env = env_at_init(area)
+    return [a for a in mirrored_actions(ir) if a not in env]
+
+
+def action_writes(ir, action, _seen=None):
+    """Vars `action` assigns (not `x' = x`), through the helper actions it
+    calls."""
+    seen = _seen if _seen is not None else set()
+    if action in seen:
+        return set()
+    seen.add(action)
+    out = set((ir.get("action_mutations") or {}).get(action) or [])
+    for callee in (ir.get("action_calls") or {}).get(action) or []:
+        out |= action_writes(ir, callee, seen)
+    return out
+
+
+def env_blockers(area, ir, action):
+    """Why `action` cannot be fixed per trace by env_at_init, as sentences;
+    empty when it can. The shape of its body (flat or not) is not judged
+    here: a non-flat one only needs declared `values`."""
+    out = []
+    mirrored = mirrored_actions(ir)
+    if action not in mirrored:
+        out.append("`step` does not call it")
+        return out
+    hosted = sorted({c["rid"] for c in requirement_checks(area)
+                     if c["action"] == action})
+    if hosted:
+        out.append(f"it hosts {', '.join(hosted)}, which would never fire "
+                   f"once it leaves stepP")
+    checked = [v["verdict"] for v in area.get("verdicts") or []
+               if v.get("action") == action
+               and v.get("verdict") in ("IMPOSSIBLE", "NO-OP")]
+    if checked:
+        out.append(f"it carries an {checked[0]} verdict, a check on its steps")
+    own = action_writes(ir, action)
+    if not own:
+        out.append("it writes no state var")
+    shared = sorted((o, sorted(own & action_writes(ir, o))) for o in mirrored
+                    if o != action and own & action_writes(ir, o))
+    if shared:
+        out.append("other actions also write its vars ("
+                   + "; ".join(f"{o}: {', '.join(vs)}" for o, vs in shared)
+                   + "), so a check could miss it changing mid-trace")
+    reads = set((ir.get("action_reads") or {}).get(action) or []) - own
+    if reads:
+        out.append(f"it reads {', '.join(sorted(reads))}, which it does not "
+                   f"write: fixed at init it would read them before init set them")
+    return out
+
+
 def requirement_checks(area):
     """One entry per requirement the model must prove, in declaration order:
     {req, rid, form, action, while, shall, outcomes, modality}. Skipped:
@@ -228,5 +296,5 @@ def area_completeness(root, area):
     ir = parse_qnt(path)
     if not ir:
         return [], {}
-    comp = completeness(area, ir, mirrored_actions(ir), requirement_checks(area))
+    comp = completeness(area, ir, step_actions(area, ir), requirement_checks(area))
     return comp, checks_by_name(comp)

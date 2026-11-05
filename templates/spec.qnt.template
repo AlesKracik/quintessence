@@ -72,6 +72,25 @@ module {{MODULE_NAME}} {
   //     few subsets that matter, listed
   //   an int only ever incremented, read only as `== before + 1`
   //     -> a bool "changed by the last step"
+  //   a set BUILT with fold + union      -> FILTER a constant set
+  //     IDIOM: building a set from a configuration. Declare the
+  //     constant set of candidates (ALL_X), then filter it:
+  //       before (the solver unrolls the fold on every step):
+  //         pure def enabled(cfg: Cfg): Set[Feat] =
+  //           cfg.keys().fold(Set(), (acc, k) =>
+  //             if (cfg.get(k)) acc.union(Set(feat(k))) else acc)
+  //       after (one filter over a fixed set):
+  //         pure val ALL_FEATS: Set[Feat] = Set(A, B, C)
+  //         pure def enabled(cfg: Cfg): Set[Feat] =
+  //           ALL_FEATS.filter(f => on(cfg, f))
+  //     Trade-off: ALL_X must cover everything the builder can
+  //     emit. A run over each configuration that matters catches
+  //     a missing candidate. Lint: cost/fold-builds-set.
+  //   an env_* action that only sets configuration -> tag it
+  //     `/// @env <why>` and list it in formal_model.env_at_init:
+  //     initP applies it once per key, stepP drops it. Keep it
+  //     and init flat `all { v' = ..., }`; it must write vars no
+  //     other action writes. Lint: cost/env-at-init-eligible.
   //   many parameters on one action      -> its branching is the
   //     product of their domains; drop or narrow the ones no
   //     requirement distinguishes

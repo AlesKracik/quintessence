@@ -409,3 +409,203 @@ def test_a_lost_race_for_the_apalache_port_is_retried_not_recorded(tmp_path, mon
     monkeypatch.setattr(record.time, "sleep", lambda s: None)
     r, _d, _t = record.run_verify("quint", tmp_path / "a.qnt", "inv", 3, 60)
     assert r == "verified" and len(calls) == 2
+
+
+FOLD_SET = '''module cfg {
+  type Feat = str
+  var cfg: str -> bool
+  var on: Set[Feat]
+  pure val KEYS = Set("a", "b")
+  pure val ALL_FEATS = Set("fa", "fb")
+  pure def enabled(c: str -> bool): Set[Feat] =
+    c.keys().fold(Set(), (acc, k) => if (c.get(k)) acc.union(Set("f" + k)) else acc)
+  pure def tally(c: str -> bool): { seen: Set[str], n: int } =
+    c.keys().fold({ seen: Set(), n: 0 }, (acc, k) => { seen: acc.seen.union(Set(k)), n: acc.n + 1 })
+  pure def unused(c: str -> bool): Set[str] =
+    c.keys().fold(Set(), (acc, k) => acc.union(Set(k)))
+  pure def count(c: str -> bool): int = c.keys().fold(0, (acc, k) => acc + 1)
+  action init = all { cfg' = KEYS.mapBy(_ => false), on' = Set() }
+  action flip(k: str): bool = all {
+    cfg' = cfg.set(k, not(cfg.get(k))), on' = enabled(cfg).union(tally(cfg).seen),
+  }
+  action step = { nondet k = oneOf(KEYS) flip(k) }
+}
+'''
+
+
+def test_a_set_built_by_fold_from_an_action_is_flagged(tmp_path):
+    qnt = tmp_path / "cfg.qnt"
+    qnt.write_text(FOLD_SET, encoding="utf-8")
+    found = lint.fold_set_builders(qnt.read_text())
+    # enabled (Set accumulator) and tally (record with a Set field) are on
+    # flip's path; `unused` is not reachable, `count` folds an int.
+    assert sorted(d for d, _ in found) == ["enabled", "tally"]
+    rep, checks = _cost(tmp_path, FOLD_SET.replace("module cfg", "module shop"),
+                        domains={"str": "KEYS"})
+    assert "fold-builds-set" in checks
+
+
+def test_a_filter_over_a_constant_set_is_quiet():
+    text = FOLD_SET.replace(
+        'c.keys().fold(Set(), (acc, k) => if (c.get(k)) acc.union(Set("f" + k)) else acc)',
+        'ALL_FEATS.filter(f => c.get(f.slice(1, 2)))')
+    assert "enabled" not in [d for d, _ in lint.fold_set_builders(text)]
+
+
+# ── 8. Environment settings fixed at init ───────────────────────────────────
+
+VM = '''module vm {
+  type Vm = str
+  type Cfg = str
+  var vmConfig: Vm -> Cfg
+  var running: Set[Vm]
+  pure val VMS = Set("a", "b")
+  pure val CFGS = Set("small", "big")
+
+  action init = all {
+    vmConfig' = VMS.mapBy(_ => "small"),
+    running' = Set(),
+  }
+
+  /// @env the operator sizes each VM before anything runs
+  action env_vm_config(v: Vm, c: Cfg): bool = all {
+    VMS.contains(v),
+    vmConfig' = vmConfig.set(v, c),
+    running' = running,
+  }
+
+  /// @req REQ-001
+  /// Starting a VM runs it.
+  /// @status specified
+  /// @shall running.contains(v)
+  action start(v: Vm): bool = all {
+    not(running.contains(v)),
+    running' = running.union(Set(v)),
+    vmConfig' = vmConfig,
+  }
+
+  action step = {
+    nondet v = oneOf(VMS)
+    nondet c = oneOf(CFGS)
+    any { env_vm_config(v, c), start(v) }
+  }
+}
+'''
+
+
+def _vm(tmp_path, text=VM, env=("env_vm_config",)):
+    import spec_source
+    from quint_ir import parse_qnt
+    qnt = tmp_path / "vm.qnt"
+    qnt.write_text(text, encoding="utf-8")
+    area = {"kind": "area", "area": "vm",
+            "formal_model": {"quint_file": "vm.qnt",
+                             "probe_domains": {"Vm": "VMS", "Cfg": "CFGS"},
+                             "env_at_init": list(env)}}
+    area.update(spec_source.derive_records(text, "vm.qnt")[0])
+    return area, parse_qnt(qnt)
+
+
+def _probes(area, ir, text=VM):
+    return "\n".join(probes.build(area, "vm", ir, "vm.qnt", text=text))
+
+
+def test_an_env_tag_is_derived_onto_the_area():
+    import spec_source
+    out = spec_source.derive_records(VM, "vm.qnt")[0]
+    assert out["env_actions"] == [{"action": "env_vm_config",
+                                   "reason": "the operator sizes each VM before anything runs"}]
+
+
+def test_an_env_setting_moves_from_stepP_into_initP(tmp_path):
+    area, ir = _vm(tmp_path)
+    out = _probes(area, ir)
+    init = out[out.index("action initP"):out.index("action stepP")]
+    step = out[out.index("action stepP"):]
+    # Applied once per key, the other argument chosen per key up front.
+    assert "nondet _env_env_vm_config_c = oneOf(setOfMaps(VMS, CFGS))" in init
+    assert "VMS.fold({ vmConfig: VMS.mapBy(_ => \"small\") }, (_acc, _k) =>" in init
+    assert "_acc.vmConfig.set(_k, _env_env_vm_config_c.get(_k))" in init
+    assert "vmConfig' = _env_env_vm_config.vmConfig" in init
+    assert "running' = Set()" in init and "    init," not in init
+    # Never a step, and no CFGS choice left in stepP; an idle step keeps a
+    # model whose env action was the one always enabled from deadlocking.
+    assert "env_vm_config" not in step and "oneOf(CFGS)" not in step
+    assert '_lastAction\' = "_idle"' in step
+    assert "fixed per trace" in out.lower()
+
+
+def test_without_env_at_init_the_module_is_unchanged(tmp_path):
+    area, ir = _vm(tmp_path, env=())
+    out = _probes(area, ir)
+    assert "action initP = all {\n    init," in out
+    assert '"env_vm_config"' in out and "_idle" not in out
+
+
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
+def test_a_fixed_env_setting_still_checks_clean(tmp_path):
+    area, ir = _vm(tmp_path)
+    (tmp_path / "vm.probes.qnt").write_text(_probes(area, ir) + "\n", encoding="utf-8")
+    def verify(inv):
+        p = run_group(["quint", "verify", f"--invariant={inv}", "--max-steps=4",
+                       "--init=initP", "--step=stepP",
+                       f"--server-endpoint={_free_endpoint()}",
+                       str(tmp_path / "vm.probes.qnt")], timeout=300)
+        return p.stdout + p.stderr
+    assert "[ok]" in verify("oblig_REQ_001")          # no deadlock either
+    assert "counterexample" in verify("witness_REQ_001")
+
+
+@pytest.mark.parametrize("edit,needle", [
+    # untagged: no @env, no OUT-OF-SCOPE verdict
+    (lambda t: t.replace("  /// @env the operator sizes each VM before anything runs\n", ""),
+     "neither tagged"),
+    # another action writes the same var
+    (lambda t: t.replace("vmConfig' = vmConfig,\n  }\n\n  action step",
+                         "vmConfig' = vmConfig.set(v, \"big\"),\n  }\n\n  action step"),
+     "other actions also write"),
+    # a requirement sits on it
+    (lambda t: t.replace("  /// @env the operator",
+                         "  /// @req REQ-002\n  /// Configures.\n  /// @status specified\n"
+                         "  /// @shall vmConfig.get(v) == c\n  /// @env the operator"),
+     "hosts REQ-002"),
+    # it reads a var it does not write
+    (lambda t: t.replace("VMS.contains(v),\n    vmConfig'",
+                         "not(running.contains(v)),\n    vmConfig'"),
+     "reads running"),
+])
+def test_an_env_setting_that_could_hide_behavior_is_refused(tmp_path, capsys, edit, needle):
+    text = edit(VM)
+    area, ir = _vm(tmp_path, text=text)
+    with pytest.raises(SystemExit):
+        _probes(area, ir, text)
+    assert needle in capsys.readouterr().err
+
+
+def test_a_body_that_is_not_flat_needs_declared_values(tmp_path, capsys):
+    text = VM.replace("""all {
+    VMS.contains(v),
+    vmConfig' = vmConfig.set(v, c),
+    running' = running,
+  }""", """if (VMS.contains(v)) all { vmConfig' = vmConfig.set(v, c), running' = running }
+    else all { vmConfig' = vmConfig, running' = running }""")
+    area, ir = _vm(tmp_path, text=text)
+    with pytest.raises(SystemExit):
+        _probes(area, ir, text)
+    assert '"values"' in capsys.readouterr().err
+    area, ir = _vm(tmp_path, text=text, env=[{"action": "env_vm_config",
+                                              "values": {"vmConfig": "setOfMaps(VMS, CFGS)"}}])
+    out = _probes(area, ir, text)
+    assert "nondet _env_env_vm_config_vmConfig = oneOf(setOfMaps(VMS, CFGS))" in out
+    assert "vmConfig' = _env_env_vm_config_vmConfig" in out
+
+
+def test_lint_hints_an_eligible_env_setting_until_it_is_listed(tmp_path):
+    def checks(env):
+        area, _ir = _vm(tmp_path, env=env)
+        sidecar = lint.parse_sidecar(tmp_path / "vm.qnt")
+        findings = []
+        lint.check_cost(tmp_path, area, sidecar, "vm", findings)
+        return {f.check for f in findings}
+    assert "env-at-init-eligible" in checks(())
+    assert "env-at-init-eligible" not in checks(("env_vm_config",))
