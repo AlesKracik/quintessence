@@ -1309,27 +1309,31 @@ def _match_arms(e):
     return None
 
 
-def _changed_fields(rhs, self_name, fields, decls, depth=0, locals_=None):
+def _changed_fields(rhs, self_name, fields, decls, calls=0, locals_=None):
     """The fields of record `self_name` that `rhs`, its new value, changes;
     None when that cannot be read off the text. Follows what route actions
     are made of: spreads, literals, helpers returning the state (the state
     passed in binds the helper's parameter), `if` / `else if` / `else` and
     `match` (the union of the branches, None if any branch is), and local
-    vals (`val next = { ...st, ... }`, resolved through their definition)."""
-    if depth > _FIELD_DEPTH + 4:
-        return None
+    vals (`val next = { ...st, ... }`, resolved through their definition).
+
+    `calls` counts only descents into a helper's body, capped at
+    _FIELD_DEPTH. Structure is free: a refusal chain of twelve `else if`s
+    is one level of helper calls, not twelve. Recursion into branches, arms,
+    blocks and spread bases is bounded by the expression itself, and a local
+    is consumed when it is resolved, so it cannot loop."""
     locals_ = dict(locals_ or {})
     e = _unparen(rhs)
     if _norm_expr(e) == self_name:
         return set()
     if re.fullmatch(r"[A-Za-z_]\w*", e) and e in locals_:
         return _changed_fields(locals_.pop(e), self_name, fields, decls,
-                               depth + 1, locals_)
+                               calls, locals_)
 
     def each(branches):
         out = set()
         for br in branches:
-            c = _changed_fields(br, self_name, fields, decls, depth + 1, locals_)
+            c = _changed_fields(br, self_name, fields, decls, calls, locals_)
             if c is None:
                 return None
             out |= c
@@ -1349,20 +1353,24 @@ def _changed_fields(rhs, self_name, fields, decls, depth=0, locals_=None):
         if base is None:
             # A literal with every field: one it leaves out is a type error.
             return changed | (set(fields) - listed)
-        from_base = _changed_fields(base, self_name, fields, decls, depth + 1, locals_)
-        # A spread of something unresolved: an unlisted field comes from
-        # elsewhere and may differ.
-        return changed | ((set(fields) if from_base is None else from_base) - listed)
+        from_base = _changed_fields(base, self_name, fields, decls, calls, locals_)
+        # A spread of something unresolved (another record, a helper past
+        # the cap) is unresolved, like any branch that cannot be read: None,
+        # so the consumer falls back to the whole var. Answering "every
+        # field" instead said the same thing in a second, different form.
+        if from_base is None:
+            return None
+        return changed | (from_base - listed)
     if e.startswith("{") and _match_close(e, 0) == len(e) - 1:
         # A block: local vals, then the expression it yields.
         inner = e[1:-1]
         binds, end = _local_vals(inner)
         if binds:
             return _changed_fields(inner[end:], self_name, fields, decls,
-                                   depth + 1, {**locals_, **dict(binds)})
+                                   calls, {**locals_, **dict(binds)})
         return None
     call = _call(e)
-    if call and depth < _FIELD_DEPTH + 4:
+    if call and calls < _FIELD_DEPTH:
         name, args = call
         host = decls.get(name) or {}
         params = host.get("params") or []
@@ -1370,7 +1378,7 @@ def _changed_fields(rhs, self_name, fields, decls, depth=0, locals_=None):
         if (host.get("kind") in ("def", "val") and host.get("body")
                 and len(params) == len(args) and len(at) == 1):
             return _changed_fields(host["body"], params[at[0]][0], fields,
-                                   decls, depth + 1)
+                                   decls, calls + 1)
     return None
 
 

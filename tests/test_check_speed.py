@@ -985,3 +985,69 @@ def test_an_env_setting_beside_a_refusal_chain_is_eligible(tmp_path):
     (tmp_path / "rc.probes.qnt").write_text(out + "\n", encoding="utf-8")
     tc = run_group(["quint", "typecheck", str(tmp_path / "rc.probes.qnt")], timeout=300)
     assert tc.returncode == 0, tc.stdout + tc.stderr
+
+
+# ── 11. Conditional nesting is not helper-call depth ────────────────────────
+# Every `else if` used to cost one level of the helper-call budget, so a
+# validation-heavy action (6+ refusals) resolved to every field, then to
+# nothing at all, and blocked env_at_init for fields it never touches.
+
+def _chain(n, deep=False):
+    conds = " ".join(f"if (k == \"e{i}\") refuse(st, E{i}) else" for i in range(n))
+    variants = " | ".join(["Ok"] + [f"E{i}" for i in range(max(n, 1))])
+    helpers = ""
+    success = "{ ...st, last: Ok, items: st.items.set(k, true) }"
+    if deep:
+        # a def calling a def calling a def ... past _FIELD_DEPTH
+        helpers = "\n".join(
+            f"  pure def h{i}(s: State): State = h{i + 1}(s)" for i in range(4))
+        helpers += "\n  pure def h4(s: State): State = { ...s, count: 1 }\n"
+        success = "h0(st)"
+    return f'''module ch {{
+  type Result = {variants}
+  type State = {{
+    items: str -> bool,
+    cfg: str -> int,
+    last: Result,
+    dirty: bool,
+    count: int,
+  }}
+  var st: State
+  pure def refuse(s0: State, r: Result): State = {{ ...s0, last: r, dirty: true }}
+{helpers}
+  action init = st' = {{ items: Map(), cfg: Map(), last: Ok, dirty: false, count: 0 }}
+  action update(k: str): bool = st' = {conds} {success}
+  action step = update("a")
+}}
+'''
+
+
+def _effects(tmp_path, text, engine="regex"):
+    import quint_ir
+    p = tmp_path / "ch.qnt"
+    p.write_text(text, encoding="utf-8")
+    return quint_ir.parse_qnt(p, engine)["action_field_mutations"]
+
+
+@pytest.mark.parametrize("n", [1, 6, 12])
+def test_a_long_refusal_chain_resolves_to_the_helper_and_success_fields(tmp_path, n):
+    for engine in _engines():
+        muts = _effects(tmp_path, _chain(n), engine)
+        assert muts["update"] == {"st": ["dirty", "items", "last"]}, (engine, n)
+
+
+def test_the_cap_still_stops_helper_calls_nested_too_deep(tmp_path):
+    from quint_ir import _FIELD_DEPTH
+    assert _FIELD_DEPTH < 5, "the chain below must outrun the cap"
+    muts = _effects(tmp_path, _chain(8, deep=True))
+    assert "update" not in muts, "a branch past the cap is unresolved: whole var"
+
+
+def test_a_match_with_many_arms_resolves(tmp_path):
+    arms = "\n".join(f"    | E{i} => refuse(st, E{i})" for i in range(10))
+    text = _chain(10).replace(
+        "action update(k: str): bool = st' = ",
+        f"action pick(r: Result): bool = st' = match r {{\n    | Ok => {{ ...st, count: 2 }}\n{arms}\n  }}\n  action update(k: str): bool = st' = ")
+    for engine in _engines():
+        muts = _effects(tmp_path, text, engine)
+        assert muts["pick"] == {"st": ["count", "dirty", "last"]}, engine
