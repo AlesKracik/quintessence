@@ -439,7 +439,7 @@ def test_a_set_built_by_fold_from_an_action_is_flagged(tmp_path):
     found = lint.fold_set_builders(qnt.read_text())
     # enabled (Set accumulator) and tally (record with a Set field) are on
     # flip's path; `unused` is not reachable, `count` folds an int.
-    assert sorted(d for d, _ in found) == ["enabled", "tally"]
+    assert sorted(d for d, *_ in found) == ["enabled", "tally"]
     rep, checks = _cost(tmp_path, FOLD_SET.replace("module cfg", "module shop"),
                         domains={"str": "KEYS"})
     assert "fold-builds-set" in checks
@@ -449,7 +449,7 @@ def test_a_filter_over_a_constant_set_is_quiet():
     text = FOLD_SET.replace(
         'c.keys().fold(Set(), (acc, k) => if (c.get(k)) acc.union(Set("f" + k)) else acc)',
         'ALL_FEATS.filter(f => c.get(f.slice(1, 2)))')
-    assert "enabled" not in [d for d, _ in lint.fold_set_builders(text)]
+    assert "enabled" not in [d for d, *_ in lint.fold_set_builders(text)]
 
 
 # ── 8. Environment settings fixed at init ───────────────────────────────────
@@ -572,7 +572,7 @@ def test_a_fixed_env_setting_still_checks_clean(tmp_path):
     # it reads a var it does not write
     (lambda t: t.replace("VMS.contains(v),\n    vmConfig'",
                          "not(running.contains(v)),\n    vmConfig'"),
-     "reads running"),
+     "reads `running`"),
 ])
 def test_an_env_setting_that_could_hide_behavior_is_refused(tmp_path, capsys, edit, needle):
     text = edit(VM)
@@ -609,3 +609,215 @@ def test_lint_hints_an_eligible_env_setting_until_it_is_listed(tmp_path):
         return {f.check for f in findings}
     assert "env-at-init-eligible" in checks(())
     assert "env-at-init-eligible" not in checks(("env_vm_config",))
+
+
+# ── 9. Record-state models and helper functions ─────────────────────────────
+# A model whose state is one record (`var st: State`) writes `st` in every
+# action. Compared per var, no env action was ever independent of the rest;
+# compared per FIELD, the one that sets `st.cfg` is.
+
+RS = '''module rs {
+  type Key = str
+  type Item = str
+  type Cfg = { region: str, tier: int }
+  type State = { items: Item -> bool, cfg: Key -> Cfg, dirty: bool }
+  var st: State
+
+  pure val KEYS = Set("k1", "k2")
+  pure val ITEMS = Set("i1", "i2")
+  pure val CFG0: Cfg = { region: "eu", tier: 0 }
+  pure val CFGS = Set(CFG0, { region: "us", tier: 1 })
+
+  pure def commit(s: State, i: Item): State = { ...s, items: s.items.set(i, true), dirty: true }
+  pure def opaque(s: State, k: Key, c: Cfg): State =
+    if (k == "") s else { ...s, cfg: s.cfg.set(k, c) }
+
+  action init = { st' = { items: ITEMS.mapBy(_ => false), cfg: KEYS.mapBy(_ => CFG0), dirty: false } }
+
+  /// @verdict OUT-OF-SCOPE
+  /// Configuration is resolved outside this area.
+  /// @scope configuration resolution
+  action env_set_cfg(k: Key, c: Cfg): bool =
+    st' = { ...st, cfg: st.cfg.set(k, c) }
+
+  /// @req REQ-001
+  /// Adding an item marks it present.
+  /// @status specified
+  /// @shall st.items.get(i)
+  action add(i: Item): bool = all {
+    not(st.items.get(i)),
+    st' = commit(st, i),
+  }
+
+  action step = {
+    nondet k = oneOf(KEYS)
+    nondet c = oneOf(CFGS)
+    nondet i = oneOf(ITEMS)
+    any { env_set_cfg(k, c), add(i) }
+  }
+
+  /// @example EX-001
+  /// Configure, then add.
+  /// @refs REQ-001
+  run configureThenAdd = init.then(env_set_cfg("k1", { region: "us", tier: 1 }))
+    .then(add("i1")).expect(st.items.get("i1") and st.cfg.get("k1").tier == 1)
+}
+'''
+
+
+def _rs(tmp_path, text=RS, env=()):
+    import spec_source
+    from quint_ir import parse_qnt
+    qnt = tmp_path / "rs.qnt"
+    qnt.write_text(text, encoding="utf-8")
+    area = {"kind": "area", "area": "rs",
+            "scope": {"excluded": [{"item": "configuration resolution"}]},
+            "formal_model": {"quint_file": "rs.qnt",
+                             "probe_domains": {"Key": "KEYS", "Cfg": "CFGS",
+                                               "Item": "ITEMS"},
+                             "env_at_init": list(env)}}
+    area.update(spec_source.derive_records(text, "rs.qnt")[0])
+    return area, parse_qnt(qnt)
+
+
+def _rs_cost(tmp_path, text=RS, env=()):
+    area, _ir = _rs(tmp_path, text, env)
+    findings = []
+    lint.check_cost(tmp_path, area, lint.parse_sidecar(tmp_path / "rs.qnt"),
+                    "rs", findings)
+    return [f for f in findings if f.check == "env-at-init-eligible"]
+
+
+def test_field_writes_and_reads_are_read_off_a_record_state():
+    import quint_ir
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "rs.qnt"
+        p.write_text(RS, encoding="utf-8")
+        for engine in ("regex",) + (("cli",) if quint_ir.cli_available() else ()):
+            ir = quint_ir.parse_qnt(p, engine)
+            muts, reads = ir["action_field_mutations"], ir["action_field_reads"]
+            assert muts["env_set_cfg"] == {"st": ["cfg"]}
+            # add's new state comes from a helper: followed one level.
+            assert muts["add"] == {"st": ["dirty", "items"]}
+            assert reads["env_set_cfg"] == {"st": ["cfg"]}
+            assert reads["add"] == {"st": ["items"]}
+
+
+def test_a_record_state_env_setting_is_fixed_by_field(tmp_path):
+    hint = _rs_cost(tmp_path)
+    assert hint and "env_set_cfg" in hint[0].description
+    assert not _rs_cost(tmp_path, env=["env_set_cfg"])
+
+    area, ir = _rs(tmp_path, env=["env_set_cfg"])
+    out = "\n".join(probes.build(area, "rs", ir, "rs.qnt", text=RS))
+    init = out[out.index("action initP"):out.index("action stepP")]
+    step = out[out.index("action stepP"):]
+    # Only st.cfg is fixed; every other field keeps init's value.
+    assert ("st' = { items: ITEMS.mapBy(_ => false), "
+            "cfg: _env_env_set_cfg.st__cfg, dirty: false }") in init
+    assert ("KEYS.fold({ st__cfg: KEYS.mapBy(_ => CFG0) }, (_acc, _k) => "
+            "{ st__cfg: _acc.st__cfg.set(_k, _env_env_set_cfg_c.get(_k)) })") in init
+    assert "env_set_cfg" not in step
+
+    from quint_ir import cli_available
+    if not cli_available():
+        return
+    (tmp_path / "rs.probes.qnt").write_text(out + "\n", encoding="utf-8")
+    tc = run_group(["quint", "typecheck", str(tmp_path / "rs.probes.qnt")], timeout=300)
+    assert tc.returncode == 0, tc.stdout + tc.stderr
+    # The model is untouched: its example still calls the env action.
+    t = run_group(["quint", "test", "--match=configureThenAdd",
+                   str(tmp_path / "rs.qnt")], timeout=300)
+    assert t.returncode == 0 and "configureThenAdd passed" in t.stdout, t.stdout + t.stderr
+
+
+def test_another_writer_of_the_same_field_blocks_it_by_name(tmp_path):
+    import completeness
+    text = RS.replace("items: s.items.set(i, true), dirty: true",
+                      "items: s.items.set(i, true), cfg: s.cfg.set(\"k1\", CFG0), dirty: true")
+    area, ir = _rs(tmp_path, text)
+    why = " ".join(completeness.env_blockers(area, ir, "env_set_cfg"))
+    assert "other actions also write `st.cfg` (add)" in why
+    assert not _rs_cost(tmp_path, text)
+
+
+def test_a_shared_bookkeeping_field_is_named_and_can_be_left_to_init(tmp_path, capsys):
+    import completeness
+    text = RS.replace("st' = { ...st, cfg: st.cfg.set(k, c) }",
+                      "st' = { ...st, cfg: st.cfg.set(k, c), dirty: true }")
+    area, ir = _rs(tmp_path, text)
+    why = completeness.env_blockers(area, ir, "env_set_cfg")
+    assert len(why) == 1 and "it also writes `st.dirty`" in why[0] and "ignore" in why[0]
+    # The hint says how to list it.
+    hint = _rs_cost(tmp_path, text)
+    assert hint and '"ignore": ["st.dirty"]' in hint[0].description
+    # Listed without `ignore`: refused, naming the field.
+    area, ir = _rs(tmp_path, text, env=["env_set_cfg"])
+    with pytest.raises(SystemExit):
+        probes.build(area, "rs", ir, "rs.qnt", text=text)
+    assert "`st.dirty`" in capsys.readouterr().err
+    # With it: st.dirty stays at init's value, st.cfg is fixed.
+    area, ir = _rs(tmp_path, text, env=[{"action": "env_set_cfg",
+                                         "ignore": ["st.dirty"]}])
+    out = "\n".join(probes.build(area, "rs", ir, "rs.qnt", text=text))
+    assert "cfg: _env_env_set_cfg.st__cfg, dirty: false }" in out
+    assert "left to init: st.dirty" in out
+
+
+def test_values_are_keyed_by_field(tmp_path):
+    area, ir = _rs(tmp_path, env=[{"action": "env_set_cfg",
+                                   "values": {"st.cfg": "setOfMaps(KEYS, CFGS)"}}])
+    out = "\n".join(probes.build(area, "rs", ir, "rs.qnt", text=RS))
+    assert "nondet _env_env_set_cfg_st__cfg = oneOf(setOfMaps(KEYS, CFGS))" in out
+    assert "cfg: _env_env_set_cfg_st__cfg, dirty: false }" in out
+
+
+def test_an_unresolvable_record_write_falls_back_to_the_whole_var(tmp_path):
+    import completeness
+    text = RS.replace("st' = { ...st, cfg: st.cfg.set(k, c) }",
+                      "st' = opaque(st, k, c)")
+    area, ir = _rs(tmp_path, text)
+    assert "env_set_cfg" not in ir["action_field_mutations"]
+    assert completeness.action_writes(ir, "env_set_cfg") == {"st"}
+    why = " ".join(completeness.env_blockers(area, ir, "env_set_cfg"))
+    assert "other actions also write `st`" in why
+    assert not _rs_cost(tmp_path, text)
+
+
+HELPER_FOLD = '''module bag {
+  type Key = str
+  type Bag = { xs: Set[str], ys: Set[str] }
+  type State = { members: Key -> Set[str], built: Bag, total: int }
+  var st: State
+  pure val KEYS = Set("g")
+  pure val EMPTY: Bag = { xs: Set(), ys: Set() }
+  pure def merge(a: Bag, b: Bag): Bag = { xs: a.xs.union(b.xs), ys: a.ys.union(b.ys) }
+  pure def partFor(m: str): Bag = { xs: Set(m), ys: Set() }
+  pure def plus(a: int, b: int): int = a + b
+  def build(s: State, g: Key): Bag =
+    s.members.get(g).fold(EMPTY, (acc, m) => merge(acc, partFor(m)))
+  def names(s: State, g: Key): Set[str] =
+    s.members.get(g).fold(Set(), (acc, m) => acc.add(m))
+  def count(s: State, g: Key): int =
+    s.members.get(g).fold(0, (acc, m) => plus(acc, 1))
+  action init = st' = { members: KEYS.mapBy(_ => Set("a")), built: EMPTY, total: 0 }
+  action rebuild(g: Key): bool = st' = { ...st, built: build(st, g),
+    total: count(st, g) + names(st, g).size() }
+  action step = { nondet g = oneOf(KEYS) rebuild(g) }
+}
+'''
+
+
+def test_a_fold_that_unions_through_a_helper_is_flagged_by_name(tmp_path):
+    found = {d: via for d, _init, via in lint.fold_set_builders(HELPER_FOLD)}
+    assert found == {"build": "merge", "names": None}, "count folds an int"
+    qnt = tmp_path / "shop.qnt"
+    qnt.write_text(HELPER_FOLD.replace("module bag", "module shop"), encoding="utf-8")
+    area = {"kind": "area", "area": "shop", "requirements": [],
+            "formal_model": {"quint_file": "shop.qnt",
+                             "probe_domains": {"Key": "KEYS"}}}
+    findings = []
+    lint.check_cost(tmp_path, area, lint.parse_sidecar(qnt), "shop", findings)
+    msgs = [f.description for f in findings if f.check == "fold-builds-set"]
+    assert any("unions through `merge`" in m and "`build`" in m for m in msgs)

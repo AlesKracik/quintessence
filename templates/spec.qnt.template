@@ -91,6 +91,9 @@ module {{MODULE_NAME}} {
   //     initP applies it once per key, stepP drops it. Keep it
   //     and init flat `all { v' = ..., }`; it must write vars no
   //     other action writes. Lint: cost/env-at-init-eligible.
+  //     A record state (`var st: State`) works per FIELD: the
+  //     action fixes `st.cfg` if no other action writes it; a
+  //     bookkeeping field every action sets goes under `ignore`.
   //   many parameters on one action      -> its branching is the
   //     product of their domains; drop or narrow the ones no
   //     requirement distinguishes

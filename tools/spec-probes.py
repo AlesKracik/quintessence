@@ -82,10 +82,11 @@ from itf_tools import (area_json_path, param_slots,  # noqa: E402
                        reach_name, obligation_name, pre_ghost, old_ghost,
                        witness_exempt, is_computed, verdict_ghost,
                        verdict_label)
-from quint_ir import parse_qnt, zero_value as _ir_zero  # noqa: E402
+from quint_ir import (parse_qnt, zero_value as _ir_zero,  # noqa: E402
+                      record_var_fields, split_record_literal)
 from completeness import (requirement_checks,  # noqa: E402
-                          env_at_init, step_actions, env_blockers,
-                          action_writes,
+                          env_at_init, step_actions, env_analysis,
+                          action_writes, units_overlap,
                           completeness, completeness_vals,
                           explained_everywhere)
 
@@ -207,13 +208,22 @@ def probe_requirements(area):
 
 def _flat_all(body):
     """The conjuncts of a flat `all { ... }` body (a `{ all { ... } }`
-    wrapper allowed), or None for any other shape."""
+    wrapper allowed), or [the assignment] for a body that is one
+    `v' = ...` (braces allowed: `{ st' = { ... } }`, the record-state init);
+    None for any other shape."""
     b = (body or "").strip()
     while b.startswith("{") and b.endswith("}"):
         inner = b[1:-1].strip()
+        if _assignment(inner) and _assignment(inner)[1] and \
+                not _assignment(inner)[1].startswith(("all", "any")):
+            if spec_source._split_top(inner) == [inner]:
+                return [inner]
         if not inner.startswith("all"):
             return None
         b = inner
+    if not b.startswith("all") and _assignment(b) and \
+            spec_source._split_top(b) == [b]:
+        return [b]
     m = re.match(r"all\s*\{", b)
     if not m:
         return None
@@ -258,11 +268,55 @@ def _substitute(expr, mapping):
     return "".join(out)
 
 
+def _acc_name(unit):
+    """The accumulator field a write unit rides in: `st.cfg` -> `st__cfg`."""
+    return unit.replace(".", "__")
+
+
+def _field_reads_to_acc(expr, units):
+    """`st.cfg` -> `_acc.st__cfg` for every record-field unit."""
+    for u in sorted(units, key=len, reverse=True):
+        if "." in u:
+            var, field = u.split(".", 1)
+            expr = re.sub(rf"(?<![\w.]){re.escape(var)}\s*\.\s*{re.escape(field)}\b",
+                          f"_acc.{_acc_name(u)}", expr)
+    return expr
+
+
+def _with_field(record, field, value):
+    """`record` with `field` set to `value`: rewritten in place when it is a
+    literal that lists the field, appended to it when it does not, and a
+    spread around anything else."""
+    rec = split_record_literal(record)
+    if rec is None:
+        return f"{{ ...{record}, {field}: {value} }}"
+    base, items = rec
+    if any(f == field for f, _v in items):
+        items = [(f, value if f == field else v) for f, v in items]
+    else:
+        items = items + [(field, value)]
+    parts = ([f"...{base}"] if base is not None else []) + [f"{f}: {v}" for f, v in items]
+    return "{ " + ", ".join(parts) + " }"
+
+
+def _init_field(record, field):
+    """The value init gives `field` of a record var: read off the literal
+    when it lists it, else the field of the whole value."""
+    rec = split_record_literal(record)
+    if rec is not None:
+        for f, v in rec[1]:
+            if f == field:
+                return v
+    return f"({record}).{field}"
+
+
 def env_init(area, ir, text, domains):
-    """(lines to open initP with, {var: value it is assigned in initP}) for
-    formal_model.env_at_init, and init's conjuncts; ([], {}, None) when it
-    lists nothing. Fails on an
-    action that cannot be fixed per trace without hiding behavior."""
+    """(lines to open initP with, {var: value it is assigned in initP}, and
+    init's conjuncts) for formal_model.env_at_init; ([], {}, None) when it
+    lists nothing. Works per WRITE UNIT: a whole var, or `var.field` of a
+    record var (completeness.action_writes), so a record-state model fixes
+    the one field its env action sets and keeps the rest of init. Fails on
+    an action that cannot be fixed per trace without hiding behavior."""
     env = env_at_init(area)
     if not env:
         return [], {}, None
@@ -271,27 +325,38 @@ def env_init(area, ir, text, domains):
            if v.get("verdict") == "OUT-OF-SCOPE"}
     decls = spec_source.declarations(text)
     params = ir.get("action_param_types") or {}
+    rec_vars = record_var_fields(ir)
 
     init_items = _flat_all((decls.get("init") or {}).get("body"))
     if init_items is None:
         fail("formal_model.env_at_init needs `init` written as a flat "
-             "`all { v' = ..., }`: initP inlines it, because Quint cannot run "
-             "init and then another action inside one step.")
+             "`all { v' = ..., }` (or one `st' = { ... }` for a record "
+             "state): initP inlines it, because Quint cannot run init and "
+             "then another action inside one step.")
     init_vals = dict(filter(None, (_assignment(x) for x in init_items)))
+    finals = {}          # var -> its value in initP, built up per action
 
-    lines, overrides = [], {}
-    for action, values in env.items():
+    lines = []
+    for action, entry in env.items():
+        values, ignore = entry["values"], entry["ignore"]
         where = f"formal_model.env_at_init: {action}"
         if action not in tagged and action not in oos:
             fail(f"{where} is neither tagged `/// @env <why>` nor OUT-OF-SCOPE "
                  f"(`/// @verdict OUT-OF-SCOPE` + `@scope <item>`). Fixing an "
                  f"action per trace says no requirement cares how it moves "
                  f"mid-trace; say so on the action first.")
-        blockers = env_blockers(area, ir, action)
-        if blockers:
-            fail(f"{where} cannot be fixed per trace: " + "; ".join(blockers) + ".")
-        own = action_writes(ir, action)
-        unset = sorted(v for v in own if v not in init_vals)
+        written = action_writes(ir, action)
+        stray = sorted(i for i in ignore
+                       if not any(units_overlap(i, w) for w in written))
+        if stray:
+            fail(f"{where}.ignore names {', '.join(stray)}, which it does not "
+                 f"write (it writes {', '.join(sorted(written)) or 'nothing'}).")
+        info = env_analysis(area, ir, action, ignore)
+        if info["blockers"]:
+            fail(f"{where} cannot be fixed per trace: "
+                 + "; ".join(info["blockers"]) + ".")
+        own = info["own"]
+        unset = sorted({u.split(".")[0] for u in own} - set(init_vals))
         if unset:
             fail(f"{where}: init assigns no value to {', '.join(unset)}.")
         tag = re.sub(r"\W", "_", action)
@@ -300,67 +365,100 @@ def env_init(area, ir, text, domains):
             missing = sorted(own - set(values))
             extra = sorted(set(values) - own)
             if missing or extra:
-                fail(f"{where}.values must name exactly the vars it writes ("
+                fail(f"{where}.values must name exactly what it writes ("
                      + ", ".join(sorted(own)) + ")"
                      + (f"; missing {', '.join(missing)}" if missing else "")
                      + (f"; not written: {', '.join(extra)}" if extra else "")
                      + ".")
-            for var in sorted(own):
-                g = f"_env_{tag}_{var}"
-                lines.append(f"    nondet {g} = oneOf({values[var]})")
-                overrides[var] = g
-            continue
-
-        body_items = _flat_all((decls.get(action) or {}).get("body"))
-        hint = ("Declare what it can leave behind instead:\n\n"
-                + json.dumps({"env_at_init": [{"action": action, "values": {
-                    v: "/* Quint set of values after setup */" for v in sorted(own)}}]},
-                    indent=2))
-        if body_items is None:
-            fail(f"{where}: its body is not a flat `all {{ v' = ..., }}`, so "
-                 f"the fold cannot be read off it. " + hint)
-        assigns, guards = {}, []
-        for item in body_items:
-            asg = _assignment(item)
-            if asg is None:
-                if re.search(r"\b\w+'", item):
-                    fail(f"{where}: `{item}` assigns state inside a nested "
-                         f"form. " + hint)
-                guards.append(item)
-            elif asg[1] != asg[0]:
-                assigns[asg[0]] = asg[1]
-        if set(assigns) != own:
-            fail(f"{where}: its body assigns {', '.join(sorted(assigns)) or 'nothing'}"
-                 f" but it writes {', '.join(sorted(own))} (through a helper?). "
-                 + hint)
-        ps = params.get(action) or []
-        mapping = {v: f"_acc.{v}" for v in own}
-        for i, (pname, ptype) in enumerate(ps):
-            dom = domain_for(pname, ptype, domains)
-            if dom is None:
-                fail(f"{where}: no probe domain for parameter {pname} ({ptype}).")
-            if i == 0:
-                mapping[pname] = "_k"
-                keydom = dom
-            else:
-                g = f"_env_{tag}_{pname}"
-                lines.append(f"    nondet {g} = oneOf(setOfMaps({keydom}, {dom}))")
-                mapping[pname] = f"{g}.get(_k)"
-        start = "{ " + ", ".join(f"{v}: {init_vals[v]}" for v in sorted(own)) + " }"
-        after = "{ " + ", ".join(f"{v}: {_substitute(assigns[v], mapping)}"
-                                for v in sorted(own)) + " }"
-        if guards:
-            cond = " and ".join(f"({_substitute(g, mapping)})" for g in guards)
-            after = f"if ({cond}) {after} else _acc"
-        val = f"_env_{tag}"
-        if ps:
-            lines.append(f"    val {val} = {keydom}.fold({start}, "
-                         f"(_acc, _k) => {after})")
+            chosen = {}
+            for u in sorted(own):
+                g = f"_env_{tag}_{_acc_name(u)}"
+                lines.append(f"    nondet {g} = oneOf({values[u]})")
+                chosen[u] = g
         else:
-            lines.append(f"    val {val} = {{ val _acc = {start} {after} }}")
-        for var in sorted(own):
-            overrides[var] = f"{val}.{var}"
-    return lines, overrides, init_items
+            chosen = _env_fold(action, where, own, ignore, decls, params,
+                               domains, init_vals, rec_vars, tag, lines)
+        for u in sorted(own):
+            var, _, field = u.partition(".")
+            current = finals.get(var, init_vals[var])
+            finals[var] = _with_field(current, field, chosen[u]) if field else chosen[u]
+    return lines, finals, init_items
+
+
+def _env_fold(action, where, own, ignore, decls, params, domains, init_vals,
+              rec_vars, tag, lines):
+    """The fold that applies `action` once per key, from init's values of
+    the units it owns: {unit: expression for its value after setup}. Read
+    off flat bodies; anything else fails with the `values` JSON to declare."""
+    body_items = _flat_all((decls.get(action) or {}).get("body"))
+    hint = ("Declare what it can leave behind instead:\n\n"
+            + json.dumps({"env_at_init": [{"action": action, "values": {
+                u: "/* Quint set of values after setup */" for u in sorted(own)}}]},
+                indent=2))
+    if body_items is None:
+        fail(f"{where}: its body is not a flat `all {{ v' = ..., }}` or one "
+             f"`v' = ...`, so the fold cannot be read off it. " + hint)
+    assigns, guards = {}, []
+    for item in body_items:
+        asg = _assignment(item)
+        if asg is None:
+            if re.search(r"\b\w+'", item):
+                fail(f"{where}: `{item}` assigns state inside a nested "
+                     f"form. " + hint)
+            guards.append(item)
+            continue
+        var, rhs = asg
+        if rhs == var:
+            continue
+        if var in rec_vars:
+            rec = split_record_literal(rhs)
+            if rec is None or (rec[0] is not None and rec[0].strip() != var):
+                fail(f"{where}: `{var}' = {rhs}` is not `{{ ...{var}, f: ... }}`, "
+                     f"so the fields it sets cannot be read off it. " + hint)
+            for f, v in rec[1]:
+                if re.sub(r"\s+", "", v) != f"{var}.{f}":
+                    assigns[f"{var}.{f}"] = v
+        else:
+            assigns[var] = rhs
+    derived = {u for u in assigns
+               if not any(units_overlap(u, i) and len(u) >= len(i) for i in ignore)}
+    if derived != own:
+        fail(f"{where}: its body assigns {', '.join(sorted(derived)) or 'nothing'}"
+             f" but it writes {', '.join(sorted(own))} (through a helper?). " + hint)
+    ps = params.get(action) or []
+    mapping = {u: f"_acc.{u}" for u in own if "." not in u}
+    keydom = None
+    for i, (pname, ptype) in enumerate(ps):
+        dom = domain_for(pname, ptype, domains)
+        if dom is None:
+            fail(f"{where}: no probe domain for parameter {pname} ({ptype}).")
+        if i == 0:
+            mapping[pname] = "_k"
+            keydom = dom
+        else:
+            g = f"_env_{tag}_{pname}"
+            lines.append(f"    nondet {g} = oneOf(setOfMaps({keydom}, {dom}))")
+            mapping[pname] = f"{g}.get(_k)"
+
+    def sub(expr):
+        return _substitute(_field_reads_to_acc(expr, own), mapping)
+
+    def start(u):
+        var, _, field = u.partition(".")
+        return _init_field(init_vals[var], field) if field else init_vals[var]
+
+    first = "{ " + ", ".join(f"{_acc_name(u)}: {start(u)}" for u in sorted(own)) + " }"
+    after = "{ " + ", ".join(f"{_acc_name(u)}: {sub(assigns[u])}"
+                            for u in sorted(own)) + " }"
+    if guards:
+        cond = " and ".join(f"({sub(g)})" for g in guards)
+        after = f"if ({cond}) {after} else _acc"
+    val = f"_env_{tag}"
+    if ps:
+        lines.append(f"    val {val} = {keydom}.fold({first}, (_acc, _k) => {after})")
+    else:
+        lines.append(f"    val {val} = {{ val _acc = {first} {after} }}")
+    return {u: f"{val}.{_acc_name(u)}" for u in own}
 
 
 def build(area, area_name, ir, quint_rel, text=None):
@@ -565,8 +663,11 @@ def build(area, area_name, ir, quint_rel, text=None):
         a("//")
         a("// Fixed per trace (formal_model.env_at_init): applied once in")
         a("// initP, to every key, never a step of stepP:")
-        for name, values in env.items():
-            a(f"//   {name}" + (" (value sets declared)" if values else ""))
+        for name, entry in env.items():
+            a(f"//   {name}"
+              + (" (value sets declared)" if entry["values"] else "")
+              + (f" (left to init: {', '.join(entry['ignore'])})"
+                 if entry["ignore"] else ""))
     a("// " + "=" * 58)
     a("")
     a(f"module {module}_probes {{")

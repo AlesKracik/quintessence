@@ -47,15 +47,18 @@ def mirrored_actions(ir):
 
 
 def env_at_init(area):
-    """{action: values-or-None} from formal_model.env_at_init, in order. A
-    bare name is None (the generator derives the fold); an object carries
-    the author's per-var value sets."""
+    """{action: {"values": {...} or None, "ignore": [...]}} from
+    formal_model.env_at_init, in order. A bare name derives the fold; an
+    object may carry the author's value set per write unit (`var`, or
+    `var.field` of a record var) and the units it deliberately leaves to
+    init (`ignore`)."""
     out = {}
     for item in ((area or {}).get("formal_model") or {}).get("env_at_init") or []:
         if isinstance(item, str):
-            out[item] = None
+            out[item] = {"values": None, "ignore": []}
         elif isinstance(item, dict) and item.get("action"):
-            out[item["action"]] = item.get("values") or None
+            out[item["action"]] = {"values": item.get("values") or None,
+                                   "ignore": list(item.get("ignore") or [])}
     return out
 
 
@@ -66,52 +69,130 @@ def step_actions(area, ir):
     return [a for a in mirrored_actions(ir) if a not in env]
 
 
+# A WRITE UNIT is what an action changes: a whole var, or `var.field` for a
+# record var whose new value the IR could resolve to fields
+# (quint_ir.scan_field_effects). A record-state model writes `st` in every
+# action; compared per var, no two actions would ever be independent.
+
+def units_overlap(a, b):
+    """`st` overlaps `st.cfg`; `st.cfg` does not overlap `st.items`."""
+    return a == b or a.startswith(b + ".") or b.startswith(a + ".")
+
+
+def _units(ir, action, kind):
+    plain = set((ir.get(f"action_{kind}") or {}).get(action) or [])
+    fields = (ir.get(f"action_field_{kind}") or {}).get(action) or {}
+    out = {v for v in plain if v not in fields}
+    for var, fs in fields.items():
+        out |= {f"{var}.{f}" for f in fs}
+    return out
+
+
 def action_writes(ir, action, _seen=None):
-    """Vars `action` assigns (not `x' = x`), through the helper actions it
-    calls."""
+    """Write units `action` changes (not `x' = x`, not `{ ...st, f: st.f }`),
+    through the helper actions it calls."""
     seen = _seen if _seen is not None else set()
     if action in seen:
         return set()
     seen.add(action)
-    out = set((ir.get("action_mutations") or {}).get(action) or [])
+    out = _units(ir, action, "mutations")
     for callee in (ir.get("action_calls") or {}).get(action) or []:
         out |= action_writes(ir, callee, seen)
     return out
 
 
-def env_blockers(area, ir, action):
-    """Why `action` cannot be fixed per trace by env_at_init, as sentences;
-    empty when it can. The shape of its body (flat or not) is not judged
-    here: a non-flat one only needs declared `values`."""
-    out = []
+def action_read_units(ir, action, _seen=None):
+    """Units `action` reads: a record var's fields where its body can be
+    resolved (helper defs followed), the whole var otherwise; through the
+    helper actions it calls."""
+    seen = _seen if _seen is not None else set()
+    if action in seen:
+        return set()
+    seen.add(action)
+    plain = set((ir.get("action_reads") or {}).get(action) or [])
+    fields = (ir.get("action_field_reads") or {}).get(action) or {}
+    callees = (ir.get("action_calls") or {}).get(action) or []
+    out = set()
+    for callee in callees:
+        out |= action_read_units(ir, callee, seen)
+    # action_reads is transitive over called actions. A var this body was
+    # resolved for (fields present, even empty) is answered by its fields
+    # plus the callees' own units; one it was not is read whole.
+    out |= {v for v in plain if v not in fields}
+    for var, fs in fields.items():
+        out |= {f"{var}.{f}" for f in fs}
+    return out
+
+
+def env_analysis(area, ir, action, ignore=()):
+    """What env_at_init needs to know about `action`:
+      own       the units it writes that no other step writes: the setting
+      shared    {unit: [other actions]} for units it writes that others write
+                too (minus `ignore`)
+      blockers  every reason it cannot be fixed per trace, as sentences;
+                empty when it can
+    The shape of its body (flat or not) is not judged here: a non-flat one
+    only needs declared `values`."""
+    out = {"own": set(), "shared": {}, "blockers": []}
+    blockers = out["blockers"]
     mirrored = mirrored_actions(ir)
     if action not in mirrored:
-        out.append("`step` does not call it")
+        blockers.append("`step` does not call it")
         return out
     hosted = sorted({c["rid"] for c in requirement_checks(area)
                      if c["action"] == action})
     if hosted:
-        out.append(f"it hosts {', '.join(hosted)}, which would never fire "
-                   f"once it leaves stepP")
+        blockers.append(f"it hosts {', '.join(hosted)}, which would never fire "
+                        f"once it leaves stepP")
     checked = [v["verdict"] for v in area.get("verdicts") or []
                if v.get("action") == action
                and v.get("verdict") in ("IMPOSSIBLE", "NO-OP")]
     if checked:
-        out.append(f"it carries an {checked[0]} verdict, a check on its steps")
-    own = action_writes(ir, action)
-    if not own:
-        out.append("it writes no state var")
-    shared = sorted((o, sorted(own & action_writes(ir, o))) for o in mirrored
-                    if o != action and own & action_writes(ir, o))
-    if shared:
-        out.append("other actions also write its vars ("
-                   + "; ".join(f"{o}: {', '.join(vs)}" for o, vs in shared)
-                   + "), so a check could miss it changing mid-trace")
-    reads = set((ir.get("action_reads") or {}).get(action) or []) - own
+        blockers.append(f"it carries an {checked[0]} verdict, a check on its steps")
+    ignored = set(ignore or ())
+    writes = {a: action_writes(ir, a) for a in mirrored}
+    mine = {u for u in writes[action]
+            if not any(units_overlap(u, i) and len(u) >= len(i) for i in ignored)}
+    for u in sorted(mine):
+        others = sorted(o for o in mirrored if o != action
+                        and any(units_overlap(u, w) for w in writes[o]))
+        if others:
+            out["shared"][u] = others
+        else:
+            out["own"].add(u)
+    if not writes[action]:
+        blockers.append("it writes no state var")
+    elif not out["own"] and not out["shared"]:
+        blockers.append("everything it writes is listed under `ignore`")
+    shared = out["shared"]
+    if shared and not out["own"]:
+        blockers.append("other actions also write "
+                        + "; ".join(f"`{u}` ({', '.join(os)})"
+                                    for u, os in sorted(shared.items()))
+                        + ", so a check could miss it changing mid-trace")
+    elif shared:
+        blockers.append("it also writes "
+                        + ", ".join(f"`{u}`" for u in sorted(shared))
+                        + ", which other actions write ("
+                        + "; ".join(f"{u}: {', '.join(os)}"
+                                    for u, os in sorted(shared.items()))
+                        + "): drop that assignment from the env action, or "
+                          "list it under `ignore` in its env_at_init entry to "
+                          "leave it at init's value")
+    reads = {r for r in action_read_units(ir, action)
+             if not any(units_overlap(r, w) and len(r) >= len(w)
+                        for w in writes[action])}
     if reads:
-        out.append(f"it reads {', '.join(sorted(reads))}, which it does not "
-                   f"write: fixed at init it would read them before init set them")
+        blockers.append(f"it reads {', '.join(f'`{r}`' for r in sorted(reads))}, "
+                        f"which it does not write: fixed at init it would read "
+                        f"them before init set them")
     return out
+
+
+def env_blockers(area, ir, action, ignore=()):
+    """Why `action` cannot be fixed per trace by env_at_init, as sentences;
+    empty when it can (see env_analysis)."""
+    return env_analysis(area, ir, action, ignore)["blockers"]
 
 
 def requirement_checks(area):

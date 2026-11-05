@@ -2217,11 +2217,40 @@ def _is_set_valued(expr, bodies, depth=0):
     return False
 
 
+_SET_GROW_RE = re.compile(r"\b(?:union|setAdd|flatten)\s*\(|\.\s*add\s*\(")
+_CALLEE_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)\s*\(")
+
+
+def _grows_set(expr, decls, depth=0, _seen=None):
+    """(True, helper or None) when `expr` grows a set: it calls union,
+    setAdd, `.add` or flatten itself (helper None), or calls a def the model
+    declares whose body does (the first such helper named, followed
+    transitively up to a depth cap). (False, None) otherwise."""
+    code = spec_source._code_only(expr or "")
+    if _SET_GROW_RE.search(code):
+        return True, None
+    if depth > 6:
+        return False, None
+    seen = _seen if _seen is not None else set()
+    for m in _CALLEE_RE.finditer(code):
+        name = m.group(1)
+        host = decls.get(name) or {}
+        if name in seen or host.get("kind") not in ("def", "val") or not host.get("body"):
+            continue
+        seen.add(name)
+        grows, _via = _grows_set(host["body"], decls, depth + 1, seen)
+        if grows:
+            return True, name
+    return False, None
+
+
 def fold_set_builders(text):
-    """[(declaration, accumulator)] for every fold, reachable from an action,
-    whose accumulator is set-valued and whose body unions into it. The
-    solver unrolls such a fold on every step it is evaluated in; filtering a
-    constant candidate set says the same with no unrolling."""
+    """[(declaration, accumulator, helper)] for every fold, reachable from an
+    action, whose accumulator is set-valued and whose body grows it: union,
+    setAdd, `.add` or flatten, in the lambda itself (helper None) or inside
+    a def it calls (helper = that def). The solver unrolls such a fold on
+    every step it is evaluated in; filtering a constant candidate set says
+    the same with no unrolling."""
     decls = spec_source.declarations(text)
     roots = [n for n, d in decls.items() if d.get("kind") == "action"]
     reach = spec_source.name_closure(decls, roots)
@@ -2239,8 +2268,11 @@ def fold_set_builders(text):
                 continue
             init, fn = args[0], args[1]
             lam = fn.partition("=>")[2]
-            if _is_set_valued(init, bodies) and re.search(r"\bunion\s*\(", lam):
-                out.append((name, init.strip()))
+            if not _is_set_valued(init, bodies):
+                continue
+            grows, via = _grows_set(lam, decls)
+            if grows:
+                out.append((name, init.strip(), via))
     return out
 
 
@@ -2263,12 +2295,20 @@ def cost_report(root, area_data, sidecar):
     # An environment setting that could be fixed per trace and is not: a
     # step in every trace and a branch in every step, for nothing.
     listed = completeness_mod.env_at_init(area_data)
-    tagged = {e.get("action") for e in area_data.get("env_actions") or []}
+    tagged = ({e.get("action") for e in area_data.get("env_actions") or []}
+              | {v.get("action") for v in area_data.get("verdicts") or []
+                 if v.get("verdict") == "OUT-OF-SCOPE"})
     for action in completeness_mod.mirrored_actions(ir):
         if action in listed or not (action.startswith("env_") or action in tagged):
             continue
-        if not completeness_mod.env_blockers(area_data, ir, action):
-            rep["env_eligible"].append((action, action in tagged))
+        info = completeness_mod.env_analysis(area_data, ir, action)
+        if not info["blockers"]:
+            rep["env_eligible"].append((action, action in tagged, []))
+        elif info["own"] and info["shared"] and len(info["blockers"]) == 1:
+            # The setting is its own; only a field every action also sets
+            # (a dirty / published flag) is shared. Eligible with `ignore`.
+            rep["env_eligible"].append((action, action in tagged,
+                                        sorted(info["shared"])))
 
     # Probe module: its ghost count, and the largest per-check slice.
     if fm.get("probes_file"):
@@ -2397,18 +2437,24 @@ def check_cost(root, area_data, sidecar, area_name, findings, report=None):
             f"`{var}: int` is only ever kept or incremented, and requirements only "
             f"ask whether it went up by one. A bool \"changed by the last step\" "
             f"says that without an unbounded int.", ref=var)
-    for action, tagged in rep["env_eligible"]:
+    for action, tagged, shared in rep["env_eligible"]:
         add(findings, WARN, "cost", "env-at-init-eligible", area_name,
             f"`{action}` only sets configuration nothing else writes, yet it is "
             f"a step of every trace and a branch of every step. List it in "
             f"formal_model.env_at_init to apply it once per key in initP"
             + ("" if tagged else ", after tagging it `/// @env <why>` (or an "
                "OUT-OF-SCOPE verdict)")
+            + (f". It also sets {', '.join(f'`{u}`' for u in shared)}, which "
+               f"other actions set too: drop that assignment from it, or list "
+               + json.dumps({"action": action, "ignore": shared})
+               + " to leave it at init's value" if shared else "")
             + ". Examples and journeys still call it as a setup step.", ref=action)
-    for decl, init in rep["fold_sets"]:
+    for decl, init, via in rep["fold_sets"]:
+        how = (f"its body unions through `{via}`" if via
+               else "its body unions into it")
         add(findings, WARN, "cost", "fold-builds-set", area_name,
-            f"`{decl}` builds a set with a fold (accumulator `{init}`, body "
-            f"unions into it), reachable from an action: the solver unrolls "
+            f"`{decl}` builds a set with a fold (accumulator `{init}`; {how}), "
+            f"reachable from an action: the solver unrolls "
             f"the whole fold on every step. Declare the constant set of "
             f"candidates (ALL_X) and filter it: `ALL_X.filter(x => on(cfg, x))` "
             f"— the candidates must cover everything the fold can emit, which "
@@ -2432,9 +2478,10 @@ def print_cost(rep, area_name):
                   + " × ".join(f"{n} ({t}) {k}" for n, t, k in parts))
     else:
         print("  branching: unknown (a probe domain is not a literal set)")
-    for decl, init in rep.get("fold_sets") or []:
-        print(f"  set built by fold: {decl} (accumulator {init})")
-    for action, _t in rep.get("env_eligible") or []:
+    for decl, init, via in rep.get("fold_sets") or []:
+        print(f"  set built by fold: {decl} (accumulator {init}"
+              + (f", unions through {via}" if via else "") + ")")
+    for action, _t, _s in rep.get("env_eligible") or []:
         print(f"  env setting taken every step: {action} (env_at_init would fix it per trace)")
 
 

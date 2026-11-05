@@ -807,7 +807,10 @@ def decision_tables_section(root, area):
                   "configuration change mid-trace.", ""]
         for item in env:
             name = item if isinstance(item, str) else item.get("action")
-            lines.append(f"- `{name}`" + (f" — {why[name]}" if why.get(name) else ""))
+            left = [] if isinstance(item, str) else item.get("ignore") or []
+            lines.append(f"- `{name}`" + (f" — {why[name]}" if why.get(name) else "")
+                         + (f" _(its writes to {', '.join(f'`{u}`' for u in left)} "
+                            f"are left at init's value)_" if left else ""))
         lines.append("")
     return lines
 

@@ -32,6 +32,8 @@ Normalized output (same shape from both engines):
     "type_records":     {"State": [("users", "UserId -> User"), ...]},
     "type_sums":        {"Status": [("Active", None), ("Locked", "int")]},
     "action_reads":     {"login": ["accountStatus", ...], ...},  # transitive
+    "action_field_mutations": {"set_cfg": {"st": ["cfg"]}, ...},  # record vars
+    "action_field_reads":     {"set_cfg": {"st": ["cfg"]}, ...},  # resolved only
     "var_types":        {"accountStatus": ["UserId", "AccountStatus"], ...},
     "produced_variants": ["Active", "Locked", ...],  # variants an assign builds
     "action_params":    {"login": ["uid", "sid"], ...},
@@ -1113,6 +1115,235 @@ def _parse_via_regex(qnt_path):
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+# ── Record-state fields ──────────────────────────────────────────────────────
+#
+# A model whose state is one record (`var st: State`, the shape a conformance
+# adapter with st()/last() getters has) writes `st` in every action, so any
+# check that compares write sets per VARIABLE is decided by that one name.
+# These read the same answers at FIELD level, from the text, after whichever
+# engine ran: the fields an action's new value changes (`{ ...st, f: e }`
+# with `e` not `st.f`), and the fields it reads (`st.f`). A body that cannot
+# be resolved to fields leaves the var out, and consumers fall back to the
+# whole var, which is what they did before.
+
+_FIELD_DEPTH = 3     # how many helper calls a resolution follows
+
+
+def _norm_expr(e):
+    return re.sub(r"\s+", "", e or "")
+
+
+def _unparen(e):
+    e = (e or "").strip()
+    while e.startswith("(") and _match_close(e, 0) == len(e) - 1:
+        e = e[1:-1].strip()
+    return e
+
+
+def _match_close(text, i):
+    """Index of the bracket closing the one at text[i], or -1."""
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    opener, depth, in_str = text[i], 0, False
+    for k in range(i, len(text)):
+        c = text[k]
+        if c == '"' and text[k - 1:k] != "\\":
+            in_str = not in_str
+        if in_str:
+            continue
+        if c == opener:
+            depth += 1
+        elif c == pairs[opener]:
+            depth -= 1
+            if depth == 0:
+                return k
+    return -1
+
+
+def split_record_literal(expr):
+    """`{ ...base, f: e, ... }` -> (base or None, [(f, e), ...]); None when
+    `expr` is not a record literal (a block, a call, a conditional)."""
+    e = _unparen(expr)
+    if not (e.startswith("{") and _match_close(e, 0) == len(e) - 1):
+        return None
+    base, items = None, []
+    for part in _split_top(e[1:-1], ","):
+        if not part:
+            continue
+        if part.startswith("..."):
+            if base is not None or items:
+                return None
+            base = part[3:].strip()
+            continue
+        name, sep, value = part.partition(":")
+        if not sep or not re.fullmatch(r"[A-Za-z_]\w*", name.strip()):
+            return None
+        items.append((name.strip(), value.strip()))
+    return base, items
+
+
+def record_var_fields(ir):
+    """{var: [field, ...]} for every state var whose type is a record."""
+    aliases = ir.get("type_aliases") or {}
+    records = ir.get("type_records") or {}
+    out = {}
+    for var, t in (ir.get("var_type_strs") or {}).items():
+        seen, t = set(), (t or "").strip()
+        while t in aliases and t not in seen:
+            seen.add(t)
+            t = aliases[t].strip()
+        fields = records.get(t) or _record_fields(t)
+        if fields:
+            out[var] = [f for f, _t in fields]
+    return out
+
+
+def _call(expr):
+    """(name, [args]) for `name(a, b)` spanning the whole expression."""
+    e = _unparen(expr)
+    m = re.match(r"([A-Za-z_]\w*)\s*\(", e)
+    if not m or _match_close(e, m.end() - 1) != len(e) - 1:
+        return None
+    return m.group(1), [a for a in _split_top(e[m.end():-1], ",") if a]
+
+
+def _changed_fields(rhs, self_name, fields, decls, depth=0):
+    """The fields of record `self_name` that `rhs`, its new value, changes;
+    None when that cannot be read off the text."""
+    e = _unparen(rhs)
+    if _norm_expr(e) == self_name:
+        return set()
+    rec = split_record_literal(e)
+    if rec is not None:
+        base, items = rec
+        listed = {f for f, _v in items}
+        changed = {f for f, v in items if _norm_expr(v) != f"{self_name}.{f}"}
+        if base is not None and _norm_expr(base) == self_name:
+            return changed
+        # A literal with every field, or a spread of something else: an
+        # unlisted field comes from elsewhere and may differ.
+        return changed | (set(fields) - listed)
+    call = _call(e)
+    if call and depth < _FIELD_DEPTH:
+        name, args = call
+        host = decls.get(name) or {}
+        params = host.get("params") or []
+        at = [i for i, a in enumerate(args) if _norm_expr(a) == self_name]
+        if (host.get("kind") in ("def", "val") and host.get("body")
+                and len(params) == len(args) and len(at) == 1):
+            return _changed_fields(host["body"], params[at[0]][0], fields,
+                                   decls, depth + 1)
+    return None
+
+
+def _enclosing_call(code, pos):
+    """(callee, arg index) when position `pos` of `code` starts a whole
+    argument of a call `callee(...)`; None otherwise."""
+    depth, commas, k = 0, 0, pos - 1
+    while k >= 0:
+        c = code[k]
+        if c in ")]}":
+            depth += 1
+        elif c in "([{":
+            if depth == 0:
+                if c != "(":
+                    return None
+                m = re.search(r"([A-Za-z_]\w*)\s*$", code[:k])
+                return (m.group(1), commas) if m else None
+            depth -= 1
+        elif c == "," and depth == 0:
+            commas += 1
+        k -= 1
+    return None
+
+
+def _read_fields(body, self_name, fields, decls, depth=0):
+    """The fields of record `self_name` that `body` reads; None when it
+    reads the record as a whole somewhere the text cannot follow. A spread
+    (`...st`) copies the fields it does not list, and an identity
+    assignment (`st' = st`) keeps them: neither is a read."""
+    import spec_source
+    code = spec_source._code_only(body or "")
+    out = set()
+    for m in re.finditer(rf"(?<![\w.]){re.escape(self_name)}(?![\w'])", code):
+        before, after = code[:m.start()], code[m.end():]
+        if before.rstrip().endswith("..."):
+            continue
+        fm = re.match(r"\s*\.\s*([A-Za-z_]\w*)(?!\s*\()", after)
+        if fm and fm.group(1) in fields:
+            out.add(fm.group(1))
+            continue
+        if (re.search(rf"(?<![\w.]){re.escape(self_name)}'\s*=\s*$", before)
+                and re.match(r"\s*(,|}|\)|$)", after)):
+            continue
+        call = _enclosing_call(code, m.start())
+        tail = re.match(r"\s*(,|\))", after)
+        host = decls.get(call[0]) if call else None
+        if (call and tail and depth < _FIELD_DEPTH and host
+                and host.get("kind") in ("def", "val") and host.get("body")
+                and call[1] < len(host.get("params") or [])):
+            sub = _read_fields(host["body"], host["params"][call[1]][0],
+                               fields, decls, depth + 1)
+            if sub is None:
+                return None
+            out |= sub
+            continue
+        return None
+    return out
+
+
+def _assigned_rhs(body, var):
+    """Right-hand sides of every `var' = ...` in an action body, each cut
+    at the top-level comma or closing bracket that ends it."""
+    out = []
+    for m in re.finditer(rf"(?<![\w.]){re.escape(var)}'\s*=(?![=>])\s*", body):
+        i, depth, buf = m.end(), 0, []
+        while i < len(body):
+            c = body[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth < 0:
+                    break
+            elif c == "," and depth == 0:
+                break
+            buf.append(c)
+            i += 1
+        out.append("".join(buf).strip())
+    return out
+
+
+def scan_field_effects(text, ir):
+    """(field mutations, field reads): {action: {var: [field, ...]}} each,
+    for record-typed vars an action's own body can be resolved for. A var
+    an action assigns or reads but cannot be resolved is left out: the
+    consumer falls back to the whole var."""
+    import spec_source
+    rec_vars = record_var_fields(ir)
+    if not rec_vars:
+        return {}, {}
+    decls = spec_source.declarations(text)
+    muts, reads = {}, {}
+    for action in ir.get("actions") or []:
+        body = (decls.get(action) or {}).get("body") or ""
+        for var, fields in rec_vars.items():
+            rhs = _assigned_rhs(body, var)
+            if rhs:
+                changed = set()
+                for r in rhs:
+                    c = _changed_fields(r, var, fields, decls)
+                    if c is None:
+                        changed = None
+                        break
+                    changed |= c
+                if changed is not None:
+                    muts.setdefault(action, {})[var] = sorted(changed)
+            rd = _read_fields(body, var, fields, decls)
+            if rd is not None:
+                reads.setdefault(action, {})[var] = sorted(rd)
+    return muts, reads
+
+
 def parse_qnt(qnt_path, engine=None):
     """Parse a .qnt file into the normalized structure, or None on failure.
     engine: 'auto' (CLI then regex), 'cli', or 'regex'. Default comes from
@@ -1129,8 +1360,10 @@ def parse_qnt(qnt_path, engine=None):
     if ir is None:
         ir = _parse_via_regex(qnt_path)
     if ir is not None:
-        ir["const_values"] = _scan_const_values(
-            qnt_path.read_text(encoding="utf-8"))
+        text = qnt_path.read_text(encoding="utf-8")
+        ir["const_values"] = _scan_const_values(text)
+        ir["action_field_mutations"], ir["action_field_reads"] = \
+            scan_field_effects(text, ir)
     return ir
 
 
