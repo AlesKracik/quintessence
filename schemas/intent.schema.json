@@ -764,7 +764,7 @@
         },
         "env_at_init": {
           "type": "array",
-          "description": "Environment actions fixed per trace. tools/spec-probes.py applies each once, to every key of its first parameter with the other arguments chosen nondeterministically, inside the generated initP, and leaves it out of stepP: no trace spends a step on it and no later step branches on it. The model is untouched, so examples, journeys and conformance replay still call it as a setup step. Allowed only for an action `step` calls that carries `/// @env` or an OUT-OF-SCOPE verdict, hosts no requirement, and writes only vars no other action writes — otherwise a check could miss the configuration changing mid-trace, and the generator refuses. A bare name: the generator derives the fold from the flat `all { v' = ... }` bodies of init and the action. An object: `values` names, per var the action writes, the Quint set its value after setup is drawn from (`{\"vmConfig\": \"setOfMaps(VMS, CFGS)\"}`) — for an action whose body is not flat; the author owns that set matching what the action can produce.",
+          "description": "Environment actions fixed per trace. tools/spec-probes.py applies each once, to every key of its first parameter with the other arguments chosen nondeterministically, inside the generated initP, and leaves it out of stepP: no trace spends a step on it and no later step branches on it. The model is untouched, so examples, journeys and conformance replay still call it as a setup step. Allowed only for an action `step` calls that carries `/// @env` or an OUT-OF-SCOPE verdict, hosts no requirement, and writes only vars no other action writes — otherwise a check could miss the configuration changing mid-trace, and the generator refuses. A bare name: the generator derives the fold from the flat `all { v' = ... }` bodies of init and the action. Works per write unit: a whole var, or `var.field` of a record-typed var (`var st: State`), so a record-state model fixes the one field its env action sets and keeps every other field of init. An object: `values` names, per unit the action writes, the Quint set its value after setup is drawn from (`{\"vmConfig\": \"setOfMaps(VMS, CFGS)\"}`, `{\"st.cfg\": \"...\"}`) — for an action whose body is not flat; the author owns that set matching what the action can produce. `ignore` lists units the action also writes but leaves at init's value — a bookkeeping field every action sets (`st.dirty`), which would otherwise make it share a write with every other action.",
           "items": {
             "oneOf": [
               {
@@ -782,8 +782,18 @@
                   },
                   "values": {
                     "type": "object",
+                    "propertyNames": {
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$"
+                    },
                     "additionalProperties": {
                       "type": "string"
+                    }
+                  },
+                  "ignore": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$"
                     }
                   }
                 }
