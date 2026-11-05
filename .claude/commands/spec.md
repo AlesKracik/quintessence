@@ -406,7 +406,7 @@ Inspect the derived area for gaps:
 | `requirements[]` has items without IDs (raw strings) | structure pass |
 | `requirements[]` items have `status: "raw"` | elicit refinement per item |
 | A journey with no `run`, or a step with no example rows | **journey pass**: write the run that walks the flow, and ask the user for the missing rows — concrete cases in their words, captured as `@example` runs |
-| Functional REQs not referenced by any journey step (`specs/journeys/*.journey.json`) | **journey pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `specs/journeys/<slug>.journey.json`. Brownfield journeys are deduced from the call graph during extraction, so what lands here is the leftovers — requirements no entry point walked through. |
+| Functional REQs not referenced by any journey step (`specs/journeys/*.journey.json`; lint `requirement-without-journey`) | **journey pass**: walk the unassigned REQs, ask which flow each belongs to and where in it ("what happens right before/after?"); new flows get a `specs/journeys/<slug>.journey.json`. Brownfield journeys are deduced from the call graph during extraction, so what lands here is the leftovers — requirements no entry point walked through. |
 | Requirements past raw status without `ears` structure | EARS pass: walk each one, fill `@when` / `@while` / `@shall` (+`@unwanted`) |
 | Requirements past raw without formal `@while` / `@shall` (and a model exists) | formalization pass: move each onto its action, draft the clauses, confirm, then suggest `/spec-check` |
 | `formal_model.quint_file` set but file missing | formalize: write the sidecar |

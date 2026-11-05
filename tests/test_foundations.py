@@ -393,6 +393,38 @@ def test_a_step_with_no_example_rows_is_reported(tmp_path):
         ("shop.REQ-002", "journey-step-without-example")]
 
 
+def _orphan_findings(tmp_path, journeys, status="formalized", area=None):
+    view = _project(tmp_path, status=status, journeys=journeys) if area is None else area
+    findings = []
+    lint.check_requirements_in_journeys(tmp_path, {"shop": view}, ["shop"], findings)
+    return findings
+
+
+@pytest.mark.parametrize("status,severity", [("formalized", "WARN"), ("in-review", "FAIL")])
+def test_a_requirement_no_journey_walks_is_reported(tmp_path, status, severity):
+    findings = _orphan_findings(tmp_path, [_journey()], status)   # REQ-001, REQ-002
+    assert _codes(findings) == [(getattr(lint, severity), "requirement-without-journey")]
+    assert "REQ-003" in findings[0].description
+    assert "REQ-001" not in findings[0].description
+
+
+def test_requirements_with_no_journeys_at_all_are_all_reported(tmp_path):
+    findings = _orphan_findings(tmp_path, [])
+    assert _codes(findings) == [(lint.WARN, "requirement-without-journey")]
+    assert all(r in findings[0].description for r in ("REQ-001", "REQ-002", "REQ-003"))
+
+
+def test_every_requirement_in_some_journey_is_clean(tmp_path):
+    rest = {"name": "Refused", "steps": [{"ref": "shop.REQ-003"}]}
+    assert _orphan_findings(tmp_path, [_journey(), rest]) == []
+
+
+def test_a_non_functional_requirement_needs_no_journey(tmp_path):
+    area = {"status": "in-review", "requirements": [
+        {"id": "REQ-001", "description": "p99 under 250ms", "type": "non-functional"}]}
+    assert _orphan_findings(tmp_path, [], area=area) == []
+
+
 def test_the_journey_schema_accepts_a_run_and_step_examples():
     jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads((TOOLS.parent / "schemas" / "journey.schema.json").read_text())

@@ -2902,6 +2902,43 @@ def check_journey_titles(root, all_areas, findings):
                 f"one's description.")
 
 
+def check_requirements_in_journeys(root, all_areas, target_areas, findings):
+    """Every functional requirement belongs to at least one journey. A
+    journey is how a reviewer meets a behavior — in the flow it happens in,
+    with the run that proves the flow works — so a requirement no journey
+    walks is reviewed out of context and replayed by nothing end to end.
+    Non-functional requirements are exempt: a latency bound is not a step
+    of any flow. WARN while authoring, FAIL once the area is up for review.
+    (check_journeys reports a journey file that does not parse.)"""
+    jdir = journeys_dir(root)
+    walked = {}  # area -> requirement IDs some journey walks
+    for p in sorted(jdir.glob("*.journey.json")) if jdir.exists() else []:
+        data = load_json(p)
+        if not isinstance(data, dict) or "__parse_error__" in data:
+            continue
+        for step in data.get("steps", []) or []:
+            ref = step.get("ref") or ""
+            if "." in ref:
+                area, rid = ref.split(".", 1)
+                walked.setdefault(area, set()).add(rid)
+    for area in target_areas:
+        view = all_areas.get(area)
+        if not isinstance(view, dict) or "__parse_error__" in view:
+            continue
+        orphans = [r["id"] for r in view.get("requirements") or []
+                   if isinstance(r, dict) and r.get("id")
+                   and r.get("type", "functional") == "functional"
+                   and r["id"] not in walked.get(area, set())]
+        if orphans:
+            add(findings, FAIL if at_review(view) else WARN, "journeys",
+                "requirement-without-journey", area,
+                f"{len(orphans)} requirement(s) belong to no journey, so the "
+                f"readback shows them outside any flow and no journey run "
+                f"replays them: {', '.join(orphans)}. Add each as a step of the "
+                f"flow it happens in (specs/journeys/<slug>.journey.json), or "
+                f"start a new journey for it.")
+
+
 def _usable_views(all_areas):
     return {a: v for a, v in all_areas.items()
             if isinstance(v, dict) and "__parse_error__" not in v}
@@ -3358,6 +3395,7 @@ def main():
     check_journeys(root, all_areas, findings,
                    build_schema_validator(root, "journey.schema.json"))
     check_journey_titles(root, all_areas, findings)
+    check_requirements_in_journeys(root, all_areas, target_areas, findings)
 
     if args.emit_json:
         print(json.dumps({
