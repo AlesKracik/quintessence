@@ -620,7 +620,11 @@ RS = '''module rs {
   type Key = str
   type Item = str
   type Cfg = { region: str, tier: int }
-  type State = { items: Item -> bool, cfg: Key -> Cfg, dirty: bool }
+  type State = {
+    items: Item -> bool,
+    cfg: Key -> Cfg,
+    dirty: bool,
+  }
   var st: State
 
   pure val KEYS = Set("k1", "k2")
@@ -630,7 +634,7 @@ RS = '''module rs {
 
   pure def commit(s: State, i: Item): State = { ...s, items: s.items.set(i, true), dirty: true }
   pure def opaque(s: State, k: Key, c: Cfg): State =
-    if (k == "") s else { ...s, cfg: s.cfg.set(k, c) }
+    s.with("cfg", s.cfg.set(k, c))
 
   action init = { st' = { items: ITEMS.mapBy(_ => false), cfg: KEYS.mapBy(_ => CFG0), dirty: false } }
 
@@ -688,12 +692,21 @@ def _rs_cost(tmp_path, text=RS, env=()):
     return [f for f in findings if f.check == "env-at-init-eligible"]
 
 
-def test_field_writes_and_reads_are_read_off_a_record_state():
+RS_ONE_LINE = RS.replace('''type State = {
+    items: Item -> bool,
+    cfg: Key -> Cfg,
+    dirty: bool,
+  }''', "type State = { items: Item -> bool, cfg: Key -> Cfg, dirty: bool }")
+
+
+@pytest.mark.parametrize("text", [RS, RS_ONE_LINE], ids=["multi-line", "one-line"])
+def test_field_writes_and_reads_are_read_off_a_record_state(text):
     import quint_ir
     import tempfile
+    assert text != RS or "type State = {\n" in text
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "rs.qnt"
-        p.write_text(RS, encoding="utf-8")
+        p.write_text(text, encoding="utf-8")
         for engine in ("regex",) + (("cli",) if quint_ir.cli_available() else ()):
             ir = quint_ir.parse_qnt(p, engine)
             muts, reads = ir["action_field_mutations"], ir["action_field_reads"]
@@ -821,3 +834,154 @@ def test_a_fold_that_unions_through_a_helper_is_flagged_by_name(tmp_path):
     lint.check_cost(tmp_path, area, lint.parse_sidecar(qnt), "shop", findings)
     msgs = [f.description for f in findings if f.check == "fold-builds-set"]
     assert any("unions through `merge`" in m and "`build`" in m for m in msgs)
+
+
+# ── 10. Refusal chains and multi-line record types ──────────────────────────
+# The shape /spec recommends: one `type State = {` field per line, route
+# actions built from `refuse` / `commit` helpers in an if / else-if chain.
+# Each used to resolve to "writes the whole var": the type because only its
+# first line, `{`, reached type_aliases; the chain because `if` was opaque.
+
+RC = '''module rc {
+  type Key = str
+  type Result = | Ok | NotFound | Busy
+  type Entry = { exists: bool, on: bool }
+  type Cfg = { region: str }
+  type State = {
+    items: Key -> Entry,
+    cfg: Key -> Cfg,
+    last: Result,
+    dirty: bool,
+    count: int,
+  }
+  var st: State
+  pure val KEYS = Set("k1", "k2")
+  pure val CFGS = Set({ region: "eu" }, { region: "us" })
+
+  pure def refuse(s0: State, r: Result): State = { ...s0, last: r, dirty: true }
+  pure def opaque(s: State): State = s.with("count", 1)
+
+  action init = st' = {
+    items: KEYS.mapBy(_ => { exists: true, on: false }),
+    cfg: KEYS.mapBy(_ => { region: "eu" }),
+    last: Ok,
+    dirty: false,
+    count: 0,
+  }
+
+  action toggle(k: Key, on: bool): bool = {
+    val old = st.items.get(k)
+    st' =
+      if (not(old.exists)) refuse(st, NotFound)
+      else if (old.on == on) refuse(st, Ok)
+      else { ...st, last: Ok, items: st.items.set(k, { ...old, on: on }), dirty: true }
+  }
+
+  action bump(r: Result): bool = st' = match r {
+    | Ok => { ...st, count: st.count + 1 }
+    | NotFound => refuse(st, r)
+    | Busy => st
+  }
+
+  action later(k: Key): bool = {
+    val nxt = { ...st, count: st.count + 2 }
+    st' = if (st.items.get(k).on) nxt else st
+  }
+
+  action weird(k: Key): bool = st' = if (k == "k1") opaque(st) else st
+
+  /// @verdict OUT-OF-SCOPE
+  /// Configuration is resolved outside this area.
+  /// @scope configuration resolution
+  action env_set_cfg(k: Key, c: Cfg): bool =
+    st' = { ...st, cfg: st.cfg.set(k, c), dirty: true }
+
+  action step = {
+    nondet k = oneOf(KEYS)
+    nondet c = oneOf(CFGS)
+    nondet on = oneOf(Set(true, false))
+    nondet r = oneOf(Set(Ok, NotFound, Busy))
+    any { env_set_cfg(k, c), toggle(k, on), bump(r), later(k) }
+  }
+}
+'''
+
+
+def _engines():
+    import quint_ir
+    return ("regex",) + (("cli",) if quint_ir.cli_available() else ())
+
+
+@pytest.mark.parametrize("engine", ["regex", "cli"])
+def test_a_multi_line_record_type_is_a_record_not_an_alias(tmp_path, engine):
+    import quint_ir
+    if engine not in _engines():
+        pytest.skip("quint CLI not installed")
+    p = tmp_path / "rc.qnt"
+    p.write_text(RC, encoding="utf-8")
+    ir = quint_ir.parse_qnt(p, engine)
+    assert "State" not in ir["type_aliases"], "only its first line, `{`, used to land here"
+    assert quint_ir.record_var_fields(ir) == {
+        "st": ["items", "cfg", "last", "dirty", "count"]}
+    assert quint_ir.zero_value("State", ir).startswith("{ items: Map()")
+    assert ir["action_field_mutations"]["env_set_cfg"] == {"st": ["cfg", "dirty"]}
+
+
+@pytest.mark.parametrize("engine", ["regex", "cli"])
+def test_conditional_new_states_resolve_to_the_union_of_their_branches(tmp_path, engine):
+    import quint_ir
+    if engine not in _engines():
+        pytest.skip("quint CLI not installed")
+    p = tmp_path / "rc.qnt"
+    p.write_text(RC, encoding="utf-8")
+    ir = quint_ir.parse_qnt(p, engine)
+    muts, reads = ir["action_field_mutations"], ir["action_field_reads"]
+    # if / else if / else through refuse(st, r), after a local val
+    assert muts["toggle"] == {"st": ["dirty", "items", "last"]}
+    assert reads["toggle"] == {"st": ["items"]}
+    # match: one arm at a time; `=> st` keeps everything
+    assert muts["bump"] == {"st": ["count", "dirty", "last"]}
+    # a local val holding a whole new state, and `else st`
+    assert muts["later"] == {"st": ["count"]}
+    assert reads["later"] == {"st": ["count", "items"]}
+    # a branch the resolver cannot read: the whole var, as before
+    assert "weird" not in muts and "weird" not in reads
+
+
+def test_an_env_setting_beside_a_refusal_chain_is_eligible(tmp_path):
+    import completeness
+    import spec_source
+    from quint_ir import parse_qnt, cli_available
+    (tmp_path / "rc.qnt").write_text(RC, encoding="utf-8")
+    ir = parse_qnt(tmp_path / "rc.qnt")
+    assert completeness.action_writes(ir, "toggle") == {"st.dirty", "st.items", "st.last"}
+
+    def area(env):
+        a = {"kind": "area", "area": "rc",
+             "scope": {"excluded": [{"item": "configuration resolution"}]},
+             "formal_model": {"quint_file": "rc.qnt",
+                              "probe_domains": {"Key": "KEYS", "Cfg": "CFGS",
+                                                "bool": "Set(true, false)",
+                                                "Result": "Set(Ok, NotFound, Busy)"},
+                              "env_at_init": env}}
+        a.update(spec_source.derive_records(RC, "rc.qnt")[0])
+        return a
+
+    why = completeness.env_blockers(area([]), ir, "env_set_cfg")
+    assert len(why) == 1 and "`st.dirty`" in why[0], why
+    findings = []
+    lint.check_cost(tmp_path, area([]), lint.parse_sidecar(tmp_path / "rc.qnt"),
+                    "rc", findings)
+    hint = [f for f in findings if f.check == "env-at-init-eligible"]
+    assert hint and '"ignore": ["st.dirty"]' in hint[0].description
+
+    out = "\n".join(probes.build(area([{"action": "env_set_cfg", "ignore": ["st.dirty"]}]),
+                                 "rc", ir, "rc.qnt", text=RC))
+    init = out[out.index("action initP"):out.index("action stepP")]
+    assert "cfg: _env_env_set_cfg.st__cfg" in init and "dirty: false" in init
+    assert "env_set_cfg" not in out[out.index("action stepP"):]
+    if not cli_available():
+        return
+    (tmp_path / "rc.probes.qnt").write_text(out + "\n", encoding="utf-8")
+    tc = run_group(["quint", "typecheck", str(tmp_path / "rc.probes.qnt")], timeout=300)
+    assert tc.returncode == 0, tc.stdout + tc.stderr

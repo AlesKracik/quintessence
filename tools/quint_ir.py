@@ -828,7 +828,10 @@ def _scan_type_aliases(text):
     out = {}
     for name, rhs in TYPE_ALIAS_RE.findall(text):
         rhs = rhs.split("//")[0].strip()
-        if rhs and "|" not in rhs:
+        # A record is not an alias: it lives in type_records, balanced. A
+        # record written one field per line matched here as its first line,
+        # `{`, and every reader that followed the alias lost the record.
+        if rhs and "|" not in rhs and not rhs.startswith("{"):
             out[name] = rhs
     return out
 
@@ -1201,7 +1204,7 @@ def record_var_fields(ir):
     out = {}
     for var, t in (ir.get("var_type_strs") or {}).items():
         seen, t = set(), (t or "").strip()
-        while t in aliases and t not in seen:
+        while t not in records and t in aliases and t not in seen:
             seen.add(t)
             t = aliases[t].strip()
         fields = records.get(t) or _record_fields(t)
@@ -1219,24 +1222,147 @@ def _call(expr):
     return m.group(1), [a for a in _split_top(e[m.end():-1], ",") if a]
 
 
-def _changed_fields(rhs, self_name, fields, decls, depth=0):
+_STMT_START = re.compile(
+    r"(?:val|nondet)\s+[A-Za-z_]\w*\s*(?::[^=]*)?=(?![=>])"
+    r"|[A-Za-z_]\w*'\s*=(?![=>])|(?:all|any|if|match)\b")
+_CONTINUES = ("else", "and", "or", "not", "iff", "implies", "then", "=>")
+
+
+def _local_vals(block):
+    """([(name, expression)], end of the last one) for the `val name = e`
+    bindings of a block body, in order. Newlines are gone by the time a
+    body reaches here, so a binding ends where the next statement starts:
+    another val / nondet, an assignment, or an all / any / if / match that
+    does not continue an expression (`else if` does)."""
+    import spec_source
+    code = spec_source._code_only(block or "")
+    out, last = [], 0
+    for m in re.finditer(r"(?<![\w.])val\s+([A-Za-z_]\w*)\s*(?::[^=]*)?=(?![=>])", code):
+        if m.start() < last:
+            continue
+        i, depth = m.end(), 0
+        while i < len(code):
+            c = code[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth < 0:
+                    break
+            elif depth == 0 and c.isspace():
+                rest = code[i:].lstrip()
+                prev = code[m.end():i].split()
+                if (prev and prev[-1] not in _CONTINUES
+                        and not prev[-1].endswith(("(", ",", "=", "+", "-", "*"))
+                        and _STMT_START.match(rest)):
+                    break
+            i += 1
+        out.append((m.group(1), block[m.end():i].strip()))
+        last = i
+    return out, last
+
+
+def _split_if(e):
+    """(then, else) of `if (c) a else b` spanning all of `e`, or None."""
+    m = re.match(r"if\s*\(", e)
+    if not m:
+        return None
+    close = _match_close(e, m.end() - 1)
+    if close < 0:
+        return None
+    rest, depth = e[close + 1:], 0
+    for k, c in enumerate(rest):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif depth == 0 and re.match(r"(?<![\w.])else\b", rest[k:]) and \
+                (k == 0 or not (rest[k - 1].isalnum() or rest[k - 1] == "_")):
+            return rest[:k].strip(), rest[k + 4:].strip()
+    return None
+
+
+def _match_arms(e):
+    """The arm bodies of `match x { | A => a | B(v) => b }` spanning all of
+    `e`, or None."""
+    if not re.match(r"match\b", e):
+        return None
+    depth = 0
+    for k in range(5, len(e)):
+        c = e[k]
+        if c == "{" and depth == 0:
+            close = _match_close(e, k)
+            if close != len(e) - 1:
+                return None
+            arms = [a for a in _split_top(e[k + 1:close], "|") if a]
+            out = []
+            for arm in arms:
+                pat, sep, body = arm.partition("=>")
+                if not sep:
+                    return None
+                out.append(body.strip())
+            return out
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+    return None
+
+
+def _changed_fields(rhs, self_name, fields, decls, depth=0, locals_=None):
     """The fields of record `self_name` that `rhs`, its new value, changes;
-    None when that cannot be read off the text."""
+    None when that cannot be read off the text. Follows what route actions
+    are made of: spreads, literals, helpers returning the state (the state
+    passed in binds the helper's parameter), `if` / `else if` / `else` and
+    `match` (the union of the branches, None if any branch is), and local
+    vals (`val next = { ...st, ... }`, resolved through their definition)."""
+    if depth > _FIELD_DEPTH + 4:
+        return None
+    locals_ = dict(locals_ or {})
     e = _unparen(rhs)
     if _norm_expr(e) == self_name:
         return set()
+    if re.fullmatch(r"[A-Za-z_]\w*", e) and e in locals_:
+        return _changed_fields(locals_.pop(e), self_name, fields, decls,
+                               depth + 1, locals_)
+
+    def each(branches):
+        out = set()
+        for br in branches:
+            c = _changed_fields(br, self_name, fields, decls, depth + 1, locals_)
+            if c is None:
+                return None
+            out |= c
+        return out
+
+    branches = _split_if(e)
+    if branches:
+        return each(branches)
+    arms = _match_arms(e)
+    if arms:
+        return each(arms)
     rec = split_record_literal(e)
     if rec is not None:
         base, items = rec
         listed = {f for f, _v in items}
         changed = {f for f, v in items if _norm_expr(v) != f"{self_name}.{f}"}
-        if base is not None and _norm_expr(base) == self_name:
-            return changed
-        # A literal with every field, or a spread of something else: an
-        # unlisted field comes from elsewhere and may differ.
-        return changed | (set(fields) - listed)
+        if base is None:
+            # A literal with every field: one it leaves out is a type error.
+            return changed | (set(fields) - listed)
+        from_base = _changed_fields(base, self_name, fields, decls, depth + 1, locals_)
+        # A spread of something unresolved: an unlisted field comes from
+        # elsewhere and may differ.
+        return changed | ((set(fields) if from_base is None else from_base) - listed)
+    if e.startswith("{") and _match_close(e, 0) == len(e) - 1:
+        # A block: local vals, then the expression it yields.
+        inner = e[1:-1]
+        binds, end = _local_vals(inner)
+        if binds:
+            return _changed_fields(inner[end:], self_name, fields, decls,
+                                   depth + 1, {**locals_, **dict(binds)})
+        return None
     call = _call(e)
-    if call and depth < _FIELD_DEPTH:
+    if call and depth < _FIELD_DEPTH + 4:
         name, args = call
         host = decls.get(name) or {}
         params = host.get("params") or []
@@ -1287,6 +1413,11 @@ def _read_fields(body, self_name, fields, decls, depth=0):
             continue
         if (re.search(rf"(?<![\w.]){re.escape(self_name)}'\s*=\s*$", before)
                 and re.match(r"\s*(,|}|\)|$)", after)):
+            continue
+        # The whole state as one branch's value (`if (c) next else st`, a
+        # match arm `=> st`): that branch keeps every field, it reads none.
+        if (re.search(r"(?:\belse|=>|\))\s*$", before)
+                and re.match(r"\s*(?:else\b|,|}|\)|\||$)", after)):
             continue
         call = _enclosing_call(code, m.start())
         tail = re.match(r"\s*(,|\))", after)
@@ -1339,12 +1470,14 @@ def scan_field_effects(text, ir):
     muts, reads = {}, {}
     for action in ir.get("actions") or []:
         body = (decls.get(action) or {}).get("body") or ""
+        b = body.strip()
+        locals_ = dict(_local_vals(b[1:-1] if b.startswith("{") else b)[0])
         for var, fields in rec_vars.items():
             rhs = _assigned_rhs(body, var)
             if rhs:
                 changed = set()
                 for r in rhs:
-                    c = _changed_fields(r, var, fields, decls)
+                    c = _changed_fields(r, var, fields, decls, locals_=locals_)
                     if c is None:
                         changed = None
                         break
