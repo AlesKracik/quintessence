@@ -704,9 +704,18 @@ def _parse_action_bodies(text):
     raw_calls = {}
     current = None
     action_depth = 0
+    action_indent = 0
     depth = 0
     for line in text.splitlines():
         depth_before = depth
+        indent = len(line) - len(line.lstrip())
+
+        # An action ends at the first line back at its header's depth and
+        # indent. Not at the header's own line: a body may start on the
+        # next one (`action a(x): bool =` then `st' = ...` below it).
+        if (current is not None and line.strip() and depth_before <= action_depth
+                and indent <= action_indent):
+            current = None
 
         action_match = ACTION_RE.match(line)
         if action_match:
@@ -716,15 +725,19 @@ def _parse_action_bodies(text):
             produces.setdefault(current, [])
             raw_calls.setdefault(current, [])
             action_depth = depth_before
+            action_indent = indent
 
-        if current is not None and (depth_before > action_depth or action_match):
+        if current is not None:
             for m in MUTATION_RE.finditer(line):
                 name = m.group(1)
                 rest_match = re.search(rf"\b{re.escape(name)}'\s*=\s*(.*)", line)
                 if rest_match:
                     rest = rest_match.group(1).strip().rstrip(",").rstrip(";").strip()
                     produces[current].extend(IDENT_RE.findall(rest))
-                    if rest == name:
+                    # Identity `x' = x`, wherever it sits on the line (`... ,
+                    # x' = x }` on a one-line body too).
+                    if re.match(rf"\s*{re.escape(name)}\s*(?:[,;}})\]]|$)",
+                                line[m.end():]):
                         if name not in preserved[current]:
                             preserved[current].append(name)
                         continue
@@ -733,12 +746,12 @@ def _parse_action_bodies(text):
             lv = LOCAL_VAL_RE.match(line)
             if lv:
                 locals_.add(lv.group(1))
-            raw_calls[current].extend(IDENT_RE.findall(line))
+            # `x' = x` is the no-change idiom, not a read (the CLI engine's
+            # _collect_reads skips it the same way).
+            raw_calls[current].extend(IDENT_RE.findall(
+                re.sub(r"\b([A-Za-z_]\w*)'\s*=\s*\1\s*(?=[,;})\]]|$)", "", line)))
 
         depth += line.count("{") - line.count("}")
-        if current is not None and depth <= action_depth:
-            current = None
-            action_depth = 0
     return mutations, preserved, produces, locals_, raw_calls
 
 
