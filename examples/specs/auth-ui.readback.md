@@ -226,24 +226,24 @@ graph TB
 
 | | ID | Behavior | Kind |
 |---|---|---|---|
-| | | **Sign in** — 3 · ◐3 | |
+| | | **Idle session expires** — 3 · ◐3 | |
 | ◐ | [UI-001](#ui-001) | **Open the sign-in form** — While on Home, when the user clicks 'Sign in', the system shall navigate to Login. | happy path |
 | ◐ | [UI-002](#ui-002) | **Land on the Dashboard** — While on Login, when the user submits valid credentials, the system shall navigate to D… | happy path |
-| ◐ | [UI-003](#ui-003) | **Show the locked notice** — If the user submits credentials for a Locked account, then the system shall navigate to… | refusal |
-| | | **Not in any journey** — 4 | |
 | ◐ | [UI-004](#ui-004) | **Expired session returns to Login** — While on Dashboard, when the session expires, the system shall return to Login. | happy path |
-| ◐ | [UI-005](#ui-005) | **Bad credentials stay on Login** — If the user submits invalid credentials, then the system shall stay on Login and show t… | refusal |
+| | | **Sign in** — 4 · ◐4 | |
 | ◐ | [UI-006](#ui-006) | **Log out to Home** — While on Dashboard, when the user clicks logout, the system shall sign the user out and… | happy path |
+| ◐ | [UI-005](#ui-005) | **Bad credentials stay on Login** — If the user submits invalid credentials, then the system shall stay on Login and show t… | refusal |
+| ◐ | [UI-003](#ui-003) | **Show the locked notice** — If the user submits credentials for a Locked account, then the system shall navigate to… | refusal |
 | ◐ | [UI-007](#ui-007) | **Leave the locked notice** — While on LockedNotice, when the user goes back, the system shall show Home with the for… | happy path |
 
 ## What the System Does
 
-### Sign in
+### Idle session expires
 
 > **Who** · User<br>
-> **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
-> **Route** · ◐ [UI-001 Open the sign-in form](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ◐ [UI-002 Land on the Dashboard](#ui-002) → [auth.REQ-003](auth.readback.md#req-003)<br>
-> **Runs as** · ✓ `auth-ui.signInJourney` — `quint test` runs it; it walks 5 of 5 step(s) in order.
+> **Story** · User signs in and leaves the Dashboard idle; the session times out and the screen returns to the login form.<br>
+> **Route** · ◐ [UI-001 Open the sign-in form](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ◐ [UI-002 Land on the Dashboard](#ui-002) → ◐ [UI-004 Expired session returns to Login](#ui-004) → [auth.REQ-004](auth.readback.md#req-004)<br>
+> **Runs as** · ✓ `auth-ui.expiryReturnsToLogin` — `quint test` runs it; it walks 5 of 5 step(s) in order.
 
 ```mermaid
 flowchart LR
@@ -252,18 +252,17 @@ flowchart LR
     S1 --> S2
     S3["3 · Land on the Dashboard<br/><small>UI-002</small>"]:::ok
     S2 --> S3
-    S4["4 · auth.REQ-003"]:::ext
+    S4["4 · Expired session returns to Login<br/><small>UI-004</small>"]:::ok
     S3 --> S4
-    S4r(["1 refusal"]):::ref
-    S4 -.- S4r
+    S5["5 · auth.REQ-004"]:::ext
+    S4 --> S5
     classDef ext fill:#fff,stroke:#999,stroke-dasharray:4 3
     classDef ok fill:#e8f1ff,stroke:#4a78c2
-    classDef ref fill:#fff8e6,stroke:#c99a2e
 ```
 
-<details open><summary><b>Steps</b> — 4 steps, 1 refusal folded under them</summary>
+<details open><summary><b>Steps</b> — 5 steps</summary>
 
-**Step 1 of 4**
+**Step 1 of 5**
 
 #### UI-001
 
@@ -314,9 +313,9 @@ sequenceDiagram
 
 </details>
 
-**Step 2 of 4** · [auth.REQ-001](auth.readback.md#req-001) — specified in area *auth*
+**Step 2 of 5** · [auth.REQ-001](auth.readback.md#req-001) — specified in area *auth*
 
-**Step 3 of 4**
+**Step 3 of 5**
 
 #### UI-002
 
@@ -371,11 +370,233 @@ sequenceDiagram
 
 </details>
 
-**Step 4 of 4** · [auth.REQ-003](auth.readback.md#req-003) — specified in area *auth*
+**Step 4 of 5**
 
-*failure branch: repeated bad credentials lock the account*
+#### UI-004
 
-<details><summary>↳ Step 4 is refused in 1 case: UI-003 Show the locked notice</summary>
+◐ ∀ **Expired session returns to Login** — While on Dashboard, when the session expires, the system shall return to Login.
+
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-004 — An idle session on the Dashboard expires back to the login form | click_sign_in; then submit_success(alice, s1); then time_passes × 4 | session_expired | `current == Login and not(authenticated)` |
+
+> **Proof** · reachable (7-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `session_expired`, formal claim + trace</summary>
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Witness:** 8 steps: click_sign_in → submit_success(bob, s1) → time_passes(s1, bob) ×4 → session_expired(s1, bob) → `current = Login` · `mySession = ""` · `auth::sessions[s1] = Expired` · `auth::userActiveSession[bob] -= {"s1"}`
+
+**As specified (EARS):** While `current == Dashboard`, when the session expires, the system shall make `current == Login and form == Idle and not(authenticated)` hold.
+
+`specs/auth-ui.qnt:L222-L228` · model `e192c072c24e`
+
+```quint
+  action session_expired: bool = all {
+    current == Dashboard,
+    auth::expire_session(mySession),
+    current'   = Login,
+    form'      = Idle,
+    mySession' = "",
+  }
+```
+
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `current == Dashboard`
+- **shall** `current == Login and form == Idle and not(authenticated)`
+
+**Record:** `specs/auth-ui.qnt:214` — the doc comment this requirement is read from.
+
+```mermaid
+sequenceDiagram
+    title UI-004 witness
+    participant E as Env
+    participant S as System
+    E->>S: click_sign_in
+    Note over S: current = Login
+    E->>S: submit_success(bob, s1)
+    Note over S: current = Dashboard<br/>mySession = "s1"<br/>auth::sessions[s1] = Active<br/>auth::sessionOwner[s1] = "bob"<br/>auth::failedAttempts[bob] = 0<br/>auth::userActiveSession[bob] = {"s1"}<br/>… +1 more
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 1
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 2
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 3
+    E->>S: time_passes(s1, bob)
+    Note over S: auth::idleFor[s1] = 4
+    E->>S: session_expired(s1, bob)
+    Note over S: current = Login<br/>mySession = ""<br/>auth::sessions[s1] = Expired<br/>auth::userActiveSession[bob] -= {"s1"}
+```
+
+</details>
+
+**Step 5 of 5** · [auth.REQ-004](auth.readback.md#req-004) — specified in area *auth*
+
+*same step: auth expires the idle session*
+
+</details>
+
+### Sign in
+
+> **Who** · User<br>
+> **Story** · User opens the login screen, signs in, lands on the Dashboard and logs out — including the bad-password and lockout failure branch, and the way back Home from the locked notice.<br>
+> **Route** · ◐ [UI-001 Open the sign-in form](#ui-001) → [auth.REQ-001](auth.readback.md#req-001) → ◐ [UI-002 Land on the Dashboard](#ui-002) → ◐ [UI-006 Log out to Home](#ui-006) → [auth.REQ-002](auth.readback.md#req-002) → [auth.REQ-003](auth.readback.md#req-003) → ◐ [UI-007 Leave the locked notice](#ui-007)<br>
+> **Runs as** · ✓ `auth-ui.signInJourney` — `quint test` runs it; it walks 9 of 9 step(s) in order.
+
+```mermaid
+flowchart LR
+    S1["1 · Open the sign-in form<br/><small>UI-001</small>"]:::ok
+    S2["2 · auth.REQ-001"]:::ext
+    S1 --> S2
+    S3["3 · Land on the Dashboard<br/><small>UI-002</small>"]:::ok
+    S2 --> S3
+    S4["4 · Log out to Home<br/><small>UI-006</small>"]:::ok
+    S3 --> S4
+    S5["5 · auth.REQ-002"]:::ext
+    S4 --> S5
+    S5r(["1 refusal"]):::ref
+    S5 -.- S5r
+    S6["6 · auth.REQ-003"]:::ext
+    S5 --> S6
+    S6r(["1 refusal"]):::ref
+    S6 -.- S6r
+    S7["7 · Leave the locked notice<br/><small>UI-007</small>"]:::ok
+    S6 --> S7
+    classDef ext fill:#fff,stroke:#999,stroke-dasharray:4 3
+    classDef ok fill:#e8f1ff,stroke:#4a78c2
+    classDef ref fill:#fff8e6,stroke:#c99a2e
+```
+
+<details><summary><b>Steps</b> — 7 steps, 2 refusals folded under them</summary>
+
+**Step 1 of 7**
+
+- UI-001 — see above.
+
+**Step 2 of 7** · [auth.REQ-001](auth.readback.md#req-001) — specified in area *auth*
+
+**Step 3 of 7**
+
+- UI-002 — see above.
+
+**Step 4 of 7**
+
+#### UI-006
+
+◐ ∀ **Log out to Home** — While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
+
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-005 — Logging out from the Dashboard returns Home | click_sign_in; then submit_success(alice, s1) | click_logout | `current == Home and not(authenticated)` |
+
+> **Proof** · reachable (3-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `click_logout`, formal claim + trace</summary>
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Witness:** 4 steps: click_sign_in → submit_success(bob, s1) → click_logout(s1, bob) → `current = Home` · `mySession = ""` · `sessions[s1] = LoggedOut` · `userActiveSession[bob] -= {"s1"}`
+
+**As specified (EARS):** While `current == Dashboard`, when the user clicks logout, the system shall make `current == Home and form == Idle and mySession == ""` hold.
+
+`specs/auth-ui.qnt:L200-L206` · model `ba1dcce1ac0f`
+
+```quint
+  action click_logout: bool = all {
+    current == Dashboard,
+    auth::logout(mySession),
+    current'   = Home,
+    form'      = Idle,
+    mySession' = "",
+  }
+```
+
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `current == Dashboard`
+- **shall** `current == Home and form == Idle and mySession == ""`
+
+**Record:** `specs/auth-ui.qnt:192` — the doc comment this requirement is read from.
+
+```mermaid
+sequenceDiagram
+    title UI-006 witness
+    participant E as Env
+    participant S as System
+    E->>S: click_sign_in
+    Note over S: current = Login
+    E->>S: submit_success(bob, s1)
+    Note over S: current = Dashboard<br/>failedAttempts[bob] = 0<br/>idleFor[s1] = 0<br/>mySession = "s1"<br/>sessionOwner[s1] = "bob"<br/>sessions[s1] = Active<br/>… +1 more
+    E->>S: click_logout(s1, bob)
+    Note over S: current = Home<br/>mySession = ""<br/>sessions[s1] = LoggedOut<br/>userActiveSession[bob] -= {"s1"}
+```
+
+</details>
+
+**Step 5 of 7** · [auth.REQ-002](auth.readback.md#req-002) — specified in area *auth*
+
+*same step as the logout click: the session ends in auth*
+
+<details><summary>↳ Step 5 is refused in 1 case: UI-005 Bad credentials stay on Login</summary>
+
+*failure branch: a bad password keeps the form open*
+
+#### UI-005
+
+◐ ∀  *(failure path)* **Bad credentials stay on Login** — If the user submits invalid credentials, then the system shall stay on Login and show the bad-credentials error.
+
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-006 — A bad password keeps the login form open with an error | click_sign_in | submit_invalid(bob) | `current == Login and form == ErrorBadCreds` |
+
+> **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
+
+<details><summary>guarded by, witness, EARS sentence, Quint action `submit_invalid`, formal claim + trace</summary>
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
+
+> **Witness:** 3 steps: click_sign_in → submit_invalid(bob) → `accountStatus[bob] = Unlocked` · `failedAttempts[bob] = 1` · `form = ErrorBadCreds`
+
+**As specified (EARS):** While `current == Login`, if the user submits invalid credentials, then the system shall make `current == Login and form == ErrorBadCreds` hold.
+
+`specs/auth-ui.qnt:L156-L162` · model `428933fcd490`
+
+```quint
+  action submit_invalid(u: UserId): bool = all {
+    current == Login,
+    auth::login_failed(u),
+    current'   = Login,
+    form'      = ErrorBadCreds,
+    mySession' = mySession,
+  }
+```
+
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `current == Login`
+- **shall** `current == Login and form == ErrorBadCreds`
+
+**Record:** `specs/auth-ui.qnt:147` — the doc comment this requirement is read from.
+
+```mermaid
+sequenceDiagram
+    title UI-005 witness
+    participant E as Env
+    participant S as System
+    E->>S: click_sign_in
+    Note over S: current = Login
+    E->>S: submit_invalid(bob)
+    Note over S: accountStatus[bob] = Unlocked<br/>failedAttempts[bob] = 1<br/>form = ErrorBadCreds
+```
+
+</details>
+
+</details>
+
+**Step 6 of 7** · [auth.REQ-003](auth.readback.md#req-003) — specified in area *auth*
+
+*same step: repeated bad credentials lock the account*
+
+<details><summary>↳ Step 6 is refused in 1 case: UI-003 Show the locked notice</summary>
 
 *locked-account counterpart of the submit step*
 
@@ -443,172 +664,17 @@ sequenceDiagram
 
 </details>
 
-</details>
+**Step 7 of 7**
 
-### Other behaviors
-
-> _Specified here, but not yet placed in any journey above._
-
-#### UI-004
-
-◐ ∀ **Expired session returns to Login** — While on Dashboard, when the session expires, the system shall return to Login.
-
-| Example | Given | When | Then |
-|---|---|---|---|
-| EX-004 — An idle session on the Dashboard expires back to the login form | click_sign_in; then submit_success(alice, s1); then time_passes × 4 | session_expired | `current == Login and not(authenticated)` |
-
-> **Proof** · reachable (7-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
-
-<details><summary>guarded by, witness, EARS sentence, Quint action `session_expired`, formal claim + trace</summary>
-
-> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
-
-> **Witness:** 8 steps: click_sign_in → submit_success(bob, s1) → time_passes(s1, bob) ×4 → session_expired(s1, bob) → `current = Login` · `mySession = ""` · `auth::sessions[s1] = Expired` · `auth::userActiveSession[bob] -= {"s1"}`
-
-**As specified (EARS):** While `current == Dashboard`, when the session expires, the system shall make `current == Login and form == Idle and not(authenticated)` hold.
-
-`specs/auth-ui.qnt:L222-L228` · model `e192c072c24e`
-
-```quint
-  action session_expired: bool = all {
-    current == Dashboard,
-    auth::expire_session(mySession),
-    current'   = Login,
-    form'      = Idle,
-    mySession' = "",
-  }
-```
-
-**Formal claim** (pre-state for while/old, post-state for shall):
-- **while** `current == Dashboard`
-- **shall** `current == Login and form == Idle and not(authenticated)`
-
-**Record:** `specs/auth-ui.qnt:214` — the doc comment this requirement is read from.
-
-```mermaid
-sequenceDiagram
-    title UI-004 witness
-    participant E as Env
-    participant S as System
-    E->>S: click_sign_in
-    Note over S: current = Login
-    E->>S: submit_success(bob, s1)
-    Note over S: current = Dashboard<br/>mySession = "s1"<br/>auth::sessions[s1] = Active<br/>auth::sessionOwner[s1] = "bob"<br/>auth::failedAttempts[bob] = 0<br/>auth::userActiveSession[bob] = {"s1"}<br/>… +1 more
-    E->>S: time_passes(s1, bob)
-    Note over S: auth::idleFor[s1] = 1
-    E->>S: time_passes(s1, bob)
-    Note over S: auth::idleFor[s1] = 2
-    E->>S: time_passes(s1, bob)
-    Note over S: auth::idleFor[s1] = 3
-    E->>S: time_passes(s1, bob)
-    Note over S: auth::idleFor[s1] = 4
-    E->>S: session_expired(s1, bob)
-    Note over S: current = Login<br/>mySession = ""<br/>auth::sessions[s1] = Expired<br/>auth::userActiveSession[bob] -= {"s1"}
-```
-
-</details>
-
-#### UI-005
-
-◐ ∀  *(failure path)* **Bad credentials stay on Login** — If the user submits invalid credentials, then the system shall stay on Login and show the bad-credentials error.
-
-> _No example rows yet — nothing concrete shows this behavior._
-
-> **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
-
-<details><summary>guarded by, witness, EARS sentence, Quint action `submit_invalid`, formal claim + trace</summary>
-
-> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
-
-> **Witness:** 3 steps: click_sign_in → submit_invalid(bob) → `accountStatus[bob] = Unlocked` · `failedAttempts[bob] = 1` · `form = ErrorBadCreds`
-
-**As specified (EARS):** While `current == Login`, if the user submits invalid credentials, then the system shall make `current == Login and form == ErrorBadCreds` hold.
-
-`specs/auth-ui.qnt:L156-L162` · model `428933fcd490`
-
-```quint
-  action submit_invalid(u: UserId): bool = all {
-    current == Login,
-    auth::login_failed(u),
-    current'   = Login,
-    form'      = ErrorBadCreds,
-    mySession' = mySession,
-  }
-```
-
-**Formal claim** (pre-state for while/old, post-state for shall):
-- **while** `current == Login`
-- **shall** `current == Login and form == ErrorBadCreds`
-
-**Record:** `specs/auth-ui.qnt:147` — the doc comment this requirement is read from.
-
-```mermaid
-sequenceDiagram
-    title UI-005 witness
-    participant E as Env
-    participant S as System
-    E->>S: click_sign_in
-    Note over S: current = Login
-    E->>S: submit_invalid(bob)
-    Note over S: accountStatus[bob] = Unlocked<br/>failedAttempts[bob] = 1<br/>form = ErrorBadCreds
-```
-
-</details>
-
-#### UI-006
-
-◐ ∀ **Log out to Home** — While on Dashboard, when the user clicks logout, the system shall sign the user out and return to Home.
-
-> _No example rows yet — nothing concrete shows this behavior._
-
-> **Proof** · reachable (3-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
-
-<details><summary>guarded by, witness, EARS sentence, Quint action `click_logout`, formal claim + trace</summary>
-
-> **Guarded by** · [INV-001](#what-must-always-be-true) `guardedDashboard` ⏳
-
-> **Witness:** 4 steps: click_sign_in → submit_success(bob, s1) → click_logout(s1, bob) → `current = Home` · `mySession = ""` · `sessions[s1] = LoggedOut` · `userActiveSession[bob] -= {"s1"}`
-
-**As specified (EARS):** While `current == Dashboard`, when the user clicks logout, the system shall make `current == Home and form == Idle and mySession == ""` hold.
-
-`specs/auth-ui.qnt:L200-L206` · model `ba1dcce1ac0f`
-
-```quint
-  action click_logout: bool = all {
-    current == Dashboard,
-    auth::logout(mySession),
-    current'   = Home,
-    form'      = Idle,
-    mySession' = "",
-  }
-```
-
-**Formal claim** (pre-state for while/old, post-state for shall):
-- **while** `current == Dashboard`
-- **shall** `current == Home and form == Idle and mySession == ""`
-
-**Record:** `specs/auth-ui.qnt:192` — the doc comment this requirement is read from.
-
-```mermaid
-sequenceDiagram
-    title UI-006 witness
-    participant E as Env
-    participant S as System
-    E->>S: click_sign_in
-    Note over S: current = Login
-    E->>S: submit_success(bob, s1)
-    Note over S: current = Dashboard<br/>failedAttempts[bob] = 0<br/>idleFor[s1] = 0<br/>mySession = "s1"<br/>sessionOwner[s1] = "bob"<br/>sessions[s1] = Active<br/>… +1 more
-    E->>S: click_logout(s1, bob)
-    Note over S: current = Home<br/>mySession = ""<br/>sessions[s1] = LoggedOut<br/>userActiveSession[bob] -= {"s1"}
-```
-
-</details>
+*back Home from the locked notice*
 
 #### UI-007
 
 ◐ ∀ **Leave the locked notice** — While on LockedNotice, when the user goes back, the system shall show Home with the form cleared.
 
-> _No example rows yet — nothing concrete shows this behavior._
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-007 — Leaving the locked notice clears the form | click_sign_in; then submit_invalid(bob) × 5; then submit_locked(bob) | go_home | `current == Home and form == Idle` |
 
 > **Proof** · reachable (8-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
 
@@ -660,6 +726,8 @@ sequenceDiagram
     E->>S: go_home(bob)
     Note over S: current = Home<br/>form = Idle
 ```
+
+</details>
 
 </details>
 
@@ -785,7 +853,7 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 ## Examples
 
-<details><summary>4 worked examples</summary>
+<details><summary>7 worked examples</summary>
 
 _Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
 
@@ -795,6 +863,9 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 | EX-002 — Valid credentials land on the Dashboard | click_sign_in | submit_success(alice, s1) | `current == Dashboard and authenticated` | UI-002 |
 | EX-003 — Five bad passwords lock the account; the next submit shows the locked notice | click_sign_in; then submit_invalid(bob) × 5 | submit_locked(bob) | `current == LockedNotice and form == ErrorLocked` | UI-003 |
 | EX-004 — An idle session on the Dashboard expires back to the login form | click_sign_in; then submit_success(alice, s1); then time_passes × 4 | session_expired | `current == Login and not(authenticated)` | UI-004 |
+| EX-005 — Logging out from the Dashboard returns Home | click_sign_in; then submit_success(alice, s1) | click_logout | `current == Home and not(authenticated)` | UI-006 |
+| EX-006 — A bad password keeps the login form open with an error | click_sign_in | submit_invalid(bob) | `current == Login and form == ErrorBadCreds` | UI-005 |
+| EX-007 — Leaving the locked notice clears the form | click_sign_in; then submit_invalid(bob) × 5; then submit_locked(bob) | go_home | `current == Home and form == Idle` | UI-007 |
 
 </details>
 
@@ -815,7 +886,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Extraction coverage | — | n/a (no code) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | — | no rejection requirements |
-| Examples | ✓ | 4 worked example(s) |
+| Examples | ✓ | 7 worked example(s) |
 | Behavior the examples pin | ! | 62% pinned by examples, 11 question(s) open |
 | Invariants | ! | 0/1 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |

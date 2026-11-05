@@ -5,6 +5,7 @@
 /// @req REQ-001
 /// While the cart is Open, when a shopper adds a SKU already in the cart,
 /// the system shall increase that line's quantity.
+/// @title Re-add merges the line
 /// @status raw
 /// @modality must
 /// @source extracted
@@ -16,6 +17,7 @@
 /// @req REQ-002
 /// While the cart is Open and holds fewer than MAX_ITEMS lines, when a
 /// shopper adds a new SKU, the system shall append a line for it.
+/// @title Add a new line
 /// @status raw
 /// @modality must
 /// @source extracted
@@ -27,6 +29,7 @@
 /// @req REQ-003
 /// If a shopper adds an item to a CheckedOut cart, then the system shall
 /// refuse the call and change nothing.
+/// @title Refuse adds after checkout
 /// @status raw
 /// @modality forbidden
 /// @source extracted
@@ -39,6 +42,7 @@
 /// @req REQ-004
 /// If the payment gateway is unavailable during checkout, then the system
 /// shall leave the cart Open and report that a retry is possible.
+/// @title Gateway down: cart stays Open
 /// @status raw
 /// @modality must
 /// @source extracted

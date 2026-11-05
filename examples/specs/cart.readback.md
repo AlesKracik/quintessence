@@ -79,18 +79,57 @@ pie showData title 4 requirements
 
 | | ID | Behavior | Kind |
 |---|---|---|---|
-| ⏳ | [REQ-001](#req-001) | While the cart is Open, when a shopper adds a SKU already in the cart, the system shall… | happy path |
-| ⏳ | [REQ-002](#req-002) | While the cart is Open and holds fewer than MAX_ITEMS lines, when a shopper adds a new… | happy path |
-| ⊘ | [REQ-003](#req-003) | If a shopper adds an item to a CheckedOut cart, then the system shall refuse the call a… | forbidden · refusal |
-| ⏳ | [REQ-004](#req-004) | If the payment gateway is unavailable during checkout, then the system shall leave the… | refusal |
+| | | **Fill a cart and check out** — 4 · ⊘1 ⏳3 | |
+| ⏳ | [REQ-002](#req-002) | **Add a new line** — While the cart is Open and holds fewer than MAX_ITEMS lines, when a shopper adds a new… | happy path |
+| ⏳ | [REQ-001](#req-001) | **Re-add merges the line** — While the cart is Open, when a shopper adds a SKU already in the cart, the system shall… | happy path |
+| ⏳ | [REQ-004](#req-004) | **Gateway down: cart stays Open** — If the payment gateway is unavailable during checkout, then the system shall leave the… | refusal |
+| ⊘ | [REQ-003](#req-003) | **Refuse adds after checkout** — If a shopper adds an item to a CheckedOut cart, then the system shall refuse the call a… | forbidden · refusal |
 
 ## What the System Does
 
-_No journeys reference this area. Run `/spec _journeys/<name>` to group requirements into flows._
+### Fill a cart and check out
+
+> **Who** · Shopper<br>
+> **Story** · Shopper adds items, checks out while the payment gateway is down and the cart stays open, then checks out again; adding to the checked-out cart is refused. Deduced from Cart.addItem and Cart.checkout in code/legacy-cart/cart.js.<br>
+> **Route** · ⏳ [REQ-002 Add a new line](#req-002) → ⏳ [REQ-001 Re-add merges the line](#req-001) (+2 refusals)<br>
+> **Runs as** · ⚠ _nothing yet_ — no Quint run walks this flow, so its steps are checked one at a time, never together.
+
+```mermaid
+flowchart LR
+    S1["1 · Add a new line<br/><small>REQ-002</small>"]:::todo
+    S2["2 · Re-add merges the line<br/><small>REQ-001</small>"]:::todo
+    S1 --> S2
+    S2r(["2 refusals"]):::ref
+    S2 -.- S2r
+    classDef ref fill:#fff8e6,stroke:#c99a2e
+    classDef todo fill:#f4f4f4,stroke:#999
+```
+
+<details open><summary><b>Steps</b> — 2 steps, 2 refusals folded under them</summary>
+
+**Step 1 of 2**
+
+*addItem with a new SKU*
+
+#### REQ-002
+
+⏳ **Add a new line** — When a shopper adds a new SKU, the system shall ….
+
+<details><summary>provenance</summary>
+
+> _Extracted from `code/legacy-cart/cart.js:26-36` (high confidence)._
+
+**Record:** `specs/cart.qnt:17` — the doc comment this requirement is read from.
+
+</details>
+
+**Step 2 of 2**
+
+*addItem with the same SKU again*
 
 #### REQ-001
 
-⏳ When a shopper adds a SKU already present, the system shall ….
+⏳ **Re-add merges the line** — When a shopper adds a SKU already present, the system shall ….
 
 | Example | Given | When | Then |
 |---|---|---|---|
@@ -104,21 +143,31 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 </details>
 
-#### REQ-002
+<details><summary>↳ Step 2 is refused in 2 cases: REQ-004 Gateway down: cart stays Open · REQ-003 Refuse adds after checkout</summary>
 
-⏳ When a shopper adds a new SKU, the system shall ….
+*checkout while the gateway throws: the cart stays Open*
+
+#### REQ-004
+
+⏳  *(failure path)* **Gateway down: cart stays Open** — If the payment gateway throws during checkout, then the system shall ….
+
+> **On PaymentGateway/OK:** CheckedOut
+> **On PaymentGateway/DECLINED:** NO_CHANGE — the cart stays Open; reason 'declined' (safe to retry)
+> **On PaymentGateway/UNAVAILABLE:** NO_CHANGE — the cart stays Open; reason 'unavailable'; caller retries (safe to retry)
 
 <details><summary>provenance</summary>
 
-> _Extracted from `code/legacy-cart/cart.js:26-36` (high confidence)._
+> _Extracted from `code/legacy-cart/cart.js:58-62` (medium confidence)._
 
-**Record:** `specs/cart.qnt:16` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:42` — the doc comment this requirement is read from.
 
 </details>
 
+*after a successful checkout (no requirement covers it yet), addItem is refused*
+
 #### REQ-003
 
-⊘  *(failure path)* If a shopper adds an item, then the system shall ….
+⊘  *(failure path)* **Refuse adds after checkout** — If a shopper adds an item, then the system shall ….
 
 > **Forbidden** — this must never happen, so there is no trace to find. The proof is the check that no reachable step of the action starts where it is forbidden. The examples below show the call being refused.
 
@@ -130,23 +179,11 @@ _No journeys reference this area. Run `/spec _journeys/<name>` to group requirem
 
 > _Extracted from `code/legacy-cart/cart.js:22-24` (high confidence)._
 
-**Record:** `specs/cart.qnt:27` — the doc comment this requirement is read from.
+**Record:** `specs/cart.qnt:29` — the doc comment this requirement is read from.
 
 </details>
 
-#### REQ-004
-
-⏳  *(failure path)* If the payment gateway throws during checkout, then the system shall ….
-
-> **On PaymentGateway/OK:** CheckedOut
-> **On PaymentGateway/DECLINED:** NO_CHANGE — the cart stays Open; reason 'declined' (safe to retry)
-> **On PaymentGateway/UNAVAILABLE:** NO_CHANGE — the cart stays Open; reason 'unavailable'; caller retries (safe to retry)
-
-<details><summary>provenance</summary>
-
-> _Extracted from `code/legacy-cart/cart.js:58-62` (medium confidence)._
-
-**Record:** `specs/cart.qnt:39` — the doc comment this requirement is read from.
+</details>
 
 </details>
 

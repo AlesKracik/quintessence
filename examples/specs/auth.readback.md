@@ -153,45 +153,30 @@ run q_6b84d96d = init.then(tick.fail())
 
 | | ID | Behavior | Kind |
 |---|---|---|---|
-| | | **Sign in** — 2 · ◐2 | |
+| | | **Locked out** — 4 · ⊘1 ◐3 | |
 | ◐ | [REQ-001](#req-001) | **Sign in with valid credentials** — When a registered user submits valid credentials, the system shall create an Active ses… | happy path |
 | ◐ | [REQ-003](#req-003) | **Lock after repeated failures** — If a login attempt fails while the account is Unlocked, then the system shall increment… | refusal |
-| | | **Not in any journey** — 4 | |
-| ◐ | [REQ-002](#req-002) | **Log out** — While a user's session is Active, when the user requests logout, the system shall trans… | happy path |
-| ◐ | [REQ-004](#req-004) | **Expire an idle session** — While a session is Active and has been inactive for longer than MAX_SESSION_AGE, the sy… | happy path |
-| ⊘ | [REQ-005](#req-005) | **Refuse sign-in while locked** — While the account is Locked, if the user submits valid credentials, then the system sha… | forbidden · refusal |
 | ◐ | [REQ-006](#req-006) | **Lockout ends active sessions** — If a failed login locks the account, then the system shall end the user's Active sessio… | refusal |
+| ⊘ | [REQ-005](#req-005) | **Refuse sign-in while locked** — While the account is Locked, if the user submits valid credentials, then the system sha… | forbidden · refusal |
+| | | **Idle session expires** — 1 · ◐1 | |
+| ◐ | [REQ-004](#req-004) | **Expire an idle session** — While a session is Active and has been inactive for longer than MAX_SESSION_AGE, the sy… | happy path |
+| | | **Sign in** — 1 · ◐1 | |
+| ◐ | [REQ-002](#req-002) | **Log out** — While a user's session is Active, when the user requests logout, the system shall trans… | happy path |
 
 ## What the System Does
 
-### Sign in
+### Locked out
 
 > **Who** · User<br>
-> **Story** · User opens the login screen, signs in, and lands on the Dashboard — including the lockout failure branch.<br>
-> **Route** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) → ◐ [REQ-001 Sign in with valid credentials](#req-001) → [auth-ui.UI-002](auth-ui.readback.md#ui-002) → [auth-ui.UI-003](auth-ui.readback.md#ui-003)<br>
-> **Runs as** · ✓ `auth-ui.signInJourney` — `quint test` runs it; it walks 5 of 5 step(s) in order.
+> **Story** · Someone tries bad passwords on a signed-in user's account; the fifth locks it and ends the live session, and the user's next sign-in is refused.<br>
+> **Route** · ◐ [REQ-001 Sign in with valid credentials](#req-001) (+3 refusals)<br>
+> **Runs as** · ✓ `auth.lockoutJourney` — `quint test` runs it; it walks 4 of 4 step(s) in order.
 
-```mermaid
-flowchart LR
-    S1["1 · auth-ui.UI-001"]:::ext
-    S2["2 · Sign in with valid credentials<br/><small>REQ-001</small>"]:::ok
-    S1 --> S2
-    S3["3 · auth-ui.UI-002"]:::ext
-    S2 --> S3
-    S3r(["1 refusal"]):::ref
-    S3 -.- S3r
-    S4["4 · auth-ui.UI-003"]:::ext
-    S3 --> S4
-    classDef ext fill:#fff,stroke:#999,stroke-dasharray:4 3
-    classDef ok fill:#e8f1ff,stroke:#4a78c2
-    classDef ref fill:#fff8e6,stroke:#c99a2e
-```
+<details open><summary><b>Steps</b> — 1 step, 3 refusals folded under it</summary>
 
-<details open><summary><b>Steps</b> — 4 steps, 1 refusal folded under them</summary>
+**Step 1 of 1**
 
-**Step 1 of 4** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) — specified in area *auth-ui*
-
-**Step 2 of 4**
+*the user is signed in*
 
 #### REQ-001
 
@@ -248,11 +233,9 @@ sequenceDiagram
 
 </details>
 
-**Step 3 of 4** · [auth-ui.UI-002](auth-ui.readback.md#ui-002) — specified in area *auth-ui*
+<details><summary>↳ Step 1 is refused in 3 cases: REQ-003 Lock after repeated failures · REQ-006 Lockout ends active sessions · REQ-005 Refuse sign-in while locked</summary>
 
-<details><summary>↳ Step 3 is refused in 1 case: REQ-003 Lock after repeated failures</summary>
-
-*failure branch: repeated bad credentials lock the account*
+*the fifth bad password locks the account*
 
 #### REQ-003
 
@@ -318,77 +301,157 @@ sequenceDiagram
 
 </details>
 
-</details>
+*same step: the live session ends*
 
-**Step 4 of 4** · [auth-ui.UI-003](auth-ui.readback.md#ui-003) — specified in area *auth-ui*
+#### REQ-006
 
-*locked-account counterpart of the submit step*
-
-</details>
-
-### Other behaviors
-
-> _Specified here, but not yet placed in any journey above._
-
-#### REQ-002
-
-◐ ∀ **Log out** — While a user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
+◐ ∀  *(failure path)* **Lockout ends active sessions** — If a failed login locks the account, then the system shall end the user's Active sessions.
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-002 — Sign in, then out | login(alice, s1) | logout(s1) | `statusOf(sessions, "s1") == LoggedOut` |
-
-> **Left open** · [249ef86b](#249ef86b) logout(s3) — the model decides, no example does
+| EX-008 — The lockout ends a signed-in user's session | login(alice, s1); then login_failed(alice) × 4 | login_failed(alice) | `isLocked("alice") and not(isActive("s1"))` |
 
 > **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
 
-<details><summary>guarded by, witness, EARS sentence, Quint action `logout`, formal claim + trace</summary>
+<details><summary>guarded by, witness, EARS sentence, Quint action `login_failed`, formal claim + trace</summary>
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
-> **Witness:** 3 steps: login(bob, s1) → logout(s1) → `sessions[s1] = LoggedOut` · `userActiveSession[bob] -= {"s1"}`
+> **Witness:** 3 steps: login(bob, s1) → login_failed(alice) → `accountStatus[alice] = Unlocked` · `failedAttempts[alice] = 1`
 
-**As specified (EARS):** While `isActive(sid)`, when the user requests logout, the system shall make `statusOf(sessions, sid) == LoggedOut` hold.
+**As specified (EARS):** While `not(isLocked(uid))`, if a failed login locks the account, then the system shall make `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))` hold.
 
-`specs/auth.qnt:L137-L152` · model `836732874606`
+`specs/auth.qnt:L188-L205` · model `9ed9151fee6b`
 
 ```quint
-  action logout(sid: SessionId): bool = {
-    val uid = if (sessionOwner.keys().contains(sid)) sessionOwner.get(sid) else ""
+  action login_failed(uid: UserId): bool = {
+    val nextCount = attemptsOf(uid) + 1
+    val locking = nextCount >= MAX_FAILED_ATTEMPTS
+    val doomed = activeSessionsOf(uid)
     all {
-      sessions.keys().contains(sid),
-      isActive(sid),
-      sessions'          = sessions.put(sid, LoggedOut),
+      not(isLocked(uid)),
+      sessions' = if (locking)
+                    doomed.fold(sessions, (acc, s) => acc.put(s, LoggedOut))
+                  else sessions,
       sessionOwner'      = sessionOwner,
-      accountStatus'     = accountStatus,
-      failedAttempts'    = failedAttempts,
-      userActiveSession' = userActiveSession.put(
-        uid,
-        activeSessionsOf(uid).exclude(Set(sid))
-      ),
+      accountStatus'     = accountStatus.put(uid, if (locking) Locked else Unlocked),
+      failedAttempts'    = failedAttempts.put(uid, nextCount),
+      userActiveSession' = if (locking)
+                             userActiveSession.put(uid, Set())
+                           else userActiveSession,
       idleFor'           = idleFor,
     }
   }
 ```
 
 **Formal claim** (pre-state for while/old, post-state for shall):
-- **while** `isActive(sid)`
-- **shall** `statusOf(sessions, sid) == LoggedOut`
+- **while** `not(isLocked(uid))`
+- **shall** `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))`
 
-**Record:** `specs/auth.qnt:129` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:177` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
-    title REQ-002 witness
+    title REQ-006 witness
     participant E as Env
     participant S as System
     E->>S: login(bob, s1)
     Note over S: failedAttempts[bob] = 0<br/>idleFor[s1] = 0<br/>sessionOwner[s1] = "bob"<br/>sessions[s1] = Active<br/>userActiveSession[bob] = {"s1"}
-    E->>S: logout(s1)
-    Note over S: sessions[s1] = LoggedOut<br/>userActiveSession[bob] -= {"s1"}
+    E->>S: login_failed(alice)
+    Note over S: accountStatus[alice] = Unlocked<br/>failedAttempts[alice] = 1
 ```
 
 </details>
+
+*refused: no sign-in while locked*
+
+#### REQ-005
+
+⊘ ∀  *(failure path)* **Refuse sign-in while locked** — While the account is Locked, if the user submits valid credentials, then the system shall refuse the login.
+
+> **Forbidden** — this must never happen, so there is no trace to find. The proof is the check that no reachable step of the action starts where it is forbidden. The examples below show the call being refused.
+
+| Example | Given | When | Then |
+|---|---|---|---|
+| EX-006 — A locked account cannot sign in | login_failed(bob) × 5, so `isLocked("bob") and attemptsOf("bob") == 5` | login(bob, s2) — refused | refused — nothing changes |
+
+> **Left open** · [3b71c867](#3b71c867) login(charlie, s3) — the model decides, no example does
+
+> **Proof** · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
+
+<details><summary>guarded by, EARS sentence, Quint action `login`, formal claim + trace</summary>
+
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
+
+**As specified (EARS):** While `isLocked(uid)`, if the user submits valid credentials, then the system shall never let it happen.
+
+`specs/auth.qnt:L114-L127` · model `ae0ddcfe96a9`
+
+```quint
+  action login(uid: UserId, sid: SessionId): bool = all {
+    not(isLocked(uid)),
+    not(sessions.keys().contains(sid)),
+    activeSessionsOf(uid).size() == 0,          // INV-001 guard
+    sessions'          = sessions.put(sid, Active),
+    sessionOwner'      = sessionOwner.put(sid, uid),
+    accountStatus'     = accountStatus,
+    failedAttempts'    = failedAttempts.put(uid, 0),
+    userActiveSession' = userActiveSession.put(
+      uid,
+      activeSessionsOf(uid).union(Set(sid))
+    ),
+    idleFor'           = idleFor.put(sid, 0),
+  }
+```
+
+**Formal claim** (pre-state for while/old, post-state for shall):
+- **while** `isLocked(uid)`
+
+**Record:** `specs/auth.qnt:104` — the doc comment this requirement is read from.
+
+</details>
+
+</details>
+
+</details>
+
+### Idle session expires
+
+> **Who** · User<br>
+> **Story** · User signs in and leaves the Dashboard idle; the session times out and the screen returns to the login form.<br>
+> **Route** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) → ◐ [REQ-001 Sign in with valid credentials](#req-001) → [auth-ui.UI-002](auth-ui.readback.md#ui-002) → [auth-ui.UI-004](auth-ui.readback.md#ui-004) → ◐ [REQ-004 Expire an idle session](#req-004)<br>
+> **Runs as** · ✓ `auth-ui.expiryReturnsToLogin` — `quint test` runs it; it walks 5 of 5 step(s) in order.
+
+```mermaid
+flowchart LR
+    S1["1 · auth-ui.UI-001"]:::ext
+    S2["2 · Sign in with valid credentials<br/><small>REQ-001</small>"]:::ok
+    S1 --> S2
+    S3["3 · auth-ui.UI-002"]:::ext
+    S2 --> S3
+    S4["4 · auth-ui.UI-004"]:::ext
+    S3 --> S4
+    S5["5 · Expire an idle session<br/><small>REQ-004</small>"]:::ok
+    S4 --> S5
+    classDef ext fill:#fff,stroke:#999,stroke-dasharray:4 3
+    classDef ok fill:#e8f1ff,stroke:#4a78c2
+```
+
+<details><summary><b>Steps</b> — 5 steps</summary>
+
+**Step 1 of 5** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) — specified in area *auth-ui*
+
+**Step 2 of 5**
+
+- REQ-001 — see above.
+
+**Step 3 of 5** · [auth-ui.UI-002](auth-ui.readback.md#ui-002) — specified in area *auth-ui*
+
+**Step 4 of 5** · [auth-ui.UI-004](auth-ui.readback.md#ui-004) — specified in area *auth-ui*
+
+**Step 5 of 5**
+
+*same step: auth expires the idle session*
 
 #### REQ-004
 
@@ -460,107 +523,132 @@ sequenceDiagram
 
 </details>
 
-#### REQ-005
+</details>
 
-⊘ ∀  *(failure path)* **Refuse sign-in while locked** — While the account is Locked, if the user submits valid credentials, then the system shall refuse the login.
+### Sign in
 
-> **Forbidden** — this must never happen, so there is no trace to find. The proof is the check that no reachable step of the action starts where it is forbidden. The examples below show the call being refused.
+> **Who** · User<br>
+> **Story** · User opens the login screen, signs in, lands on the Dashboard and logs out — including the bad-password and lockout failure branch, and the way back Home from the locked notice.<br>
+> **Route** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) → ◐ [REQ-001 Sign in with valid credentials](#req-001) → [auth-ui.UI-002](auth-ui.readback.md#ui-002) → [auth-ui.UI-006](auth-ui.readback.md#ui-006) → ◐ [REQ-002 Log out](#req-002) → [auth-ui.UI-005](auth-ui.readback.md#ui-005) → [auth-ui.UI-003](auth-ui.readback.md#ui-003) → [auth-ui.UI-007](auth-ui.readback.md#ui-007)<br>
+> **Runs as** · ✓ `auth-ui.signInJourney` — `quint test` runs it; it walks 9 of 9 step(s) in order.
+
+```mermaid
+flowchart LR
+    S1["1 · auth-ui.UI-001"]:::ext
+    S2["2 · Sign in with valid credentials<br/><small>REQ-001</small>"]:::ok
+    S1 --> S2
+    S3["3 · auth-ui.UI-002"]:::ext
+    S2 --> S3
+    S4["4 · auth-ui.UI-006"]:::ext
+    S3 --> S4
+    S5["5 · Log out<br/><small>REQ-002</small>"]:::ok
+    S4 --> S5
+    S6["6 · auth-ui.UI-005"]:::ext
+    S5 --> S6
+    S6r(["1 refusal"]):::ref
+    S6 -.- S6r
+    S7["7 · auth-ui.UI-003"]:::ext
+    S6 --> S7
+    S8["8 · auth-ui.UI-007"]:::ext
+    S7 --> S8
+    classDef ext fill:#fff,stroke:#999,stroke-dasharray:4 3
+    classDef ok fill:#e8f1ff,stroke:#4a78c2
+    classDef ref fill:#fff8e6,stroke:#c99a2e
+```
+
+<details><summary><b>Steps</b> — 8 steps, 1 refusal folded under them</summary>
+
+**Step 1 of 8** · [auth-ui.UI-001](auth-ui.readback.md#ui-001) — specified in area *auth-ui*
+
+**Step 2 of 8**
+
+- REQ-001 — see above.
+
+**Step 3 of 8** · [auth-ui.UI-002](auth-ui.readback.md#ui-002) — specified in area *auth-ui*
+
+**Step 4 of 8** · [auth-ui.UI-006](auth-ui.readback.md#ui-006) — specified in area *auth-ui*
+
+**Step 5 of 8**
+
+*same step as the logout click: the session ends in auth*
+
+#### REQ-002
+
+◐ ∀ **Log out** — While a user's session is Active, when the user requests logout, the system shall transition that session to LoggedOut.
 
 | Example | Given | When | Then |
 |---|---|---|---|
-| EX-006 — A locked account cannot sign in | login_failed(bob) × 5, so `isLocked("bob") and attemptsOf("bob") == 5` | login(bob, s2) — refused | refused — nothing changes |
+| EX-002 — Sign in, then out | login(alice, s1) | logout(s1) | `statusOf(sessions, "s1") == LoggedOut` |
 
-> **Left open** · [3b71c867](#3b71c867) login(charlie, s3) — the model decides, no example does
-
-> **Proof** · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
-
-<details><summary>guarded by, EARS sentence, Quint action `login`, formal claim + trace</summary>
-
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
-
-**As specified (EARS):** While `isLocked(uid)`, if the user submits valid credentials, then the system shall never let it happen.
-
-`specs/auth.qnt:L114-L127` · model `ae0ddcfe96a9`
-
-```quint
-  action login(uid: UserId, sid: SessionId): bool = all {
-    not(isLocked(uid)),
-    not(sessions.keys().contains(sid)),
-    activeSessionsOf(uid).size() == 0,          // INV-001 guard
-    sessions'          = sessions.put(sid, Active),
-    sessionOwner'      = sessionOwner.put(sid, uid),
-    accountStatus'     = accountStatus,
-    failedAttempts'    = failedAttempts.put(uid, 0),
-    userActiveSession' = userActiveSession.put(
-      uid,
-      activeSessionsOf(uid).union(Set(sid))
-    ),
-    idleFor'           = idleFor.put(sid, 0),
-  }
-```
-
-**Formal claim** (pre-state for while/old, post-state for shall):
-- **while** `isLocked(uid)`
-
-**Record:** `specs/auth.qnt:104` — the doc comment this requirement is read from.
-
-</details>
-
-#### REQ-006
-
-◐ ∀  *(failure path)* **Lockout ends active sessions** — If a failed login locks the account, then the system shall end the user's Active sessions.
-
-> _No example rows yet — nothing concrete shows this behavior._
+> **Left open** · [249ef86b](#249ef86b) logout(s3) — the model decides, no example does
 
 > **Proof** · reachable (2-step trace) · ∀ holds on every reachable step (≤3 steps) — only the shallow bound: the budget stopped the deep pass; re-run `/spec-check` with budget to deepen
 
-<details><summary>guarded by, witness, EARS sentence, Quint action `login_failed`, formal claim + trace</summary>
+<details><summary>guarded by, witness, EARS sentence, Quint action `logout`, formal claim + trace</summary>
 
-> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-004](#what-must-always-be-true) `noEarlyLockout` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
+> **Guarded by** · [INV-001](#what-must-always-be-true) `atMostOneActiveSession` ✓ (≤3 steps) · [INV-002](#what-must-always-be-true) `noSessionWhileLocked` ✓ (≤3 steps) · [INV-003](#what-must-always-be-true) `noAccessWithInvalidToken` ✓ (≤3 steps) · [INV-005](#what-must-always-be-true) `noEarlyExpiry` ✓ (≤3 steps)
 
-> **Witness:** 3 steps: login(bob, s1) → login_failed(alice) → `accountStatus[alice] = Unlocked` · `failedAttempts[alice] = 1`
+> **Witness:** 3 steps: login(bob, s1) → logout(s1) → `sessions[s1] = LoggedOut` · `userActiveSession[bob] -= {"s1"}`
 
-**As specified (EARS):** While `not(isLocked(uid))`, if a failed login locks the account, then the system shall make `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))` hold.
+**As specified (EARS):** While `isActive(sid)`, when the user requests logout, the system shall make `statusOf(sessions, sid) == LoggedOut` hold.
 
-`specs/auth.qnt:L188-L205` · model `9ed9151fee6b`
+`specs/auth.qnt:L137-L152` · model `836732874606`
 
 ```quint
-  action login_failed(uid: UserId): bool = {
-    val nextCount = attemptsOf(uid) + 1
-    val locking = nextCount >= MAX_FAILED_ATTEMPTS
-    val doomed = activeSessionsOf(uid)
+  action logout(sid: SessionId): bool = {
+    val uid = if (sessionOwner.keys().contains(sid)) sessionOwner.get(sid) else ""
     all {
-      not(isLocked(uid)),
-      sessions' = if (locking)
-                    doomed.fold(sessions, (acc, s) => acc.put(s, LoggedOut))
-                  else sessions,
+      sessions.keys().contains(sid),
+      isActive(sid),
+      sessions'          = sessions.put(sid, LoggedOut),
       sessionOwner'      = sessionOwner,
-      accountStatus'     = accountStatus.put(uid, if (locking) Locked else Unlocked),
-      failedAttempts'    = failedAttempts.put(uid, nextCount),
-      userActiveSession' = if (locking)
-                             userActiveSession.put(uid, Set())
-                           else userActiveSession,
+      accountStatus'     = accountStatus,
+      failedAttempts'    = failedAttempts,
+      userActiveSession' = userActiveSession.put(
+        uid,
+        activeSessionsOf(uid).exclude(Set(sid))
+      ),
       idleFor'           = idleFor,
     }
   }
 ```
 
 **Formal claim** (pre-state for while/old, post-state for shall):
-- **while** `not(isLocked(uid))`
-- **shall** `isLocked(uid) implies sessions.keys().forall(s => sessionOwner.get(s) != uid or not(isActive(s)))`
+- **while** `isActive(sid)`
+- **shall** `statusOf(sessions, sid) == LoggedOut`
 
-**Record:** `specs/auth.qnt:177` — the doc comment this requirement is read from.
+**Record:** `specs/auth.qnt:129` — the doc comment this requirement is read from.
 
 ```mermaid
 sequenceDiagram
-    title REQ-006 witness
+    title REQ-002 witness
     participant E as Env
     participant S as System
     E->>S: login(bob, s1)
     Note over S: failedAttempts[bob] = 0<br/>idleFor[s1] = 0<br/>sessionOwner[s1] = "bob"<br/>sessions[s1] = Active<br/>userActiveSession[bob] = {"s1"}
-    E->>S: login_failed(alice)
-    Note over S: accountStatus[alice] = Unlocked<br/>failedAttempts[alice] = 1
+    E->>S: logout(s1)
+    Note over S: sessions[s1] = LoggedOut<br/>userActiveSession[bob] -= {"s1"}
 ```
+
+</details>
+
+**Step 6 of 8** · [auth-ui.UI-005](auth-ui.readback.md#ui-005) — specified in area *auth-ui*
+
+*failure branch: a bad password keeps the form open*
+
+<details><summary>↳ Step 6 is refused in 1 case: REQ-003 Lock after repeated failures</summary>
+
+- REQ-003 — see above.
+
+</details>
+
+**Step 7 of 8** · [auth-ui.UI-003](auth-ui.readback.md#ui-003) — specified in area *auth-ui*
+
+*locked-account counterpart of the submit step*
+
+**Step 8 of 8** · [auth-ui.UI-007](auth-ui.readback.md#ui-007) — specified in area *auth-ui*
+
+*back Home from the locked notice*
 
 </details>
 
@@ -671,7 +759,7 @@ _Invariant legend: ✓ proven — inductive, holds in ALL reachable states · �
 
 ## Examples
 
-<details><summary>7 worked examples</summary>
+<details><summary>8 worked examples</summary>
 
 _Concrete cases, each a Quint `run` that `quint test` executes and the code's conformance harness replays. A witness trace shows a behavior is reachable at all; an example pins the one case it states._
 
@@ -684,6 +772,7 @@ _Concrete cases, each a Quint `run` that `quint test` executes and the code's co
 | EX-005 — A session idle for four ticks expires | login(alice, s1); then tick × 4 | expire_session(s1) | `statusOf(sessions, "s1") == Expired` | REQ-004 |
 | EX-006 — A locked account cannot sign in | login_failed(bob) × 5, so `isLocked("bob") and attemptsOf("bob") == 5` | login(bob, s2) — refused | refused — nothing changes | REQ-005 |
 | EX-007 — Three idle ticks are not enough to expire | login(alice, s1); then tick × 3, so `isActive("s1") and idleOf("s1") == 3` | expire_session(s1) — refused | refused — nothing changes | REQ-004, INV-005 |
+| EX-008 — The lockout ends a signed-in user's session | login(alice, s1); then login_failed(alice) × 4 | login_failed(alice) | `isLocked("alice") and not(isActive("s1"))` | REQ-006 |
 
 </details>
 
@@ -736,7 +825,7 @@ _One number would hide which half is missing. Each row is derived from declared 
 | Extraction coverage | — | n/a (no code) |
 | Substitutability | — | not measured — needs a parallel build and `spec-record equiv` |
 | Refusal coverage | ✓ | 1/1 rejection(s) shown by an example |
-| Examples | ✓ | 7 worked example(s) |
+| Examples | ✓ | 8 worked example(s) |
 | Behavior the examples pin | ! | 64% pinned by examples, 6 question(s) open |
 | Invariants | ✓ | 5/5 holding |
 | Adversarial review | — | never run — `/spec-check --reality` |

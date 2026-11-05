@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../schemas/journey.schema.json",
+  "name": "Fill a cart and check out",
+  "actor": "Shopper",
+  "description": "Shopper adds items, checks out while the payment gateway is down and the cart stays open, then checks out again; adding to the checked-out cart is refused. Deduced from Cart.addItem and Cart.checkout in code/legacy-cart/cart.js.",
+  "steps": [
+    { "ref": "cart.REQ-002", "note": "addItem with a new SKU" },
+    { "ref": "cart.REQ-001", "note": "addItem with the same SKU again" },
+    { "ref": "cart.REQ-004", "note": "checkout while the gateway throws: the cart stays Open" },
+    { "ref": "cart.REQ-003", "note": "after a successful checkout (no requirement covers it yet), addItem is refused" }
+  ]
+}

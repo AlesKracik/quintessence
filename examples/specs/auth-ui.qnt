@@ -306,11 +306,22 @@ module authUi {
     .then(submit_success("alice", "s1"))
     .expect(current == Dashboard and authenticated)
 
+  /// @example EX-005
+  /// Logging out from the Dashboard returns Home
+  /// @refs UI-006
   run happyPathFlow = init
     .then(click_sign_in)
     .then(submit_success("alice", "s1"))
     .then(click_logout)
     .expect(current == Home and not(authenticated))
+
+  /// @example EX-006
+  /// A bad password keeps the login form open with an error
+  /// @refs UI-005
+  run badPasswordStays = init
+    .then(click_sign_in)
+    .then(submit_invalid("bob"))
+    .expect(current == Login and form == ErrorBadCreds)
 
   /// @example EX-003
   /// Five bad passwords lock the account; the next submit shows the locked
@@ -339,11 +350,19 @@ module authUi {
     .then(session_expired)
     .expect(current == Login and not(authenticated))
 
+  /// @example EX-007
+  /// Leaving the locked notice clears the form
+  /// @refs UI-007
+  run leaveLockedNotice = lockedFlow
+    .then(go_home)
+    .expect(current == Home and form == Idle)
+
   // The "Sign in" journey (specs/journeys/sign-in.journey.json), end to
   // end: alice signs in and out; bob mistypes his password five times,
-  // which locks his account (auth's REQ-003), and his next submit lands on
-  // the locked notice. Each UI step here IS the auth step it causes, so
-  // this one run walks the journey's auth steps and its UI steps alike.
+  // which locks his account (auth's REQ-003), his next submit lands on
+  // the locked notice, and he goes back Home. Each UI step here IS the
+  // auth step it causes, so this one run walks the journey's auth steps
+  // and its UI steps alike.
   run signInJourney = init
     .then(click_sign_in)
     .then(submit_success("alice", "s1"))
@@ -356,4 +375,6 @@ module authUi {
     .then(submit_invalid("bob"))
     .then(submit_locked("bob"))
     .expect(current == LockedNotice and accountLocked("bob"))
+    .then(go_home)
+    .expect(current == Home and form == Idle)
 }

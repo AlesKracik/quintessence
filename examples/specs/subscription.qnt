@@ -418,12 +418,23 @@ module subscription {
 
   // The "Cancel a subscription" journey
   // (specs/journeys/cancel-subscription.journey.json), end to end:
-  // the first try goes unanswered, the retry succeeds, a second
-  // cancel is harmless, and the period runs out.
+  // the first try goes unanswered, the retry succeeds and is
+  // confirmed, a second cancel is harmless, the period runs out, and
+  // asking for the unused time back is refused.
   run cancelJourney = init
     .then(cancel_unanswered("alice", true))
     .then(cancel_subscription("alice", Email))
     .then(cancel_again("alice"))
     .then(expire_period("alice"))
     .expect(status.get("alice") == Expired and not(billingEnabled.get("alice")))
+    .then(request_refund("alice").fail())
+
+  // The "Provider declines a cancellation" journey
+  // (specs/journeys/cancel-declined.journey.json): the provider
+  // refuses the first try, nothing moves, and the retry goes through.
+  run declinedThenRetried = init
+    .then(cancel_declined("alice"))
+    .expect(status.get("alice") == Active and billingEnabled.get("alice"))
+    .then(cancel_subscription("alice", InApp))
+    .expect(status.get("alice") == Cancelled and not(billingEnabled.get("alice")))
 }

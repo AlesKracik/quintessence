@@ -421,4 +421,23 @@ module auth {
     .then(login_failed("bob"))
     .expect(isLocked("bob") and attemptsOf("bob") == 5)
     .then(login("bob", "s2").fail())
+
+  /// @example EX-008
+  /// The lockout ends a signed-in user's session
+  /// @refs REQ-006
+  run lockoutEndsSession = init
+    .then(login("alice", "s1"))
+    .then(login_failed("alice"))
+    .then(login_failed("alice"))
+    .then(login_failed("alice"))
+    .then(login_failed("alice"))
+    .then(login_failed("alice"))
+    .expect(isLocked("alice") and not(isActive("s1")))
+
+  // The "Locked out" journey (specs/journeys/locked-out.journey.json):
+  // alice is signed in when five bad passwords are tried on her account.
+  // The fifth locks it and ends her live session, and her next sign-in
+  // is refused.
+  run lockoutJourney = lockoutEndsSession
+    .then(login("alice", "s2").fail())
 }
