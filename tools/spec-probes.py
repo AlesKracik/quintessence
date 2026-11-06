@@ -83,7 +83,8 @@ from itf_tools import (area_json_path, param_slots,  # noqa: E402
                        witness_exempt, is_computed, verdict_ghost,
                        verdict_label)
 from quint_ir import (parse_qnt, zero_value as _ir_zero,  # noqa: E402
-                      record_var_fields, split_record_literal)
+                      record_var_fields, split_record_literal,
+                      _split_if, _match_close, _split_top, _unparen)
 from completeness import (requirement_checks,  # noqa: E402
                           env_at_init, step_actions, env_analysis,
                           action_writes, units_overlap,
@@ -385,28 +386,79 @@ def env_init(area, ir, text, domains):
     return lines, finals, init_items
 
 
+def _match_parts(e):
+    """(scrutinee, [(pattern, body), ...]) of `match x { | A => a | ... }`
+    spanning all of `e`, or None."""
+    m = re.match(r"match\b", e)
+    if not m:
+        return None
+    k = e.find("{", m.end())
+    if k < 0 or _match_close(e, k) != len(e) - 1:
+        return None
+    scrutinee, parts = e[m.end():k], []
+    if any(c in scrutinee for c in "{}"):
+        return None
+    for arm in (a for a in _split_top(e[k + 1:-1], "|") if a.strip()):
+        pat, sep, body = arm.partition("=>")
+        if not sep:
+            return None
+        parts.append((pat.strip(), body.strip()))
+    return scrutinee, parts
+
+
 def _keyed_by(p, assigns):
     """Whether the env action is applied once PER `p`: some unit it sets is
     written at key `p` (`u.set(p, …)`, `u.put(p, …)`, `u.union(Set(p))`,
     `u.exclude(Set(p))`), and every unit whose value mentions `p` is written
-    that way. Anything else — `flag: on`, `cfg: TABLE.get(on)` — uses `p` as
-    a VALUE: folding over its domain would leave one fixed value, the fold's
-    last, where the trace must pick one. In doubt, it is a value."""
+    that way — directly, or on every branch of an `if` / `match` whose
+    condition does not read `p` (a branch may leave the unit as it is).
+    Where no unit is written at `p` — `flag: on`, `cfg: TABLE.get(on)` — `p`
+    is a VALUE: folding over its domain would leave one fixed value, the
+    fold's last, where the trace must pick one.
+
+    Raises ValueError (naming the value units) when some units are written
+    at `p` and others use it as a value: once per key fixes the value units,
+    once sets the keyed ones at one key, so both readings drop initial
+    states and neither is guessed."""
     name = re.escape(p)
-    per_key = 0
-    for u, v in assigns.items():
-        if not re.search(rf"(?<![\w.]){name}(?!\w)", v):
-            continue
+    mentions = lambda e: re.search(rf"(?<![\w.]){name}(?!\w)", e) is not None
+
+    def per_key(u, v):
+        """`v` writes unit `u` at key `p` on every path: a per-key write,
+        or an `if` whose condition does not read `p` and whose branches
+        each are one (or leave `u` as it is)."""
+        v = _unparen(v)
+        same = lambda b: re.sub(r"\s+", "", _unparen(b)) == re.sub(r"\s+", "", u)
+        br = _split_if(v)
+        if br:
+            m = re.match(r"if\s*\(", v)
+            close = _match_close(v, m.end() - 1)
+            if close < 0 or mentions(v[m.end():close]):
+                return False
+            return all(same(b) or per_key(u, b) for b in br)
+        arms = _match_parts(v)
+        if arms is not None:
+            scrutinee, parts = arms
+            # The scrutinee reads `p`, or a pattern rebinds it: not per key.
+            if mentions(scrutinee) or any(mentions(pat) for pat, _ in parts):
+                return False
+            return all(same(b) or per_key(u, b) for _, b in parts)
         own = re.escape(u)
         if not re.fullmatch(
                 rf"\s*{own}\s*\.\s*(?:(?:set|put)\(\s*{name}\s*,.*\)"
                 rf"|(?:union|exclude)\(\s*Set\(\s*{name}\s*\)\s*\))\s*", v, re.S):
             return False
         # The key appears once, as the key: not inside the new value too.
-        if len(re.findall(rf"(?<![\w.]){name}(?!\w)", v)) != 1:
-            return False
-        per_key += 1
-    return per_key > 0
+        return len(re.findall(rf"(?<![\w.]){name}(?!\w)", v)) == 1
+
+    using = {u: v for u, v in assigns.items() if mentions(v)}
+    keyed = {u for u, v in using.items() if per_key(u, v)}
+    if keyed and keyed != set(using):
+        # Some units are written at key `p`, others use it as a value: no
+        # reading is sound (once per key fixes the value units; once fixes
+        # the keyed ones to one key), so neither is guessed.
+        raise ValueError(", ".join(sorted(set(using) - keyed)))
+    return bool(keyed)
 
 
 def _env_fold(action, where, own, ignore, decls, params, domains, init_vals,
@@ -452,7 +504,12 @@ def _env_fold(action, where, own, ignore, decls, params, domains, init_vals,
     ps = params.get(action) or []
     mapping = {u: f"_acc.{u}" for u in own if "." not in u}
     keydom = None
-    keyed = bool(ps) and _keyed_by(ps[0][0], assigns)
+    try:
+        keyed = bool(ps) and _keyed_by(ps[0][0], assigns)
+    except ValueError as e:
+        fail(f"{where}: it writes some units at key `{ps[0][0]}` and uses it as "
+             f"a value in others ({e}), so neither once per key nor once is "
+             f"sound. " + hint)
     for i, (pname, ptype) in enumerate(ps):
         dom = domain_for(pname, ptype, domains)
         if dom is None:
