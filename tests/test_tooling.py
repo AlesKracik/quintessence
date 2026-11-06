@@ -6362,3 +6362,80 @@ def test_a_title_longer_than_a_label_is_rejected_by_the_schema():
     assert not list(v.iter_errors(area("x" * 36)))
     assert any("too long" in e.message for e in v.iter_errors(area("x" * 37)))
 
+
+
+# ── State slices (tools/state_slice.py): spec-record and spec-lint ──────────
+
+def _big_project(tmp_path, quint_cfg=None):
+    from test_check_speed import _big
+    specs, cm, ptext = _big(tmp_path)
+    if quint_cfg is not None:
+        (tmp_path / ".spec" / "project.json").write_text(json.dumps(
+            {"project": "p", "areas": [{"name": "big", "kind": "area"}],
+             "quint": quint_cfg}), encoding="utf-8")
+    return specs
+
+
+def _check_big(tmp_path, monkeypatch, fake_verify, only="REQ-002"):
+    monkeypatch.setattr(record, "find_quint", lambda: "quint")
+    monkeypatch.setattr(record, "quint_supports", lambda *a, **k: False)
+    monkeypatch.setattr(record, "run_verify", fake_verify)
+    args = _Args(tmp_path, "big")
+    args.no_witness, args.only, args.parallel = False, only, 1
+    with pytest.raises(SystemExit):
+        record.cmd_check(args)
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_quint_slice_state_switches_the_frozen_model_copy(tmp_path, monkeypatch, on):
+    specs = _big_project(tmp_path, None if on else {"slice_state": False})
+    seen = {}
+
+    def fake(quint, target, name, *a, **k):
+        seen[name] = Path(target).read_text(encoding="utf-8")
+        return "verified", "", 0.1
+
+    _check_big(tmp_path, monkeypatch, fake)
+    text = seen["oblig_REQ_002"]
+    assert ("State frozen at init (outside this check's cone): "
+            "st.big, st.stamp, st.x, st.z" in text) == on
+    assert ('import big_cone_oblig_REQ_002.* from "./big_cone_oblig_REQ_002"'
+            in text) == on
+    assert ('import big.* from "../../../big"' in text) == (not on)
+    assert (specs / "big" / "gen" / "slices" / "big_cone_oblig_REQ_002.qnt").exists() == on
+
+
+def test_a_sliced_counterexample_that_does_not_replay_is_re_proven_whole(
+        tmp_path, monkeypatch):
+    """Never taken on trust: a counterexample of a state slice that does not
+    replay through the full model is re-run on the whole probe module, and
+    that run's answer is the verdict."""
+    specs = _big_project(tmp_path)
+    calls = []
+
+    def fake(quint, target, name, *a, out_itf=None, **k):
+        calls.append((name, Path(target).name))
+        if name == "oblig_REQ_002" and out_itf:
+            # A step stepP has no branch for: the replay cannot rebuild it.
+            Path(out_itf).parent.mkdir(parents=True, exist_ok=True)
+            Path(out_itf).write_text(json.dumps({"#meta": {}, "vars": [], "states": [
+                {"_lastAction": "init", "st": {}}, {"_lastAction": "nope", "st": {}}]}),
+                encoding="utf-8")
+            return "counterexample", "", 0.1
+        return "verified", "", 0.1
+
+    monkeypatch.setattr(record, "need_quint", lambda: "quint", raising=False)
+    _check_big(tmp_path, monkeypatch, fake)
+    ob = [t for n, t in calls if n == "oblig_REQ_002"]
+    assert ob[:2] == ["big_probes_slice_oblig_REQ_002.qnt", "big.probes.qnt"], calls
+
+
+def test_lint_cost_names_the_state_outside_most_cones(tmp_path):
+    _big_project(tmp_path)
+    p = subprocess.run([sys.executable, str(TOOLS / "spec-lint.py"), "big",
+                        "--root", str(tmp_path), "--cost"],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    out = p.stdout
+    assert "state cones: 8 checks over 5 state units; largest cone 3 (witness_REQ_004)" in out, out
+    assert "`st.stamp` is outside 8 of 8 checks' cones" in out
+    assert "`st.big` is outside 2 of 8 checks' cones" in out

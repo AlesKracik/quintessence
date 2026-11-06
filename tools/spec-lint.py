@@ -2432,7 +2432,7 @@ def cost_report(root, area_data, sidecar):
         return None
     fm = area_data.get("formal_model") or {}
     consts = _decl_bodies(text)
-    rep = {"ghosts": None, "largest_slice": None, "branching": None,
+    rep = {"ghosts": None, "largest_slice": None, "cones": None, "branching": None,
            "factors": [], "growing_maps": [], "powerset": [], "counters": [],
            "fold_sets": [], "env_eligible": []}
     domains = fm.get("probe_domains") or {}
@@ -2479,6 +2479,7 @@ def cost_report(root, area_data, sidecar):
                     if m:
                         sizes.append(int(m.group(1)))
                 rep["largest_slice"] = max(sizes) if sizes else None
+                rep["cones"] = state_cones(ptext, sp, sidecar, area_data)
             except (ImportError, KeyError, OSError, AttributeError, SyntaxError):
                 pass
 
@@ -2547,6 +2548,41 @@ def cost_report(root, area_data, sidecar):
         if uses == as_step and all(o.strip() in ("", var) or var not in o for o in olds):
             rep["counters"].append(var)
     return rep
+
+
+def state_cones(ptext, sp, sidecar, area_data):
+    """Per check, the model state its claim can depend on (its cone,
+    tools/state_slice.py): what /spec-check keeps of the model when it runs
+    that check, everything else frozen at init. None when the model cannot
+    be state-sliced (more than one module in its file, or a multi-module
+    probe module)."""
+    import state_slice
+    path = Path(sidecar["file"])
+    mtext = path.read_text(encoding="utf-8")
+    if (len(re.findall(r"(?m)^\s*module \w+", mtext)) != 1
+            or state_slice.model_import(ptext) is None):
+        return None
+    cm = state_slice.ConeModel(mtext, sidecar["ir"], ptext, path.parent)
+    universe = cm.universe()
+    if not universe:
+        return None
+    cones = {}
+    for n in re.findall(r"^  val (\w+)\s*:", ptext, re.M):
+        if n.startswith(("oblig_", "witness_", "cover_", "explain_", "verdict_")):
+            cones[n] = state_slice.probe_cone(
+                cm, sp.slice_text(ptext, [n], "s", "."), n).cone
+    for inv in area_data.get("invariants") or []:
+        q = inv.get("quint_name")
+        if q and (inv.get("over") or "model") == "model" and q in cm.decls:
+            cones[q] = state_slice.model_cone(cm, sidecar["ir"], q).cone
+    if not cones:
+        return None
+    big = max(cones, key=lambda n: (len(cones[n]), n))
+    outside = sorted(((sum(u not in c for c in cones.values()), u) for u in universe),
+                     key=lambda t: (-t[0], t[1]))
+    return {"checks": len(cones), "units": len(universe),
+            "largest": (big, len(cones[big])),
+            "outside": [(u, k) for k, u in outside if k]}
 
 
 def check_cost(root, area_data, sidecar, area_name, findings, report=None):
@@ -2628,6 +2664,14 @@ def print_cost(rep, area_name):
               f"slice {rep['largest_slice'] if rep['largest_slice'] is not None else '?'}")
     else:
         print("  probe module: not generated yet (tools/spec-probes.py)")
+    cones = rep.get("cones")
+    if cones:
+        big, n = cones["largest"]
+        print(f"  state cones: {cones['checks']} checks over {cones['units']} state "
+              f"units; largest cone {n} ({big}) — each check runs with the rest "
+              f"frozen at init")
+        for unit, k in cones["outside"][:5]:
+            print(f"    `{unit}` is outside {k} of {cones['checks']} checks' cones")
     if rep["branching"] is not None:
         print(f"  branching: ≈{rep['branching']:,} steps from one state")
         for prod, action, parts in rep["factors"]:

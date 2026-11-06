@@ -1325,6 +1325,56 @@ def cmd_check(args):
     slice_dir = root / "specs" / args.area / "gen" / "slices"
     slices = {}
     slice_lock = threading.Lock()
+    # And per check, the model state its claim can depend on (its cone,
+    # tools/state_slice.py): everything else is frozen at init in a copy of
+    # the area model the slice imports. quint.slice_state: false turns it
+    # off; the verdicts are the same either way.
+    slice_state = quint_cfg.get("slice_state", True)
+    state_slices = {}          # check val -> (Slice, its ghost-only slice text)
+    cone_cache = {}
+
+    def cone_model():
+        if "cm" not in cone_cache:
+            cm = None
+            try:
+                ss = load_tool("state_slice.py", "state_slice")
+                mtext = qnt_file.read_text(encoding="utf-8")
+                # One module per file: a copy is renamed by its module line.
+                if model_ir and len(re.findall(r"(?m)^\s*module \w+", mtext)) == 1:
+                    cm = ss.ConeModel(
+                        mtext, model_ir,
+                        probes_file.read_text(encoding="utf-8")
+                        if probes_file and probes_file.exists() else None,
+                        qnt_file.parent)
+            except (OSError, ValueError, KeyError, AttributeError) as e:
+                print(f"{'slice':<12} state not sliced ({e})", flush=True)
+            cone_cache["cm"] = cm
+        return cone_cache["cm"]
+
+    def model_module():
+        return (model_ir or {}).get("module_name") or args.area.replace("-", "_")
+
+    def state_slice_probe(val, text):
+        """The ghost slice `text` retargeted at a copy of the model with
+        everything outside `val`'s cone frozen; `text` unchanged when
+        nothing can be frozen."""
+        cm = cone_model() if slice_state else None
+        if cm is None:
+            return text
+        ss = load_tool("state_slice.py", "state_slice")
+        imp = ss.model_import(text)
+        if not imp or (slice_dir / (imp[2] + ".qnt")).resolve() != qnt_file.resolve():
+            return text
+        sl = ss.probe_cone(cm, text, val)
+        if not sl.frozen:
+            return text
+        mname = f"{model_module()}_cone_{val}"
+        prefix = Path(os.path.relpath(qnt_file.parent, slice_dir)).as_posix()
+        (slice_dir / f"{mname}.qnt").write_text(
+            ss.sliced_model_text(cm, sl, mname, prefix, ("init", "initP")),
+            encoding="utf-8")
+        state_slices[val] = (sl, text)
+        return ss.retarget(text, sl, mname, f"./{mname}")
 
     def slice_for(val):
         if not (slice_enabled and probes_file and probes_file.exists()):
@@ -1341,14 +1391,98 @@ def cmd_check(args):
                 prefix = Path(os.path.relpath(probes_file.parent, slice_dir))
                 slice_dir.mkdir(parents=True, exist_ok=True)
                 target = slice_dir / f"{name}.qnt"
-                target.write_text(sp.slice_text(text, [val], name, prefix.as_posix()),
-                                  encoding="utf-8")
+                out = sp.slice_text(text, [val], name, prefix.as_posix())
+                try:
+                    out = state_slice_probe(val, out)
+                except (KeyError, AttributeError, OSError, ValueError) as e:
+                    state_slices.pop(val, None)
+                    print(f"{'slice':<12} {val}: state not sliced ({e})", flush=True)
+                target.write_text(out, encoding="utf-8")
             except (KeyError, AttributeError, OSError, ValueError) as e:
                 print(f"{'slice':<12} {val}: {e} — checked against the whole "
                       f"probe module", flush=True)
                 target = probes_file
             slices[val] = target
             return target
+
+    model_slices = {}
+
+    def model_slice_for(qname):
+        """A model invariant's own copy of the model, everything outside its
+        cone frozen; the model itself when nothing can be."""
+        with slice_lock:
+            if qname in model_slices:
+                return model_slices[qname][0]
+            target, sl = qnt_file, None
+            cm = cone_model() if (slice_enabled and slice_state) else None
+            if cm is not None:
+                try:
+                    ss = load_tool("state_slice.py", "state_slice")
+                    sl = ss.model_cone(cm, model_ir, qname)
+                    if sl.frozen:
+                        mname = f"{model_module()}_cone_{qname}"
+                        prefix = Path(os.path.relpath(qnt_file.parent, slice_dir)).as_posix()
+                        slice_dir.mkdir(parents=True, exist_ok=True)
+                        target = slice_dir / f"{mname}.qnt"
+                        target.write_text(ss.sliced_model_text(cm, sl, mname, prefix),
+                                          encoding="utf-8")
+                except (KeyError, AttributeError, OSError, ValueError) as e:
+                    print(f"{'slice':<12} {qname}: state not sliced ({e})", flush=True)
+                    target, sl = qnt_file, None
+            model_slices[qname] = (target, sl)
+            return target
+
+    def unslice_trace(val, trace_path):
+        """A counterexample of `val`'s state-sliced probe slice, made a trace
+        of the REAL model: replayed through the full model (irrelevant steps
+        dropped, cone asserted, `val` falsified at the end) and written back
+        with the frozen state re-derived. True when the trace on disk is the
+        real model's — also when nothing was frozen; False when it did not
+        replay, and the check must be re-run on the whole probe module."""
+        if val not in state_slices:
+            return True
+        sl, ghost_text = state_slices[val]
+        ss = load_tool("state_slice.py", "state_slice")
+        wr = load_tool("witness_replay.py", "witness_replay")
+        path = Path(trace_path)
+        try:
+            trace = json.loads(path.read_text(encoding="utf-8"))
+            mod = f"{model_module()}_replay_{val}"
+            module, run, _n = ss.replay_module(cone_model(), sl, ghost_text, mod,
+                                               trace, val)
+        except (OSError, ValueError, KeyError, wr.Unreplayable) as e:
+            print(f"{'slice':<12} {val}: trace not replayed ({e}) — re-proving "
+                  f"on the whole probe module", flush=True)
+            return False
+        rdir = slice_dir / "replay"
+        rdir.mkdir(parents=True, exist_ok=True)
+        src = slice_dir / f"{mod}.qnt"
+        src.write_text(module, encoding="utf-8")
+        out = rdir / f"{val}.itf.json"
+        out.unlink(missing_ok=True)
+        cmd = [need_quint(), "test", str(src), "--match", f"^{run}$",
+               f"--out-itf={rdir}/{val}.itf.json"]
+        if quint_supports(need_quint(), "test", "--max-samples"):
+            cmd.append("--max-samples=1")
+        try:
+            proc = run_group(cmd, timeout=timeout)
+            passed = wr.parse_test_output((proc.stdout or "") + (proc.stderr or "")
+                                          ).get(run) == "passed"
+        except subprocess.TimeoutExpired:
+            passed = False
+        if not (passed and out.exists()):
+            print(f"{'slice':<12} {val}: trace did not replay through the full "
+                  f"model — re-proving on the whole probe module", flush=True)
+            return False
+        real = json.loads(out.read_text(encoding="utf-8"))
+        meta = dict(trace.get("#meta") or {})
+        meta["state_slice"] = ("found on a state slice (frozen: "
+                               + ", ".join(sorted(sl.frozen))
+                               + "); replayed through the full model")
+        real["#meta"] = meta
+        path.write_text(json.dumps(real, separators=(",", ":")), encoding="utf-8")
+        restore_names(path)
+        return True
 
     # The probe module carries parameters in slots (one ghost per type
     # position); every trace this run writes from it is restored to
@@ -1585,16 +1719,34 @@ def cmd_check(args):
                 and quint_supports(need_quint(), "verify", "--server"))
 
     def bounded_verify(job, steps):
-        target = (slice_for(job["quint_name"]) if job["over"] == "probes"
+        name = job["quint_name"]
+        target = (slice_for(name) if job["over"] == "probes"
+                  else model_slice_for(name) if job["target"] == qnt_file
                   else job["target"])
-        result, detail, duration = run_verify(
-            need_quint(), target, job["quint_name"], steps, timeout,
-            init=job["init"], step=job["step"], out_itf=job["cex_path"],
-            no_server=server_off(), endpoint=endpoint())
-        if result == "timeout":
-            server_state["dirty"] = True
-        if result == "counterexample" and job["over"] == "probes":
-            restore_names(job["cex_path"])
+
+        def once(target):
+            result, detail, duration = run_verify(
+                need_quint(), target, name, steps, timeout,
+                init=job["init"], step=job["step"], out_itf=job["cex_path"],
+                no_server=server_off(), endpoint=endpoint())
+            if result == "timeout":
+                server_state["dirty"] = True
+            if result == "counterexample" and job["over"] == "probes":
+                restore_names(job["cex_path"])
+            return result, detail, duration
+
+        result, detail, duration = once(target)
+        if result == "counterexample":
+            # A state-sliced counterexample is never taken on trust: it is
+            # replayed through the full model, or the check is re-run on it.
+            if job["over"] == "probes" and not unslice_trace(name, job["cex_path"]):
+                result, detail, more = once(job["target"])
+                duration += more
+            elif job["over"] != "probes" and target != job["target"]:
+                print(f"{'slice':<12} {name}: violated on its state slice — "
+                      f"re-running on the whole model for the real trace", flush=True)
+                result, detail, more = once(job["target"])
+                duration += more
         return result, detail, duration
 
     items_by_id = {it.get("id"): it
@@ -2060,6 +2212,9 @@ def cmd_check(args):
         if r != "counterexample":
             return None
         restore_names(trace_path)
+        if not unslice_trace(pname, trace_path):
+            Path(trace_path).unlink(missing_ok=True)
+            return None
         trace, errs = load_trace(trace_path)
         action, pg = event_probes[pname]
         if errs or not simulated_witness_ok(trace, action, pg):
@@ -2074,14 +2229,22 @@ def cmd_check(args):
         if sim is not None:
             return sim
         found[str(trace_path)] = ("apalache", steps)
-        result, detail, duration = run_verify(
-            need_quint(), slice_for(pname), pname, steps, timeout,
-            init="initP", step="stepP", out_itf=trace_path,
-            no_server=server_off(), endpoint=endpoint())
-        if result == "timeout":
-            server_state["dirty"] = True
-        if result == "counterexample":
-            restore_names(trace_path)
+
+        def once(target):
+            result, detail, duration = run_verify(
+                need_quint(), target, pname, steps, timeout,
+                init="initP", step="stepP", out_itf=trace_path,
+                no_server=server_off(), endpoint=endpoint())
+            if result == "timeout":
+                server_state["dirty"] = True
+            if result == "counterexample":
+                restore_names(trace_path)
+            return result, detail, duration
+
+        result, detail, duration = once(slice_for(pname))
+        if result == "counterexample" and not unslice_trace(pname, trace_path):
+            result, detail, more = once(probes_file)
+            duration += more
         return result, detail, duration
 
     def probe_order_key(item):

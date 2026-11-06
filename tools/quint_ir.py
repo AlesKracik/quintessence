@@ -1411,13 +1411,15 @@ def _read_fields(body, self_name, fields, decls, depth=0):
     import spec_source
     code = spec_source._code_only(body or "")
     out = set()
-    for m in re.finditer(rf"(?<![\w.]){re.escape(self_name)}(?![\w'])", code):
+    for m in re.finditer(rf"(?:(?<=\.\.\.)|(?<![\w.])){re.escape(self_name)}(?![\w'])",
+                         code):
         before, after = code[:m.start()], code[m.end():]
-        if before.rstrip().endswith("..."):
-            continue
+        # A field first: `...st.items` spreads a FIELD, which reads it.
         fm = re.match(r"\s*\.\s*([A-Za-z_]\w*)(?!\s*\()", after)
         if fm and fm.group(1) in fields:
             out.add(fm.group(1))
+            continue
+        if before.rstrip().endswith("..."):
             continue
         if (re.search(rf"(?<![\w.]){re.escape(self_name)}'\s*=\s*$", before)
                 and re.match(r"\s*(,|}|\)|$)", after)):
