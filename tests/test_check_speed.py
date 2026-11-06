@@ -1512,3 +1512,350 @@ def test_a_spread_of_a_field_is_a_read_of_that_field(tmp_path):
         reads = quint_ir.parse_qnt(p, engine)["action_field_reads"]
         assert reads["a2"] == {"st": ["big", "x"]}, engine
         assert reads["gated"] == {"st": ["big"]}, engine
+
+
+# ── 6. Per-field cones (follow-up to §5) ────────────────────────────────────
+#
+# A record state whose expensive field is written by a helper returning the
+# new state, alongside a field nearly every check reads. Closed per action,
+# `f` reading `big` to rebuild `big` put big in every cone; closed per
+# written field it is in only the cones that read it.
+
+SD = '''module sd {
+  type State = { a: int, b: int, big: Set[int] }
+  var st: State
+  pure def expensive(bg: Set[int], n: int): Set[int] = bg.union(Set(n))
+  pure def h(s0: State): State = { ...s0, a: s0.a + 1, big: expensive(s0.big, s0.a) }
+  action init = { st' = { a: 0, b: 0, big: Set() } }
+  /// @req REQ-001
+  /// Filling bumps a. (Seeded: f stutters once a reaches 2.)
+  /// @status specified
+  /// @old before: int = st.a
+  /// @shall st.a == before + 1
+  action f: bool = GUARD st' = RHS
+  /// @req REQ-002
+  /// Bumping b adds one.
+  /// @status specified
+  /// @old before: int = st.b
+  /// @shall st.b == before + 1
+  action g: bool = all { st.b < 2, st' = { ...st, b: st.b + 1 } }
+  /// @req REQ-003
+  /// The bag stays small.
+  /// @status specified
+  /// @shall st.big.size() <= 3
+  action f2: bool = all { st.a > 0, st' = h(st) }
+  action step = any { f, g, f2 }
+}
+'''
+SD_HELPER = "pure def h(s0: State): State = { ...s0, a: s0.a + 1, big: expensive(s0.big, s0.a) }"
+
+
+def _sd(tmp_path, guard="", rhs="if (st.a < 2) h(st) else st", helper=None):
+    """(model text, ConeModel, probe module text) for an SD variant."""
+    import spec_source
+    import state_slice
+    from quint_ir import parse_qnt
+    text = SD.replace("GUARD ", f"all {{ {guard}, " if guard else "") \
+             .replace("RHS", rhs + (" }" if guard else ""))
+    if helper:
+        text = text.replace(SD_HELPER, helper)
+    (tmp_path / "sd.qnt").write_text(text, encoding="utf-8")
+    ir = parse_qnt(tmp_path / "sd.qnt")
+    area = {"kind": "area", "area": "sd", "formal_model": {"quint_file": "sd.qnt"}}
+    area.update(spec_source.derive_records(text, "sd.qnt")[0])
+    ptext = "\n".join(probes.build(area, "sd", ir, "sd.qnt", text=text)).rstrip() + "\n"
+    (tmp_path / "sd.probes.qnt").write_text(ptext, encoding="utf-8")
+    return text, state_slice.ConeModel(text, ir, ptext, tmp_path), ptext
+
+
+def _frozen_action(cm, sl, name):
+    text, _n = cm.frozen_text(sl.frozen, cm.init_actions(["init", "initP"]))
+    return next(ln for ln in text.splitlines() if ln.strip().startswith(f"action {name}"))
+
+
+def test_a_field_rebuilt_from_itself_through_a_helper_is_frozen_and_not_encoded(tmp_path):
+    """f reads big only to rebuild big (through h). A check reading `a`
+    freezes big, and the sliced f no longer calls h or `expensive`: the
+    helper is inlined and the frozen field's expression dropped."""
+    _t, cm, ptext = _sd(tmp_path)
+    sl = _cone(cm, ptext, "oblig_REQ_001")
+    assert sl.cone == {"st.a"} and sl.frozen == {"st.b", "st.big"}
+    f = _frozen_action(cm, sl, "f")
+    assert f.endswith("st' = if (st.a < 2) ({ ...st, a: st.a + 1 }) else st"), f
+    assert "expensive" not in f and "h(" not in f
+    # A check of big keeps it, and a, which big is built from.
+    assert {"st.big", "st.a"} <= _cone(cm, ptext, "oblig_REQ_003").cone
+
+
+def test_a_field_computed_from_the_expensive_one_keeps_it(tmp_path):
+    _t, cm, ptext = _sd(tmp_path, helper=SD_HELPER.replace("a: s0.a + 1", "a: s0.a + s0.big.size()"))
+    assert _cone(cm, ptext, "oblig_REQ_001").cone == {"st.a", "st.big"}
+
+
+def test_a_guard_reading_the_expensive_field_keeps_it(tmp_path):
+    _t, cm, ptext = _sd(tmp_path, guard="not(st.big.contains(9))")
+    assert _cone(cm, ptext, "oblig_REQ_001").cone == {"st.a", "st.big"}
+
+
+@pytest.mark.parametrize("cond,kept", [("st.big.size() > 0", True), ("st.a > 0", False)])
+def test_the_condition_of_a_conditional_new_state_is_a_dependency(tmp_path, cond, kept):
+    _t, cm, ptext = _sd(tmp_path, rhs=f"if ({cond}) {{ ...st, a: 1 }} else {{ ...st, a: 2, big: Set(1) }}")
+    sl = _cone(cm, ptext, "oblig_REQ_001")
+    assert ("st.big" in sl.cone) == kept
+
+
+def test_an_expression_that_cannot_be_taken_apart_falls_back_to_every_read(tmp_path):
+    _t, cm, ptext = _sd(tmp_path, helper="pure def h(s0: State): State = Map(1 -> s0).get(1)")
+    assert cm.unit_deps("f", "st.a") == cm.action_reads("f")
+    assert _cone(cm, ptext, "oblig_REQ_001").frozen == set()
+
+
+def test_a_helper_is_not_inlined_where_binding_it_would_capture_a_name():
+    import spec_source
+    import state_slice
+    decls = spec_source.declarations('''module m {
+  pure def h(s0: S, n: int): S = { ...s0, a: s0.xs.fold(0, (acc, i) => acc + i + n) }
+}
+''')
+    assert state_slice._inline_call("h(st, k)", decls) == \
+        "{ ...st, a: st.xs.fold(0, (acc, i) => acc + i + k) }"
+    # `i` is the fold's own parameter: bound to it, the argument would change meaning.
+    assert state_slice._inline_call("h(st, i)", decls) is None
+
+
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
+def test_per_field_slices_give_every_check_the_verdict_the_whole_model_gives(tmp_path):
+    """Every check of SD, state-sliced and not. REQ-001 is violated (f
+    stutters once a reaches 2), in a model whose checks of a freeze big."""
+    from concurrent.futures import ThreadPoolExecutor
+    import state_slice
+    _t, cm, ptext = _sd(tmp_path)
+    sd = tmp_path / "sd" / "gen" / "slices"
+    sd.mkdir(parents=True)
+    jobs = []
+    for n in re.findall(r"(?m)^  val (\w+)\s*:", ptext):
+        if not n.startswith(("oblig_", "witness_", "cover_", "explain_", "verdict_")):
+            continue
+        mod = probes.slice_module_name("sd_probes", n)
+        text = probes.slice_text(ptext, [n], mod, "../../..")
+        sl = state_slice.probe_cone(cm, text, n)
+        if sl.frozen:
+            mname = f"sd_cone_{n}"
+            (sd / f"{mname}.qnt").write_text(
+                state_slice.sliced_model_text(cm, sl, mname, "../../..", ("init", "initP")),
+                encoding="utf-8")
+            text = state_slice.retarget(text, sl, mname, f"./{mname}")
+        (sd / f"{mod}.qnt").write_text(text, encoding="utf-8")
+        jobs.append((n, sd / f"{mod}.qnt", sl.frozen))
+    assert any("st.big" in j[2] for j in jobs)
+    with ThreadPoolExecutor(4) as ex:
+        got = list(ex.map(lambda j: (j[0], _verdict(j[1], j[0]),
+                                     _verdict(tmp_path / "sd.probes.qnt", j[0])), jobs))
+    for name, sliced, whole in got:
+        assert sliced == whole, name
+    by = {n: s for n, s, _w in got}
+    assert by["oblig_REQ_001"] == "violated" and by["oblig_REQ_002"] == "holds"
+
+
+# ── 7. A state-sliced trace replays from its own state 0 ────────────────────
+
+ENV0 = '''module env0 {
+  type Key = str
+  type Val = int
+  var cfg: Key -> Val
+  var x: int
+  var noise: int
+  pure val KS = Set("k1", "k2")
+  pure val VS = Set(1, 2)
+  action init = all { cfg' = KS.mapBy(_ => 1), x' = 0, noise' = 0 }
+  /// @env the operator sets each key before anything runs
+  action env_cfg(k: Key, v: Val): bool = all { cfg' = cfg.set(k, v), x' = x, noise' = noise }
+  /// @req REQ-001
+  /// Bumping copies k1's setting.
+  /// @status specified
+  /// @shall x == cfg.get("k1")
+  action bump: bool = all { x' = cfg.get("k1"), cfg' = cfg, noise' = noise }
+  /// @verdict GAP
+  /// Noise is bookkeeping.
+  action jitter: bool = all { noise < 2, noise' = noise + 1, cfg' = cfg, x' = x }
+  action step = {
+    nondet k = oneOf(KS)
+    nondet v = oneOf(VS)
+    any { env_cfg(k, v), bump, jitter }
+  }
+}
+'''
+ENV0_INTENT = {"kind": "area", "area": "env0", "version": "0.1.0", "status": "structured",
+               "formal_model": {"quint_file": "env0.qnt", "probes_file": "env0.probes.qnt",
+                                "probe_domains": {"Key": "KS", "Val": "VS"},
+                                "env_at_init": ["env_cfg"]}}
+
+
+def _env0(tmp_path):
+    import json
+    import spec_source
+    import state_slice
+    from quint_ir import parse_qnt
+    specs = tmp_path / "specs"
+    specs.mkdir(parents=True)
+    (tmp_path / ".spec").mkdir()
+    (tmp_path / ".spec" / "project.json").write_text(json.dumps(
+        {"project": "p", "areas": [{"name": "env0", "kind": "area"}]}), encoding="utf-8")
+    (specs / "env0.qnt").write_text(ENV0, encoding="utf-8")
+    (specs / "env0.intent.json").write_text(json.dumps(ENV0_INTENT), encoding="utf-8")
+    area = dict(ENV0_INTENT)
+    area.update(spec_source.derive_records(ENV0, "env0.qnt")[0])
+    ir = parse_qnt(specs / "env0.qnt")
+    ptext = "\n".join(probes.build(area, "env0", ir, "env0.qnt", text=ENV0)).rstrip() + "\n"
+    (specs / "env0.probes.qnt").write_text(ptext, encoding="utf-8")
+    return specs, state_slice.ConeModel(ENV0, ir, ptext, specs), ptext
+
+
+def test_an_env_init_with_several_states_is_what_the_replay_must_start_from(tmp_path):
+    _specs, cm, ptext = _env0(tmp_path)
+    init = ptext[ptext.index("action initP"):ptext.index("action stepP")]
+    assert "nondet _env_env_cfg_v = oneOf(setOfMaps(KS, VS))" in init
+    sl = _cone(cm, ptext, "witness_REQ_001")
+    assert sl.frozen == {"noise"} and sl.cone == {"cfg", "x"}
+
+
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
+def test_a_sliced_trace_replays_from_its_own_state_0(tmp_path):
+    """initP has four states (k1, k2 each 1 or 2). A sliced witness whose
+    state 0 is k1 = k2 = 2 — the one sampling hits least, under any seed —
+    replays from that very state: the written trace starts there, counts
+    #meta.index from 0, and re-derives the frozen noise."""
+    import json
+    import state_slice
+    import witness_replay
+    specs, cm, ptext = _env0(tmp_path)
+    name = "witness_REQ_001"
+    mod = probes.slice_module_name("env0_probes", name)
+    sd = specs / "env0" / "gen" / "slices"
+    sd.mkdir(parents=True)
+    ghost = probes.slice_text(ptext, [name], mod, "../../..")
+    sl = state_slice.probe_cone(cm, ghost, name)
+    cfg = {"#map": [["k1", {"#bigint": "2"}], ["k2", {"#bigint": "2"}]]}
+    zero = {"#bigint": "0"}
+    trace = {"#meta": {"action_params": {}}, "vars": [], "states": [
+        {"#meta": {"index": 0}, "_lastAction": "init", "cfg": cfg, "x": zero, "noise": zero},
+        {"#meta": {"index": 1}, "_lastAction": "bump", "cfg": cfg, "x": {"#bigint": "2"},
+         "noise": zero}]}
+    module, run, kept = state_slice.replay_module(cm, sl, ghost, "env0_replay", trace, name)
+    assert kept == 1 and "initP.then(all { cfg' = Map(" in module
+    (sd / "env0_replay.qnt").write_text(module, encoding="utf-8")
+    p = run_group(["quint", "test", str(sd / "env0_replay.qnt"), "--match", f"^{run}$",
+                   "--max-samples=1", f"--out-itf={sd}/out.itf.json"], timeout=300)
+    assert witness_replay.parse_test_output(p.stdout + p.stderr).get(run) == "passed", \
+        p.stdout + p.stderr
+    real = state_slice.replayed_trace(
+        json.loads((sd / "out.itf.json").read_text(encoding="utf-8")), trace, sl)
+    assert [s["#meta"]["index"] for s in real["states"]] == [0, 1]
+    assert real["states"][0]["cfg"] == cfg and real["states"][-1]["x"] == {"#bigint": "2"}
+    assert "state_slice" in real["#meta"]
+
+
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
+def test_a_witness_of_an_env_init_model_is_not_re_proven_whole(tmp_path):
+    """End to end: the sliced witness replays first time (no fall-back to
+    the whole probe module), and its stored trace says it was replayed."""
+    import json
+    import spec_source
+    specs, _cm, _ptext = _env0(tmp_path)
+    p = run_group([sys.executable, str(TOOLS / "spec-record.py"), "check", "env0",
+                   "--root", str(tmp_path), "--steps", "3", "--shallow-steps", "3",
+                   "--no-simulate", "--parallel", "2", "--only", "REQ-001"], timeout=900)
+    out = p.stdout + p.stderr
+    assert "re-proving on the whole probe module" not in out, out[-2000:]
+    req = spec_source.load_area(tmp_path, "env0")["requirements"][0]
+    assert req["witness"]["status"] == "witnessed", out[-2000:]
+    t = json.loads((specs / req["witness"]["trace"]).read_text(encoding="utf-8"))
+    assert "state_slice" in t["#meta"]
+    assert [s["#meta"]["index"] for s in t["states"]] == list(range(len(t["states"])))
+
+
+# ── 8b. An env parameter is a key only if the action indexes by it ──────────
+
+FLAG = '''module flg {
+  var flag: bool
+  var out: int
+  pure val BOOLS = Set(true, false)
+  action init = all { flag' = true, out' = 0 }
+  /// @env the operator sets the flag before anything runs
+  action env_flag(on: bool): bool = all { flag' = on, out' = out }
+  /// @req REQ-001
+  /// With the flag on, going writes 1.
+  /// @status specified
+  /// @while flag
+  /// @shall out == 1
+  action go_on: bool = all { flag, out' = 1, flag' = flag }
+  /// @req REQ-002
+  /// With the flag off, going writes 2.
+  /// @status specified
+  /// @while not(flag)
+  /// @shall out == 2
+  action go_off: bool = all { not(flag), out' = 2, flag' = flag }
+  action step = {
+    nondet on = oneOf(BOOLS)
+    any { env_flag(on), go_on, go_off }
+  }
+}
+'''
+
+
+def _flag(tmp_path):
+    import spec_source
+    from quint_ir import parse_qnt
+    (tmp_path / "flg.qnt").write_text(FLAG, encoding="utf-8")
+    area = {"kind": "area", "area": "flg",
+            "formal_model": {"quint_file": "flg.qnt", "probe_domains": {"bool": "BOOLS"},
+                             "env_at_init": ["env_flag"]}}
+    area.update(spec_source.derive_records(FLAG, "flg.qnt")[0])
+    ir = parse_qnt(tmp_path / "flg.qnt")
+    return "\n".join(probes.build(area, "flg", ir, "flg.qnt", text=FLAG)) + "\n"
+
+
+def test_an_env_value_parameter_is_picked_not_folded(tmp_path):
+    """`env_flag(on)` sets `flag: on`: `on` is a value. A fold over its domain
+    left the flag at the fold's last value in every trace; a pick lets each
+    trace have either."""
+    out = _flag(tmp_path)
+    init = out[out.index("action initP"):out.index("action stepP")]
+    assert "nondet _env_env_flag_on = oneOf(BOOLS)" in init
+    assert ".fold(" not in init
+    assert "val _env_env_flag = { val _acc = { flag: true } { flag: _env_env_flag_on } }" in init
+
+
+@pytest.mark.parametrize("assigns,keyed", [
+    ({"vmConfig": "vmConfig.set(v, c)"}, True),
+    ({"st.runBlocked": "st.runBlocked.set(g, b)"}, True),
+    ({"st.requested": "st.requested.union(Set(g))"}, True),
+    ({"flag": "on"}, False),
+    ({"st.cfg": "TABLE.get(on)"}, False),                 # a lookup, not a key
+    ({"m": "m.set(k, 1)", "last": "k"}, False),           # also a plain value
+    ({"m": "m.set(k, default(k))"}, False),               # in doubt: a value
+    ({"m": "m.set(other, 1)"}, False),                    # never mentions k
+])
+def test_a_parameter_is_a_key_only_where_every_use_writes_at_it(assigns, keyed):
+    p = next(iter(re.findall(r"\b(v|g|on|k)\b", " ".join(assigns.values()))), "k")
+    assert probes._keyed_by(p, assigns) is keyed
+
+
+def test_a_keyed_env_action_emits_what_it_always_did(tmp_path):
+    area, ir = _vm(tmp_path)
+    init = _probes(area, ir)
+    init = init[init.index("action initP"):init.index("action stepP")]
+    assert init.splitlines()[1:4] == [
+        "    nondet _env_env_vm_config_c = oneOf(setOfMaps(VMS, CFGS))",
+        "    val _env_env_vm_config = VMS.fold({ vmConfig: VMS.mapBy(_ => \"small\") }, "
+        "(_acc, _k) => if ((VMS.contains(_k))) { vmConfig: _acc.vmConfig.set(_k, "
+        "_env_env_vm_config_c.get(_k)) } else _acc)",
+        "    all {",
+    ]
+
+
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
+def test_both_values_of_an_env_flag_are_witnessed(tmp_path):
+    (tmp_path / "flg.probes.qnt").write_text(_flag(tmp_path), encoding="utf-8")
+    for name in ("witness_REQ_001", "witness_REQ_002"):
+        assert _verdict(tmp_path / "flg.probes.qnt", name) == "violated", name
