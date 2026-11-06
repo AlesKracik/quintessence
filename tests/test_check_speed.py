@@ -6,6 +6,7 @@ rest of this file covers the probe generator and the check runner.
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import time
@@ -1147,3 +1148,367 @@ def test_a_match_with_many_arms_resolves(tmp_path):
     for engine in _engines():
         muts = _effects(tmp_path, text, engine)
         assert muts["pick"] == {"st": ["count", "dirty", "last"]}, engine
+
+
+# ── 5. State slices: each check carries only the state its claim can read ──
+#
+# tools/state_slice.py. `big` is the expensive field: only `a` writes it
+# (from x), only REQ-001 / REQ-003 read it. `stamp` is written by incy and
+# read by nothing. `gated` writes z behind a guard on big: the guard edge
+# case.
+
+BIG = '''module big {
+  type Bag = { items: Set[int], n: int }
+  type State = {
+    x: int,
+    y: int,
+    z: int,
+    stamp: int,
+    big: Bag,
+  }
+  var st: State
+
+  pure val XS = Set(1, 2)
+
+  action init = { st' = { x: 0, y: 0, z: 0, stamp: 0, big: { items: Set(), n: 0 } } }
+
+  /// @verdict GAP
+  /// Moving x is bookkeeping no requirement speaks to.
+  action incx(d: int): bool = all {
+    st.x < 3,
+    st' = { ...st, x: st.x + d },
+  }
+
+  /// @req REQ-001
+  /// Filling records x in the bag.
+  /// @status specified
+  /// @shall st.big.n == st.x and st.big.items.contains(st.x)
+  action a: bool = all {
+    st.x > 0,
+    st' = { ...st, big: { items: st.big.items.union(Set(st.x)), n: st.x } },
+  }
+
+  /// @req REQ-002
+  /// Bumping y adds one.
+  /// @status specified
+  /// @old before: int = st.y
+  /// @shall st.y == before + 1
+  action incy: bool = all {
+    st.y < 2,
+    st' = { ...st, y: st.y + 1, stamp: 7 },
+  }
+
+  /// @req REQ-003
+  /// Refilling keeps more than one in the bag. (Seeded: false when x is 1.)
+  /// @status specified
+  /// @shall st.big.n > 1
+  action a2: bool = all {
+    st.x > 0,
+    st' = { ...st, big: { ...st.big, n: st.x } },
+  }
+
+  /// @req REQ-004
+  /// A full enough bag opens the gate.
+  /// @status specified
+  /// @shall st.z == 1
+  action gated: bool = all {
+    st.big.n > 1,
+    st' = { ...st, z: 1 },
+  }
+
+  action step = {
+    nondet d = oneOf(XS)
+    any { incx(d), a, incy, a2, gated }
+  }
+}
+'''
+
+BIG_INTENT = {"kind": "area", "area": "big", "version": "0.1.0", "status": "structured",
+              "formal_model": {"quint_file": "big.qnt", "probes_file": "big.probes.qnt",
+                               "probe_domains": {"int": "XS"}}}
+
+
+def _big(tmp_path, text=BIG):
+    """(specs dir, ConeModel, probe module text) for BIG written to disk."""
+    import json
+    import spec_source
+    import state_slice
+    from quint_ir import parse_qnt
+    specs = tmp_path / "specs"
+    specs.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".spec").mkdir(exist_ok=True)
+    (tmp_path / ".spec" / "project.json").write_text(json.dumps(
+        {"project": "p", "areas": [{"name": "big", "kind": "area"}]}), encoding="utf-8")
+    (specs / "big.qnt").write_text(text, encoding="utf-8")
+    (specs / "big.intent.json").write_text(json.dumps(BIG_INTENT), encoding="utf-8")
+    area = dict(BIG_INTENT)
+    area.update(spec_source.derive_records(text, "big.qnt")[0])
+    ir = parse_qnt(specs / "big.qnt")
+    ptext = "\n".join(probes.build(area, "big", ir, "big.qnt", text=text)).rstrip() + "\n"
+    (specs / "big.probes.qnt").write_text(ptext, encoding="utf-8")
+    return specs, state_slice.ConeModel(text, ir, ptext, specs), ptext
+
+
+def _cone(cm, ptext, name):
+    import state_slice
+    return state_slice.probe_cone(cm, probes.slice_text(ptext, [name], "s", "."), name)
+
+
+def _state_slice(specs, cm, ptext, name):
+    """Write `name`'s slice the way spec-record does; returns its path."""
+    import state_slice
+    sd = specs / "big" / "gen" / "slices"
+    sd.mkdir(parents=True, exist_ok=True)
+    mod = probes.slice_module_name("big_probes", name)
+    text = probes.slice_text(ptext, [name], mod, "../../..")
+    sl = state_slice.probe_cone(cm, text, name)
+    if sl.frozen:
+        mname = f"big_cone_{name}"
+        (sd / f"{mname}.qnt").write_text(
+            state_slice.sliced_model_text(cm, sl, mname, "../../..", ("init", "initP")),
+            encoding="utf-8")
+        text = state_slice.retarget(text, sl, mname, f"./{mname}")
+    (sd / f"{mod}.qnt").write_text(text, encoding="utf-8")
+    return sd / f"{mod}.qnt", sl
+
+
+def test_a_check_that_never_reads_the_expensive_field_freezes_it(tmp_path):
+    specs, cm, ptext = _big(tmp_path)
+    for name in ("oblig_REQ_002", "witness_REQ_002"):
+        sl = _cone(cm, ptext, name)
+        assert sl.cone == {"st.y"}, name
+        assert sl.frozen == {"st.big", "st.x", "st.z", "st.stamp"}, name
+    path, sl = _state_slice(specs, cm, ptext, "oblig_REQ_002")
+    text = path.read_text(encoding="utf-8")
+    assert "// State frozen at init (outside this check's cone): st.big, st.stamp, st.x, st.z" in text
+    assert 'import big_cone_oblig_REQ_002.* from "./big_cone_oblig_REQ_002"' in text
+    model = (path.parent / "big_cone_oblig_REQ_002.qnt").read_text(encoding="utf-8")
+    assert "module big_cone_oblig_REQ_002 {" in model
+    # Every write outside the cone is the identity; the cone's own is not,
+    # and init is left alone. Types are untouched.
+    assert "st' = { ...st, y: st.y + 1 }" in model
+    assert model.count("st' = st,") == 4
+    assert "stamp: 0, big: { items: Set(), n: 0 } } }" in model
+    assert "type State = {" in model and "big: Bag," in model
+    from quint_ir import cli_available
+    if cli_available():
+        p = run_group(["quint", "typecheck", str(path)], timeout=120)
+        assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_a_check_of_the_expensive_field_keeps_it_and_what_it_is_written_from(tmp_path):
+    _specs, cm, ptext = _big(tmp_path)
+    for name in ("oblig_REQ_001", "witness_REQ_001"):
+        sl = _cone(cm, ptext, name)
+        assert {"st.big", "st.x"} <= sl.cone, name
+        assert {"st.y", "st.stamp"} <= sl.frozen, name
+    # The relevant actions: the one REQ-001 sits on, and every writer of
+    # its cone. incy writes nothing it can read.
+    assert _cone(cm, ptext, "oblig_REQ_001").relevant == {"a", "a2", "incx"}
+
+
+def test_a_guard_reading_a_field_puts_it_in_the_cone_of_its_writes(tmp_path):
+    """The edge case: `gated`'s guard reads st.big. Frozen, its enabledness
+    would differ, so a check whose cone gated writes must keep big — and
+    with it x, which big is written from."""
+    _specs, cm, ptext = _big(tmp_path)
+    sl = _cone(cm, ptext, "witness_REQ_004")
+    assert "gated" in sl.relevant
+    assert {"st.z", "st.big", "st.x"} <= sl.cone and "st.y" not in sl.cone
+    # A check gated never writes into leaves big frozen: there, gated's
+    # steps are stutters on the cone, whatever its guard says.
+    assert "st.big" in _cone(cm, ptext, "oblig_REQ_002").frozen
+
+
+PQR = '''module pqr {
+  var p: int
+  var q: int
+  var r: int
+  var s: int
+  action init = all { p' = 0, q' = 0, r' = 0, s' = 0 }
+  def ready(v: int): bool = v > 0
+  /// @req REQ-001
+  /// Moving p sets it.
+  /// @status specified
+  /// @shall p == 1
+  action b: bool = all { ready(q), p' = 1, q' = q, r' = r, s' = s }
+  action c: bool = all { q' = r + 1, p' = p, r' = r, s' = s }
+  action d: bool = all { s' = s + 1, p' = p, q' = q, r' = r }
+  action e: bool = all { r' = r, p' = p, q' = q, s' = s + 2 }
+  action step = any { b, c, d, e }
+}
+'''
+
+
+def test_the_cone_closes_transitively_through_guards_and_helpers(tmp_path):
+    """REQ-001 reads p; b writes p behind a guard on q (through a helper);
+    c writes q from r. The cone is {p, q, r}; s is frozen, d and e with it."""
+    import spec_source
+    import state_slice
+    from quint_ir import parse_qnt
+    (tmp_path / "pqr.qnt").write_text(PQR, encoding="utf-8")
+    area = {"kind": "area", "area": "pqr", "formal_model": {"quint_file": "pqr.qnt"}}
+    area.update(spec_source.derive_records(PQR, "pqr.qnt")[0])
+    for engine in _engines():
+        ir = parse_qnt(tmp_path / "pqr.qnt", engine)
+        ptext = "\n".join(probes.build(area, "pqr", ir, "pqr.qnt", text=PQR)) + "\n"
+        cm = state_slice.ConeModel(PQR, ir, ptext, tmp_path)
+        sl = state_slice.probe_cone(cm, probes.slice_text(ptext, ["oblig_REQ_001"],
+                                                          "s", "."), "oblig_REQ_001")
+        assert sl.cone == {"p", "q", "r"} and sl.frozen == {"s"}, engine
+        assert sl.relevant == {"b", "c"}, engine
+        frozen, n = cm.frozen_text(sl.frozen, cm.init_actions(["init"]))
+        assert "action d: bool = all { s' = s, p' = p" in frozen
+        assert "s' = s + 2" not in frozen and n == 2
+        assert "action init = all { p' = 0, q' = 0, r' = 0, s' = 0 }" in frozen
+
+
+OPAQUE = '''module op {
+  type State = { items: str -> bool, cfg: str -> int, other: int }
+  var st: State
+  pure def peek(s: State): bool = s.with("other", 0) == s
+  action init = { st' = { items: Map(), cfg: Map(), other: 0 } }
+  /// @req REQ-001
+  /// Touching sets items.
+  /// @status specified
+  /// @shall st.items.keys().size() >= 0
+  action touch: bool = all { peek(st), st' = { ...st, items: st.items.put("i", true) } }
+  action bump: bool = all { st' = { ...st, other: st.other + 1 } }
+  action step = any { touch, bump }
+}
+'''
+
+
+def test_a_body_that_cannot_be_resolved_keeps_the_whole_var(tmp_path):
+    """touch's guard hands the whole state to a helper that reads it
+    through `with`: its reads cannot be taken apart, so every field of st
+    is in the cone of a check touch writes into — `other` too."""
+    import spec_source
+    import state_slice
+    from quint_ir import parse_qnt
+    (tmp_path / "op.qnt").write_text(OPAQUE, encoding="utf-8")
+    area = {"kind": "area", "area": "op", "formal_model": {"quint_file": "op.qnt"}}
+    area.update(spec_source.derive_records(OPAQUE, "op.qnt")[0])
+    ir = parse_qnt(tmp_path / "op.qnt", "regex")
+    ptext = "\n".join(probes.build(area, "op", ir, "op.qnt", text=OPAQUE)) + "\n"
+    cm = state_slice.ConeModel(OPAQUE, ir, ptext, tmp_path)
+    assert cm.action_reads("touch") == {"st.items", "st.cfg", "st.other"}
+    sl = state_slice.probe_cone(cm, probes.slice_text(ptext, ["oblig_REQ_001"],
+                                                      "s", "."), "oblig_REQ_001")
+    assert sl.frozen == set()
+
+
+def test_frozen_writes_are_local_edits_that_keep_the_types():
+    import state_slice
+    from quint_ir import record_var_fields  # noqa: F401
+    fields = ["a", "graph", "b"]
+    f = state_slice._freeze
+    # Over the var itself a frozen field is simply not listed.
+    assert f("{ ...st, graph: g(st) }", "st", {"graph"}, fields, {}, {}) == "st"
+    assert f("{ ...st, graph: g, a: 1 }", "st", {"graph"}, fields, {}, {}) == "{ ...st, a: 1 }"
+    # Branches are edited in place.
+    assert f("if (c) { ...st, graph: g } else st", "st", {"graph"}, fields, {}, {}) \
+        == "if (c) st else st"
+    # A full literal keeps the field, at its old value.
+    assert f("{ a: 1, graph: g, b: 2 }", "st", {"graph"}, fields, {}, {}) \
+        == "{ a: 1, graph: st.graph, b: 2 }"
+    # A new state the text cannot take apart is wrapped.
+    assert f("mystery(st)", "st", {"graph"}, fields, {}, {}) \
+        == "{ ...(mystery(st)), graph: st.graph }"
+
+
+def _verdict(path, name, steps=3):
+    for _attempt in range(3):
+        p = run_group(["quint", "verify", f"--invariant={name}", "--init=initP",
+                       "--step=stepP", f"--max-steps={steps}",
+                       f"--server-endpoint={_free_endpoint()}", str(path)], timeout=600)
+        out = p.stdout + p.stderr
+        if "[ok]" in out:
+            return "holds"
+        if "[violation]" in out:
+            return "violated"
+    raise AssertionError(out[-800:])
+
+
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
+def test_a_state_slice_gives_every_check_the_verdict_the_whole_model_gives(tmp_path):
+    """Every check of BIG, state-sliced and not: REQ-003 is violated (its
+    counterexample lies in the state REQ-002's checks freeze), REQ-004's
+    witness needs the guard on big, and the rest hold or are witnessed."""
+    from concurrent.futures import ThreadPoolExecutor
+    specs, cm, ptext = _big(tmp_path)
+    names = [n for n in re.findall(r"(?m)^  val (\w+)\s*:", ptext)
+             if n.startswith(("oblig_", "witness_", "cover_", "explain_", "verdict_"))]
+    jobs = []
+    for n in names:
+        path, sl = _state_slice(specs, cm, ptext, n)
+        jobs.append((n, path, bool(sl.frozen)))
+    assert sum(j[2] for j in jobs) >= len(jobs) - 1, "nearly every check freezes something"
+    with ThreadPoolExecutor(4) as ex:
+        got = list(ex.map(lambda j: (j[0], _verdict(j[1], j[0]),
+                                     _verdict(specs / "big.probes.qnt", j[0])), jobs))
+    for name, sliced, whole in got:
+        assert sliced == whole, name
+    by = {n: s for n, s, _w in got}
+    assert by["oblig_REQ_003"] == "violated" and by["oblig_REQ_002"] == "holds"
+    assert by["witness_REQ_004"] == "violated"   # i.e. witnessed
+
+
+@pytest.mark.skipif(not _apalache_runs(), reason="quint/Apalache cannot run here")
+@pytest.mark.parametrize("slice_state", [True, False])
+def test_witness_traces_from_a_state_slice_are_traces_of_the_real_model(tmp_path, slice_state):
+    """spec-record check end to end. Each stored trace replays, every var
+    asserted, through the FULL probe module: REQ-002's was found with stamp
+    frozen at 0, and incy sets it to 7 — the replay re-derived it. Slicing
+    off gives the same verdicts."""
+    import json
+    import spec_source
+    import witness_replay
+    specs, _cm, ptext = _big(tmp_path)
+    if not slice_state:
+        (tmp_path / ".spec" / "project.json").write_text(json.dumps(
+            {"project": "p", "areas": [{"name": "big", "kind": "area"}],
+             "quint": {"slice_state": False}}), encoding="utf-8")
+    p = run_group([sys.executable, str(TOOLS / "spec-record.py"), "check", "big",
+                   "--root", str(tmp_path), "--steps", "4", "--shallow-steps", "4",
+                   "--no-simulate", "--parallel", "2"], timeout=900)
+    out = p.stdout + p.stderr
+    area = spec_source.load_area(tmp_path, "big")
+    reqs = {r["id"]: r for r in area["requirements"]}
+    assert {rid: r["witness"]["status"] for rid, r in reqs.items()} == {
+        "REQ-001": "witnessed", "REQ-002": "witnessed", "REQ-003": "witnessed",
+        "REQ-004": "witnessed"}, out[-2000:]
+    assert {rid: r["obligation"]["formal_status"] for rid, r in reqs.items()} == {
+        "REQ-001": "verified", "REQ-002": "verified", "REQ-003": "counterexample-found",
+        "REQ-004": "verified"}, out[-2000:]
+    traces = specs / "big" / "traces"
+    t2 = json.loads((traces / "REQ-002.itf.json").read_text(encoding="utf-8"))
+    assert t2["states"][-1]["st"]["stamp"] == {"#bigint": "7"}
+    assert ("state_slice" in t2["#meta"]) == slice_state
+    cands = []
+    for rid in reqs:
+        cands.append((rid, f"witness_{rid.replace('-', '_')}",
+                      json.loads((traces / f"{rid}.itf.json").read_text(encoding="utf-8"))))
+    module, runs, skipped = witness_replay.build(
+        ptext, BIG, cands, "big_probes_check", ".",
+        lambda t, m, _p: t.replace("module big_probes {", f"module {m} {{"))
+    assert not skipped and len(runs) == 4
+    (specs / "big_probes_check.qnt").write_text(module, encoding="utf-8")
+    p = run_group(["quint", "test", str(specs / "big_probes_check.qnt"),
+                   "--match", "^replay_", "--max-samples=1"], timeout=300)
+    res = witness_replay.parse_test_output(p.stdout + p.stderr)
+    assert set(res.values()) == {"passed"}, p.stdout + p.stderr
+
+
+def test_a_spread_of_a_field_is_a_read_of_that_field(tmp_path):
+    """`{ ...st.big, n: 1 }` copies big's other fields: a write built from it
+    depends on big. Read as a spread of st, it was no read at all — and a
+    cone missing it would freeze state a cone write is computed from."""
+    text = BIG.replace("st' = { ...st, z: 1 },", "st' = { ...st, z: 1, big: { ...st.big, n: 0 } },")
+    for engine in _engines():
+        import quint_ir
+        p = tmp_path / "big.qnt"
+        p.write_text(text, encoding="utf-8")
+        reads = quint_ir.parse_qnt(p, engine)["action_field_reads"]
+        assert reads["a2"] == {"st": ["big", "x"]}, engine
+        assert reads["gated"] == {"st": ["big"]}, engine

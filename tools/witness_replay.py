@@ -114,14 +114,23 @@ def _literal(v):
     raise Unreplayable(repr(v))
 
 
-def _state(st, scope=None):
+def _state(st, scope=None, fields=None):
     """The model's variables and the step label, exactly as the trace has
     them. `scope`: the variables the probe module can name (an imported
-    module's, imported qualified, it cannot); None for all."""
+    module's, imported qualified, it cannot); None for all. `fields`:
+    {record var: [field, ...]} asserted field by field — a state-sliced
+    trace is only the model's own on those (tools/state_slice.py)."""
     keys = sorted(k for k in st if not k.startswith("#") and not k.startswith("mbt::")
                   and (not k.startswith("_") or k == "_lastAction")
                   and (scope is None or k in scope or k == "_lastAction"))
-    return " and ".join(f"{k} == {_literal(st[k])}" for k in keys) or "true"
+    parts = []
+    for k in keys:
+        if fields and k in fields and isinstance(st[k], dict):
+            parts += [f"{k}.{f} == {_literal(st[k][f])}"
+                      for f in sorted(fields[k]) if f in st[k]]
+        else:
+            parts.append(f"{k} == {_literal(st[k])}")
+    return " and ".join(parts) or "true"
 
 
 def _bind(text, picks):
@@ -136,7 +145,8 @@ def _bind(text, picks):
     return "".join(out)
 
 
-def replay_run(name, trace, probe, nondets, branches, scope=None):
+def replay_run(name, trace, probe, nondets, branches, scope=None, fields=None,
+               min_steps=1):
     """The `run` line replaying `trace` and asserting it still violates
     `probe`. Raises Unreplayable when a step cannot be rebuilt.
 
@@ -144,10 +154,10 @@ def replay_run(name, trace, probe, nondets, branches, scope=None):
     makes the witness hold is that every step is taken (a step whose action
     is not enabled fails the run) and the last state violates the probe."""
     states = trace.get("states") or []
-    if len(states) < 2:
+    if len(states) < 1 + min_steps:
         raise Unreplayable("a witness needs at least one step")
     params = ((trace.get("#meta") or {}).get("action_params")) or {}
-    chain = f"initP.expect({_state(states[0], scope)})"
+    chain = f"initP.expect({_state(states[0], scope, fields)})"
     for st in states[1:]:
         action = st.get("_lastAction")
         if action not in branches:
@@ -168,7 +178,7 @@ def replay_run(name, trace, probe, nondets, branches, scope=None):
                                f"{sorted(unbound)}")
         for arg in args:
             chain += f".expect({nondets[arg]}.contains({picks[arg]}))"
-        chain += f".then({_bind(text, picks)}).expect({_state(st, scope)})"
+        chain += f".then({_bind(text, picks)}).expect({_state(st, scope, fields)})"
     chain += f".expect(not({probe}))"
     return f"  run {name} = {chain}"
 
