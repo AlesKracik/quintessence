@@ -1468,7 +1468,7 @@ def cmd_check(args):
             proc = run_group(cmd, timeout=timeout)
             passed = wr.parse_test_output((proc.stdout or "") + (proc.stderr or "")
                                           ).get(run) == "passed"
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, OSError):
             passed = False
         if not (passed and out.exists()):
             print(f"{'slice':<12} {val}: trace did not replay through the full "

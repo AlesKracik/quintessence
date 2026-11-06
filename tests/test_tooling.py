@@ -6424,7 +6424,9 @@ def test_a_sliced_counterexample_that_does_not_replay_is_re_proven_whole(
             return "counterexample", "", 0.1
         return "verified", "", 0.1
 
-    monkeypatch.setattr(record, "need_quint", lambda: "quint", raising=False)
+    # The replay's `quint test` fails, as it would for this trace.
+    monkeypatch.setattr(record, "run_group",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "failed"))
     _check_big(tmp_path, monkeypatch, fake)
     ob = [t for n, t in calls if n == "oblig_REQ_002"]
     assert ob[:2] == ["big_probes_slice_oblig_REQ_002.qnt", "big.probes.qnt"], calls
