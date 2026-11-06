@@ -385,6 +385,30 @@ def env_init(area, ir, text, domains):
     return lines, finals, init_items
 
 
+def _keyed_by(p, assigns):
+    """Whether the env action is applied once PER `p`: some unit it sets is
+    written at key `p` (`u.set(p, …)`, `u.put(p, …)`, `u.union(Set(p))`,
+    `u.exclude(Set(p))`), and every unit whose value mentions `p` is written
+    that way. Anything else — `flag: on`, `cfg: TABLE.get(on)` — uses `p` as
+    a VALUE: folding over its domain would leave one fixed value, the fold's
+    last, where the trace must pick one. In doubt, it is a value."""
+    name = re.escape(p)
+    per_key = 0
+    for u, v in assigns.items():
+        if not re.search(rf"(?<![\w.]){name}(?!\w)", v):
+            continue
+        own = re.escape(u)
+        if not re.fullmatch(
+                rf"\s*{own}\s*\.\s*(?:(?:set|put)\(\s*{name}\s*,.*\)"
+                rf"|(?:union|exclude)\(\s*Set\(\s*{name}\s*\)\s*\))\s*", v, re.S):
+            return False
+        # The key appears once, as the key: not inside the new value too.
+        if len(re.findall(rf"(?<![\w.]){name}(?!\w)", v)) != 1:
+            return False
+        per_key += 1
+    return per_key > 0
+
+
 def _env_fold(action, where, own, ignore, decls, params, domains, init_vals,
               rec_vars, tag, lines):
     """The fold that applies `action` once per key, from init's values of
@@ -428,11 +452,16 @@ def _env_fold(action, where, own, ignore, decls, params, domains, init_vals,
     ps = params.get(action) or []
     mapping = {u: f"_acc.{u}" for u in own if "." not in u}
     keydom = None
+    keyed = bool(ps) and _keyed_by(ps[0][0], assigns)
     for i, (pname, ptype) in enumerate(ps):
         dom = domain_for(pname, ptype, domains)
         if dom is None:
             fail(f"{where}: no probe domain for parameter {pname} ({ptype}).")
-        if i == 0:
+        if not keyed:
+            g = f"_env_{tag}_{pname}"
+            lines.append(f"    nondet {g} = oneOf({dom})")
+            mapping[pname] = g
+        elif i == 0:
             mapping[pname] = "_k"
             keydom = dom
         else:
@@ -454,7 +483,7 @@ def _env_fold(action, where, own, ignore, decls, params, domains, init_vals,
         cond = " and ".join(f"({sub(g)})" for g in guards)
         after = f"if ({cond}) {after} else _acc"
     val = f"_env_{tag}"
-    if ps:
+    if ps and keyed:
         lines.append(f"    val {val} = {keydom}.fold({first}, (_acc, _k) => {after})")
     else:
         lines.append(f"    val {val} = {{ val _acc = {first} {after} }}")

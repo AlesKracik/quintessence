@@ -1474,12 +1474,7 @@ def cmd_check(args):
             print(f"{'slice':<12} {val}: trace did not replay through the full "
                   f"model — re-proving on the whole probe module", flush=True)
             return False
-        real = json.loads(out.read_text(encoding="utf-8"))
-        meta = dict(trace.get("#meta") or {})
-        meta["state_slice"] = ("found on a state slice (frozen: "
-                               + ", ".join(sorted(sl.frozen))
-                               + "); replayed through the full model")
-        real["#meta"] = meta
+        real = ss.replayed_trace(json.loads(out.read_text(encoding="utf-8")), trace, sl)
         path.write_text(json.dumps(real, separators=(",", ":")), encoding="utf-8")
         restore_names(path)
         return True

@@ -146,18 +146,34 @@ def _bind(text, picks):
 
 
 def replay_run(name, trace, probe, nondets, branches, scope=None, fields=None,
-               min_steps=1):
+               min_steps=1, from_state=None):
     """The `run` line replaying `trace` and asserting it still violates
     `probe`. Raises Unreplayable when a step cannot be rebuilt.
 
     The state assertions say where a replay parts from its trace; what
     makes the witness hold is that every step is taken (a step whose action
-    is not enabled fails the run) and the last state violates the probe."""
+    is not enabled fails the run) and the last state violates the probe.
+
+    `from_state` ({model var: ...}, plus the ghost var names under "_keep"):
+    start from the trace's own state 0 instead of asking initP for it —
+    `initP.then(all { v' = <state 0>, ..., ghost' = ghost })`. Only for a
+    trace whose state 0 is known to be an initP state of this very model (a
+    state slice leaves init alone, so the one Apalache found is): an initP
+    that picks its state nondeterministically (env_at_init) otherwise
+    almost never lands on it. The run's first state is initP's own; the
+    caller drops it from the trace it writes."""
     states = trace.get("states") or []
     if len(states) < 1 + min_steps:
         raise Unreplayable("a witness needs at least one step")
     params = ((trace.get("#meta") or {}).get("action_params")) or {}
-    chain = f"initP.expect({_state(states[0], scope, fields)})"
+    if from_state is not None:
+        sets = [f"{v}' = {_literal(states[0][v])}" for v in from_state["vars"]
+                if v in states[0]]
+        sets += [f"{g}' = {g}" for g in from_state["_keep"]]
+        chain = (f"initP.then(all {{ {', '.join(sets)} }})"
+                 f".expect({_state(states[0], scope, fields)})")
+    else:
+        chain = f"initP.expect({_state(states[0], scope, fields)})"
     for st in states[1:]:
         action = st.get("_lastAction")
         if action not in branches:
