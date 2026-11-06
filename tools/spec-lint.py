@@ -2244,13 +2244,21 @@ def _grows_set(expr, decls, depth=0, _seen=None):
     return False, None
 
 
-def fold_set_builders(text):
-    """[(declaration, accumulator, helper)] for every fold, reachable from an
-    action, whose accumulator is set-valued and whose body grows it: union,
-    setAdd, `.add` or flatten, in the lambda itself (helper None) or inside
-    a def it calls (helper = that def). The solver unrolls such a fold on
-    every step it is evaluated in; filtering a constant candidate set says
-    the same with no unrolling."""
+# A fold over at most this many elements unrolls into at most this many
+# copies of its body. The filter rewrite costs one predicate per candidate,
+# and a set worth building has a candidate set at least as large as the
+# keys it is built from, usually several per key: below this bound the fold
+# is the cheaper shape (measured downstream: a fold over a 2-element probe
+# domain proved in ~570s where the filter over ~180 candidates timed out).
+FOLD_SMALL_BOUND = 3
+
+
+def fold_set_sites(text):
+    """Every fold, reachable from an action, whose accumulator is set-valued
+    and whose body grows it: union, setAdd, `.add` or flatten, in the lambda
+    itself (via None) or inside a def it calls (via = that def). One dict
+    each: decl, init, via, coll (the collection folded over), params (the
+    enclosing declaration's typed parameters)."""
     decls = spec_source.declarations(text)
     roots = [n for n, d in decls.items() if d.get("kind") == "action"]
     reach = spec_source.name_closure(decls, roots)
@@ -2262,8 +2270,10 @@ def fold_set_builders(text):
             open_at = m.end() - 1
             close = spec_source._balanced(body, open_at)
             args = spec_source._split_top(body[open_at + 1:close - 1])
-            if not m.group(1):        # fold(coll, init, f): the function form
-                args = args[1:]
+            if m.group(1):            # coll.fold(init, f): the method form
+                coll = _receiver(body, m.start())
+            else:                     # fold(coll, init, f): the function form
+                coll, args = (args[0] if args else ""), args[1:]
             if len(args) < 2:
                 continue
             init, fn = args[0], args[1]
@@ -2272,8 +2282,142 @@ def fold_set_builders(text):
                 continue
             grows, via = _grows_set(lam, decls)
             if grows:
-                out.append((name, init.strip(), via))
+                out.append({"decl": name, "init": init.strip(), "via": via,
+                            "coll": coll.strip(),
+                            "params": dict(decls[name].get("params") or [])})
     return out
+
+
+def fold_set_builders(text):
+    """[(declaration, accumulator, helper)] for every set-building fold
+    (fold_set_sites). The solver unrolls such a fold on every step it is
+    evaluated in: one copy of its body per element of the collection."""
+    return [(f["decl"], f["init"], f["via"]) for f in fold_set_sites(text)]
+
+
+def _receiver(body, dot_at):
+    """The expression a method call at `body[dot_at] == '.'` is called on:
+    a chain of names, `.field`s and balanced calls, read backwards."""
+    i = dot_at
+    while i > 0:
+        j = i
+        while j > 0 and body[j - 1].isspace():
+            j -= 1
+        if j > 0 and body[j - 1] in ")]":
+            depth, k = 0, j - 1
+            while k >= 0:
+                depth += body[k] in ")]"
+                depth -= body[k] in "(["
+                if depth == 0:
+                    break
+                k -= 1
+            j = k
+        while j > 0 and (body[j - 1].isalnum() or body[j - 1] == "_"):
+            j -= 1
+        i = j
+        if i > 0 and body[i - 1] == ".":
+            i -= 1
+            continue
+        break
+    return body[i:dot_at]
+
+
+_CHAIN_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*(\()?")
+
+
+def _split_type(t, aliases, depth=0):
+    """A type with plain aliases followed: `UserId` -> `str`."""
+    t = (t or "").strip()
+    while depth < 8 and t in aliases:
+        t, depth = aliases[t].strip(), depth + 1
+    return t
+
+
+def _map_parts(t):
+    """(key, value) of a map type `A -> B`, or None."""
+    depth = 0
+    for i, ch in enumerate(t):
+        depth += ch in "([{"
+        depth -= ch in ")]}"
+        if depth == 0 and t.startswith("->", i):
+            return t[:i].strip(), t[i + 2:].strip()
+    return None
+
+
+def _expr_type(expr, params, ir):
+    """The declared type of a chain like `s.members.get(g)` or `cfg.keys()`,
+    walking `.field` (records), `.get(_)` (map value), `.keys()` (map key
+    set) and set-preserving calls (`filter`, `union`, `intersect`,
+    `exclude`). None as soon as a link cannot be typed."""
+    e = (expr or "").strip()
+    m = re.match(r"[A-Za-z_]\w*", e)
+    if not m:
+        return None
+    root = m.group(0)
+    aliases = ir.get("type_aliases") or {}
+    records = ir.get("type_records") or {}
+    t = params.get(root) or (ir.get("var_type_strs") or {}).get(root)
+    if not t:
+        return None
+    pos = m.end()
+    while pos < len(e):
+        cm = _CHAIN_RE.match(e, pos)
+        if not cm:
+            return None
+        name, call = cm.group(1), cm.group(2)
+        pos = cm.end()
+        if call:
+            pos = spec_source._balanced(e, pos - 1)
+        t = _split_type(t, aliases)
+        mp = _map_parts(t)
+        if call and name == "get" and mp:
+            t = mp[1]
+        elif call and name == "keys" and mp:
+            t = f"Set[{mp[0]}]"
+        elif call and name in ("filter", "union", "intersect", "exclude"):
+            pass
+        elif not call and t in records:
+            t = dict(records[t]).get(name)
+            if not t:
+                return None
+        else:
+            return None
+    return t
+
+
+def fold_bound(site, ir, domains, consts):
+    """(bound, how): at most how many elements the fold's collection holds,
+    and what that rests on — a constant set it is drawn from (`VMS`,
+    `KEYS.filter(...)`), or the probe domain of its element type (which also
+    covers the keys of a map keyed by that type). (None, why) when neither
+    can be read off the model."""
+    coll = site["coll"]
+    base = re.match(r"([A-Za-z_]\w*)\s*(?:\.\s*filter\s*\(.*)?$", coll, re.S)
+    if base and base.group(1) in consts and base.group(1) not in site["params"]:
+        n = domain_size(base.group(1), consts)
+        if n is not None:
+            return n, f"the constant `{base.group(1)}`"
+    aliases = ir.get("type_aliases") or {}
+    t = _expr_type(coll, site["params"], ir)
+    m = re.fullmatch(r"Set\[(.+)\]", _split_type(t, aliases), re.S) if t else None
+    if not m:
+        return None, (f"`{coll}` has no type it could read" if t is None
+                      else f"`{coll}` is a `{t}`, not a set")
+    # The element type as declared, then what it aliases — never a sibling
+    # alias: `Key = str` does not bound a `Set[str]`.
+    elem = m.group(1).strip()
+    for key in dict.fromkeys([elem, _split_type(elem, aliases)]):
+        dom = domains.get(key)
+        n = domain_size(dom, consts) if isinstance(dom, str) else None
+        if n is not None:
+            return n, f"the probe domain of `{key}`"
+    base = _split_type(elem, aliases)
+    sums = (ir.get("type_sums") or {}).get(base)
+    if sums and all(arg is None for _c, arg in sums):
+        return len(sums), f"the {len(sums)} variants of `{base}`"
+    if base == "bool":
+        return 2, "`bool`"
+    return None, f"`{elem}` has no literal probe domain"
 
 
 def cost_report(root, area_data, sidecar):
@@ -2290,7 +2434,11 @@ def cost_report(root, area_data, sidecar):
     consts = _decl_bodies(text)
     rep = {"ghosts": None, "largest_slice": None, "branching": None,
            "factors": [], "growing_maps": [], "powerset": [], "counters": [],
-           "fold_sets": fold_set_builders(text), "env_eligible": []}
+           "fold_sets": [], "env_eligible": []}
+    domains = fm.get("probe_domains") or {}
+    for site in fold_set_sites(text):
+        site["bound"], site["bound_how"] = fold_bound(site, ir, domains, consts)
+        rep["fold_sets"].append(site)
 
     # An environment setting that could be fixed per trace and is not: a
     # step in every trace and a branch in every step, for nothing.
@@ -2336,7 +2484,6 @@ def cost_report(root, area_data, sidecar):
 
     # Branching: per action stepP takes, the product of its parameters'
     # probe domains; a step is any one of them, so the sum.
-    domains = fm.get("probe_domains") or {}
     env = completeness_mod.env_at_init(area_data)
     calls = [a for a in (sidecar.get("action_calls") or {}).get("step") or []
              if a not in env]
@@ -2449,16 +2596,26 @@ def check_cost(root, area_data, sidecar, area_name, findings, report=None):
                + json.dumps({"action": action, "ignore": shared})
                + " to leave it at init's value" if shared else "")
             + ". Examples and journeys still call it as a setup step.", ref=action)
-    for decl, init, via in rep["fold_sets"]:
+    for site in rep["fold_sets"]:
+        decl, init, via, n = site["decl"], site["init"], site["via"], site.get("bound")
+        if n is not None and n <= FOLD_SMALL_BOUND:
+            continue                  # ≤ 3 copies: cheaper than any filter
         how = (f"its body unions through `{via}`" if via
                else "its body unions into it")
+        size = (f"unrolls up to {n} copies of its body per step "
+                f"({site['bound_how']} bounds `{site['coll']}`)" if n is not None
+                else f"unrolls it once per element of `{site['coll']}` on every "
+                     f"step, and the bound is unknown ({site['bound_how']})")
         add(findings, WARN, "cost", "fold-builds-set", area_name,
             f"`{decl}` builds a set with a fold (accumulator `{init}`; {how}), "
-            f"reachable from an action: the solver unrolls "
-            f"the whole fold on every step. Declare the constant set of "
-            f"candidates (ALL_X) and filter it: `ALL_X.filter(x => on(cfg, x))` "
-            f"— the candidates must cover everything the fold can emit, which "
-            f"an example run checks (template: CHECKING COST).", ref=decl)
+            f"reachable from an action: the solver {size}. The alternative is "
+            f"a constant candidate set filtered, `ALL_X.filter(x => on(cfg, x))`, "
+            f"which costs one predicate per candidate per step — worth it when "
+            f"the candidates are few compared with the fold's elements × the "
+            f"size of its body, and it must cover everything the fold can "
+            f"emit. When in doubt, measure `spec-record check --only` on two "
+            f"or three obligations before and after (template: CHECKING COST).",
+            ref=decl)
 
 
 def print_cost(rep, area_name):
@@ -2478,9 +2635,15 @@ def print_cost(rep, area_name):
                   + " × ".join(f"{n} ({t}) {k}" for n, t, k in parts))
     else:
         print("  branching: unknown (a probe domain is not a literal set)")
-    for decl, init, via in rep.get("fold_sets") or []:
-        print(f"  set built by fold: {decl} (accumulator {init}"
-              + (f", unions through {via}" if via else "") + ")")
+    for site in rep.get("fold_sets") or []:
+        n = site.get("bound")
+        bound = (f"unrolls ≤{n} copies per step, {site['bound_how']}"
+                 + (" — small, the fold is cheap" if n <= FOLD_SMALL_BOUND else "")
+                 if n is not None else f"bound unknown: {site['bound_how']}")
+        print(f"  set built by fold: {site['decl']} over {site['coll']} "
+              f"(accumulator {site['init']}"
+              + (f", unions through {site['via']}" if site["via"] else "")
+              + f"; {bound})")
     for action, _t, _s in rep.get("env_eligible") or []:
         print(f"  env setting taken every step: {action} (env_at_init would fix it per trace)")
 

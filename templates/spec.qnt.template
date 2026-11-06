@@ -72,20 +72,32 @@ module {{MODULE_NAME}} {
   //     few subsets that matter, listed
   //   an int only ever incremented, read only as `== before + 1`
   //     -> a bool "changed by the last step"
-  //   a set BUILT with fold + union      -> FILTER a constant set
+  //   a set BUILT with fold + union over a LARGE domain
+  //     -> FILTER a constant set. The solver unrolls a fold into
+  //     one copy of its body per element; a filter costs one
+  //     predicate per candidate. Which is cheaper depends on
+  //     the sizes:
+  //       a fold over a small domain (<= 3 elements: a probe
+  //         domain of 2 keys) is cheap — keep it;
+  //       a filter is cheap when the candidate set is small
+  //         next to the fold's elements x the size of its body.
   //     IDIOM: building a set from a configuration. Declare the
   //     constant set of candidates (ALL_X), then filter it:
-  //       before (the solver unrolls the fold on every step):
+  //       before (n copies of the body per step, n = |keys|):
   //         pure def enabled(cfg: Cfg): Set[Feat] =
   //           cfg.keys().fold(Set(), (acc, k) =>
   //             if (cfg.get(k)) acc.union(Set(feat(k))) else acc)
-  //       after (one filter over a fixed set):
+  //       after (one predicate per candidate per step):
   //         pure val ALL_FEATS: Set[Feat] = Set(A, B, C)
   //         pure def enabled(cfg: Cfg): Set[Feat] =
   //           ALL_FEATS.filter(f => on(cfg, f))
   //     Trade-off: ALL_X must cover everything the builder can
   //     emit. A run over each configuration that matters catches
-  //     a missing candidate. Lint: cost/fold-builds-set.
+  //     a missing candidate. When in doubt, measure: run
+  //     `spec-record check --only <ID,ID>` on two or three
+  //     obligations before and after the rewrite. Lint:
+  //     cost/fold-builds-set (quiet when the fold's bound is
+  //     <= 3; --cost prints each fold's bound).
   //   an env_* action that only sets configuration -> tag it
   //     `/// @env <why>` and list it in formal_model.env_at_init:
   //     initP applies it once per key, stepP drops it. Keep it

@@ -441,7 +441,7 @@ def test_a_set_built_by_fold_from_an_action_is_flagged(tmp_path):
     # flip's path; `unused` is not reachable, `count` folds an int.
     assert sorted(d for d, *_ in found) == ["enabled", "tally"]
     rep, checks = _cost(tmp_path, FOLD_SET.replace("module cfg", "module shop"),
-                        domains={"str": "KEYS"})
+                        domains={"str": 'Set("a", "b", "c", "d", "e", "f")'})
     assert "fold-builds-set" in checks
 
 
@@ -829,11 +829,107 @@ def test_a_fold_that_unions_through_a_helper_is_flagged_by_name(tmp_path):
     qnt.write_text(HELPER_FOLD.replace("module bag", "module shop"), encoding="utf-8")
     area = {"kind": "area", "area": "shop", "requirements": [],
             "formal_model": {"quint_file": "shop.qnt",
-                             "probe_domains": {"Key": "KEYS"}}}
+                             "probe_domains": {"Key": "KEYS",
+                                               "str": 'Set("a", "b", "c", "d")'}}}
     findings = []
     lint.check_cost(tmp_path, area, lint.parse_sidecar(qnt), "shop", findings)
     msgs = [f.description for f in findings if f.check == "fold-builds-set"]
     assert any("unions through `merge`" in m and "`build`" in m for m in msgs)
+    assert any("`names`" in m and "unrolls up to 4 copies" in m for m in msgs), \
+        "the `.add` case fires over a 4-element domain"
+
+
+# ── 12. A fold's unroll bound against the filter's candidate set ────────────
+# A fold unrolls into one copy of its body per element; the filter rewrite
+# costs one predicate per candidate. Over a 2-element probe domain the fold
+# is the cheaper shape (measured downstream: proved where the filter over
+# ~180 candidates timed out), so the rule weighs the bound before advising.
+
+GRAPH = '''module shop {
+  type Key = str
+  type Graph = { jobs: Set[str], edges: Set[str] }
+  type State = {
+    members: Key -> Set[Key],
+    cfg: Key -> bool,
+    g: Graph,
+  }
+  var st: State
+  pure val KEYS = Set("a", "b")
+  pure val EMPTY: Graph = { jobs: Set(), edges: Set() }
+  pure def merge(a: Graph, b: Graph): Graph =
+    { jobs: a.jobs.union(b.jobs), edges: a.edges.union(b.edges) }
+  pure def partFor(m: Key, on: bool): Graph =
+    if (on) { jobs: Set(m), edges: Set() } else EMPTY
+  def build(s: State, g: Key): Graph =
+    s.members.get(g).fold(EMPTY, (acc, m) => merge(acc, partFor(m, s.cfg.get(m))))
+  action init = st' = { members: KEYS.mapBy(_ => KEYS), cfg: KEYS.mapBy(_ => true), g: EMPTY }
+  action rebuild(g: Key): bool = st' = { ...st, g: build(st, g) }
+  action step = { nondet g = oneOf(KEYS) rebuild(g) }
+}
+'''
+
+
+def _fold_msgs(tmp_path, text, domains):
+    rep, _ = _cost(tmp_path, text, domains=domains)
+    findings = []
+    area = {"kind": "area", "area": "shop", "requirements": [],
+            "formal_model": {"quint_file": "shop.qnt", "probe_domains": domains}}
+    lint.check_cost(tmp_path, area, lint.parse_sidecar(tmp_path / "shop.qnt"),
+                    "shop", findings, report=rep)
+    return rep, [f.description for f in findings if f.check == "fold-builds-set"]
+
+
+def test_a_fold_over_a_two_element_probe_domain_is_quiet(tmp_path, capsys):
+    rep, msgs = _fold_msgs(tmp_path, GRAPH, {"Key": "KEYS"})
+    assert msgs == []
+    [site] = rep["fold_sets"]
+    assert (site["coll"], site["bound"]) == ("s.members.get(g)", 2)
+    lint.print_cost(rep, "shop")
+    out = capsys.readouterr().out
+    assert "build over s.members.get(g)" in out
+    assert "unrolls ≤2 copies per step, the probe domain of `Key` — small" in out
+
+
+def test_a_fold_over_a_six_element_domain_warns_and_names_the_bound(tmp_path):
+    six = 'Set("a", "b", "c", "d", "e", "f")'
+    _rep, msgs = _fold_msgs(tmp_path, GRAPH, {"Key": six})
+    [m] = msgs
+    assert "unrolls up to 6 copies of its body per step" in m
+    assert "the probe domain of `Key` bounds `s.members.get(g)`" in m
+    assert "one predicate per candidate per step" in m
+    assert "few compared with the fold's elements × the size of its body" in m
+    assert "spec-record check --only" in m
+
+
+def test_a_fold_whose_bound_is_unknown_warns_as_before(tmp_path, capsys):
+    rep, msgs = _fold_msgs(tmp_path, GRAPH, {})
+    [m] = msgs
+    assert "the bound is unknown" in m and "`Key` has no literal probe domain" in m
+    lint.print_cost(rep, "shop")
+    assert "bound unknown: `Key` has no literal probe domain" in capsys.readouterr().out
+
+
+def test_a_fold_over_a_constant_set_takes_its_size(tmp_path):
+    text = GRAPH.replace("s.members.get(g).fold", "KEYS.filter(k => k != g).fold")
+    rep, msgs = _fold_msgs(tmp_path, text, {})
+    assert msgs == [] and rep["fold_sets"][0]["bound"] == 2
+    assert rep["fold_sets"][0]["bound_how"] == "the constant `KEYS`"
+    big = text.replace('pure val KEYS = Set("a", "b")',
+                       'pure val KEYS = Set("a", "b", "c", "d", "e")')
+    _rep, msgs = _fold_msgs(tmp_path, big, {})
+    assert len(msgs) == 1 and "up to 5 copies" in msgs[0]
+
+
+def test_a_fold_over_map_keys_takes_the_key_domain(tmp_path):
+    text = GRAPH.replace("s.members.get(g).fold", "s.cfg.keys().fold")
+    rep, msgs = _fold_msgs(tmp_path, text, {"Key": 'Set("a", "b", "c", "d")'})
+    assert rep["fold_sets"][0]["bound"] == 4 and "up to 4 copies" in msgs[0]
+
+
+def test_the_receiver_of_a_method_fold_is_read_back_whole():
+    body = "x + s.members.get(f(g, h)).filter(m => m != g).fold(Set(), (a, m) => a)"
+    at = body.index(".fold")
+    assert lint._receiver(body, at) == "s.members.get(f(g, h)).filter(m => m != g)"
 
 
 # ── 10. Refusal chains and multi-line record types ──────────────────────────
