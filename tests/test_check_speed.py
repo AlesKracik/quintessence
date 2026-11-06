@@ -7,6 +7,7 @@ rest of this file covers the probe generator and the check runner.
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -1832,13 +1833,103 @@ def test_an_env_value_parameter_is_picked_not_folded(tmp_path):
     ({"st.requested": "st.requested.union(Set(g))"}, True),
     ({"flag": "on"}, False),
     ({"st.cfg": "TABLE.get(on)"}, False),                 # a lookup, not a key
-    ({"m": "m.set(k, 1)", "last": "k"}, False),           # also a plain value
     ({"m": "m.set(k, default(k))"}, False),               # in doubt: a value
     ({"m": "m.set(other, 1)"}, False),                    # never mentions k
+    # A conditional per-key write: each branch writes at the key, or keeps
+    # the unit; the condition does not read the key.
+    ({"st.faMultiDs": "if (b) st.faMultiDs.union(Set(v)) else st.faMultiDs.exclude(Set(v))"}, True),
+    ({"m": "if (b) m.set(k, 1) else m"}, True),
+    ({"m": "if (k == x) m.set(k, 1) else m"}, False),     # condition reads the key
+    ({"m": "if (b) m.set(k, 1) else TABLE.get(k)"}, False),
+    ({"m": "if (a) m.set(k, 1) else if (b) m.set(k, 2) else m"}, True),
+    ({"m": "(if (b) (m.set(k, 1)) else (m))"}, True),
+    ({"m": "match c { | On => m.set(k, 1) | Off => m }"}, True),
+    ({"m": "match k { | On => m.set(k, 1) | Off => m }"}, False),   # scrutinee is the key
+    ({"m": "match c { | Some(k) => m.set(k, 1) | None => m }"}, False),  # rebinds k
 ])
 def test_a_parameter_is_a_key_only_where_every_use_writes_at_it(assigns, keyed):
     p = next(iter(re.findall(r"\b(v|g|on|k)\b", " ".join(assigns.values()))), "k")
     assert probes._keyed_by(p, assigns) is keyed
+
+
+def test_a_parameter_both_key_and_value_is_refused():
+    # Once per key would fix `last` to the fold's last key; once would set
+    # `m` at one key only. Both drop initial states, so neither is guessed.
+    with pytest.raises(ValueError):
+        probes._keyed_by("k", {"m": "m.set(k, 1)", "last": "k"})
+
+
+MULTI = '''module multi {
+  type VmId = str
+  type State = { faMultiDs: Set[VmId], published: bool, runs: int }
+  var st: State
+  pure val VMS = Set("v1", "v2")
+  pure val BOOLS = Set(true, false)
+  action init = all { st' = { faMultiDs: Set(), published: true, runs: 0 } }
+  /// @env the operator marks which VMs use several datastores
+  action env_fa_multi_datastore(v: VmId, b: bool): bool =
+    st' = { ...st, faMultiDs: if (b) st.faMultiDs.union(Set(v)) else st.faMultiDs.exclude(Set(v)), published: false }
+  /// @req REQ-001
+  /// A run counts.
+  /// @status specified
+  /// @shall st.runs > 0
+  action go: bool = st' = { ...st, runs: st.runs + 1 }
+  action step = {
+    nondet v = oneOf(VMS)
+    nondet b = oneOf(BOOLS)
+    any { env_fa_multi_datastore(v, b), go }
+  }
+}
+'''
+
+
+def _multi(tmp_path, text=MULTI):
+    import spec_source
+    from quint_ir import parse_qnt
+    (tmp_path / "multi.qnt").write_text(text, encoding="utf-8")
+    area = {"kind": "area", "area": "multi",
+            "formal_model": {"quint_file": "multi.qnt",
+                             "probe_domains": {"VmId": "VMS", "bool": "BOOLS"},
+                             "env_at_init": [{"action": "env_fa_multi_datastore",
+                                              "ignore": ["st.published"]}]}}
+    area.update(spec_source.derive_records(text, "multi.qnt")[0])
+    ir = parse_qnt(tmp_path / "multi.qnt")
+    return "\n".join(probes.build(area, "multi", ir, "multi.qnt", text=text)) + "\n"
+
+
+def _init_of(out):
+    return out[out.index("action initP"):out.index("action stepP")]
+
+
+def test_a_conditional_per_key_env_write_folds_over_every_key(tmp_path):
+    """`if (b) s.union(Set(v)) else s.exclude(Set(v))` writes at key `v` on
+    both branches: initP folds over every VM with a per-key `b`, so a trace
+    can start with any subset of VMs in the set, not at most one."""
+    init = _init_of(_multi(tmp_path))
+    assert "nondet _env_env_fa_multi_datastore_b = oneOf(setOfMaps(VMS, BOOLS))" in init
+    assert "VMS.fold(" in init
+    assert "_env_env_fa_multi_datastore_v" not in init
+
+
+@pytest.mark.skipif(shutil.which("quint") is None, reason="quint is not installed")
+def test_a_conditional_per_key_env_write_reaches_several_keys(tmp_path):
+    out = _multi(tmp_path)
+    (tmp_path / "multi.probes.qnt").write_text(out, encoding="utf-8")
+    r = subprocess.run(["quint", "run", "multi.probes.qnt", "--init=initP",
+                        "--step=stepP", "--max-steps=0", "--max-samples=200",
+                        "--invariant=st.faMultiDs.size() < 2"],
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert "violation" in r.stdout and 'Set("v1", "v2")' in r.stdout, r.stdout + r.stderr
+
+
+def test_an_env_action_using_its_key_both_ways_is_refused(tmp_path, capsys):
+    text = MULTI.replace("runs: int }", "runs: int, lastVm: VmId }") \
+                .replace("runs: 0 }", "runs: 0, lastVm: \"v1\" }") \
+                .replace("published: false }", "published: false, lastVm: v }")
+    with pytest.raises(SystemExit):
+        _multi(tmp_path, text)
+    err = capsys.readouterr().err
+    assert "st.lastVm" in err and "values" in err
 
 
 def test_a_keyed_env_action_emits_what_it_always_did(tmp_path):
