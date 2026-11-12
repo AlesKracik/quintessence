@@ -121,6 +121,10 @@ structure Area (σ α : Type) where
   /-- Per action name: the decision on whether it can interleave with other
   events inside the implementation. A missing entry is an open question. -/
   atomic : List (String × String) := []
+  /-- Questions for a person that the checker cannot find by itself: what a
+  document says against what the code does, what a document leaves unsaid.
+  They stay in the review until answered; removing one means it was. -/
+  questions : List String := []
   code : Option (Code σ) := none
 
 /-- What one area reports. `ledger` is committed; `review` adds the traces. -/
@@ -513,7 +517,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     else (3, s!"no counterexample within {f.depth} steps ({states} states)")
   -- one claim: (id, kind, text, level, target, verdict, counterexample)
   let mut claims : Array (String × String × String × Nat × Nat × String × Option (List α)) := #[]
-  let mut questions : Array (String × Option (List α)) := #[]
+  let mut questions : Array (String × Option (List α)) := A.questions.toArray.map (·, none)
   for (i, j) in A.invariants.zipIdx do
     claims := claims.push <| match f.invFail[j]!, i.proof with
       | some fp, _ => (i.id, "invariant", i.text, 5, 1, "violated", some (trace fp none))

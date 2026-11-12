@@ -87,10 +87,10 @@ A project is a directory with its own `lakefile.toml`. It can be a new repositor
 
 4. Say where things are, in `.spec/`:
 
-   `.spec/project.json` (committed): the architecture documents, if there are any, and every repository the code or the documents live in.
+   `.spec/project.json` (committed): every repository the code lives in, and whatever is written about the system: architecture and design documents, READMEs, runbooks, product notes. Nothing here is required, and no structure is expected of the documents; list what exists, as files, directories, or `<repo>:<path>`.
 
    ```json
-   { "architecture": ["docs/architecture/", "platform-docs:services/billing.md"],
+   { "documents": ["docs/", "platform-docs:services/billing.md", "billing:README.md"],
      "repos": { "billing": "git@example.com:org/billing.git",
                 "platform-docs": "git@example.com:org/platform-docs.git" } }
    ```
@@ -163,6 +163,7 @@ The search also finds what the requirements do not say, and reports it as questi
 - an action is refused in a situation no requirement covers;
 - a requirement never applies anywhere in the scope;
 - a requirement is part of no journey, or the area has no journey at all;
+- anything the agent wrote down while reading documents and code: a document and the code disagree, or a document leaves something open;
 - nobody has decided whether an action can interleave with others inside the implementation.
 
 Answering a question means adding a requirement, an example, or a decision. The requirements are complete, relative to the scope, when the list is empty.
@@ -177,7 +178,7 @@ On every run the checker drives the code through the model: every state of the s
 - an observation differs after a step;
 - the code has an operation the model never uses (reported as an open question).
 
-**Extraction** uses the same check. An agent reads the code and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the review page. `example/Areas/Reservation` was extracted this way from `example/app/reservation.py`.
+**Extraction** uses the same check. An agent reads the code, and the documents around it, and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the review page. `example/Areas/Reservation` was extracted this way from `example/app/reservation.py`.
 
 **New code** goes the other way: the code and the binding are written from the model, and the same check says when they are done.
 
@@ -207,11 +208,11 @@ A project (its own repository)
   Areas/<Name>/       its model and proofs
   ledger/             what was verified, per area (committed)
   out/                the review page (generated, not committed)
-  .spec/project.json  architecture documents and repositories of the system
+  .spec/project.json  repositories of the system and the documents written about it
   .spec/local.json    where this developer has those repositories (not committed)
 ```
 
-When the system is described by architecture documents, list them in `.spec/project.json`, together with the repositories they point to. Extraction starts from them: the agent reads the documents to decide what an area is and where its code lives, then reads the code, which stays the reference. A difference between the two is a question for the person.
+Code is rarely the only source. Architecture and design documents, READMEs, comments, tests and product notes say what a system is for and how it is cut into parts, and they often say it differently from the code. The framework takes both: documents tell the agent what an area is, where its code lives and what was intended; the code tells it what actually happens, and stays the reference for the model. Where a document and the code disagree, or a document promises something the code does not do, the agent does not choose: it records a question in the area (`questions`), and the question stays on the review page until a person answers it. No particular set or layout of documents is required. A repository of architecture notes that point to code repositories works, and so does a single README.
 
 ## Changes and git
 

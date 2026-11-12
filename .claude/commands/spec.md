@@ -6,7 +6,7 @@ The person you work with decides what the system must do. You write the Lean, ru
 
 ## Starting a project (once)
 
-If the directory has no `lakefile.toml` yet, set the project up first, following "Starting a project" in the framework's `README.md` step by step (the four files, `lake update`, the commands, `.gitignore`, `.spec/project.json`, `.spec/local.json`, CI). Ask the person for the framework revision to pin, for the architecture documents and repositories, and for the local checkout paths; do not clone anything on your own. `Main.lean` must be exactly the three lines given there: that file decides what counts as verified.
+If the directory has no `lakefile.toml` yet, set the project up first, following "Starting a project" in the framework's `README.md` step by step (the four files, `lake update`, the commands, `.gitignore`, `.spec/project.json`, `.spec/local.json`, CI). Ask the person for the framework revision to pin, for the repositories and whatever documents exist about the system, and for the local checkout paths; do not clone anything on your own. `Main.lean` must be exactly the three lines given there: that file decides what counts as verified.
 
 ## 0. The change
 
@@ -18,6 +18,8 @@ Ask what the area does, then write or change:
 
 - `Areas/<Name>/Model.lean`: the state, the actions, `init`, the step function (`none` means refused), and the invariant predicates. Import only `Spec.Data`.
 - `Areas/<Name>.lean`: the `Area` record with journeys, invariants, requirements, examples, scope and views. Register it in `Areas.lean`.
+
+Use what is already written. Before asking, read the documents listed in `.spec/project.json` (`documents`) and anything the person points you to: product notes, design documents, READMEs, tickets. They are sources for journeys and requirements, not the truth: say what you took from where, and let the person confirm it. No particular documents or structure are required; when there are none, everything comes from the person.
 
 Start from the journeys. Ask the person for the stories of the people who use this part of the system: who wants what, and what happens, moment by moment, including the moments where the system says no. Write each as a `Journey` (`.step` for a moment the system goes along with, `.refusal` for one it turns down), in the person's own words, with no identifiers or technical terms in `say`. The requirements then come out of the journeys: every moment needs a requirement that covers it, and the checker asks about every requirement that no journey shows. Keep a journey to a handful of moments; boundary cases belong in examples.
 
@@ -57,7 +59,8 @@ The checker lists what the requirements do not say. Go through the list with the
 
 When the area describes code that already exists, the model is extracted from the code:
 
-0. Orient yourself before reading code. Read the architecture documents listed in `.spec/project.json` and follow them to the repositories they point to (`repos`, with the local checkouts in `.spec/local.json`). Use them to decide what one area is (one component with its own state and operations, not a whole system), where its entry points are, and which repository and paths its code lives in. Tell the person which area you will extract and from where, and what the documents say that the code may or may not confirm. The documents orient; the code is the reference. Where they disagree, that is a question for the person.
+0. Orient yourself before reading code. Read what is written about the system: the documents listed in `.spec/project.json` (`documents`), and what lies around the code itself, such as READMEs, design notes, comments and tests. Follow them to the repositories they point to (`repos`, with the local checkouts in `.spec/local.json`). None of this is required to exist or to have a particular shape; use what there is. Use it to decide what one area is (one component with its own state and operations, not a whole system), where its entry points are, which repository and paths its code lives in, and what the behaviour was meant to be. Tell the person which area you will extract and from where.
+   The documents give orientation and intent; the code is the reference for the model. Do not settle a disagreement yourself. When a document says something the code does not do, or the code does something no document mentions and it looks unintended, add it to the area's `questions` as one plain sentence naming both sources ("docs/holds.md says a hold lasts 15 minutes; the code releases it after 2"). It stays on the review page until the person answers; then remove it and change the model, the code, or neither.
 1. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
 2. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
 3. Bind the area to the code with `code := some { ... }`:
