@@ -17,7 +17,7 @@ h1{font-size:20px;margin:0 0 12px}h2{font-size:16px;margin:26px 0 8px}h3{font-si
 .sec>summary{cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:11px 0;list-style:none}
 .sec>summary::-webkit-details-marker{display:none}.sec>summary::before{content:"▸";color:var(--mut);width:12px}.sec[open]>summary::before{content:"▾"}
 .sec>summary h2{margin:0}.sec>.sub{margin:0 0 8px}.cnt{color:var(--mut);font-size:13px}
-tr.lo td{background:var(--warnb)}
+tr.lo td{background:var(--warnb)}td.wr{word-break:break-all;font-size:11.5px;color:var(--mut);width:34%}
 .asm{margin:0 0 12px;padding-left:20px}.asm li{margin:3px 0}.asm li.gone{color:var(--mut);text-decoration:line-through}
 button{font:inherit;color:inherit;background:var(--surf);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer}
 button:hover{border-color:var(--acc)}button:disabled{opacity:.4;cursor:default}
@@ -486,7 +486,7 @@ function render(a, only) {
     const S = sec("What the code offers", (sf.length - out - rd) + " of " + (sf.length - rd) + " operations modelled", out ? out + " left out" : "", 0,
       "Every way into the existing code of this area, listed from the code, and what the model does with each. What is left out, the model says nothing about.");
     const tb = h("tbody"); [...sf].sort((x, y) => (y.status === "left out") - (x.status === "left out")).forEach(e => {
-      const r = h("tr", e.status === "left out" ? "lo" : "", h("td", "", e.what), h("td", "mono", e.code),
+      const r = h("tr", e.status === "left out" ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
         h("td", "", e.status === "modelled" ? ["modelled: ", h("span", "mono", e.actions.join(", "))] : e.status === "reads" ? "only reads" : [h("b", "", "left out: "), e.why]));
       tb.append(r); });
     S.append(h("div", "tw", h("table", "", h("thead", "", h("tr", "", ["the code can", "where", "in the model"].map(x => h("th", "", x)))), tb))); }
@@ -537,8 +537,8 @@ function render(a, only) {
 const app = document.getElementById("app"), KIND = PAGE.kind || "area";
 const link = (text, href, cls) => { const x = h("a", cls || "", text); x.href = href; return x; };
 // an area can have parts ("protection/runs"): one page per area, one tab per part
-const top = name => name.split("/")[0], part = name => name.split("/").slice(1).join("/");
-const file = name => encodeURIComponent(top(name)) + ".html" + (part(name) ? "#" + encodeURIComponent(part(name)) : "");
+const areaOf = name => name.split("/")[0], partOf = name => name.split("/").slice(1).join("/");
+const file = name => encodeURIComponent(areaOf(name)) + ".html" + (partOf(name) ? "#" + encodeURIComponent(partOf(name)) : "");
 const pl = (k, one) => k + " " + one + (k === 1 ? "" : "s");
 if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readback data. The checker has not filled in this page yet."));
 else if (KIND === "index") {
@@ -553,7 +553,7 @@ else if (KIND === "index") {
       file(a.area), "row arow " + (bad ? "failed" : "ok"))); });
 } else {
   const areas = KIND === "change" ? DATA.filter(a => changed(diff(a))) : DATA, since = PAGE.since ? short(PAGE.since) : "";
-  app.append(h("h1", "", KIND === "change" ? "Readback of the change since " + since : "Readback: " + top(DATA[0].area)),
+  app.append(h("h1", "", KIND === "change" ? "Readback of the change since " + since : "Readback: " + areaOf(DATA[0].area)),
     h("p", "nav", link("all areas", "index.html"),
       KIND === "area" && since ? [" · ", link("the change since " + since, "change.html")] : null,
       KIND === "change" ? areas.flatMap(a => [" · ", link(a.area + " as it stands", file(a.area))]) : null));
@@ -565,13 +565,13 @@ else if (KIND === "index") {
     all.onclick = () => { const ds = [...body.querySelectorAll("details.sec")], open = ds.some(d => !d.open);
       ds.forEach(d => { d.open = open; }); all.textContent = open ? "close all" : "open all"; };
     const show = k => { cur = k; all.textContent = "open all"; [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(areas[k], only)); };
-    areas.forEach((a, k) => { const bad = problem(a), b = h("button", "tab", KIND === "area" ? part(a.area) || a.area : a.area.replace("/", " / "),
+    areas.forEach((a, k) => { const bad = problem(a), b = h("button", "tab", KIND === "area" ? partOf(a.area) || a.area : a.area.replace("/", " / "),
         h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"));
       b.setAttribute("role", "tab"); b.onclick = () => show(k); tabs.append(b); });
     let tog = null;
     if (since) { const cb = h("input"); cb.type = "checkbox"; cb.checked = only; cb.onchange = () => { only = cb.checked; show(cur); };
       tog = h("label", "tog", cb, "only what changed"); }
-    const want = decodeURIComponent(location.hash.slice(1)), at = areas.findIndex(a => part(a.area) === want);
+    const want = decodeURIComponent(location.hash.slice(1)), at = areas.findIndex(a => partOf(a.area) === want);
     app.append(h("div", "bar", areas.length > 1 ? tabs : null, all, tog), body); show(want && at >= 0 ? at : 0);
   }
 }
