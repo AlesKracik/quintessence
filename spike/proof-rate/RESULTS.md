@@ -4,6 +4,8 @@ Run on 2026-11-11 against the three example areas (`auth`, `subscription`, `auth
 
 **Answer: yes, for models of this size. Every target was proven, each in one to two minutes, and every result passed an independent re-check.**
 
+A third round measured what a Lean-only design depends on: exhaustive search written in Lean matched TLC's state count and ran faster on one core than TLC on ten, and proofs broken by a model edit were repaired in under a minute. See "Round 3" below.
+
 A second round on 2026-11-12 repeated the measurement on three real models of up to 2,600 lines and added Dafny. **The unattended rate did not fall: Lean and Dafny reached the correct verdict on every invariant. What broke was tooling**, namely the Quint-to-Lean generator and the Apalache route on the largest model. See "Round 2" below.
 
 ## Round 1 results (example areas)
@@ -111,6 +113,47 @@ The round used about 1.07M tokens. Dafny was the cheapest to drive: most lemmas 
 3. **One attempt per target**, and effort figures are self-reported.
 4. **Not covered:** one two-state invariant of B, Verus and TLAPS.
 
+## Round 3: is a Lean-only stack feasible in time?
+
+Run on 2026-11-12 on the example `auth` model. Two questions a Lean-only design depends on: is exhaustive search fast enough when written in Lean, and how much repair do proofs need when the model changes?
+
+### Exhaustive search in Lean against TLC
+
+`lean/Search/Auth.lean` is a 75-line depth-first search over the generated Lean model, compiled to native code. Same scope as the TLC baseline: three users, three sessions, clock capped one tick above the timeout.
+
+| | Lean search | TLC |
+|---|---|---|
+| Distinct states | 14,461,775 | 14,461,775 |
+| Violations | 0 | 0 |
+| Wall time | 113 s | 191 s |
+| Cores used | 1 | 10 (1,689 CPU-seconds) |
+| Peak memory | 1.2 GB | not measured |
+
+The state counts are identical, which cross-checks the two tools. Notes: both remember visited states by 64-bit fingerprint, so a collision could hide a state; TLC generated about four times as many successor states because the Quint `step` draws a user and a session for every action, including those that ignore them; the search program itself is not proven correct.
+
+Reproduce with `cd spike/proof-rate/lean && lake build authsearch && .lake/build/bin/authsearch`.
+
+### Proof repair after a model edit
+
+Three edits applied to copies of the Lean model and the Dafny port of `auth`, each with five proven invariants.
+
+| Edit | Lean: proofs broken | Lean: repair | Dafny: errors | Dafny: repair |
+|---|---|---|---|---|
+| Lockout threshold 5 → 7 | 1 of 5 | 26 s, 4 builds, 4 lines | 0 | none needed |
+| Unlock no longer resets the attempt count | 0 of 5 | none needed | 0 | none needed |
+| New action added (ends all of a user's sessions) | 5 of 5 | 35 s for all five, 1 build each, 37 lines | 1 | 19 s, 1 run, 16 lines |
+
+- The one Lean proof broken by the constant change had the number 5 written into its helper invariant. The repair refers to the constant instead, and the repaired proof still builds when the constant is moved again to 9.
+- A new action breaks every Lean proof, because each proof analyses the actions case by case. Each repair was one added case and built at the first attempt.
+- All repaired proofs were re-audited: statements unchanged, no forbidden constructs, standard axioms only; the Dafny file re-verifies with 0 errors.
+
+### What round 3 does not show
+
+1. **One small model.** `auth` has six actions. Repair effort on a model with dozens of actions, where a new action interacts with many invariants, is not measured.
+2. **The edits kept every invariant true**, and the new action resembled an existing branch, which the agent was told. An edit that needs a new strengthening fact, or that makes an invariant false, would cost more.
+3. **One attempt per repair**; build counts are self-reported.
+4. **Search throughput is for one model.** Wider states or larger scopes will be slower per state, and the search is single-threaded.
+
 ## How round 1 was checked
 
 Nothing here rests on an agent's own report.
@@ -146,7 +189,7 @@ Reproduce the Lean audit with `python3 spike/proof-rate/audit_lean.py`.
 
 ## Files
 
-- `lean/` — one Lake project: the prelude, the three generated models and the nine proofs under `Spec/<Area>/Proofs/`.
+- `lean/` — one Lake project: the prelude, the three generated models, the nine proofs under `Spec/<Area>/Proofs/`, and the round 3 search program `Search/Auth.lean`.
 - `apalache/` — the example models with the added inductive invariants (`indInv`).
 - `fluency/` — the two agent-written models.
 - `dafny/` — the round 2 Dafny ports and proofs of the two example areas (`dafny verify <file>`). Nothing from the real models is stored here.

@@ -7,3 +7,7 @@ name = "Quint"
 [[lean_lib]]
 name = "Spec"
 globs = ["Spec.+"]
+
+[[lean_exe]]
+name = "authsearch"
+root = "Search.Auth"
