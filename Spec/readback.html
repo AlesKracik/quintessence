@@ -440,9 +440,11 @@ function codeSection(a, D) {
 
 function render(a, only) {
   const t = stats(a), sr = a.search, root = h("div"), D = diff(a), F = only && D && !D.isNew;
-  const inJ = new Map(); (a.journeys || []).forEach(j => (j.moments || []).forEach(m => (m.requirements || []).forEach(r => {
-    if (!inJ.has(r)) inJ.set(r, []); if (!inJ.get(r).includes(j.id)) inJ.get(r).push(j.id); })));
-  const jl = id => (a.journeys || []).length ? (inJ.has(id) ? "in journeys: " + inJ.get(id).join(", ") : "in no journey") : null;
+  // where each requirement shows: on a journey (at work in a step, or as a way a step is turned down) and in walkthroughs
+  const inJ = new Map(), note = (r, id) => { if (!inJ.has(r)) inJ.set(r, []); if (!inJ.get(r).includes(id)) inJ.get(r).push(id); };
+  (a.journeys || []).forEach(j => (j.steps || []).forEach(st => [...(st.requirements || []), ...(st.turnedDown || [])].forEach(r => note(r, j.id))));
+  (a.walkthroughs || []).forEach(w => (w.moments || []).forEach(m => (m.requirements || []).forEach(r => note(r, w.id))));
+  const jl = id => (a.journeys || []).length ? (inJ.has(id) ? "shown in " + inJ.get(id).join(", ") : "shown in no journey or walkthrough") : null;
   const keep = (m, bad) => !F || m || bad;
   const cover = sr.exhaustive ? "scope exhausted: " + n(sr.states) + " states" : "stopped at budget: " + n(sr.states) + " states, depth " + sr.depth;
   root.append(h("div", "tiles",
@@ -500,7 +502,7 @@ function render(a, only) {
     const S = sec(title, all.length, nb ? nb + " violated" : nw ? nw + " below target" : "",
       D && some(all.filter(x => D.c.has(x.id)).length + gone.length),
       kind === "invariant" ? "Always true, in every state." : "What must happen in response to something.");
-    cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => S.append(claimRow(c, D && D.c.get(c.id), jl(c.id))));
+    cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => S.append(claimRow(c, D && D.c.get(c.id), kind === "requirement" ? jl(c.id) : null)));
     gone.forEach(c => S.append(goneRow(c, "removed"))); hid(S, all.length - cs.length);
   }
   const lcs = a.lifecycles || [];

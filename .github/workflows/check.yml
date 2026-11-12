@@ -24,6 +24,16 @@ jobs:
       # The committed ledger must be what the checker produces.
       - working-directory: example
         run: test -z "$(git status --porcelain ledger)" || (git status --porcelain ledger; git diff ledger; exit 1)
+      # The readback pages must load: a script error leaves a page blank.
+      - working-directory: example
+        run: |
+          for f in out/readback/*.html; do
+            google-chrome --headless=new --no-sandbox --disable-gpu --virtual-time-budget=5000 \
+              --enable-logging=stderr --dump-dom "file://$PWD/$f" 2>err.txt >dom.html
+            if grep -q "Uncaught" err.txt || ! grep -q "<h1" dom.html; then
+              echo "$f does not load"; grep "Uncaught" err.txt; exit 1
+            fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
