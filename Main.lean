@@ -1,7 +1,7 @@
 import Areas
 
 /-!
-The checker program: `lake exe spec`, run from the repository root. Runs every area, writes `ledger/<area>.json`
+The checker program: `lake exe check`, run from the repository root. Runs every area, writes `ledger/<area>.json`
 (committed) and `out/review.html` (the page a person reviews), prints one line
 per area, and fails if any claim is violated, any example fails, or code and
 model differ.

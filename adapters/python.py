@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Python adapter: runs model-chosen action sequences against Python code.
 
-It executes and reports; it judges nothing. The checker (`lake exe spec`)
+It executes and reports; it judges nothing. The checker (`lake exe check`)
 starts it with the root of the code's repository as its argument, sends one JSON message per line on stdin and reads one JSON reply
 per line on stdout:
 

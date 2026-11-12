@@ -1,6 +1,6 @@
 # /spec — write or change the requirements of an area
 
-Requirements here are Lean 4 objects checked by `lake exe spec`. Read `README.md` first if you have not. `Areas/Auth` is the pattern for an area written from scratch, `Areas/Reservation` for one extracted from existing code.
+Requirements here are Lean 4 objects checked by `lake exe check`. Read `README.md` first if you have not. `Areas/Auth` is the pattern for an area written from scratch, `Areas/Reservation` for one extracted from existing code.
 
 The person you work with decides what the system must do. You write the Lean, run the checker, and bring back what it found. Never decide a requirement on the person's behalf, and never weaken a claim to make the check pass.
 
@@ -24,7 +24,7 @@ Rules for the claims:
 
 ## 2. Check
 
-Run `lake exe spec` from the repository root.
+Run `lake exe check` from the repository root.
 
 - A violated claim or failed example comes with the shortest run that shows it (in `out/review.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
 - A claim "below target" is not a failure, but say so.
@@ -59,7 +59,7 @@ When the area describes code that already exists, the model is extracted from th
    - `actions` gives, for every action name, the code to run (`{0}`, `{1}` are the action's arguments). The action counts as refused when that code raises. Call `refuse()` to turn a return value into a refusal;
    - `observe` lists what is compared after every step: a name, the value the model expects as text (`true`, `3`, `none`, plain text), and the expression that reads it from the code. Observe everything a caller can see.
    The mapping must stay a table of short calls. If it needs logic to make the code fit the model, the model is wrong.
-4. Run `lake exe spec` until the code agrees. Each difference comes with the run that shows it. During extraction the code is the reference, so fix the model.
+4. Run `lake exe check` until the code agrees. Each difference comes with the run that shows it. During extraction the code is the reference, so fix the model.
 5. "The code has operation X that the model does not use" means the model is missing something. Add it, or leave the question for the person.
 
 ## 6. Next

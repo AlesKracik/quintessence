@@ -4,6 +4,21 @@ Requirements as mathematical objects, so that the correctness of AI-written work
 
 A requirement here is a statement about a state machine, written in [Lean 4](https://lean-lang.org). The machine checks it. A person reviews a generated page, not the Lean. The goal and every decision behind it are in [GOAL.md](GOAL.md).
 
+## Using it
+
+You work with an AI agent through four commands (in `.claude/commands/`, for Claude Code). They are stages of one loop, and dependencies rather than a schedule: any stage can be re-entered at any time, and a change to the requirements sends the later ones round again.
+
+| Stage | Command | What happens | Done when |
+|---|---|---|---|
+| Spec | `/spec` | Write or change the model and its claims with the person; check; prove; answer open questions. For existing code, extract the model from it. | No violated claim; questions answered or knowingly left open |
+| Readback | `/spec-readback` | Generate the review page for the change and walk the person through it | The person has no corrections; the pull request review approves |
+| Code generation | `/spec-code-generate` | Write the code and its binding from the model, on the change's branch in the code repository | Code committed, binding in place |
+| Code validation | `/spec-code-verify` | Drive the code through the model; resolve any drift with the person | The ledger records agreement |
+
+The agent writes the model, the proofs and the code, and none of them needs to be trusted. A proof that is wrong does not compile. A requirement that the model breaks comes back with the shortest run that breaks it. Code that differs from the model comes back with the run that shows it. What the agent cannot settle is whether a requirement says what the person meant, which is what the readback is for.
+
+Underneath, every command runs the same program, the **checker**: `lake exe check`. It is deterministic and involves no AI. The agent runs it, and so does CI; you do not need to. Everything below describes what it checks and how.
+
 ## How it works
 
 Everything about one part of a system lives in an **area**:
@@ -17,13 +32,7 @@ Everything about one part of a system lives in an **area**:
 | Scope | The finite set of actions (and an optional bound on states) the search explores |
 | Code (optional) | How the area maps onto existing code: what to run for each action, what to read after each step |
 
-One command checks every area:
-
-```
-lake exe spec
-```
-
-It does four things.
+The checker (`lake exe check`) goes through every area and does four things.
 
 1. **Audits the proofs.** The program cannot even be built unless every attached proof is accepted by the Lean kernel and rests on nothing but Lean's three standard axioms.
 2. **Searches the scope.** It runs the model through every reachable state of the scope, or until the budget is spent, and checks every invariant, requirement and example on the way.
@@ -79,7 +88,7 @@ Spec/Data.lean      finite maps and sets, and the definition of "reachable"
 Spec/Check.lean     the area records and the checker
 Spec/review.html    the review page template
 Audit.lean          the gate on what counts as proven
-Main.lean           the `spec` program
+Main.lean           the checker program, `lake exe check`
 adapters/python.py  runs model-chosen action sequences against Python code
 Areas.lean          the list of areas
 Areas/<Name>.lean   one area: claims and scope
@@ -91,26 +100,15 @@ examples/           existing code used by the example areas
 
 `Areas/Auth` is the worked example. Copy its shape for a new area and add it to `Areas.lean`.
 
-## Changes, git and the loop
+## Changes and git
 
 **The area is the unit of meaning; the change is the unit of work.** A change is a git branch: `change/<name>` here, and the same branch name in every code repository it touches. Git tracks the change, the pull request review is the approval, and the committed ledger is the record of what was verified. There is no other bookkeeping, so several changes can be open at once, each on its own branch. When two changes touch the same area and their ledgers conflict, re-running the checker settles it, because the ledger is generated.
 
 Git also answers "did anything change?":
 
-- `lake exe spec --since <revision>` compares with that revision. The review page then shows what the change added, removed or altered, which is all a reviewer has to read.
+- `lake exe check --since <revision>` compares with that revision. The review page then shows what the change added, removed or altered, which is all a reviewer has to read.
 - A code check is re-run only when git reports different content for what its verdict depends on: the area's own files, the checker, the adapter and the code's files. The ledger records the state git reported when the verdict was reached; if git reports the same state now, committed or not, the verdict stands. With `--since`, the ledger of that revision is the one that counts as recorded, which is what a pull request check uses: it trusts the base branch, not the ledger the change brings. `--full` re-runs everything.
 - A binding names where its code lives: this repository, or another one by name, with the local checkout given in `.spec/local.json` (`{"repo_paths": {"name": "/path"}}`, not committed). For another repository the ledger records the code commit the verdict is about, and a verdict on uncommitted code is never taken as recorded.
-
-The work goes through four stages, each with a command in `.claude/commands/`. They are dependencies, not a schedule: any stage can be re-entered at any time, and a change to the requirements sends the later ones round again.
-
-| Stage | Command | What happens | Done when |
-|---|---|---|---|
-| Spec | `/spec` | Write or change the model and its claims with the person; check; prove; answer open questions. For existing code, extract the model from it. | No violated claim; questions answered or knowingly left open |
-| Readback | `/spec-readback` | Generate the review page for the change and walk the person through it | The person has no corrections; the pull request review approves |
-| Code generation | `/spec-code-generate` | Write the code and its binding from the model, on the change's branch in the code repository | Code committed, binding in place |
-| Code validation | `/spec-code-verify` | Drive the code through the model; resolve any drift with the person | The ledger records agreement |
-
-The agent writes the model, the proofs and the code, and none of them needs to be trusted. A proof that is wrong does not compile. A requirement that the model breaks comes back with the shortest run that breaks it. Code that differs from the model comes back with the run that shows it. What the agent cannot settle is whether a requirement says what the person meant, which is what the readback is for.
 
 ## What is trusted
 
