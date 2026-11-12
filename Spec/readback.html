@@ -13,6 +13,10 @@ main{max-width:1000px;margin:0 auto;padding:16px}
 .mono,code,td.v,.act{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
 h1{font-size:20px;margin:0 0 12px}h2{font-size:16px;margin:26px 0 8px}h3{font-size:13px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
 .sub{color:var(--mut);font-size:13px;margin:-4px 0 8px}
+.sec{border-top:1px solid var(--line)}.sec[open]{padding-bottom:12px}
+.sec>summary{cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:11px 0;list-style:none}
+.sec>summary::-webkit-details-marker{display:none}.sec>summary::before{content:"▸";color:var(--mut);width:12px}.sec[open]>summary::before{content:"▾"}
+.sec>summary h2{margin:0}.sec>.sub{margin:0 0 8px}.cnt{color:var(--mut);font-size:13px}
 .asm{margin:0 0 12px;padding-left:20px}.asm li{margin:3px 0}.asm li.gone{color:var(--mut);text-decoration:line-through}
 button{font:inherit;color:inherit;background:var(--surf);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer}
 button:hover{border-color:var(--acc)}button:disabled{opacity:.4;cursor:default}
@@ -250,22 +254,21 @@ function moment(m, i, prev, req, prevV) {
     bad ? h("p", "note", "the story says otherwise: the model " + (m.refused ? "turns down" : "accepts") + " this") : null,
     h("span", "act", m.action));
 }
-function journey(j, req, ms, fold) {
+function journey(j, req, ms) {
   const cls = j.status === "ok" ? "ok" : "failed", d = h("details", "row ex jr " + cls), tl = h("div", "tl");
-  d.open = !fold; let prev = new Map(j.start || []), prevV = new Map(j.startViews || []);
+  d.open = j.status !== "ok" || !!(ms && ms.length); let prev = new Map(j.start || []), prevV = new Map(j.startViews || []);
   (j.moments || []).forEach((m, i) => { tl.append(moment(m, i, prev, req, prevV));
     if (!m.refused) { if (m.state) prev = new Map(m.state); if (m.views) prevV = new Map(m.views); } });
   d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null),
     h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, tl));
   return d;
 }
-function journeys(a, D, F) {
-  const js = a.journeys || [], out = [h("h2", "", "Journeys")];
-  if (!js.length) return out.concat(h("p", "sub", "No journeys yet — the stories a person would recognise this area by are missing."));
-  out.push(h("p", "sub", "Read these first: what a person does and what the system does about it."));
+function journeys(a, D) {
+  const js = a.journeys || [], out = [];
+  if (!js.length) return [h("p", "sub", "No journeys yet — the stories a person would recognise this area by are missing.")];
   const req = new Map(a.claims.map(c => [c.id, c.text]));
   [...js].sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(j =>
-    out.push(journey(j, req, D && D.j.get(j.id), F && !D.j.has(j.id) && j.status === "ok")));
+    out.push(journey(j, req, D && D.j.get(j.id))));
   (D ? D.rj : []).forEach(j => out.push(goneRow({ id: j.id, text: j.title }, "removed")));
   return out;
 }
@@ -361,7 +364,7 @@ function changeBlock(D) {
 }
 
 function codeSection(a, D) {
-  const c = codeOf(a), [, , cls, icon] = CODE[c.status] || ["warn", "", "below", "▲ not checked"], out = [h("h2", "", "Code")];
+  const c = codeOf(a), [, , cls, icon] = CODE[c.status] || ["warn", "", "below", "▲ not checked"], out = [];
   out.push(h("div", "cv", h("span", "badge " + cls, icon), h("span", "", c.verdict || "")));
   if (c.status === "drift" && c.steps && c.steps.length) {
     const d = h("details", "ex row " + cls); d.open = true;
@@ -403,43 +406,64 @@ function render(a, only) {
     h("p", "", "Budget " + n(sr.budget) + " states; " + n(sr.cutByBound) + " states cut by the size bound."),
     h("p", "mono", sr.actions.join("  |  ")));
   if (D) root.append(changeBlock(D));
-  root.append(...journeys(a, D, F));
+  // Every section starts closed, so the page first reads as its own table of contents.
+  // A section that holds a problem, or something the change touched, starts open.
+  const sec = (title, count, bad, chg, sub) => {
+    const d = h("details", "sec"); d.open = !!(bad || chg);
+    d.append(h("summary", "", h("h2", "", title), count != null ? h("span", "cnt", String(count)) : null,
+      bad ? h("span", "badge failed", bad) : null, chg ? h("span", "badge new", "changed") : null));
+    if (sub) d.append(h("p", "sub", sub));
+    root.append(d); return d; };
+  const some = k => k ? k : 0;
+  const js = a.journeys || [];
+  sec("Journeys", js.length, t.jBad ? t.jBad + " failed" : "", D && some(D.j.size + D.rj.length),
+    js.length ? "Read these first: what a person does and what the system does about it." : "").append(...journeys(a, D));
   const asm = a.assumptions || [], gas = D ? D.ras : [];
-  if (asm.length || gas.length) { root.append(h("h2", "", "Assumptions"),
-    h("p", "sub", "What the model takes for granted, simplifies or leaves out. Everything below holds only under these."));
+  if (asm.length || gas.length) {
+    const S = sec("Assumptions", asm.length, "", D && some(D.as.size + gas.length),
+      "What the model takes for granted, simplifies or leaves out. Every claim on this page holds only under these.");
     const shown = asm.filter(x => keep(D && D.as.has(x), 0)), ul = h("ul", "asm");
     shown.forEach(x => ul.append(h("li", "", D && D.as.has(x) ? h("span", "badge new", "new") : null, D && D.as.has(x) ? " " : "", x)));
     gas.forEach(x => ul.append(h("li", "gone", h("span", "badge below", "dropped"), " ", x)));
-    root.append(ul); hid(root, asm.length - shown.length); }
-  root.append(det, ...codeSection(a, D));
+    S.append(ul); hid(S, asm.length - shown.length); }
+  const cs0 = codeOf(a).status;
+  sec("Code", cs0, /drift|error/.test(cs0) ? "needs attention" : "", D && (D.code || D.bind)).append(...codeSection(a, D));
   for (const [kind, title] of [["invariant", "Invariants"], ["requirement", "Requirements"]]) {
     const all = a.claims.filter(x => x.kind === kind), gone = D ? D.rc.filter(x => x.kind === kind) : [];
     if (!all.length && !gone.length) continue;
     const cs = all.filter(x => keep(D && D.c.has(x.id), x.status !== "ok"));
-    root.append(h("h2", "", title), h("p", "sub", kind === "invariant" ? "Always true, in every state." : "What must happen in response to something."));
-    cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => root.append(claimRow(c, D && D.c.get(c.id), jl(c.id))));
-    gone.forEach(c => root.append(goneRow(c, "removed"))); hid(root, all.length - cs.length);
+    const nb = all.filter(x => x.status === "violated").length, nw = all.filter(x => x.status !== "ok").length - nb;
+    const S = sec(title, all.length, nb ? nb + " violated" : nw ? nw + " below target" : "",
+      D && some(all.filter(x => D.c.has(x.id)).length + gone.length),
+      kind === "invariant" ? "Always true, in every state." : "What must happen in response to something.");
+    cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => S.append(claimRow(c, D && D.c.get(c.id), jl(c.id))));
+    gone.forEach(c => S.append(goneRow(c, "removed"))); hid(S, all.length - cs.length);
   }
   if (a.views.length) { const vs = a.views.filter(v => keep(D && D.v.has(v.name), 0));
     const same = new Map();  // views with the same diagram are drawn once
     vs.forEach(v => { const k = edgeKey(v); if (!same.has(k)) same.set(k, []); same.get(k).push(v); });
-    root.append(h("h2", "", "State diagrams")); same.forEach(g => root.append(h("h3", "", g.map(v => v.name).join(", ")), diagram(g[0])));
-    hid(root, a.views.length - vs.length); }
+    const S = sec("State diagrams", a.views.length, "", D && some(D.v.size), "How each thing the journeys talk about can change.");
+    same.forEach(g => S.append(h("h3", "", g.map(v => v.name).join(", ")), diagram(g[0])));
+    hid(S, a.views.length - vs.length); }
   const gx = D ? D.re : [];
-  if (a.examples.length || gx.length) { root.append(h("h2", "", "Examples"), h("p", "sub", "Concrete scenarios replayed against the model. Click to step through."));
+  if (a.examples.length || gx.length) {
+    const S = sec("Examples", a.examples.length, t.exBad ? t.exBad + " failed" : "", D && some(D.e.size + gx.length),
+      "Concrete scenarios replayed against the model. Click to step through.");
     const es = a.examples.filter(e => keep(D && D.e.has(e.id), e.status !== "ok"));
-    es.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(e => root.append(exampleRow(e, D && D.e.get(e.id))));
-    gx.forEach(e => root.append(goneRow(e, "removed"))); hid(root, a.examples.length - es.length); }
+    es.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(e => S.append(exampleRow(e, D && D.e.get(e.id))));
+    gx.forEach(e => S.append(goneRow(e, "removed"))); hid(S, a.examples.length - es.length); }
   const gq = D ? D.rq : [];
-  if (a.questions.length || gq.length) { root.append(h("h2", "", "Open questions: you must decide"),
-    h("p", "sub", "The model does something here that no requirement covers. Say whether that is right."));
+  if (a.questions.length || gq.length) {
+    const S = sec("Open questions", a.questions.length, "", D && some(D.q.size + gq.length),
+      "Yours to decide: something the requirements do not say, or where two sources disagree.");
     const qs = a.questions.filter(q => keep(D && D.q.has(q.text), 0));
-    qs.forEach(q => root.append(questionRow(q, D && D.q.has(q.text))));
-    gq.forEach(q => root.append(goneRow(q, "resolved", "q"))); hid(root, a.questions.length - qs.length); }
+    qs.forEach(q => S.append(questionRow(q, D && D.q.has(q.text))));
+    gq.forEach(q => S.append(goneRow(q, "resolved", "q"))); hid(S, a.questions.length - qs.length); }
   const at = Object.entries(a.atomic || {});
-  if (at.length) { root.append(h("h2", "", "Concurrency decisions"));
-    const tb = h("tbody"); at.forEach(([k, v]) => tb.append(h("tr", "", h("td", "f act", k), h("td", "", v))));
-    root.append(h("div", "tw", h("table", "", tb))); }
+  if (at.length) { const tb = h("tbody"); at.forEach(([k, v]) => tb.append(h("tr", "", h("td", "f act", k), h("td", "", v))));
+    sec("Concurrency decisions", at.length, "", 0, "Decided, with the reason: whether an action can interleave with others inside the implementation.")
+      .append(h("div", "tw", h("table", "", tb))); }
+  root.append(det);
   return root;
 }
 
@@ -450,14 +474,17 @@ else {
   app.append(h("h1", "", "Readback"));
   const body = h("div"), tabs = h("div", "tabs"); tabs.setAttribute("role", "tablist");
   let only = true, cur = 0;
-  const show = k => { cur = k; [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(DATA[k], only)); };
+  const all = h("button", "tab", "open all");
+  all.onclick = () => { const ds = [...body.querySelectorAll("details.sec")], open = ds.some(d => !d.open);
+    ds.forEach(d => { d.open = open; }); all.textContent = open ? "close all" : "open all"; };
+  const show = k => { cur = k; all.textContent = "open all"; [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(DATA[k], only)); };
   DATA.forEach((a, k) => { const bad = problem(a), b = h("button", "tab", a.area,
       h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"), changed(diff(a)) ? h("span", "chgd", "● changed") : null);
     b.setAttribute("role", "tab"); b.onclick = () => show(k); tabs.append(b); });
   if (DATA.some(a => a.since)) {
     const cb = h("input"); cb.type = "checkbox"; cb.checked = only; cb.onchange = () => { only = cb.checked; show(cur); };
-    app.append(h("div", "bar", DATA.length > 1 ? tabs : null, h("label", "tog", cb, "only what changed")));
-  } else if (DATA.length > 1) app.append(tabs);
+    app.append(h("div", "bar", DATA.length > 1 ? tabs : null, all, h("label", "tog", cb, "only what changed")));
+  } else app.append(h("div", "bar", DATA.length > 1 ? tabs : null, all));
   app.append(body); show(0);
 }
 </script></body></html>
