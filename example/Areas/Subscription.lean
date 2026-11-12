@@ -183,6 +183,40 @@ def area : Area State Action where
         .step "The next try goes through, and Bob is told in the app." (.cancel_subscription "bob" .InApp)] }]
   views := customers.map (fun c => (s!"subscription of {c}", statusView c))
     ++ customers.map (fun c => (s!"cancellation tries of {c}", retryView c))
+  code := some {
+    adapter := ["python3", "adapters/kotlin.py", "app/kotlin"]
+    paths := ["app/kotlin"]
+    setup := "import billing.*
+import java.io.IOException
+class ScriptedProvider : BillingProvider {
+    var answer: () -> ProviderAnswer = { error(\"the provider must not be called\") }
+    override fun cancelSubscription(customerId: String): ProviderAnswer = answer()
+    fun accepts() { answer = { ProviderAnswer.Accepted } }
+    fun declines() { answer = { ProviderAnswer.Declined } }
+    fun staysSilent(timedOut: Boolean) { answer = { if (timedOut) throw ProviderTimeoutException() else throw IOException() } }
+    fun mustNotBeCalled() { answer = { error(\"the provider must not be called\") } }
+}
+val provider = ScriptedProvider()
+val system = SubscriptionService(provider).also { it.subscribe(\"alice\"); it.subscribe(\"bob\") }"
+    actions := [
+      ("cancel_subscription", "provider.accepts(); if (system.cancel({0}, Notice.valueOf({1})) != CancelOutcome.Cancelled) refuse()"),
+      ("cancel_declined", "provider.declines(); if (system.cancel({0}, Notice.Email) != CancelOutcome.Declined) refuse()"),
+      ("cancel_unanswered", "provider.staysSilent({1}); if (!system.cancel({0}, Notice.Email).unanswered) refuse()"),
+      ("cancel_again", "provider.mustNotBeCalled(); if (system.cancel({0}, Notice.Email) != CancelOutcome.AlreadyCancelled) refuse()"),
+      ("expire_period", "system.expirePeriod({0})"),
+      ("request_refund", "system.requestRefund({0})")]
+    observe := customers.flatMap (fun c => [
+      (s!"status {c}", fun s => match s.status.get c with
+          | .Active => "Active" | .Cancelled => "Cancelled" | .Expired => "Expired",
+        s!"system.statusOf(\"{c}\")"),
+      (s!"billed {c}", fun s => toString (s.billingEnabled.get c), s!"system.isBilled(\"{c}\")"),
+      (s!"access until period end {c}", fun s => toString (s.accessUntilPeriodEnd.get c),
+        s!"system.hasAccessUntilPeriodEnd(\"{c}\")"),
+      (s!"notice {c}", fun s => match s.notice.get c with
+          | .NoNotice => "none" | .Email => "Email" | .InApp => "InApp",
+        s!"system.noticeSentTo(\"{c}\")"),
+      (s!"unanswered tries {c}", fun s => toString (triesOf s c), s!"system.unansweredTries(\"{c}\")")])
+    budget := 100000 }
 
 def entry : Entry := area.entry
 

@@ -167,7 +167,39 @@
   {"text": "Declined journey: the provider declines, the retry goes through",
    "status": "ok",
    "id": "EX-011"}],
- "code": {"verdict": "not checked", "status": "not checked", "level": 6},
+ "code":
+ {"verdict":
+  "the code agrees with the model on every journey and example, and on every transition and refusal of the scope (960 transitions, 5186 code steps)",
+  "status": "agrees",
+  "setup":
+  "import billing.*\nimport java.io.IOException\nclass ScriptedProvider : BillingProvider {\n    var answer: () -> ProviderAnswer = { error(\"the provider must not be called\") }\n    override fun cancelSubscription(customerId: String): ProviderAnswer = answer()\n    fun accepts() { answer = { ProviderAnswer.Accepted } }\n    fun declines() { answer = { ProviderAnswer.Declined } }\n    fun staysSilent(timedOut: Boolean) { answer = { if (timedOut) throw ProviderTimeoutException() else throw IOException() } }\n    fun mustNotBeCalled() { answer = { error(\"the provider must not be called\") } }\n}\nval provider = ScriptedProvider()\nval system = SubscriptionService(provider).also { it.subscribe(\"alice\"); it.subscribe(\"bob\") }",
+  "repo": ".",
+  "paths": ["app/kotlin"],
+  "observe":
+  [["status alice", "system.statusOf(\"alice\")"],
+   ["billed alice", "system.isBilled(\"alice\")"],
+   ["access until period end alice",
+    "system.hasAccessUntilPeriodEnd(\"alice\")"],
+   ["notice alice", "system.noticeSentTo(\"alice\")"],
+   ["unanswered tries alice", "system.unansweredTries(\"alice\")"],
+   ["status bob", "system.statusOf(\"bob\")"],
+   ["billed bob", "system.isBilled(\"bob\")"],
+   ["access until period end bob", "system.hasAccessUntilPeriodEnd(\"bob\")"],
+   ["notice bob", "system.noticeSentTo(\"bob\")"],
+   ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
+  "level": 4,
+  "inputs": "3866053347673189685",
+  "actions":
+  {"request_refund": "system.requestRefund({0})",
+   "expire_period": "system.expirePeriod({0})",
+   "cancel_unanswered":
+   "provider.staysSilent({1}); if (!system.cancel({0}, Notice.Email).unanswered) refuse()",
+   "cancel_subscription":
+   "provider.accepts(); if (system.cancel({0}, Notice.valueOf({1})) != CancelOutcome.Cancelled) refuse()",
+   "cancel_declined":
+   "provider.declines(); if (system.cancel({0}, Notice.Email) != CancelOutcome.Declined) refuse()",
+   "cancel_again":
+   "provider.mustNotBeCalled(); if (system.cancel({0}, Notice.Email) != CancelOutcome.AlreadyCancelled) refuse()"}},
  "claims":
  [{"verdict": "proven for all sizes and steps",
    "text": "A cancelled or expired subscription is never billed again.",
