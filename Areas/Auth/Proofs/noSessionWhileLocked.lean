@@ -90,7 +90,7 @@ theorem P_step : ∀ a s t, P s → apply a s = some t → P t := by
     · subst ho; simp [FSet.diff, hs']
     · simp [ho]; exact hs'
   | tick =>
-    simp only [apply] at h; split at h <;> simp at h; subst h
+    simp only [apply] at h; simp at h; subst h
     intro u hl
     exact hs u hl
   | unlock_account uid =>

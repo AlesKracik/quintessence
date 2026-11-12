@@ -129,11 +129,10 @@ def apply : Action → State → Option State
         sessions := (s.sessions.set sid SessionStatus.LoggedOut)
         userActiveSession := (s.userActiveSession.set (if ((s.sessionOwner.keySet).contains sid) then (s.sessionOwner.get sid) else "") ((activeSessionsOf s (if ((s.sessionOwner.keySet).contains sid) then (s.sessionOwner.get sid) else "")).diff (FSet.ofList [sid] : (FSet SessionId)))) }
     else none
+  -- time passes whether or not anyone is signed in
   | .tick, s =>
-    if ((s.sessions.keySet).any (fun sid => (isActive s sid))) then
-      some { s with
-        idleFor := (FSet.mapBy (s.idleFor.keySet) (fun sid => (if (isActive s sid) then ((s.idleFor.get sid) + (1 : Int)) else (s.idleFor.get sid)))) }
-    else none
+    some { s with
+      idleFor := (FSet.mapBy (s.idleFor.keySet) (fun sid => (if (isActive s sid) then ((s.idleFor.get sid) + (1 : Int)) else (s.idleFor.get sid)))) }
   | .unlock_account uid, s =>
     if (isLocked s uid) then
       some { s with

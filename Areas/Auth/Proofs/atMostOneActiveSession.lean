@@ -65,7 +65,7 @@ theorem P_step : ∀ a s t, P s → apply a s = some t → P t := by
     simp only [apply] at h; split at h <;> simp at h; subst h
     exact PM_set hs (diff_len _ _ (active_len hs _))
   | tick =>
-    simp only [apply] at h; split at h <;> simp at h; subst h
+    simp only [apply] at h; simp at h; subst h
     exact hs
   | unlock_account uid =>
     simp only [apply] at h; split at h <;> simp at h; subst h

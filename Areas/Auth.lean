@@ -127,6 +127,34 @@ def area : Area State Action where
       run := .login "alice" "s1" :: List.replicate 5 (.login_failed "alice"),
       expect := fun s => isLocked s "alice" && !isActive s "s1" }]
   views := [("session s1", sessionView "s1"), ("account alice", accountView "alice")]
+  code := some {
+    adapter := ["python3", "adapters/python.py"]
+    paths := ["examples/python/auth.py"]
+    setup := "from examples.python.auth import AuthService
+class Clock:
+    now = 0
+    def tick(self):
+        self.now += 1
+clock = Clock()
+system = AuthService(lambda: clock.now)"
+    actions := [
+      ("login", "system.login({0}, {1})"),
+      ("login_failed", "system.record_failed_login({0})"),
+      ("logout", "system.logout({0})"),
+      ("expire_session", "system.expire({0})"),
+      ("unlock_account", "system.unlock({0})"),
+      ("tick", "clock.tick()")]
+    observe := users.flatMap (fun u => [
+        (s!"locked {u}", fun s => toString (isLocked s u), s!"system.is_locked('{u}')"),
+        (s!"failed attempts {u}", fun s => toString (attemptsOf s u), s!"system.failed_attempts('{u}')"),
+        (s!"active session {u}", fun s => (activeSessionsOf s u).elems.headD "none", s!"system.active_session('{u}')")])
+      ++ sids.flatMap (fun x => [
+        (s!"status {x}", fun s => if s.sessions.contains x then (match statusOf s.sessions x with
+            | .Active => "active" | .Expired => "expired" | .LoggedOut => "logged_out") else "none",
+          s!"system.session_status('{x}')"),
+        (s!"user {x}", fun s => if s.sessionOwner.contains x then s.sessionOwner.get x else "none", s!"system.session_user('{x}')"),
+        (s!"idle {x}", fun s => toString (idleOf s x), s!"system.idle_time('{x}')")])
+    budget := 100000 }
 
 def entry : Entry := area.entry
 

@@ -73,7 +73,7 @@ theorem strong_step : ∀ a s t, strong s → apply a s = some t → strong t :=
   | logout sid =>
     simp only [apply] at h; split at h <;> simp at h; subst h; exact hs
   | tick =>
-    simp only [apply] at h; split at h <;> simp at h; subst h; exact hs
+    simp only [apply] at h; simp at h; subst h; exact hs
   | unlock_account uid =>
     simp only [apply] at h; split at h <;> simp at h; subst h
     intro u hu

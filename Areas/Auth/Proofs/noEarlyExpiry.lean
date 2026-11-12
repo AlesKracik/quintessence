@@ -124,25 +124,23 @@ theorem P_step : ∀ a s t, P s → apply a s = some t → P t := by
     · simp at h
   | tick =>
     simp only [apply] at h
-    split at h
-    · simp only [Option.some.injEq] at h
-      subst h
-      intro k hk
-      simp only at hk ⊢
-      obtain ⟨n, hn, hn3⟩ := hP k hk
-      have hmem : k ∈ s.idleFor.keySet.elems := by
-        have := (mem_iff_getList s.idleFor.entries k).2 (by simp [FMap.get?] at hn; simp [hn])
-        simpa [FMap.keySet, FMap.keys] using this
-      refine ⟨n, ?_, hn3⟩
-      simp only [FSet.mapBy, FMap.ofList, FMap.get?]
-      rw [foldl_map_get (fun sid => if isActive s sid = true then s.idleFor.get sid + 1 else s.idleFor.get sid)
-        s.idleFor.keySet.elems [] k]
-      simp only [hmem, if_true]
-      have : isActive s k = false := by
-        unfold isActive
-        rw [statusOf_eq, hk]; simp
-      simp [this, FMap.get, hn]
-    · simp at h
+    simp only [Option.some.injEq] at h
+    subst h
+    intro k hk
+    simp only at hk ⊢
+    obtain ⟨n, hn, hn3⟩ := hP k hk
+    have hmem : k ∈ s.idleFor.keySet.elems := by
+      have := (mem_iff_getList s.idleFor.entries k).2 (by simp [FMap.get?] at hn; simp [hn])
+      simpa [FMap.keySet, FMap.keys] using this
+    refine ⟨n, ?_, hn3⟩
+    simp only [FSet.mapBy, FMap.ofList, FMap.get?]
+    rw [foldl_map_get (fun sid => if isActive s sid = true then s.idleFor.get sid + 1 else s.idleFor.get sid)
+      s.idleFor.keySet.elems [] k]
+    simp only [hmem, if_true]
+    have : isActive s k = false := by
+      unfold isActive
+      rw [statusOf_eq, hk]; simp
+    simp [this, FMap.get, hn]
   | unlock_account uid =>
     simp only [apply] at h
     split at h

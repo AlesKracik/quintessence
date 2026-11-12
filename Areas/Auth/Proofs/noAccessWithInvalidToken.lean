@@ -140,7 +140,7 @@ theorem P_step : ∀ a s t, P s → apply a s = some t → P t := by
     exact remove_core s sid .LoggedOut _ (by decide) hs
       (by intro u hu; simp [contains_keySet, hu, FMap.get_of_get? hu])
   | tick =>
-    simp only [apply] at h; split at h <;> simp at h; subst h
+    simp only [apply] at h; simp at h; subst h
     exact hs
   | unlock_account uid =>
     simp only [apply] at h; split at h <;> simp at h; subst h
