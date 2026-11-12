@@ -585,10 +585,13 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       let hit := (List.range acts.size).findSome? fun i =>
         if names[i]! == n then (f.gaps[2 * i + (if refused then 1 else 0)]!).map (·, i) else none
       if let some (fp, i) := hit then
+        let run := (trace fp (some i)).map label
+        let last := run.getLast?.getD n
+        let after := if run.length ≤ 1 then "at the start" else s!"after {", ".intercalate run.dropLast}"
         questions := questions.push
           (if refused
-            then s!"`{n}` is refused in a situation no requirement covers. Is refusing right there?"
-            else s!"`{n}` is accepted in a situation no requirement covers. What must it do there?",
+            then s!"`{last}` is refused {after}, and no requirement covers that. Is refusing right there?"
+            else s!"`{last}` is accepted {after}, and no requirement covers that. What must it do there?",
            some (trace fp (some i)))
   for q in code.questions do
     questions := questions.push (q, none)

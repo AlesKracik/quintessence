@@ -41,15 +41,15 @@
    "request_refund \"bob\""]},
  "questions":
  [{"text":
-   "`cancel_subscription` is refused in a situation no requirement covers. Is refusing right there?"},
+   "`cancel_subscription \"alice\" (Email)` is refused after cancel_subscription \"alice\" (Email), and no requirement covers that. Is refusing right there?"},
   {"text":
-   "`cancel_declined` is refused in a situation no requirement covers. Is refusing right there?"},
+   "`cancel_declined \"alice\"` is refused after cancel_subscription \"alice\" (Email), and no requirement covers that. Is refusing right there?"},
   {"text":
-   "`cancel_unanswered` is refused in a situation no requirement covers. Is refusing right there?"},
+   "`cancel_unanswered \"alice\" true` is refused after cancel_subscription \"alice\" (Email), and no requirement covers that. Is refusing right there?"},
   {"text":
-   "`cancel_again` is refused in a situation no requirement covers. Is refusing right there?"},
+   "`cancel_again \"alice\"` is refused at the start, and no requirement covers that. Is refusing right there?"},
   {"text":
-   "`expire_period` is refused in a situation no requirement covers. Is refusing right there?"},
+   "`expire_period \"alice\"` is refused at the start, and no requirement covers that. Is refusing right there?"},
   {"text":
    "Can `cancel_subscription` interleave with other events inside the implementation, or is it atomic? Not decided."},
   {"text":

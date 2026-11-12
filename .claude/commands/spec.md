@@ -10,14 +10,14 @@ If the directory has no `lakefile.toml` yet, set the project up first: follow `S
 
 ## 0. The change
 
-Work happens in a change, and a change is a git branch. If you are on the default branch, ask for a short name and create `change/<name>`; use the same branch name in every code repository the change touches. Commit as `spec(<name>): ...`. Several changes can be open at once, each on its own branch. Do not merge or close a change yourself: the pull request review is the approval.
+Work happens in a change, and a change is a git branch. If you are on the default branch, ask for a short name and create `change/<name>` from it; use the same branch name in every code repository the change touches. Commit as `spec(<name>): ...`. Several changes can be open at once, each on its own branch. Do not merge or close a change yourself: the pull request review is the approval.
 
 ## 1. Model and claims
 
 Ask what the area does, then write or change:
 
 - `Areas/<Name>/Model.lean`: the state, the actions, `init`, the step function (`none` means refused), and the invariant predicates. Import only `Spec.Data`.
-- `Areas/<Name>.lean`: the `Area` record with journeys, invariants, requirements, examples, scope and views. Register it in `Areas.lean`.
+- `Areas/<Name>.lean`: the `Area` record with journeys, invariants, requirements, examples, scope and views. It imports `Spec.Check`, `Areas.<Name>.Model`, and every proof file. Register it in `Areas.lean` (one import, one entry in the list).
 
 Use what is already written. Before asking, read the documents listed in `.spec/project.json` (`documents`) and anything the person points you to: product notes, design documents, READMEs, tickets. They are sources for journeys and requirements, not the truth: say what you took from where, and let the person confirm it. No particular documents or structure are required; when there are none, everything comes from the person.
 
@@ -26,6 +26,8 @@ Start from the journeys. Ask the person for the stories of the people who use th
 Rules for the claims:
 
 - Every `text` is one plain sentence the person can confirm or reject.
+- When the person has not said what happens in some situation, do not decide it. Let the model refuse the action there and write no requirement for it: the checker then reports "refused in a situation no requirement covers" with an example run, and that open question is the record. Never write a requirement to silence a question the person has not answered.
+- A claim you add on your own, such as an invariant you found worth stating, is a proposal: say so in its `source` ("proposed by the agent, not yet confirmed") and tell the person.
 - Give every requirement, invariant and journey its `source`: who or what it comes from (the person, a document and where in it, a place in the code). The reviewer sees it next to the claim. Do not invent one; leave it empty when you do not know, and ask.
 - A requirement's `when` is the full condition under which the action is accepted (or, with `refused := true`, refused). Where `when` holds, the checker demands that the step succeeds and satisfies `shall`.
 - Keep the scope small enough that the search finishes within the budget. Add a `bound` only for values that grow without limit, and say in a comment what it cuts off.
@@ -49,6 +51,8 @@ theorem <invariant>_holds : ∀ s, Reachable init apply s → <invariant> s = tr
 and attach it with `proof := some ⟨...⟩`. Use `Reachable.induct`. When the invariant is not preserved by a step on its own, prove a stronger predicate and weaken it at the end. Put each proof file in its own namespace, as `Areas/Auth/Proofs` does.
 
 `sorry`, `native_decide`, new axioms, `implemented_by`, `extern`, `unsafe` and `debug.skipKernelTC` are rejected by the build. If you cannot prove an invariant, leave the proof out and report it. If you find it is false, bring the counterexample to the person.
+
+There is no Mathlib: no `tauto`, `linarith`, `by_contra` and the like; use `simp`, `omega`, `cases`, `by_cases`, `Classical.byContradiction`. The data library (`Spec/Data.lean` in the framework) has the lemmas about maps you will need most, `FMap.get?_set`, `FMap.get_set`, `FMap.get?_of_mem_keys`, `FMap.get_of_get?`, and the proofs under `example/Areas/*/Proofs/` in the framework show the usual shape.
 
 Proof writing and proof repair after a model change are mechanical: delegate them to a cheaper model when you can. The kernel checks the result.
 

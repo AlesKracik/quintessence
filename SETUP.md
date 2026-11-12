@@ -16,7 +16,7 @@ If you are reading this from a temporary checkout of the framework, keep it unti
 
 3. Check the tools: `lake --version` and `git --version`, and `python3 --version` if the code is Python. If Lean is missing, **ask** before installing it; the installer is elan (https://github.com/leanprover/elan).
 
-4. Create four files.
+4. Create four files and one directory. In `lakefile.toml`, `git` is the address the person gave you for the framework.
 
 `lean-toolchain`, the same as the framework's:
 
@@ -61,6 +61,8 @@ import Spec.Check
 def Areas.all : List Spec.Entry := []
 ```
 
+   Also create the directory `Areas/` with an empty file `Areas/.gitkeep` in it: the build needs the directory to exist, and git does not keep an empty one.
+
 5. Fetch the framework and take its commands:
 
    ```
@@ -88,11 +90,13 @@ def Areas.all : List Spec.Entry := []
 { "repo_paths": { "billing": "/home/me/src/billing", "platform-docs": "/home/me/src/platform-docs" } }
 ```
 
+   When there are no other repositories and no documents, the files are `{ "documents": [], "repos": {} }` and `{ "repo_paths": {} }`.
+
 8. Run `lake exe check`. With no areas yet it builds the checker (a minute or two the first time) and prints `review: out/review.html`. If it does not, fix that before going on.
 
 9. **Ask** whether the project uses GitHub Actions. If so, copy `.github/workflows/check.yml` from the framework and replace `example` by the project's directory, or remove those settings when the project is the repository root.
 
-10. **Ask** before committing. Propose a branch `change/setup` and one commit with everything created here.
+10. **Ask** before committing. In a new repository, propose one commit on the default branch (`main`): the setup changes no requirement, and later changes branch off it. In an existing repository, propose a branch `change/setup`.
 
 11. Tell the person what now exists, in three or four sentences, and that the next step is `/spec`. If the commands are not offered, the agent has to be restarted in the project directory.
 
@@ -106,4 +110,4 @@ A binding names the code it checks:
 
 ## A newer framework version
 
-Change `rev` in `lakefile.toml`, run `lake update quintessence`, copy the commands again (step 5), run `lake exe check --full`, and show the person what changed in the ledger before committing it together with `lake-manifest.json`.
+Change `rev` in `lakefile.toml`, run `lake update quintessence`, copy the commands again (step 5; they are the framework's, so overwrite), run `lake exe check --full`, and show the person what changed in the ledger before committing it together with `lake-manifest.json`.
