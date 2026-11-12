@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Spec review</title>
+<title>Readback</title>
 <style>
 :root{--bg:#f6f7f9;--surf:#fff;--ink:#1c2230;--mut:#5d667a;--line:#dde1e8;--acc:#2b5fd9;
 --ok:#1a7f4b;--okb:#e3f4ea;--warn:#9a5b00;--warnb:#fff0d6;--bad:#c4271f;--badb:#fde6e4;--chg:#fff3b8}
@@ -13,6 +13,7 @@ main{max-width:1000px;margin:0 auto;padding:16px}
 .mono,code,td.v,.act{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
 h1{font-size:20px;margin:0 0 12px}h2{font-size:16px;margin:26px 0 8px}h3{font-size:13px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
 .sub{color:var(--mut);font-size:13px;margin:-4px 0 8px}
+.asm{margin:0 0 12px;padding-left:20px}.asm li{margin:3px 0}.asm li.gone{color:var(--mut);text-decoration:line-through}
 button{font:inherit;color:inherit;background:var(--surf);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer}
 button:hover{border-color:var(--acc)}button:disabled{opacity:.4;cursor:default}
 button:focus-visible,.trace:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
@@ -291,8 +292,8 @@ const bind = c => JSON.stringify([c.setup, c.actions, c.observe]);
 const edgeKey = v => JSON.stringify([v.initial, v.edges.map(e => e.join("\0")).sort()]);
 function diff(a) {
   if (!a.since) return null;
-  const b = a.before, D = { since: short(a.since), isNew: !b, c: new Map(), e: new Map(), q: new Set(), v: new Set(),
-    rc: [], re: [], rq: [], j: new Map(), rj: [], code: null, bind: false, n: 0 };
+  const b = a.before, D = { since: short(a.since), isNew: !b, c: new Map(), e: new Map(), q: new Set(), v: new Set(), as: new Set(),
+    rc: [], re: [], rq: [], ras: [], j: new Map(), rj: [], code: null, bind: false, n: 0 };
   if (!b) return D;
   const bc = new Map(b.claims.map(x => [x.id, x])), be = new Map(b.examples.map(x => [x.id, x]));
   for (const c of a.claims) { const o = bc.get(c.id), m = [];
@@ -320,11 +321,14 @@ function diff(a) {
   const now = new Set(a.questions.map(q => q.text)), was = new Set(b.questions.map(q => q.text));
   a.questions.forEach(q => { if (!was.has(q.text)) D.q.add(q.text); });
   D.rq = b.questions.filter(q => !now.has(q.text));
+  const asNow = a.assumptions || [], asWas = b.assumptions || [];
+  asNow.forEach(x => { if (!asWas.includes(x)) D.as.add(x); });
+  D.ras = asWas.filter(x => !asNow.includes(x));
   const ca = codeOf(a), cb = codeOf(b);
   if (ca.status !== cb.status) D.code = [cb.status, ca.status];
   D.bind = bind(ca) !== bind(cb);
   for (const v of a.views) { const o = (b.views || []).find(x => x.name === v.name); if (!o || edgeKey(o) !== edgeKey(v)) D.v.add(v.name); }
-  D.n = D.c.size + D.e.size + D.j.size + D.rj.length + D.q.size + D.v.size + D.rc.length + D.re.length + D.rq.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
+  D.n = D.c.size + D.e.size + D.j.size + D.rj.length + D.q.size + D.v.size + D.rc.length + D.re.length + D.rq.length + D.as.size + D.ras.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
   return D;
 }
 const changed = D => !!D && (D.isNew || D.n > 0);
@@ -345,6 +349,7 @@ function changeBlock(D) {
   p(eids("new"), "new example", "new examples"); p(eids("status"), "example changed status", "examples changed status");
   p(D.re.map(x => x.id), "removed example", "removed examples");
   p(D.q.size, "new question", "new questions"); p(D.rq.length, "resolved question", "resolved questions");
+  p(D.as.size, "new assumption", "new assumptions"); p(D.ras.length, "dropped assumption", "dropped assumptions", 1);
   p(D.v.size, "state diagram changed", "state diagrams changed");
   const line = [];
   L.forEach((x, i) => { if (i) line.push(" · "); line.push(x); });
@@ -398,7 +403,15 @@ function render(a, only) {
     h("p", "", "Budget " + n(sr.budget) + " states; " + n(sr.cutByBound) + " states cut by the size bound."),
     h("p", "mono", sr.actions.join("  |  ")));
   if (D) root.append(changeBlock(D));
-  root.append(...journeys(a, D, F), det, ...codeSection(a, D));
+  root.append(...journeys(a, D, F));
+  const asm = a.assumptions || [], gas = D ? D.ras : [];
+  if (asm.length || gas.length) { root.append(h("h2", "", "Assumptions"),
+    h("p", "sub", "What the model takes for granted, simplifies or leaves out. Everything below holds only under these."));
+    const shown = asm.filter(x => keep(D && D.as.has(x), 0)), ul = h("ul", "asm");
+    shown.forEach(x => ul.append(h("li", "", D && D.as.has(x) ? h("span", "badge new", "new") : null, D && D.as.has(x) ? " " : "", x)));
+    gas.forEach(x => ul.append(h("li", "gone", h("span", "badge below", "dropped"), " ", x)));
+    root.append(ul); hid(root, asm.length - shown.length); }
+  root.append(det, ...codeSection(a, D));
   for (const [kind, title] of [["invariant", "Invariants"], ["requirement", "Requirements"]]) {
     const all = a.claims.filter(x => x.kind === kind), gone = D ? D.rc.filter(x => x.kind === kind) : [];
     if (!all.length && !gone.length) continue;
@@ -432,9 +445,9 @@ function render(a, only) {
 
 // ---- page ----
 const app = document.getElementById("app");
-if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No review data. The checker has not filled in this page yet."));
+if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readback data. The checker has not filled in this page yet."));
 else {
-  app.append(h("h1", "", "Spec review"));
+  app.append(h("h1", "", "Readback"));
   const body = h("div"), tabs = h("div", "tabs"); tabs.setAttribute("role", "tablist");
   let only = true, cur = 0;
   const show = k => { cur = k; [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(DATA[k], only)); };

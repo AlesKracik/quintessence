@@ -19,11 +19,11 @@ program. It compiles only if
   the definitions the proofs are about, or that skips the kernel.
 
 The program, `lake exe check`, is run from the project's root. It runs every
-area, writes `ledger/<area>.json` (committed) and `out/review.html` (the page
-a person reviews), prints one line per area, and fails if any claim is
+area, writes `ledger/<area>.json` (committed) and `out/readback.html` (the page
+a person reads), prints one line per area, and fails if any claim is
 violated, any example fails, or code and model differ.
 
-    --since <rev>   compare with that git revision: the review shows what changed
+    --since <rev>   compare with that git revision: the readback shows what changed
                     since, and that revision's ledger is what counts as recorded
     --full          re-run every code check
 -/
@@ -36,19 +36,19 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
     | _ => none
   IO.FS.createDirAll "ledger"
   IO.FS.createDirAll "out"
-  let mut reviews := #[]
+  let mut pages := #[]
   let mut failed := []
   for e in areas do
     let r ← e.report since (args.contains "--full")
     IO.FS.writeFile s!"ledger/{e.name}.json" (r.ledger.pretty ++ "\n")
     IO.println r.summary
-    reviews := reviews.push r.review
+    pages := pages.push r.readback
     failed := failed ++ r.failed.map (s!"{e.name}: " ++ ·)
-  let data := (Lean.Json.arr reviews).compress.replace "</" "<\\/"
-  let template ← IO.FS.readFile s!"{← platformDir}/Spec/review.html"
-  IO.FS.writeFile "out/review.html" (template.replace "/*DATA*/[]" data)
+  let data := (Lean.Json.arr pages).compress.replace "</" "<\\/"
+  let template ← IO.FS.readFile s!"{← platformDir}/Spec/readback.html"
+  IO.FS.writeFile "out/readback.html" (template.replace "/*DATA*/[]" data)
   for f in failed do IO.eprintln f
-  IO.println "review: out/review.html"
+  IO.println "readback: out/readback.html"
   return if failed.isEmpty then 0 else 1
 
 open Lean Elab Command in

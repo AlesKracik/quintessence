@@ -17,7 +17,7 @@ jobs:
           lake-package-directory: example
       # Audits the proofs, searches every area, checks bound code; fails on any
       # violated claim or drift. On a pull request it compares with the base
-      # branch: the review shows what the change does, and code checks re-run
+      # branch: the readback shows what the change does, and code checks re-run
       # only where the change touched something. Elsewhere everything re-runs.
       - working-directory: example
         run: lake exe check ${{ github.event_name == 'pull_request' && format('--since origin/{0}', github.base_ref) || '--full' }}
@@ -27,5 +27,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: review
-          path: example/out/review.html
+          name: readback
+          path: example/out/readback.html

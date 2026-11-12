@@ -183,6 +183,10 @@ def area : Area State Action where
         .step "The next try goes through, and Bob is told in the app." (.cancel_subscription "bob" .InApp)] }]
   views := customers.map (fun c => (s!"subscription of {c}", statusView c))
     ++ customers.map (fun c => (s!"cancellation tries of {c}", retryView c))
+  assumptions := [
+    "Two customers (alice, bob) stand for any number; each already has an active subscription.",
+    "The billing provider is outside the model: its answer to a cancellation (accepted, declined, no answer) arrives as part of the action.",
+    "Refunds are never issued in this area; asking for one is always turned down."]
   code := some {
     adapter := ["python3", "adapters/kotlin.py", "app/kotlin"]
     paths := ["app/kotlin"]

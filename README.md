@@ -34,7 +34,7 @@ The agent asks for the stories of the people who use that part of the system, jo
 
 > /spec-readback
 
-The agent generates the review page and tells you what to look at. The page opens with the journeys as storyboards, then every requirement with how strongly it is verified and where it comes from, and for a later change only what that change did. Say what is wrong and the agent goes back to step 2. Approving the pull request is the approval.
+The readback is the model in a form you can read and correct: one generated page. It opens with the journeys as storyboards, then the assumptions the model makes, every requirement with how strongly it is verified and where it comes from, the open questions that are yours to answer, and the decisions already taken. For a later change it can show only what that change did. The agent generates it and tells you what to look at. Say what is wrong and the agent goes back to step 2. Approving the pull request is the approval.
 
 ### 4. Have the code written
 
@@ -67,7 +67,7 @@ They are dependencies rather than a schedule: any stage can be re-entered at any
 | Stage | Command | What happens | Done when |
 |---|---|---|---|
 | Spec | `/spec` | Write or change the model and its claims with the person; check; prove; answer open questions. For existing code, extract the model from it. | No violated claim; questions answered or knowingly left open |
-| Readback | `/spec-readback` | Generate the review page for the change and walk the person through it | The person has no corrections; the pull request review approves |
+| Readback | `/spec-readback` | Generate the readback, the model as a page a person can read (journeys, assumptions, claims, open questions, decisions), and walk the person through it | The person has no corrections; the pull request review approves |
 | Code generation | `/spec-code-generate` | Write the code and its binding from the model, on the change's branch in the code repository | Code committed, binding in place |
 | Code validation | `/spec-code-verify` | Drive the code through the model; resolve any drift with the person | The ledger records agreement |
 
@@ -96,7 +96,7 @@ The checker (`lake exe check`) goes through every area and does four things.
 1. **Audits the proofs.** The program cannot even be built unless every attached proof is accepted by the Lean kernel and rests on nothing but Lean's three standard axioms.
 2. **Searches the scope.** It runs the model through every reachable state of the scope, or until the budget is spent, and checks every invariant, requirement and example on the way.
 3. **Checks the code**, for areas bound to code (see below).
-4. **Reports.** It writes `ledger/<area>.json` (committed, so a change in what is verified shows up in the diff) and `out/review.html` (the page a person reviews), and fails if anything is violated.
+4. **Reports.** It writes `ledger/<area>.json` (committed, so a change in what is verified shows up in the diff) and `out/readback.html` (the readback: the page a person reads), and fails if anything is violated.
 
 ### How strong is a claim
 
@@ -113,7 +113,7 @@ Invariants are expected to reach level 1 and requirements level 2. Anything weak
 
 ### Journeys
 
-People understand a system through the stories of its users, so the review page opens with the journeys. Each is a storyboard: one card per moment with what happens in plain words, whether the system did it or turned it down, the requirements at work in that moment, and what changed. The cards are generated from the run, so a journey cannot say something the model does not do: a moment that goes the other way fails the check. Journeys are also replayed against bound code, whatever the budget, so the stories a person has read are stories the code was seen to follow.
+People understand a system through the stories of its users, so the readback page opens with the journeys. Each is a storyboard: one card per moment with what happens in plain words, whether the system did it or turned it down, the requirements at work in that moment, and what changed. The cards are generated from the run, so a journey cannot say something the model does not do: a moment that goes the other way fails the check. Journeys are also replayed against bound code, whatever the budget, so the stories a person has read are stories the code was seen to follow.
 
 A journey stays inside one area. A story that crosses areas is told as one journey per area for now.
 
@@ -140,7 +140,7 @@ On every run the checker drives the code through the model: every state of the s
 - an observation differs after a step;
 - the code has an operation the model never uses (reported as an open question).
 
-**Extraction** uses the same check. An agent reads the code, and the documents around it, and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the review page. `example/Areas/Reservation` was extracted this way from `example/app/reservation.py`.
+**Extraction** uses the same check. An agent reads the code, and the documents around it, and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the readback page. `example/Areas/Reservation` was extracted this way from `example/app/reservation.py`.
 
 **New code** goes the other way: the code and the binding are written from the model, and the same check says when they are done.
 
@@ -157,7 +157,7 @@ The framework (this repository)
   Spec/Data.lean      finite maps and sets, and the definition of "reachable"
   Spec/Check.lean     the area records and the checker
   Spec/Main.lean      the checker program and the gate on what counts as proven
-  Spec/review.html    the review page template
+  Spec/readback.html  the readback page template
   adapters/python.py  runs model-chosen action sequences against Python code
   adapters/kotlin.py  the same for Kotlin and other JVM code (compiles the binding once, then drives it)
   .claude/commands/   the four commands
@@ -171,12 +171,12 @@ A project (its own repository)
   Areas/<Name>.lean   one area: claims, scope, binding to code
   Areas/<Name>/       its model and proofs
   ledger/             what was verified, per area (committed)
-  out/                the review page (generated, not committed)
+  out/                the readback page (generated, not committed)
   .spec/project.json  repositories of the system and the documents written about it
   .spec/local.json    where this developer has those repositories (not committed)
 ```
 
-Code is rarely the only source. Architecture and design documents, READMEs, comments, tests and product notes say what a system is for and how it is cut into parts, and they often say it differently from the code. The framework takes both: documents tell the agent what an area is, where its code lives and what was intended; the code tells it what actually happens, and stays the reference for the model. Where a document and the code disagree, or a document promises something the code does not do, the agent does not choose: it records a question in the area (`questions`), and the question stays on the review page until a person answers it. No particular set or layout of documents is required. A repository of architecture notes that point to code repositories works, and so does a single README.
+Code is rarely the only source. Architecture and design documents, READMEs, comments, tests and product notes say what a system is for and how it is cut into parts, and they often say it differently from the code. The framework takes both: documents tell the agent what an area is, where its code lives and what was intended; the code tells it what actually happens, and stays the reference for the model. Where a document and the code disagree, or a document promises something the code does not do, the agent does not choose: it records a question in the area (`questions`), and the question stays on the readback page until a person answers it. No particular set or layout of documents is required. A repository of architecture notes that point to code repositories works, and so does a single README.
 
 ## Changes and git
 
@@ -184,7 +184,7 @@ Code is rarely the only source. Architecture and design documents, READMEs, comm
 
 Git also answers "did anything change?":
 
-- `lake exe check --since <revision>` compares with that revision. The review page then shows what the change added, removed or altered, which is all a reviewer has to read.
+- `lake exe check --since <revision>` compares with that revision. The readback page then shows what the change added, removed or altered, which is all a reviewer has to read.
 - A code check is re-run only when git reports different content for what its verdict depends on: the area's own files, the checker, the adapter and the code's files. The ledger records the state git reported when the verdict was reached; if git reports the same state now, committed or not, the verdict stands. With `--since`, the ledger of that revision is the one that counts as recorded, which is what a pull request check uses: it trusts the base branch, not the ledger the change brings. `--full` re-runs everything.
 - A binding names where its code lives: this repository, or another one by name, with the local checkout given in `.spec/local.json` (`{"repo_paths": {"name": "/path"}}`, not committed). For another repository the ledger records the code commit the verdict is about, and a verdict on uncommitted code is never taken as recorded.
 
@@ -194,7 +194,7 @@ Git also answers "did anything change?":
 - `Spec/Data.lean` and the record types in `Spec/Check.lean`: they fix what "reachable" and "proven" mean.
 - `checker_main` in `Spec/Main.lean`: it rejects `sorry`, added axioms, `native_decide`, and constructs that let compiled code differ from the definitions the proofs are about. A project's `Main.lean` must stay the three fixed lines; a change to it, to the lakefile or to the CI workflow is a change to what counts as verified.
 - For levels 2 and 3 only: the search in `Spec/Check.lean`, the Lean compiler, and 64-bit state fingerprints (two different states can, with very small probability, be taken for one). These are argued and tested, not proven.
-- For the code verdict only: the adapter for the code's language, and the binding, which a person confirms on the review page.
+- For the code verdict only: the adapter for the code's language, and the binding, which a person confirms on the readback page.
 
 ## Not built yet
 

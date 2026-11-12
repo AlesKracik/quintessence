@@ -30,14 +30,15 @@ Rules for the claims:
 - A claim you add on your own, such as an invariant you found worth stating, is a proposal: say so in its `sources` ("proposed by the agent, not yet confirmed") and tell the person.
 - Give every requirement, invariant and journey its `sources`: where it comes from, as a history with the oldest origin first. One entry per origin: the person (and when), a document and where in it, a place in the code. When you change an existing claim, keep the entries it has and add the origin of the change, so a requirement extracted from code and later changed by a person shows both. The reviewer sees the list next to the claim. Do not invent an origin; leave the list empty when you do not know, and ask.
 - A requirement's `when` is the full condition under which the action is accepted (or, with `refused := true`, refused). Where `when` holds, the checker demands that the step succeeds and satisfies `shall`.
-- Keep the scope small enough that the search finishes within the budget. Add a `bound` only for values that grow without limit, and say in a comment what it cuts off.
-- Give `views` for everything a journey talks about, named and valued in the person's words ("seat s1" is "held by alice"), one per thing in the scope. The review tells the journeys in them, moment by moment, and draws each as a lifecycle diagram; a moment that changes no view shows the reader nothing.
+- Keep the scope small enough that the search finishes within the budget. Add a `bound` only for values that grow without limit.
+- Say what the model assumes, in `assumptions`: one plain sentence for every bound of the scope and what it cuts off ("the group takes 2 VMs here; the real limit is 100"), for everything that stands in for the outside world, for every part of the behaviour left out, and for what you took from a document without checking it in the code. The person reads these on the readback next to the journeys; a comment in the Lean reaches nobody.
+- Give `views` for everything a journey talks about, named and valued in the person's words ("seat s1" is "held by alice"), one per thing in the scope. The readback tells the journeys in them, moment by moment, and draws each as a lifecycle diagram; a moment that changes no view shows the reader nothing.
 
 ## 2. Check
 
 Run `lake exe check` from the repository root.
 
-- A violated claim or failed example comes with the shortest run that shows it (in `out/review.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
+- A violated claim or failed example comes with the shortest run that shows it (in `out/readback.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
 - A claim "below target" is not a failure, but say so.
 
 ## 3. Prove the invariants
@@ -58,14 +59,14 @@ Proof writing and proof repair after a model change are mechanical: delegate the
 
 ## 4. Open questions
 
-The checker lists what the requirements do not say. Go through the list with the person, one question at a time, showing the situation from the review page. Each answer becomes a requirement, a refusal requirement, an example, or an entry in `atomic` (the decision on whether an action can interleave with others inside the implementation, with the reason). Re-run the check after each answer. Leave a question open if the person has not answered it.
+The checker lists what the requirements do not say. Go through the list with the person, one question at a time, showing the situation from the readback page. Each answer becomes a requirement, a refusal requirement, an example, or an entry in `atomic` (the decision on whether an action can interleave with others inside the implementation, with the reason). Re-run the check after each answer. Leave a question open if the person has not answered it.
 
 ## 5. Existing code
 
 When the area describes code that already exists, the model is extracted from the code:
 
 0. Orient yourself before reading code. Read what is written about the system: the documents listed in `.spec/project.json` (`documents`), and what lies around the code itself, such as READMEs, design notes, comments and tests. Follow them to the repositories they point to (`repos`, with the local checkouts in `.spec/local.json`). None of this is required to exist or to have a particular shape; use what there is. Use it to decide what one area is (one component with its own state and operations, not a whole system), where its entry points are, which repository and paths its code lives in, and what the behaviour was meant to be. Tell the person which area you will extract and from where.
-   The documents give orientation and intent; the code is the reference for the model. Documents age: when one says which revision of the code it was written against, compare that with the checkout, and read what changed in between before trusting its details. Do not settle a disagreement yourself. When a document says something the code does not do, or the code does something no document mentions and it looks unintended, add it to the area's `questions` as one plain sentence naming both sources ("docs/holds.md says a hold lasts 15 minutes; the code releases it after 2"). It stays on the review page until the person answers; then remove it and change the model, the code, or neither.
+   The documents give orientation and intent; the code is the reference for the model. Documents age: when one says which revision of the code it was written against, compare that with the checkout, and read what changed in between before trusting its details. Do not settle a disagreement yourself. When a document says something the code does not do, or the code does something no document mentions and it looks unintended, add it to the area's `questions` as one plain sentence naming both sources ("docs/holds.md says a hold lasts 15 minutes; the code releases it after 2"). It stays on the readback page until the person answers; then remove it and change the model, the code, or neither.
 1. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
 2. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
 3. Bind the area to the code with `code := some { ... }`. Pick the adapter for the code's language (`adapters/python.py`, `adapters/kotlin.py`) and read its header: it says exactly what `setup`, `actions` and `observe` mean in that language. In general:

@@ -188,7 +188,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "12037680091539425126",
+  "inputs": "16010569710192558912",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",
@@ -307,4 +307,8 @@
    "kind": "requirement",
    "id": "REQ-006"}],
  "atomic": {},
+ "assumptions":
+ ["Two customers (alice, bob) stand for any number; each already has an active subscription.",
+  "The billing provider is outside the model: its answer to a cancellation (accepted, declined, no answer) arrives as part of the action.",
+  "Refunds are never issued in this area; asking for one is always turned down."],
  "area": "subscription"}

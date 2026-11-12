@@ -77,7 +77,7 @@ def Moment.step {α : Type} (say : String) (action : α) : Moment α := ⟨say, 
 def Moment.refusal {α : Type} (say : String) (action : α) : Moment α := ⟨say, action, true⟩
 
 /-- A customer journey: a story a person recognises, told as one run of the
-model. The review opens with the journeys and shows, for every moment, the
+model. The readback opens with the journeys and shows, for every moment, the
 requirements at work and what changed. Every moment must go the way it is
 told: accepted for `.step`, turned down for `.refusal`. -/
 structure Journey (α : Type) where
@@ -127,7 +127,7 @@ structure Area (σ α : Type) where
   examples : List (Example σ α) := []
   journeys : List (Journey α) := []
   /-- Named projections of the state in words a reader knows ("seat s1" is
-  "held"). The review draws each as a diagram and tells the journeys in
+  "held"). The readback draws each as a diagram and tells the journeys in
   them: a moment shows which views changed, not the raw state. -/
   views : List (String × (σ → String)) := []
   /-- Per action name: the decision on whether it can interleave with other
@@ -135,14 +135,19 @@ structure Area (σ α : Type) where
   atomic : List (String × String) := []
   /-- Questions for a person that the checker cannot find by itself: what a
   document says against what the code does, what a document leaves unsaid.
-  They stay in the review until answered; removing one means it was. -/
+  They stay in the readback until answered; removing one means it was. -/
   questions : List String := []
+  /-- What the model takes for granted, simplifies or leaves out, one plain
+  sentence each: what the scope cuts off, what stands in for the outside
+  world, what was not looked at. Every claim holds only under these, so the
+  readback shows them to the person and the ledger records them. -/
+  assumptions : List String := []
   code : Option (Code σ) := none
 
-/-- What one area reports. `ledger` is committed; `review` adds the traces. -/
+/-- What one area reports. `ledger` is committed; `readback` adds the traces. -/
 structure Report where
   ledger : Json
-  review : Json
+  readback : Json
   failed : List String
   summary : String
 
@@ -294,7 +299,7 @@ private def pathTo (seen : Std.HashMap UInt64 (UInt64 × Nat)) (root : UInt64) :
     | none => acc
     | some (parent, i) => pathTo seen root n parent (i :: acc)
 
-/-- A run from the initial state as rows for the review: action, state after
+/-- A run from the initial state as rows for the readback: action, state after
 it, and whether the action was refused (the state then stays). -/
 private def steps [Repr σ] [Repr α] (A : Area σ α) (run : List α) : Json := Id.run do
   let row (action : String) (s : σ) (refused : Bool) : Json := Json.mkObj [
@@ -334,7 +339,7 @@ private def call (label : String) : Json :=
 private structure CodeResult where
   status : String := "not checked"
   verdict : String := "not checked"
-  /-- The run that shows the drift, as rows for the review. -/
+  /-- The run that shows the drift, as rows for the readback. -/
   drift : Option Json := none
   questions : List String := []
   /-- The state git reports for everything the verdict depends on here. -/
@@ -524,7 +529,7 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
 
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     (since : Option String) (rerun : Bool) : IO Report := do
-  -- what was recorded at the revision this run is compared with, for the review
+  -- what was recorded at the revision this run is compared with, for the readback
   let before ← match since with
     | some r => ledgerAt A.name (some r)
     | none => pure .null
@@ -651,6 +656,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         ("status", .str (if ok then "ok" else "failed"))]),
     ("questions", .arr <| questions.map fun (text, run) => withSteps full run [("text", .str text)]),
     ("atomic", Json.mkObj (A.atomic.map fun (n, d) => (n, .str d))),
+    ("assumptions", .arr (A.assumptions.map .str).toArray),
     ("views", .arr <| (A.views.zipIdx.map fun ((name, v), k) => Json.mkObj [
       ("name", .str name), ("initial", .str (v A.init)),
       ("edges", .arr <| (sortedEdges.filter (·.1 == k)).map fun (_, a, n, b) =>
@@ -667,7 +673,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ++ s!"; {claims.size} claims, {below} below target, {failed.length} failed; "
     ++ s!"{questions.size} open questions; code {code.status}"
     ++ (if code.reused then " (unchanged in git since recorded, not re-run)" else "")
-  return { ledger := json false, review := json true, failed := failed ++ codeFailed, summary }
+  return { ledger := json false, readback := json true, failed := failed ++ codeFailed, summary }
 
 /-- Package an area for the checker program. -/
 def Area.entry [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Entry :=
