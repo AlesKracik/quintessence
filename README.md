@@ -132,7 +132,7 @@ Answering a question means adding a requirement, an example, or a decision. The 
 
 ## Existing code and drift
 
-An area can be bound to code that already exists. The binding is a table, not a program: for every action the call to make in the code, and for every observation the expression that reads it. A small per-language adapter executes the table; it judges nothing.
+An area can be bound to code that already exists. The binding is a table, not a program: for every action the call to make in the code, and for every observation the expression that reads it. A small per-language adapter executes the table; it judges nothing. There are adapters for Python and for Kotlin; the header of each says what the table's entries mean in that language.
 
 On every run the checker drives the code through the model: every state of the scope, nearest first, every action the model accepts there, and every action it refuses in the state that follows. Each run starts from a fresh system, and after every step the checker compares what the code shows with what the model expects. The first difference is reported as drift, with the run that shows it:
 
@@ -159,6 +159,7 @@ The framework (this repository)
   Spec/Main.lean      the checker program and the gate on what counts as proven
   Spec/review.html    the review page template
   adapters/python.py  runs model-chosen action sequences against Python code
+  adapters/kotlin.py  the same for Kotlin and other JVM code (compiles the binding once, then drives it)
   .claude/commands/   the four commands
   SETUP.md            how an agent sets up a project, step by step
   example/            a complete project, laid out as below
@@ -197,7 +198,8 @@ Git also answers "did anything change?":
 
 ## Not built yet
 
-- Adapters for languages other than Python. The protocol is a few JSON messages, described at the top of `adapters/python.py`.
+- Adapters for languages other than Python and Kotlin. The protocol is a few JSON messages, described at the top of `adapters/python.py`.
+- Help with the surroundings of real code: a binding's `setup` has to build the system with its database, network and neighbours under the test's control, and nothing assists with that yet.
 - Stronger code verdicts: every action sequence to a depth, symbolic checking, proof that the code matches the model.
 - A code verdict per requirement. Today there is one per area.
 - Recording a person's acceptance of a claim that stays below its target.
@@ -207,6 +209,6 @@ Git also answers "did anything change?":
 
 ## Requirements
 
-An AI coding agent, git, and Lean through [elan](https://github.com/leanprover/elan) (the agent sets it up with your consent; the version is pinned in `lean-toolchain`). Areas bound to Python code also need `python3`.
+An AI coding agent, git, and Lean through [elan](https://github.com/leanprover/elan) (the agent sets it up with your consent; the version is pinned in `lean-toolchain`). The adapters need `python3`; Kotlin code also needs `kotlinc` and `java`.
 
 The measurements that led to this design are in [docs/spike-results.md](docs/spike-results.md).

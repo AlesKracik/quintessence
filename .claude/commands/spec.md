@@ -68,7 +68,7 @@ When the area describes code that already exists, the model is extracted from th
    The documents give orientation and intent; the code is the reference for the model. Do not settle a disagreement yourself. When a document says something the code does not do, or the code does something no document mentions and it looks unintended, add it to the area's `questions` as one plain sentence naming both sources ("docs/holds.md says a hold lasts 15 minutes; the code releases it after 2"). It stays on the review page until the person answers; then remove it and change the model, the code, or neither.
 1. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
 2. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
-3. Bind the area to the code with `code := some { ... }`:
+3. Bind the area to the code with `code := some { ... }`. Pick the adapter for the code's language (`adapters/python.py`, `adapters/kotlin.py`) and read its header: it says exactly what `setup`, `actions` and `observe` mean in that language. In general:
    - `repo` and `paths` say where the code lives in git (`repo` is `"."` for this repository, otherwise a name that `.spec/local.json` maps to a checkout under `repo_paths`);
    - `setup` builds a fresh system in a variable named `system`; put the clock and other surroundings under the test's control there;
    - `actions` gives, for every action name, the code to run (`{0}`, `{1}` are the action's arguments). The action counts as refused when that code raises. Call `refuse()` to turn a return value into a refusal;

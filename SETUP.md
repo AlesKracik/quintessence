@@ -14,7 +14,7 @@ If you are reading this from a temporary checkout of the framework, keep it unti
    - what is written about the system: architecture or design documents, READMEs, runbooks, product notes. Nothing is required, and no structure is expected; take what there is, or nothing;
    - which framework revision to pin. Offer the commit you are reading these instructions from (`git rev-parse HEAD` in the framework checkout), so the project stays on a known version.
 
-3. Check the tools: `lake --version` and `git --version`, and `python3 --version` if the code is Python. If Lean is missing, **ask** before installing it; the installer is elan (https://github.com/leanprover/elan).
+3. Check the tools: `lake --version` and `git --version`; `python3 --version` when any area will be bound to code; `kotlinc -version` and `java -version` when that code is Kotlin. If Lean is missing, **ask** before installing it; the installer is elan (https://github.com/leanprover/elan).
 
 4. Create four files and one directory. In `lakefile.toml`, `git` is the address the person gave you for the framework.
 

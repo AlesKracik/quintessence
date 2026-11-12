@@ -13,4 +13,10 @@ Rules:
 
 Then bind the area to the code with `code := some { ... }` in `Areas/<Name>.lean`: `repo`, `paths`, `setup`, one entry in `actions` per action name, and `observe` for everything a caller can see (see `/spec`, "Existing code", for the fields). The binding is generated from the model: every action is mapped and every observable state is read. It must stay a table of short calls.
 
+Model and code are cut differently, and the binding is where that shows:
+
+- One operation of the code can stand behind several actions of the model, typically when the outcome depends on something outside, such as another service's answer. Put a scriptable stand-in for that something into `setup`, and let each action first say what it will answer and then make the one call: two short statements. Use `refuse()` when the call's result is the one the model counts as refused.
+- A refused action must leave the code as it was. The check compares every observation after a refusal too, so code that half-does something before saying no comes back as drift.
+- If an action of the model has no natural counterpart in the code at all, or the code needs a field or operation only to mirror the model, stop: that is a question about the model, for the person.
+
 Finish with `/spec-code-verify`. The code is not done until the check says it agrees.

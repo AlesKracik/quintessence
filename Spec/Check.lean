@@ -416,7 +416,10 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
     return reply
   let hello ← ask <| Json.mkObj [("setup", .str c.setup),
     ("actions", Json.mkObj (c.actions.map fun (n, code) => (n, .str code))),
-    ("observe", .arr (c.observe.map fun (_, _, e) => .str e).toArray)]
+    ("observe", .arr (c.observe.map fun (_, _, e) => .str e).toArray),
+    -- every concrete call that can follow, for adapters that compile the table
+    ("calls", .arr ((A.actions ++ A.journeys.flatMap (·.moments.map (·.action))
+        ++ A.examples.flatMap (fun e => e.run ++ e.refused.toList)).map (call ∘ label)).eraseDups.toArray)]
   let mapped := c.setup :: c.actions.map (·.2) ++ c.observe.map (·.2.2)
   let operations := ((hello.getObjVal? "operations" >>= Json.getArr?).toOption.getD #[]).toList.filterMap
     (·.getStr?.toOption)
