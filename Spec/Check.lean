@@ -494,7 +494,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let withSteps (full : Bool) (run : Option (List α)) (obj : List (String × Json)) : Json :=
     Json.mkObj (obj ++ (if full then (run.map fun r => ("steps", steps A r)).toList else []))
   let sortedEdges := f.edges.toArray.qsort fun a b => oneLine a < oneLine b
-  let json (full : Bool) : Json := Json.mkObj <| (if full then [("before", before)] else []) ++ [
+  let json (full : Bool) : Json := Json.mkObj <| (if full then [("since", (since.map Json.str).getD .null), ("before", before)] else []) ++ [
     ("area", .str A.name),
     ("search", Json.mkObj [
       ("states", num states), ("depth", num f.depth), ("exhaustive", .bool f.exhaustive),

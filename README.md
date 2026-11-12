@@ -66,6 +66,8 @@ On every run the checker drives the code through the model: every state of the s
 
 **Extraction** uses the same check. An agent reads the code and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the review page. `Areas/Reservation` was extracted this way from `examples/python/reservation.py`.
 
+**New code** goes the other way: the code and the binding are written from the model, and the same check says when they are done.
+
 **Drift** is the same check failing later. A person decides which of three things happened: the code is wrong, the model is wrong, or the change is deliberate and the requirement changes first.
 
 The code verdict sits on its own scale. Agreement on every transition of the scope, or of the first N steps when the budget runs out, is reported as level 4: model-driven runs, systematic instead of random. It is evidence, not proof: code that remembers more than the binding observes can still differ on a path the check did not take.
@@ -89,11 +91,26 @@ examples/           existing code used by the example areas
 
 `Areas/Auth` is the worked example. Copy its shape for a new area and add it to `Areas.lean`.
 
-## Working with an AI agent
+## Changes, git and the loop
 
-The `/spec` command in `.claude/commands/` drives the loop: write or change the model and its claims with the person, run the check, prove the invariants, and walk the open questions one at a time.
+**The area is the unit of meaning; the change is the unit of work.** A change is a git branch: `change/<name>` here, and the same branch name in every code repository it touches. Git tracks the change, the pull request review is the approval, and the committed ledger is the record of what was verified. There is no other bookkeeping, so several changes can be open at once, each on its own branch. When two changes touch the same area and their ledgers conflict, re-running the checker settles it, because the ledger is generated.
 
-The agent writes the model and the proofs, and neither needs to be trusted. A proof that is wrong does not compile. A requirement that the model breaks comes back with the shortest run that breaks it. What the agent cannot settle is whether a requirement says what the person meant, which is what the review page is for.
+Git also answers "did anything change?":
+
+- `lake exe spec --since <revision>` compares with that revision. The review page then shows what the change added, removed or altered, which is all a reviewer has to read.
+- A code check is re-run only when git shows a difference in what its verdict depends on: the areas, the checker, the adapters, the code's files, or the area's ledger. The reference is `--since`, or else the commit that last recorded the ledger. Otherwise the recorded agreement stands. `--full` re-runs everything.
+- A binding names where its code lives: this repository, or another one by name, with the local checkout given in `.spec/local.json` (`{"repo_paths": {"name": "/path"}}`, not committed). For another repository the ledger records the code commit the verdict is about, and a verdict on uncommitted code is never taken as recorded.
+
+The work goes through four stages, each with a command in `.claude/commands/`. They are dependencies, not a schedule: any stage can be re-entered at any time, and a change to the requirements sends the later ones round again.
+
+| Stage | Command | What happens | Done when |
+|---|---|---|---|
+| Spec | `/spec` | Write or change the model and its claims with the person; check; prove; answer open questions. For existing code, extract the model from it. | No violated claim; questions answered or knowingly left open |
+| Readback | `/spec-readback` | Generate the review page for the change and walk the person through it | The person has no corrections; the pull request review approves |
+| Code generation | `/spec-code-generate` | Write the code and its binding from the model, on the change's branch in the code repository | Code committed, binding in place |
+| Code validation | `/spec-code-verify` | Drive the code through the model; resolve any drift with the person | The ledger records agreement |
+
+The agent writes the model, the proofs and the code, and none of them needs to be trusted. A proof that is wrong does not compile. A requirement that the model breaks comes back with the shortest run that breaks it. Code that differs from the model comes back with the run that shows it. What the agent cannot settle is whether a requirement says what the person meant, which is what the readback is for.
 
 ## What is trusted
 

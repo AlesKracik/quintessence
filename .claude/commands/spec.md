@@ -1,8 +1,12 @@
-# /spec — write, check and complete the requirements of an area
+# /spec — write or change the requirements of an area
 
-You are working in a repository where requirements are Lean 4 objects checked by `lake exe spec`. Read `README.md` first if you have not. `Areas/Auth` is the pattern to follow.
+Requirements here are Lean 4 objects checked by `lake exe spec`. Read `README.md` first if you have not. `Areas/Auth` is the pattern for an area written from scratch, `Areas/Reservation` for one extracted from existing code.
 
 The person you work with decides what the system must do. You write the Lean, run the checker, and bring back what it found. Never decide a requirement on the person's behalf, and never weaken a claim to make the check pass.
+
+## 0. The change
+
+Work happens in a change, and a change is a git branch. If you are on the default branch, ask for a short name and create `change/<name>`; use the same branch name in every code repository the change touches. Commit as `spec(<name>): ...`. Several changes can be open at once, each on its own branch. Do not merge or close a change yourself: the pull request review is the approval.
 
 ## 1. Model and claims
 
@@ -45,13 +49,12 @@ The checker lists what the requirements do not say. Go through the list with the
 
 ## 5. Existing code
 
-When the area describes code that already exists, the model is extracted from the code, and the checker then compares the two on every run of `lake exe spec`.
-
-Extraction:
+When the area describes code that already exists, the model is extracted from the code:
 
 1. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
 2. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
-3. Bind the area to the code with `code := some { ... }` (see `Areas/Reservation.lean`):
+3. Bind the area to the code with `code := some { ... }`:
+   - `repo` and `paths` say where the code lives in git (`repo` is `"."` for this repository, otherwise a name that `.spec/local.json` maps to a checkout under `repo_paths`);
    - `setup` builds a fresh system in a variable named `system`; put the clock and other surroundings under the test's control there;
    - `actions` gives, for every action name, the code to run (`{0}`, `{1}` are the action's arguments). The action counts as refused when that code raises. Call `refuse()` to turn a return value into a refusal;
    - `observe` lists what is compared after every step: a name, the value the model expects as text (`true`, `3`, `none`, plain text), and the expression that reads it from the code. Observe everything a caller can see.
@@ -59,8 +62,6 @@ Extraction:
 4. Run `lake exe spec` until the code agrees. Each difference comes with the run that shows it. During extraction the code is the reference, so fix the model.
 5. "The code has operation X that the model does not use" means the model is missing something. Add it, or leave the question for the person.
 
-Drift, later: when the check reports a difference on an area that used to agree, show the run to the person. There are three outcomes and the person picks one: the code is wrong (fix the code), the model is wrong (fix the model and its claims), or the change is deliberate (change the requirement first, then both).
+## 6. Next
 
-## 6. Hand over
-
-Tell the person to open `out/review.html`. Commit the area together with `ledger/<area>.json`.
+Commit the area together with `ledger/<area>.json`, then suggest the next step: `/spec-readback` to put the change in front of the person, `/spec-code-generate` when the area has no code yet, `/spec-code-verify` when it has.
