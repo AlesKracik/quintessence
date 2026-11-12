@@ -214,12 +214,27 @@ private structure Found where
   gaps : Array (Option UInt64)
   edges : Std.HashSet (Nat × String × String × String)
 
+/-- The requirements, with their positions, whose `when` holds for doing `a` in
+`s`. Asked for every state and action, and nearly always answered "none", so it
+is a plain loop that allocates only for the ones that apply. -/
+private def applying (reqs : Array (Requirement σ α)) (s : σ) (a : α) :
+    Nat → List (Requirement σ α × Nat) → List (Requirement σ α × Nat)
+  | 0, acc => acc
+  | j + 1, acc =>
+    if h : j < reqs.size then
+      applying reqs s a j (if reqs[j].when s a then (reqs[j], j) :: acc else acc)
+    else applying reqs s a j acc
+
 /-- Breadth-first over the scope. States are remembered by 64-bit fingerprint. -/
 private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found := Id.run do
   let acts := A.actions.toArray
   let reqs := A.requirements.toArray
   let invs := A.invariants.toArray
   let views := A.views.toArray
+  -- paired with their positions once: the loops below run for every state and action
+  let actsI := acts.zipIdx
+  let invsI := invs.zipIdx
+  let viewsI := views.zipIdx
   let root := hash A.init
   let mut seen : Std.HashMap UInt64 (UInt64 × Nat) := Std.HashMap.emptyWithCapacity 1024
   seen := seen.insert root (root, 0)
@@ -241,31 +256,29 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
         break
       let fs := hash s
       let vs := views.map fun v => v.2 s
-      for (a, i) in acts.zipIdx do
+      for (a, i) in actsI do
         let r := A.step a s
-        let mut covered := false
-        for (q, j) in reqs.zipIdx do
-          if q.when s a then
-            covered := true
-            reqHits := reqHits.modify j (· + 1)
-            let ok := match r with
-              | none => q.refused
-              | some t => !q.refused && q.shall s a t
-            if !ok && reqFail[j]!.isNone then reqFail := reqFail.set! j (some (fs, i))
+        let speaking := applying reqs s a reqs.size []
+        for (q, j) in speaking do
+          reqHits := reqHits.modify j (· + 1)
+          let ok := match r with
+            | none => q.refused
+            | some t => !q.refused && q.shall s a t
+          if !ok && reqFail[j]!.isNone then reqFail := reqFail.set! j (some (fs, i))
         let g := 2 * i + (if r.isNone then 1 else 0)
-        if !covered && gaps[g]!.isNone then gaps := gaps.set! g (some fs)
+        if speaking.isEmpty && gaps[g]!.isNone then gaps := gaps.set! g (some fs)
         match r with
         | none => pure ()
         | some t =>
           if !A.bound t then cut := cut + 1 else
-          for (v, k) in views.zipIdx do
+          for (v, k) in viewsI do
             let w := v.2 t
             if w != vs[k]! then edges := edges.insert (k, vs[k]!, names[i]!, w)
           let ft := hash t
           if !seen.contains ft then
             seen := seen.insert ft (fs, i)
             next := next.push t
-            for (inv, j) in invs.zipIdx do
+            for (inv, j) in invsI do
               if !inv.holds t && invFail[j]!.isNone then invFail := invFail.set! j (some ft)
     if !stopped then depth := depth + 1
     frontier := next
