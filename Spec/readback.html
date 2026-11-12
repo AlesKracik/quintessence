@@ -273,24 +273,33 @@ function walkthrough(w, req, ms) {
 const LOOP = () => { const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 20 20"); s.setAttribute("class", "lp");
   s.innerHTML = '<path d="M15.5 6.5A6.5 6.5 0 1 0 16.5 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.8 2.6v4.6h-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
   return s; };
+// A requirement id as a chip that opens its text below.
+function reqChips(ids, req) {
+  const more = h("div"), chips = (ids || []).map(id => { const t = req.get(id) || "(not a requirement of this area)";
+    const b = h("button", "chip", id), p = h("p", "rt", h("b", "mono", id + " "), t);
+    b.title = t; b.setAttribute("aria-expanded", "false"); p.hidden = true;
+    b.onclick = () => { p.hidden = !p.hidden; b.setAttribute("aria-expanded", String(!p.hidden)); }; more.append(p); return b; });
+  return [chips.length ? h("div", "", chips) : null, more];
+}
 function journey(j, req, ms, walks, wmark) {
   const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
   const d = h("details", "row ex jr " + cls), fl = h("div", "tl flow");
-  d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w)); let prev = new Map(j.start || []), prevV = new Map(j.startViews || []);
+  d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w));
+  // A journey is generic: a step shows what happens and the requirements behind it, never a particular
+  // VM, customer, count or value. Those belong to the walkthroughs.
   (j.steps || []).forEach((st, i) => {
-    const n = (st.actions || []).length, card = moment({ say: st.say, action: (st.actions || []).join("   ·   "), refused: false,
-      asTold: st.asTold, requirements: st.requirements, views: st.views, state: st.state }, i, prev, req, prevV);
-    if (n > 1) card.querySelector(".say").after(h("p", "again", LOOP(), "repeats — shown here " + n + " times"));
+    const off = st.asTold === false, card = h("div", "mo" + (off ? " bad" : ""), h("span", "dot", String(i + 1)), h("p", "say", st.say),
+      st.repeats ? h("p", "again", LOOP(), "can repeat") : null, reqChips(st.requirements, req),
+      off ? h("p", "note", "the model does not take this step as told") : null);
     const leaves = h("div", "lvs", (st.turnedDown || []).map(id =>
       h("div", "leaf", h("span", "badge ref", "⊘ turned down"), h("span", "", req.get(id) || id), " ", h("span", "mono lid", id))));
-    fl.append(h("div", "fs" + (n > 1 ? " loop" : ""), card, leaves));
-    if (st.state) prev = new Map(st.state); if (st.views) prevV = new Map(st.views); });
+    fl.append(h("div", "fs" + (st.repeats ? " loop" : ""), card, leaves)); });
   const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null,
     j.given ? h("p", "given", h("b", "", "Starts with: "), j.given) : null, fl);
   if (walks.length) { body.append(h("h3", "", "Walkthroughs of this journey"));
     walks.forEach(w => body.append(walkthrough(w, req, wmark(w)))); }
   d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]),
-    h("span", "cnt", (j.steps || []).length + " steps" + (walks.length ? " · " + walks.length + " walkthrough" + (walks.length === 1 ? "" : "s") : "")),
+    h("span", "cnt", (j.steps || []).length + " step" + ((j.steps || []).length === 1 ? "" : "s") + (walks.length ? " · " + walks.length + " walkthrough" + (walks.length === 1 ? "" : "s") : "")),
     ms ? ms.map(mark) : null), body);
   return d;
 }

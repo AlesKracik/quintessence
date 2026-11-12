@@ -58,10 +58,11 @@ structure Requirement (σ α : Type) where
   Free text, shown to the reviewer. -/
   sources : List String := []
 
-/-- One step of a journey's usual course: what happens, in the words of the
-business, and the step as it happens in the scope: one or more concrete
-actions, taken in order. More than one means the step repeats ("the operator
-adds a VM", shown for two VMs), and the readback draws it as a loop. -/
+/-- One step of a journey's usual course: what happens, in general words, and
+the evidence that the model takes the step: one or more concrete actions, in
+order. More than one says that the step can repeat, and the readback draws a
+loop on it. The actions are evidence only. A journey is generic, and the
+readback shows neither them nor any value they produce. -/
 structure Step (α : Type) where
   say : String
   actions : List α
@@ -69,18 +70,21 @@ structure Step (α : Type) where
 /-- A step of a journey: `.step "The operator adds a VM." [.enroll "a", .enroll "b"]`. -/
 def Step.step {α : Type} (say : String) (actions : List α) : Step α := ⟨say, actions⟩
 
-/-- A journey: one business case, such as "enrolling VMs" or "a protection
-run", as the usual course of events from start to end. The readback draws it
-as a graph: the steps in order, a loop on a step that repeats, and hanging off
-each step every way the system can turn that step down. Those are not written
-here: they are the area's refusal requirements for the step's action, so none
-can be left out. Every action of every step must be accepted, in order. -/
+/-- A journey: one business case, such as "enrolling a VM" or "a protection
+run", as the usual course of events from start to end, in general terms: no
+particular VM, customer or run, and no numbers except thresholds that a
+requirement states. The readback draws it as a graph: the steps in order, a
+loop on a step that can repeat, and hanging off each step every way the system
+can turn that step down. Those are not written here: they are the area's
+refusal requirements for the step's action, so none can be left out. The
+concrete actions are the evidence that the course can be taken: every one of
+them must be accepted, in order. -/
 structure Journey (α : Type) where
   id : String
   title : String
   /-- Who wants what. -/
   goal : String
-  /-- Where the journey starts, in words ("two VMs are in the group") ... -/
+  /-- Where the journey starts, in general words ("the group has VMs") ... -/
   given : String := ""
   /-- ... and the run that gets there from the initial state. -/
   setup : List α := []
@@ -618,7 +622,6 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       match A.step a s with
       | some t => s := t
       | none => ok := false
-    let start := s
     let mut rows : Array (Bool → Json) := #[]
     for st in j.steps do
       let mut reqs : List String := []
@@ -636,18 +639,16 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           stepNames.contains names[i]! && f.reqAct[k * acts.size + i]!).map (·.1.id)
       told := told ++ reqs ++ turnedDown
       if !went then ok := false
-      let after := s
-      rows := rows.push fun full => Json.mkObj <| [
+      rows := rows.push fun _ => Json.mkObj <| [
         ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
+        ("repeats", .bool (st.actions.length > 1)),
         ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
         ("turnedDown", .arr (turnedDown.map .str).toArray)]
-        ++ (if full then [("views", viewsJson after), ("state", stateJson after)] else [])
     let status := if ok then "ok" else "failed"
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
       ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
-      ("status", .str status), ("steps", .arr (rows.map (· full)))]
-      ++ (if full then [("startViews", viewsJson start), ("start", stateJson start)] else []))
+      ("status", .str status), ("steps", .arr (rows.map (· full)))])
   -- walkthroughs: specific runs that matter, replayed moment by moment
   let mut walkthroughs : Array (String × Bool × (Bool → Json)) := #[]
   for w in A.walkthroughs do

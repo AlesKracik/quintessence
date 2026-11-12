@@ -119,15 +119,15 @@ def area : Area State Action where
       shall := fun _ _ t => effective t "s1" == .Free }]
   journeys := [
     { id := "J-001",
-      sources := ["written for this example"], title := "Buying seats",
-      goal := "A customer picks seats, gets a moment to pay, and ends up owning them.",
+      sources := ["written for this example"], title := "Buying a seat",
+      goal := "A customer picks a seat, gets a moment to pay, and ends up owning it.",
       steps := [
         .step "The customer puts a seat on hold." [.hold "s1" "alice", .hold "s2" "alice"],
         .step "The customer confirms a seat on hold; it is theirs." [.confirm "s1" "alice", .confirm "s2" "alice"]] },
     { id := "J-002",
       sources := ["written for this example"], title := "Giving a seat back",
       goal := "A customer who bought a seat changes their mind, and the seat goes back on sale.",
-      given := "Alice has bought seat s1.",
+      given := "A customer has bought a seat.",
       setup := [.hold "s1" "alice", .confirm "s1" "alice"],
       steps := [
         .step "The customer cancels the seat; it is free again." [.cancel "s1" "alice"],

@@ -185,11 +185,13 @@
      "say":
      "The customer cancels; the billing provider accepts and the customer is told.",
      "requirements": ["REQ-001", "REQ-002", "REQ-007"],
+     "repeats": false,
      "asTold": true,
      "actions": ["cancel_subscription \"alice\" (Email)"]},
     {"turnedDown": [],
      "say": "The paid period ends and access ends with it.",
      "requirements": ["REQ-005"],
+     "repeats": false,
      "asTold": true,
      "actions": ["expire_period \"alice\""]}],
    "status": "ok",
@@ -220,7 +222,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "15072502133557129532",
+  "inputs": "16342093450950372918",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",

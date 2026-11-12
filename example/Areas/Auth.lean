@@ -127,7 +127,7 @@ def area : Area State Action where
     { id := "J-003",
       sources := ["written for this example"], title := "A session left idle expires",
       goal := "A user signs in and walks away; the service ends the session by itself.",
-      given := "Alice is signed in.",
+      given := "A user is signed in.",
       setup := [.login "alice" "s1"],
       steps := [
         .step "Time passes with nothing happening in the session." [.tick, .tick, .tick, .tick],
