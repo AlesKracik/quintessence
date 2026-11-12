@@ -1,6 +1,6 @@
 # /spec-code-verify — check the code against the model
 
-Run `lake exe spec` from the repository root. For every area bound to code it drives the code through the model and compares after every step. Git decides whether that is needed: when nothing the verdict depends on has changed since the ledger was last committed, the recorded agreement stands and the check is not re-run. `--full` re-runs it regardless.
+Run `lake exe spec` from the repository root. For every area bound to code it drives the code through the model and compares after every step. Git decides whether that is needed: the ledger records the state git reported for the area's files, the checker, the adapter and the code when agreement was reached, and while git reports the same state the agreement stands and the check is not re-run. `--full` re-runs it regardless.
 
 Read the `code` part of each summary line:
 

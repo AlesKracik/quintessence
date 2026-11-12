@@ -21,7 +21,8 @@ open questions that drive the requirements toward completeness.
 An area bound to code (`Area.code`) is also checked against it: the code is
 driven through the model's transitions and compared after every step. Any
 difference is drift. Code and model both live in git, and git says whether
-anything changed: the code check is re-run only when it did.
+anything changed: the ledger records the state git reports for what a code
+verdict depends on, and the check is re-run only when that state differs.
 -/
 
 namespace Spec
@@ -107,8 +108,8 @@ structure Report where
 
 structure Entry where
   name : String
-  /-- `since`: the git revision to compare against (default: the commit that
-  last recorded this area's ledger). `full`: re-run the code check regardless. -/
+  /-- `since`: the git revision to compare against; its ledger, not the one on
+  disk, is then what counts as recorded. `full`: re-run the code check regardless. -/
   report : (since : Option String) → (full : Bool) → IO Report
 
 /-! ## Display -/
@@ -283,6 +284,8 @@ private structure CodeResult where
   /-- The run that shows the drift, as rows for the review. -/
   drift : Option Json := none
   questions : List String := []
+  /-- The state git reports for everything the verdict depends on here. -/
+  inputs : String := ""
   /-- For code in another repository: the commit the verdict is about. -/
   commit : String := ""
   reused : Bool := false
@@ -301,19 +304,25 @@ private def ledgerAt (area : String) (ref : Option String) : IO Json := do
     | none => try IO.FS.readFile s!"ledger/{area}.json" catch _ => pure ""
   return (Json.parse text).toOption.getD .null
 
-/-- Whether nothing the code verdict depends on differs from the reference
-revision: the areas, the checker, the adapters, the recorded ledger, and the
-code when it lives in this repository. -/
-private def unchanged (area : String) (c : Code σ) (since : Option String) : IO Bool := do
-  let ledger := s!"ledger/{area}.json"
-  let ref ← match since with
-    | some r => pure r
-    | none => pure ((← git "." ["log", "-1", "--format=%H", "--", ledger]).getD "")
-  if ref == "" then return false
-  let inputs := ["Areas", "Spec", "adapters", ledger] ++ (if c.repo == "." then c.paths else [])
-  let same ← git "." (["diff", "--quiet", ref, "--"] ++ inputs)
-  let untracked ← git "." (["ls-files", "--others", "--exclude-standard", "--"] ++ inputs)
-  return same.isSome && untracked == some ""
+/-- What git says the content of these paths is: one fingerprint over the
+object ids of their files, committed or not (ignored files left out). -/
+private def gitState (dir : String) (paths : List String) : IO String := do
+  let listed := (← git dir (["ls-files", "-co", "--exclude-standard", "--"] ++ paths)).getD ""
+  let mut files : List String := []
+  for f in listed.splitOn "\n" do
+    if f != "" && (← System.FilePath.pathExists (System.FilePath.mk dir / f)) then files := f :: files
+  let ids := (← git dir (["hash-object", "--"] ++ files.reverse)).getD "not in git"
+  return toString (hash (files, ids))
+
+/-- The files a code verdict depends on in this repository: the area's own
+files (`Areas/<Name>.lean` and `Areas/<Name>/`), the checker, the adapter, and
+the code when it lives here. -/
+private def inputsOf (area : String) (c : Code σ) : IO (List String) := do
+  let plain (s : String) : String := (s.toLower.replace "-" "").replace "_" ""
+  let own := (← System.FilePath.readDir "Areas").toList.filterMap fun e =>
+    if plain (e.fileName.takeWhile (· != '.')) == plain area then some s!"Areas/{e.fileName}" else none
+  let adapter ← c.adapter.filterM fun (a : String) => System.FilePath.pathExists (System.FilePath.mk a)
+  return own ++ ["Spec/Check.lean", "Spec/Data.lean"] ++ adapter ++ (if c.repo == "." then c.paths else [])
 
 /-- Drive the code through the model: for every state of the scope, nearest
 first, every accepted action, and every refused action in the state it leads
@@ -323,6 +332,7 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
   let names := A.actions.map (actionName ∘ label)
   if let some n := names.find? fun n => !(c.actions.any (·.1 == n)) then
     return { status := "error", verdict := s!"action `{n}` has no code mapping" }
+  let inputs ← gitState "." (← inputsOf A.name c)
   -- where the code is, and for another repository, which commit of it
   let mut root := "."
   let mut commit := ""
@@ -354,13 +364,13 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
   let finish : IO Unit := do  -- closing its input ends the adapter
     let (_, child) ← child.takeStdin
     discard child.wait
-  -- git says nothing changed since agreement was recorded: the verdict stands
-  let old := (← ledgerAt A.name none).getObjValD "code"
+  -- git reports the same content as when agreement was recorded: the verdict stands
+  let old := (← ledgerAt A.name since).getObjValD "code"
   let was (k : String) : String := (old.getObjVal? k >>= Json.getStr?).toOption.getD ""
-  if !full && was "status" == "agrees" && was "commit" == commit
-      && !commit.endsWith "changes" && (← unchanged A.name c since) then
+  if !full && was "status" == "agrees" && was "inputs" == inputs && was "commit" == commit
+      && !commit.endsWith "changes" then
     finish
-    return { status := "agrees", verdict := was "verdict", questions, commit, reused := true }
+    return { status := "agrees", verdict := was "verdict", questions, inputs, commit, reused := true }
   let expect (s : σ) : List String := c.observe.map (·.2.1 s)
   let row (action : String) (refused : Bool) (model code : List String) : Json := Json.mkObj [
     ("action", .str action), ("refused", .bool refused),
@@ -421,12 +431,13 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
         queue := queue.push (t, a :: path)
   finish
   match drift with
-  | some (what, rows) => return { status := "drift", verdict := what, drift := some rows, questions, commit }
+  | some (what, rows) =>
+    return { status := "drift", verdict := what, drift := some rows, questions, inputs, commit }
   | none =>
     let reach := match stoppedAt with
       | none => "of the scope"
       | some d => s!"within {d} steps of the start"
-    return { status := "agrees", questions, commit,
+    return { status := "agrees", questions, inputs, commit,
              verdict := s!"the code agrees with the model on every transition and refusal {reach} "
                ++ s!"({transitions} transitions, {used} code steps)" }
 
@@ -504,7 +515,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       ("budget", num A.budget), ("actions", .arr (labels.map .str)), ("cutByBound", num f.cut)]),
     ("code", Json.mkObj <| [("status", .str code.status), ("verdict", .str code.verdict),
         ("level", num (if code.status == "agrees" then 4 else 6))]
-      ++ (A.code.map fun c => [("repo", Json.str c.repo), ("paths", .arr (c.paths.map .str).toArray),
+      ++ (A.code.map fun c => [("inputs", Json.str code.inputs), ("repo", Json.str c.repo), ("paths", .arr (c.paths.map .str).toArray),
           ("setup", Json.str c.setup),
           ("actions", Json.mkObj (c.actions.map fun (n, x) => (n, .str x))),
           ("observe", .arr (c.observe.map fun (n, _, x) => .arr #[.str n, .str x]).toArray)]).getD []

@@ -98,7 +98,7 @@ examples/           existing code used by the example areas
 Git also answers "did anything change?":
 
 - `lake exe spec --since <revision>` compares with that revision. The review page then shows what the change added, removed or altered, which is all a reviewer has to read.
-- A code check is re-run only when git shows a difference in what its verdict depends on: the areas, the checker, the adapters, the code's files, or the area's ledger. The reference is `--since`, or else the commit that last recorded the ledger. Otherwise the recorded agreement stands. `--full` re-runs everything.
+- A code check is re-run only when git reports different content for what its verdict depends on: the area's own files, the checker, the adapter and the code's files. The ledger records the state git reported when the verdict was reached; if git reports the same state now, committed or not, the verdict stands. With `--since`, the ledger of that revision is the one that counts as recorded, which is what a pull request check uses: it trusts the base branch, not the ledger the change brings. `--full` re-runs everything.
 - A binding names where its code lives: this repository, or another one by name, with the local checkout given in `.spec/local.json` (`{"repo_paths": {"name": "/path"}}`, not committed). For another repository the ledger records the code commit the verdict is about, and a verdict on uncommitted code is never taken as recorded.
 
 The work goes through four stages, each with a command in `.claude/commands/`. They are dependencies, not a schedule: any stage can be re-entered at any time, and a change to the requirements sends the later ones round again.
