@@ -171,7 +171,9 @@ def area : Area State Action where
         .step "One more time unit passes." .tick,
         .step "Now the session expires." (.expire_session "s1"),
         .step "Back at her desk, Alice signs in again." (.login "alice" "s2")] }]
-  views := [("session s1", sessionView "s1"), ("account alice", accountView "alice")]
+  views := sids.map (fun x => (s!"session {x}", sessionView x))
+    ++ users.map (fun u => (s!"account of {u}", accountView u))
+    ++ users.map (fun u => (s!"failed sign-ins of {u}", fun s => toString (attemptsOf s u)))
   code := some {
     adapter := ["python3", "adapters/python.py"]
     paths := ["app/auth.py"]

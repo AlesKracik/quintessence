@@ -31,7 +31,7 @@ Rules for the claims:
 - Give every requirement, invariant and journey its `sources`: where it comes from, as a history with the oldest origin first. One entry per origin: the person (and when), a document and where in it, a place in the code. When you change an existing claim, keep the entries it has and add the origin of the change, so a requirement extracted from code and later changed by a person shows both. The reviewer sees the list next to the claim. Do not invent an origin; leave the list empty when you do not know, and ask.
 - A requirement's `when` is the full condition under which the action is accepted (or, with `refused := true`, refused). Where `when` holds, the checker demands that the step succeeds and satisfies `shall`.
 - Keep the scope small enough that the search finishes within the budget. Add a `bound` only for values that grow without limit, and say in a comment what it cuts off.
-- Give one or two `views` so the review page can draw the lifecycle.
+- Give `views` for everything a journey talks about, named and valued in the person's words ("seat s1" is "held by alice"), one per thing in the scope. The review tells the journeys in them, moment by moment, and draws each as a lifecycle diagram; a moment that changes no view shows the reader nothing.
 
 ## 2. Check
 

@@ -177,7 +177,8 @@ def area : Area State Action where
         .step "She confirms it." (.confirm "s2" "alice"),
         .step "She cancels the sold seat, and it is free again." (.cancel "s2" "alice"),
         .step "Bob can now hold it." (.hold "s2" "bob")] }]
-  views := [("seat s1", seatView "s1"), ("seats alice holds", fun s => toString (heldBy s "alice"))]
+  views := seatNames.map (fun x => (s!"seat {x}", seatView x))
+    ++ customers.map (fun c => (s!"seats on hold for {c}", fun s => toString (heldBy s c)))
   code := some {
     adapter := ["python3", "adapters/python.py"]
     paths := ["app/reservation.py"]

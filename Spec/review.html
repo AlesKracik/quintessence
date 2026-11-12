@@ -82,6 +82,7 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .chip{font:12px ui-monospace,Menlo,Consolas,monospace;padding:0 7px;border-radius:10px;margin:0 4px 4px 0;color:var(--acc)}
 .chip[aria-expanded=true]{background:var(--acc);color:var(--bg)}
 .rt{font-size:13px;margin:2px 0;color:var(--mut)}.rt b{color:var(--ink)}
+.dl.vw{font-size:13.5px}.raw{margin-top:2px}.raw summary{cursor:pointer}
 .dl{font-size:12px;color:var(--ink);word-break:break-word}.dl div{margin:1px 0}.dl .f{font-weight:700}
 .mo .act{display:block;color:var(--mut);font-size:12px;margin-top:3px;word-break:break-word}
 .jl{font-size:12px}
@@ -229,24 +230,30 @@ function questionRow(q, isNew) {
   return r;
 }
 // ---- journeys: a storyboard per journey, a vertical timeline of moments ----
-function moment(m, i, prev, req) {
+function moment(m, i, prev, req, prevV) {
   const bad = m.asTold === false, more = h("div");
   const chips = (m.requirements || []).map(id => { const t = req.get(id) || "(not a requirement of this area)";
     const b = h("button", "chip", id), p = h("p", "rt", h("b", "mono", id + " "), t);
     b.title = t; b.setAttribute("aria-expanded", "false"); p.hidden = true;
     b.onclick = () => { p.hidden = !p.hidden; b.setAttribute("aria-expanded", String(!p.hidden)); }; more.append(p); return b; });
   const ch = m.refused ? [] : (m.state || []).filter(([f, v]) => prev.get(f) !== v);
+  const named = (m.views || []).length > 0, vch = m.refused ? [] : (m.views || []).filter(([n, v]) => prevV.get(n) !== v);
+  const lines = (xs, old, cls) => h("div", cls, xs.map(([f, v]) => h("div", "", h("span", "f", f), ": " + (old.get(f) ?? "∅") + " → " + v)));
+  // told in the area's named views; the raw model state stays one click away
+  let raw = null;
+  if (ch.length && named) { raw = h("details", "raw"); raw.append(h("summary", "sub", vch.length ? "model state" : "no named view changed; model state"), lines(ch, prev, "dl mono")); }
   return h("div", "mo" + (bad ? " bad" : m.refused ? " ref" : ""), h("span", "dot", String(i + 1)),
     h("p", "say", m.refused ? h("span", "badge ref", "⊘ turned down") : null, m.say),
     chips.length ? h("div", "", chips) : null, more,
-    ch.length ? h("div", "dl mono", ch.map(([f, v]) => h("div", "", h("span", "f", f), ": " + (prev.get(f) ?? "∅") + " → " + v))) : null,
+    named ? (vch.length ? lines(vch, prevV, "dl vw") : null) : (ch.length ? lines(ch, prev, "dl mono") : null), raw,
     bad ? h("p", "note", "the story says otherwise: the model " + (m.refused ? "turns down" : "accepts") + " this") : null,
     h("span", "act", m.action));
 }
 function journey(j, req, ms, fold) {
   const cls = j.status === "ok" ? "ok" : "failed", d = h("details", "row ex jr " + cls), tl = h("div", "tl");
-  d.open = !fold; let prev = new Map(j.start || []);
-  (j.moments || []).forEach((m, i) => { tl.append(moment(m, i, prev, req)); if (m.state && !m.refused) prev = new Map(m.state); });
+  d.open = !fold; let prev = new Map(j.start || []), prevV = new Map(j.startViews || []);
+  (j.moments || []).forEach((m, i) => { tl.append(moment(m, i, prev, req, prevV));
+    if (!m.refused) { if (m.state) prev = new Map(m.state); if (m.views) prevV = new Map(m.views); } });
   d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null),
     h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, tl));
   return d;
@@ -401,7 +408,10 @@ function render(a, only) {
     gone.forEach(c => root.append(goneRow(c, "removed"))); hid(root, all.length - cs.length);
   }
   if (a.views.length) { const vs = a.views.filter(v => keep(D && D.v.has(v.name), 0));
-    root.append(h("h2", "", "State diagrams")); vs.forEach(v => root.append(h("h3", "", v.name), diagram(v))); hid(root, a.views.length - vs.length); }
+    const same = new Map();  // views with the same diagram are drawn once
+    vs.forEach(v => { const k = edgeKey(v); if (!same.has(k)) same.set(k, []); same.get(k).push(v); });
+    root.append(h("h2", "", "State diagrams")); same.forEach(g => root.append(h("h3", "", g.map(v => v.name).join(", ")), diagram(g[0])));
+    hid(root, a.views.length - vs.length); }
   const gx = D ? D.re : [];
   if (a.examples.length || gx.length) { root.append(h("h2", "", "Examples"), h("p", "sub", "Concrete scenarios replayed against the model. Click to step through."));
     const es = a.examples.filter(e => keep(D && D.e.has(e.id), e.status !== "ok"));

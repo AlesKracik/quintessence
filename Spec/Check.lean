@@ -126,7 +126,9 @@ structure Area (σ α : Type) where
   requirements : List (Requirement σ α) := []
   examples : List (Example σ α) := []
   journeys : List (Journey α) := []
-  /-- Named projections of the state, drawn as diagrams in the review. -/
+  /-- Named projections of the state in words a reader knows ("seat s1" is
+  "held"). The review draws each as a diagram and tells the journeys in
+  them: a moment shows which views changed, not the raw state. -/
   views : List (String × (σ → String)) := []
   /-- Per action name: the decision on whether it can interleave with other
   events inside the implementation. A missing entry is an open question. -/
@@ -551,6 +553,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   -- journeys: the stories a person reads, replayed on the model
   let stateJson (s : σ) : Json :=
     .arr ((fields (short (oneLine s))).map fun (k, v) => .arr #[.str k, .str v]).toArray
+  let viewsJson (s : σ) : Json := .arr (A.views.map fun (n, v) => .arr #[.str n, .str (v s)]).toArray
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
   let mut told : List String := []  -- the requirements some journey shows at work
   for j in A.journeys do
@@ -566,13 +569,14 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       rows := rows.push fun full => Json.mkObj <| [
         ("say", .str m.say), ("action", .str (label m.action)), ("refused", .bool next.isNone),
         ("asTold", .bool (next.isNone == m.refused)), ("requirements", .arr (reqs.map .str).toArray)]
-        ++ (if full then [("state", stateJson after)] else [])
+        ++ (if full then [("views", viewsJson after), ("state", stateJson after)] else [])
       s := after
     let status := if ok then "ok" else "failed"
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("sources", .arr (j.sources.map .str).toArray),
       ("status", .str status),
-      ("moments", .arr (rows.map (· full)))] ++ (if full then [("start", stateJson A.init)] else []))
+      ("moments", .arr (rows.map (· full)))]
+      ++ (if full then [("startViews", viewsJson A.init), ("start", stateJson A.init)] else []))
   if A.journeys.isEmpty then
     questions := questions.push
       ("The area has no journey. Which stories should a person recognise it by?", none)

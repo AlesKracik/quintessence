@@ -1,10 +1,27 @@
 {"views":
- [{"name": "subscription alice",
+ [{"name": "subscription of alice",
    "initial": "active",
    "edges":
    [["active", "cancel_subscription", "cancelled, access until period end"],
     ["cancelled, access until period end", "expire_period", "expired"]]},
-  {"name": "retries alice",
+  {"name": "subscription of bob",
+   "initial": "active",
+   "edges":
+   [["active", "cancel_subscription", "cancelled, access until period end"],
+    ["cancelled, access until period end", "expire_period", "expired"]]},
+  {"name": "cancellation tries of alice",
+   "initial": "0 unanswered tries",
+   "edges":
+   [["0 unanswered tries", "cancel_unanswered", "1 unanswered tries"],
+    ["1 unanswered tries", "cancel_declined", "0 unanswered tries"],
+    ["1 unanswered tries", "cancel_subscription", "0 unanswered tries"],
+    ["1 unanswered tries", "cancel_unanswered", "2 unanswered tries"],
+    ["2 unanswered tries", "cancel_declined", "0 unanswered tries"],
+    ["2 unanswered tries", "cancel_subscription", "0 unanswered tries"],
+    ["2 unanswered tries", "cancel_unanswered", "3 unanswered tries"],
+    ["3 unanswered tries", "cancel_declined", "0 unanswered tries"],
+    ["3 unanswered tries", "cancel_subscription", "0 unanswered tries"]]},
+  {"name": "cancellation tries of bob",
    "initial": "0 unanswered tries",
    "edges":
    [["0 unanswered tries", "cancel_unanswered", "1 unanswered tries"],

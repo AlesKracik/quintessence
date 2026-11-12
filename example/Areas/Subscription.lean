@@ -181,7 +181,8 @@ def area : Area State Action where
         .step "A second try gets no answer either." (.cancel_unanswered "bob" false),
         .step "A third try is declined by the provider. Bob is still subscribed and still billed." (.cancel_declined "bob"),
         .step "The next try goes through, and Bob is told in the app." (.cancel_subscription "bob" .InApp)] }]
-  views := [("subscription alice", statusView "alice"), ("retries alice", retryView "alice")]
+  views := customers.map (fun c => (s!"subscription of {c}", statusView c))
+    ++ customers.map (fun c => (s!"cancellation tries of {c}", retryView c))
 
 def entry : Entry := area.entry
 
