@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spec review</title>
+<style>
+:root{--bg:#f6f7f9;--surf:#fff;--ink:#1c2230;--mut:#5d667a;--line:#dde1e8;--acc:#2b5fd9;
+--ok:#1a7f4b;--okb:#e3f4ea;--warn:#9a5b00;--warnb:#fff0d6;--bad:#c4271f;--badb:#fde6e4;--chg:#fff3b8}
+@media (prefers-color-scheme:dark){:root{--bg:#12151c;--surf:#1b2029;--ink:#e6e9f0;--mut:#9aa3b5;--line:#2e3542;--acc:#7aa2ff;
+--ok:#4cc38a;--okb:#14301f;--warn:#f0b44c;--warnb:#33270f;--bad:#ff7b72;--badb:#3a1816;--chg:#4a4210}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:16px}
+.mono,code,td.v,.act{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+h1{font-size:20px;margin:0 0 12px}h2{font-size:16px;margin:26px 0 8px}h3{font-size:13px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+.sub{color:var(--mut);font-size:13px;margin:-4px 0 8px}
+button{font:inherit;color:inherit;background:var(--surf);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer}
+button:hover{border-color:var(--acc)}button:disabled{opacity:.4;cursor:default}
+button:focus-visible,.trace:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.tab{display:flex;gap:6px;align-items:center;padding:6px 12px}
+.tab[aria-selected=true]{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc);font-weight:600}
+.mk{font-weight:700}.mk.ok{color:var(--ok)}.mk.below{color:var(--warn)}.mk.violated,.mk.failed{color:var(--bad)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(135px,100%),1fr));gap:8px}
+.tile{background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.tile b{display:block;font-size:24px;line-height:1.1}.tile span{font-size:12.5px;color:var(--mut)}
+.tile.bad{background:var(--badb);border-color:var(--bad)}.tile.bad b{color:var(--bad)}
+.tile.warn{background:var(--warnb);border-color:var(--warn)}.tile.warn b{color:var(--warn)}
+.tile.good b{color:var(--ok)}.tile.wide{grid-column:span 2}.tile.wide b{font-size:15px;padding:4px 0}
+.row{background:var(--surf);border:1px solid var(--line);border-left-width:5px;border-radius:8px;padding:8px 10px;margin-bottom:6px}
+.row.ok{border-left-color:var(--ok)}.row.below{border-left-color:var(--warn)}.row.violated,.row.failed{border-left-color:var(--bad);background:var(--badb)}
+.row.below{background:var(--warnb)}
+.head>*{min-width:0}.head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 12px;align-items:start}
+.id{font-weight:700;font-size:12.5px;white-space:nowrap}
+.verd{grid-column:2/4;font-size:13px;color:var(--mut)}
+.lad{display:flex;align-items:center;gap:3px;white-space:nowrap;font-size:12px}
+.pip{width:14px;height:10px;border-radius:2px;border:1.5px solid var(--mut)}
+.pip.on{background:var(--ok);border-color:var(--ok)}.row.below .pip.on{background:var(--warn);border-color:var(--warn)}
+.row.violated .pip.on{background:var(--bad);border-color:var(--bad)}
+.pip.tgt{outline:2px solid var(--acc);outline-offset:1px}
+.badge{font-size:12px;font-weight:700;border-radius:10px;padding:0 8px;border:1px solid currentColor;white-space:nowrap}
+.badge.ok{color:var(--ok)}.badge.below{color:var(--warn)}.badge.violated,.badge.failed{color:var(--bad)}
+.ex{padding:0;border-left-width:5px}.ex>summary{padding:8px 10px;cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.ex>div{padding:0 10px 10px}
+.trace{margin-top:8px;outline:0}
+.strip{display:flex;gap:4px;overflow-x:auto;padding-bottom:6px}
+.st{flex:0 0 auto;max-width:200px;text-align:left;padding:3px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st.cur{background:var(--acc);color:#fff;border-color:var(--acc)}
+.st.ref{border-style:dashed;border-color:var(--bad);color:var(--bad)}.st.ref.cur{background:var(--bad);color:#fff}
+.ctl{display:flex;gap:8px;align-items:center;margin:4px 0;font-size:13px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;background:var(--surf);font-size:13px}
+td,th{border:1px solid var(--line);padding:3px 8px;text-align:left;vertical-align:top}
+td.v{word-break:break-word}td.f{white-space:nowrap;width:1%}
+tr.chg td{background:var(--chg)}.old{text-decoration:line-through;color:var(--mut);margin-right:8px}
+.note{font-size:13px;color:var(--bad);font-weight:600}
+.dg{background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:6px;margin-bottom:8px;overflow-x:auto}
+.dg svg{display:block}.dg text{font:12px ui-monospace,Menlo,Consolas,monospace;fill:var(--ink)}
+.dg .nd{fill:var(--surf);stroke:var(--mut);stroke-width:1.5}.dg .ini{stroke:var(--acc);stroke-width:3;fill:var(--surf)}
+.dg .ed{fill:none;stroke:var(--mut);stroke-width:1.4}.dg .lb{stroke:var(--surf);stroke-width:4;paint-order:stroke;fill:var(--acc)}
+.dg .tag{fill:var(--acc);font-size:10px}
+.q{background:var(--surf);border:1px solid var(--line);border-left:5px solid var(--acc);border-radius:8px;padding:8px 10px;margin-bottom:6px}
+.q>p{margin:0 0 4px}
+.empty{text-align:center;color:var(--mut);padding:60px 0}
+@media (max-width:560px){.head{grid-template-columns:auto minmax(0,1fr)}.lad,.badge{grid-column:2}.tile.wide{grid-column:span 1}}
+</style></head><body><main id="app"></main>
+<script>
+const DATA = /*DATA*/[];
+
+const h = (t, c, ...k) => { const e = document.createElement(t); if (c) e.className = c;
+  for (const x of k.flat()) if (x != null) e.append(x.nodeType ? x : document.createTextNode(x)); return e; };
+const NS = "http://www.w3.org/2000/svg";
+const s = (t, a, text) => { const e = document.createElementNS(NS, t);
+  for (const k in a) e.setAttribute(k, a[k]); if (text != null) e.textContent = text; return e; };
+const n = x => Number(x).toLocaleString();
+const CLS = { "ok": "ok", "below target": "below", "violated": "violated", "failed": "failed" };
+const ICON = { ok: "✓ ok", below: "▲ below target", violated: "✕ violated", failed: "✕ failed" };
+const LEVEL = { 1: "proven", 2: "all reachable states", 3: "bounded search", 5: "not verified" };
+const PIPS = { 1: 3, 2: 2, 3: 1, 5: 0 };
+
+// ---- trace stepper ----
+function stepper(steps) {
+  let i = steps.length - 1;
+  const box = h("div", "trace"); box.tabIndex = 0;
+  const strip = h("div", "strip"), ctl = h("div", "ctl"), tw = h("div", "tw");
+  const prev = h("button", "", "← prev"), next = h("button", "", "next →"), pos = h("span");
+  const label = (st, k) => (k ? k + ". " : "") + (k === 0 ? "start" : st.action) + (st.refused ? " ✕ refused" : "");
+  const btns = steps.map((st, k) => { const b = h("button", "st" + (st.refused ? " ref" : ""), label(st, k));
+    b.title = label(st, k); b.onclick = () => { i = k; draw(); }; strip.append(b); return b; });
+  function draw() {
+    btns.forEach((b, k) => { b.classList.toggle("cur", k === i); b.setAttribute("aria-current", k === i); });
+    btns[i].scrollIntoView({ block: "nearest", inline: "nearest" });
+    prev.disabled = i === 0; next.disabled = i === steps.length - 1;
+    const st = steps[i];
+    pos.textContent = "step " + i + " of " + (steps.length - 1) + (i === 0 ? " (initial state)" : "");
+    const before = i > 0 ? new Map(steps[i - 1].state) : new Map();
+    const t = h("table"); const body = h("tbody");
+    for (const [f, v] of st.state) {
+      const changed = i > 0 && before.has(f) ? before.get(f) !== v : i > 0;
+      const td = h("td", "v"); if (changed) td.append(h("span", "old", before.get(f) ?? "(new)"));
+      td.append(v); body.append(h("tr", changed ? "chg" : "", h("td", "f mono", f), td));
+    }
+    t.append(body); tw.replaceChildren(
+      st.refused ? h("div", "note", "✕ This action was refused; nothing changed.") : "", t);
+  }
+  prev.onclick = () => { if (i > 0) { i--; draw(); } };
+  next.onclick = () => { if (i < steps.length - 1) { i++; draw(); } };
+  box.onkeydown = e => { if (e.key === "ArrowLeft") { prev.onclick(); e.preventDefault(); }
+    if (e.key === "ArrowRight") { next.onclick(); e.preventDefault(); } };
+  ctl.append(prev, next, pos, h("span", "sub", "changed fields are highlighted; old value struck through"));
+  box.append(strip, ctl, tw); draw(); return box;
+}
+
+// ---- state diagram ----
+function diagram(v) {
+  const names = [...new Set([v.initial, ...v.edges.flatMap(e => [e[0], e[2]])])];
+  const out = {}; names.forEach(x => out[x] = []);
+  v.edges.forEach(e => out[e[0]].push(e[2]));
+  const layer = {}; let queue = [v.initial]; layer[v.initial] = 0;
+  const bfs = () => { while (queue.length) { const a = queue.shift();
+    for (const b of out[a]) if (!(b in layer)) { layer[b] = layer[a] + 1; queue.push(b); } } };
+  bfs();
+  for (const x of names) if (!(x in layer)) { layer[x] = 0; queue = [x]; bfs(); }
+  const nl = Math.max(...Object.values(layer)) + 1;
+  const cols = Array.from({ length: nl }, () => []); names.forEach(x => cols[layer[x]].push(x));
+  const W = x => Math.max(60, x.length * 7.4 + 20), H = 30, RY = 78;
+  const labels = new Map(); // "from\0to" -> [actions]
+  for (const [a, act, b] of v.edges) { const k = a + "\0" + b; if (!labels.has(k)) labels.set(k, []);
+    if (!labels.get(k).includes(act)) labels.get(k).push(act); }
+  const lw = cols.map(c => Math.max(...c.map(W)));
+  const maxLab = Math.max(0, ...[...labels.values()].map(l => l.join(", ").length * 7)) ;
+  const gap = Math.min(220, Math.max(70, maxLab + 24));
+  const pos = {}; let x = 20; const rows = Math.max(...cols.map(c => c.length));
+  cols.forEach((c, li) => { c.forEach((nm, r) => pos[nm] = { x: x + lw[li] / 2, y: 50 + r * RY + (rows - c.length) * RY / 2, w: W(nm) });
+    x += lw[li] + gap; });
+  const backs = [...labels.keys()].map(k => k.split("\0")).filter(([a, b]) => a !== b && layer[b] <= layer[a])
+    .map(([a, b]) => 40 + 40 * Math.abs(layer[a] - layer[b]));  // room for the curved back edges
+  const width = x - gap + 20, height = 50 + (rows - 1) * RY + 40 + Math.max(0, ...backs) / 2;
+  const svg = s("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "state diagram " + v.name });
+  svg.append(s("defs", {}), s("title", {}, v.name));
+  const defs = svg.firstChild, mk = s("marker", { id: "ar", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" });
+  mk.append(s("path", { d: "M0 0L10 5L0 10z", fill: "currentColor" })); defs.append(mk);
+  svg.style.color = "var(--mut)";
+  const edge = (p, c) => { // clip toward point c to node rectangle
+    const dx = c.x - p.x, dy = c.y - p.y, t = Math.min(dx ? (p.w / 2 + 2) / Math.abs(dx) : 1e9, dy ? (H / 2 + 2) / Math.abs(dy) : 1e9);
+    return { x: p.x + dx * t, y: p.y + dy * t }; };
+  for (const [k, acts] of labels) {
+    const [a, b] = k.split("\0"), A = pos[a], B = pos[b], text = acts.join(", ");
+    let d, lx, ly;
+    if (a === b) { d = `M${A.x - 14} ${A.y - H / 2} C${A.x - 30} ${A.y - H / 2 - 36} ${A.x + 30} ${A.y - H / 2 - 36} ${A.x + 14} ${A.y - H / 2 - 2}`;
+      lx = A.x; ly = A.y - H / 2 - 32; }
+    else {
+      const back = layer[b] <= layer[a], rev = labels.has(b + "\0" + a);
+      const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1;
+      const off = back ? 40 + 40 * Math.abs(layer[a] - layer[b]) : (rev || Math.abs(layer[b] - layer[a]) > 1 ? 24 : 0);
+      const c = { x: (A.x + B.x) / 2 + dy / len * off, y: (A.y + B.y) / 2 - dx / len * off };
+      const p = edge(A, c), q = edge(B, c);
+      d = `M${p.x} ${p.y} Q${c.x} ${c.y} ${q.x} ${q.y}`;
+      lx = .25 * p.x + .5 * c.x + .25 * q.x; ly = .25 * p.y + .5 * c.y + .25 * q.y;
+    }
+    const path = s("path", { d, class: "ed", "marker-end": "url(#ar)" }); svg.append(path);
+    const lab = s("text", { x: lx, y: ly + 4, "text-anchor": "middle", class: "lb" }, text); svg.append(lab);
+  }
+  for (const nm of names) { const p = pos[nm];
+    svg.append(s("rect", { x: p.x - p.w / 2, y: p.y - H / 2, width: p.w, height: H, rx: 8, class: "nd" + (nm === v.initial ? " ini" : "") }),
+      s("text", { x: p.x, y: p.y + 4, "text-anchor": "middle" }, nm));
+    if (nm === v.initial) svg.append(s("text", { x: p.x, y: p.y + H / 2 + 14, "text-anchor": "middle", class: "tag" }, "▶ START")); }
+  return h("div", "dg", svg);
+}
+
+// ---- sections ----
+function ladder(c, cls) {
+  const on = PIPS[c.level] ?? 0, tg = PIPS[c.target] ?? 0, box = h("span", "lad");
+  box.title = "reached: " + (LEVEL[c.level] || c.level) + "; target: " + (LEVEL[c.target] || c.target);
+  for (let k = 1; k <= 3; k++) box.append(h("span", "pip" + (k <= on ? " on" : "") + (k === tg ? " tgt" : "")));
+  box.append(h("span", "", "level " + c.level + " / target " + c.target)); return box;
+}
+function claimRow(c) {
+  const cls = CLS[c.status] || "below", r = h("div", "row " + cls);
+  r.append(h("div", "head", h("span", "id mono", c.id), h("span", "", c.text), h("span", "badge " + cls, ICON[cls]),
+    h("span", "verd", c.verdict), ladder(c, cls)));
+  if (c.steps && c.steps.length) { const box = h("div"); const b = h("button", "", "show counterexample"); b.style.marginTop = "6px";
+    b.onclick = () => { if (box.firstChild) { box.replaceChildren(); b.textContent = "show counterexample"; }
+      else { box.append(stepper(c.steps)); b.textContent = "hide counterexample"; } };
+    r.append(b, box); }
+  return r;
+}
+function exampleRow(e) {
+  const cls = e.status === "ok" ? "ok" : "failed", d = h("details", "row ex " + cls);
+  d.append(h("summary", "", h("span", "id mono", e.id), h("span", "badge " + cls, ICON[cls]), h("span", "", e.text)));
+  let done = false; d.ontoggle = () => { if (d.open && !done) { done = true; d.append(h("div", "", stepper(e.steps || []))); } };
+  return d;
+}
+function questionRow(q) {
+  const r = h("div", "q", h("p", "", "? ", q.text));
+  if (q.steps && q.steps.length) { const box = h("div"), b = h("button", "", "show situation");
+    b.onclick = () => { if (box.firstChild) { box.replaceChildren(); b.textContent = "show situation"; }
+      else { box.append(stepper(q.steps)); b.textContent = "hide situation"; } };
+    r.append(b, box); }
+  return r;
+}
+const tile = (cls, big, label) => h("div", "tile " + cls, h("b", "", big), h("span", "", label));
+
+function stats(a) {
+  const c = k => a.claims.filter(x => x.status === k).length, e = k => a.examples.filter(x => x.status === k).length;
+  return { ok: c("ok"), below: c("below target"), bad: c("violated"), exOk: e("ok"), exBad: a.examples.length - e("ok") };
+}
+const problem = a => { const t = stats(a); return t.below + t.bad + t.exBad > 0; };
+
+function render(a) {
+  const t = stats(a), sr = a.search, root = h("div");
+  const cover = sr.exhaustive ? "scope exhausted: " + n(sr.states) + " states" : "stopped at budget: " + n(sr.states) + " states, depth " + sr.depth;
+  root.append(h("div", "tiles",
+    tile(t.bad ? "bad" : "good", t.bad, "✕ claims violated"),
+    tile(t.below ? "warn" : "good", t.below, "▲ claims below target"),
+    tile("good", t.ok, "✓ claims ok"),
+    tile(t.exBad ? "bad" : "good", t.exBad, "✕ examples failed"),
+    tile("good", t.exOk, "✓ examples ok"),
+    tile(a.questions.length ? "warn" : "good", a.questions.length, "? open questions"),
+    tile(sr.exhaustive ? "good wide" : "warn wide", cover, "search coverage"),
+    tile("warn wide", "code: " + a.code, "implementation check")));
+  const det = h("details", "sub", h("summary", "", "search details"),
+    h("p", "", "Budget " + n(sr.budget) + " states; " + n(sr.cutByBound) + " states cut by the size bound."),
+    h("p", "mono", sr.actions.join("  |  ")));
+  root.append(det);
+  for (const [kind, title] of [["invariant", "Invariants"], ["requirement", "Requirements"]]) {
+    const cs = a.claims.filter(x => x.kind === kind); if (!cs.length) continue;
+    root.append(h("h2", "", title), h("p", "sub", kind === "invariant" ? "Always true, in every state." : "What must happen in response to something."));
+    cs.slice().sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => root.append(claimRow(c)));
+  }
+  if (a.views.length) { root.append(h("h2", "", "State diagrams")); a.views.forEach(v => root.append(h("h3", "", v.name), diagram(v))); }
+  if (a.examples.length) { root.append(h("h2", "", "Examples"), h("p", "sub", "Concrete scenarios replayed against the model. Click to step through."));
+    a.examples.slice().sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(e => root.append(exampleRow(e))); }
+  if (a.questions.length) { root.append(h("h2", "", "Open questions: you must decide"),
+    h("p", "sub", "The model does something here that no requirement covers. Say whether that is right."));
+    a.questions.forEach(q => root.append(questionRow(q))); }
+  const at = Object.entries(a.atomic || {});
+  if (at.length) { root.append(h("h2", "", "Concurrency decisions"));
+    const tb = h("tbody"); at.forEach(([k, v]) => tb.append(h("tr", "", h("td", "f act", k), h("td", "", v))));
+    root.append(h("div", "tw", h("table", "", tb))); }
+  return root;
+}
+
+// ---- page ----
+const app = document.getElementById("app");
+if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No review data. The checker has not filled in this page yet."));
+else {
+  app.append(h("h1", "", "Spec review"));
+  const body = h("div"), tabs = h("div", "tabs"); tabs.setAttribute("role", "tablist");
+  const show = k => { [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(DATA[k])); };
+  DATA.forEach((a, k) => { const bad = problem(a), b = h("button", "tab", a.area,
+      h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"));
+    b.setAttribute("role", "tab"); b.onclick = () => show(k); tabs.append(b); });
+  if (DATA.length > 1) app.append(tabs);
+  app.append(body); show(DATA.findIndex(problem) >= 0 && DATA.length > 1 ? 0 : 0);
+}
+</script></body></html>
