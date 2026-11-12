@@ -126,6 +126,37 @@ def area : Area State Action where
     { id := "EX-008", text := "The lockout ends a signed-in user's session",
       run := .login "alice" "s1" :: List.replicate 5 (.login_failed "alice"),
       expect := fun s => isLocked s "alice" && !isActive s "s1" }]
+  journeys := [
+    { id := "J-001", title := "Signing in and out",
+      goal := "Alice wants to use the service and then leave it.",
+      moments := [
+        .step "Alice signs in." (.login "alice" "s1"),
+        .refusal "She tries to sign in a second time while still signed in, and is turned away." (.login "alice" "s2"),
+        .step "She signs out." (.logout "s1"),
+        .step "Later she signs in again." (.login "alice" "s2")] },
+    { id := "J-002", title := "Locked out",
+      goal := "Someone tries wrong passwords on Alice's account while she is signed in.",
+      moments := [
+        .step "Alice signs in." (.login "alice" "s1"),
+        .step "A wrong password is tried on her account." (.login_failed "alice"),
+        .step "And a second one." (.login_failed "alice"),
+        .step "A third." (.login_failed "alice"),
+        .step "A fourth. The account is still open." (.login_failed "alice"),
+        .step "The fifth wrong password locks the account and ends her session." (.login_failed "alice"),
+        .refusal "Alice tries to sign in again and is turned away." (.login "alice" "s2"),
+        .step "An administrator unlocks the account." (.unlock_account "alice"),
+        .step "Alice signs in again." (.login "alice" "s2")] },
+    { id := "J-003", title := "Left idle",
+      goal := "Alice signs in and then walks away from her desk.",
+      moments := [
+        .step "Alice signs in." (.login "alice" "s1"),
+        .step "Time passes." .tick,
+        .step "More time passes." .tick,
+        .step "And more: she has now been idle for three time units." .tick,
+        .refusal "That is not yet long enough for the session to expire." (.expire_session "s1"),
+        .step "One more time unit passes." .tick,
+        .step "Now the session expires." (.expire_session "s1"),
+        .step "Back at her desk, Alice signs in again." (.login "alice" "s2")] }]
   views := [("session s1", sessionView "s1"), ("account alice", accountView "alice")]
   code := some {
     adapter := ["python3", "adapters/python.py"]

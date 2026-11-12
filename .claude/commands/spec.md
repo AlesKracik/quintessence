@@ -60,7 +60,9 @@ Work happens in a change, and a change is a git branch. If you are on the defaul
 Ask what the area does, then write or change:
 
 - `Areas/<Name>/Model.lean`: the state, the actions, `init`, the step function (`none` means refused), and the invariant predicates. Import only `Spec.Data`.
-- `Areas/<Name>.lean`: the `Area` record with invariants, requirements, examples, scope and views. Register it in `Areas.lean`.
+- `Areas/<Name>.lean`: the `Area` record with journeys, invariants, requirements, examples, scope and views. Register it in `Areas.lean`.
+
+Start from the journeys. Ask the person for the stories of the people who use this part of the system: who wants what, and what happens, moment by moment, including the moments where the system says no. Write each as a `Journey` (`.step` for a moment the system goes along with, `.refusal` for one it turns down), in the person's own words, with no identifiers or technical terms in `say`. The requirements then come out of the journeys: every moment needs a requirement that covers it, and the checker asks about every requirement that no journey shows. Keep a journey to a handful of moments; boundary cases belong in examples.
 
 Rules for the claims:
 

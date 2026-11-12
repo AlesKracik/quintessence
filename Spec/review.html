@@ -72,6 +72,19 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .mks{grid-column:2/4;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}.mk2{display:inline-flex;gap:6px;align-items:baseline}
 .was{color:var(--mut);font-size:13px}.was .old{margin:0}
 .row.rm,.q.rm{background:transparent;border-style:dashed;border-left-style:solid;border-left-color:var(--line);color:var(--mut)}.tx{text-decoration:line-through}
+.jr>summary b{font-size:15px}.goal{margin:2px 0 6px}
+.tl{position:relative;padding-left:36px}.tl::before{content:"";position:absolute;left:11px;top:14px;bottom:14px;width:2px;background:var(--line)}
+.mo{position:relative;background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+.dot{position:absolute;left:-36px;top:7px;width:24px;height:24px;border-radius:50%;background:var(--surf);border:2px solid var(--acc);font-size:12px;font-weight:700;text-align:center;line-height:20px}
+.mo.ref{border:1px dashed var(--warn);background:var(--warnb)}.mo.ref .dot{border:2px dashed var(--warn)}
+.mo.bad{border:1px solid var(--bad);border-left-width:5px;background:var(--badb)}.mo.bad .dot{border-color:var(--bad);color:var(--bad)}
+.say{font-size:15.5px;font-weight:600;margin:0 0 4px}.badge.ref{color:var(--warn);margin-right:6px;font-weight:700}
+.chip{font:12px ui-monospace,Menlo,Consolas,monospace;padding:0 7px;border-radius:10px;margin:0 4px 4px 0;color:var(--acc)}
+.chip[aria-expanded=true]{background:var(--acc);color:var(--bg)}
+.rt{font-size:13px;margin:2px 0;color:var(--mut)}.rt b{color:var(--ink)}
+.dl{font-size:12px;color:var(--ink);word-break:break-word}.dl div{margin:1px 0}.dl .f{font-weight:700}
+.mo .act{display:block;color:var(--mut);font-size:12px;margin-top:3px;word-break:break-word}
+.jl{font-size:12px}
 .empty{text-align:center;color:var(--mut);padding:60px 0}
 @media (max-width:560px){.head{grid-template-columns:auto minmax(0,1fr)}.lad,.badge,.mks{grid-column:2}.tile.wide{grid-column:span 1}}
 </style></head><body><main id="app"></main>
@@ -187,10 +200,10 @@ function ladder(c, cls) {
   for (let k = 1; k <= 3; k++) box.append(h("span", "pip" + (k <= on ? " on" : "") + (k === tg ? " tgt" : "")));
   box.append(h("span", "", "level " + c.level + " / target " + c.target)); return box;
 }
-function claimRow(c, ms) {
+function claimRow(c, ms, jl) {
   const cls = CLS[c.status] || "below", r = h("div", "row " + cls);
   r.append(h("div", "head", h("span", "id mono", c.id), h("span", "", c.text), h("span", "badge " + cls, ICON[cls]),
-    ms ? h("span", "mks", ms.map(mark)) : null, h("span", "verd", c.verdict), ladder(c, cls)));
+    ms ? h("span", "mks", ms.map(mark)) : null, h("span", "verd", c.verdict), jl ? h("span", "verd jl", jl) : null, ladder(c, cls)));
   if (c.steps && c.steps.length) { const box = h("div"); const b = h("button", "", "show counterexample"); b.style.marginTop = "6px";
     b.onclick = () => { if (box.firstChild) { box.replaceChildren(); b.textContent = "show counterexample"; }
       else { box.append(stepper(c.steps)); b.textContent = "hide counterexample"; } };
@@ -211,6 +224,39 @@ function questionRow(q, isNew) {
     r.append(b, box); }
   return r;
 }
+// ---- journeys: a storyboard per journey, a vertical timeline of moments ----
+function moment(m, i, prev, req) {
+  const bad = m.asTold === false, more = h("div");
+  const chips = (m.requirements || []).map(id => { const t = req.get(id) || "(not a requirement of this area)";
+    const b = h("button", "chip", id), p = h("p", "rt", h("b", "mono", id + " "), t);
+    b.title = t; b.setAttribute("aria-expanded", "false"); p.hidden = true;
+    b.onclick = () => { p.hidden = !p.hidden; b.setAttribute("aria-expanded", String(!p.hidden)); }; more.append(p); return b; });
+  const ch = m.refused ? [] : (m.state || []).filter(([f, v]) => prev.get(f) !== v);
+  return h("div", "mo" + (bad ? " bad" : m.refused ? " ref" : ""), h("span", "dot", String(i + 1)),
+    h("p", "say", m.refused ? h("span", "badge ref", "⊘ turned down") : null, m.say),
+    chips.length ? h("div", "", chips) : null, more,
+    ch.length ? h("div", "dl mono", ch.map(([f, v]) => h("div", "", h("span", "f", f), ": " + (prev.get(f) ?? "∅") + " → " + v))) : null,
+    bad ? h("p", "note", "the story says otherwise: the model " + (m.refused ? "turns down" : "accepts") + " this") : null,
+    h("span", "act", m.action));
+}
+function journey(j, req, ms, fold) {
+  const cls = j.status === "ok" ? "ok" : "failed", d = h("details", "row ex jr " + cls), tl = h("div", "tl");
+  d.open = !fold; let prev = new Map(j.start || []);
+  (j.moments || []).forEach((m, i) => { tl.append(moment(m, i, prev, req)); if (m.state && !m.refused) prev = new Map(m.state); });
+  d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null),
+    h("div", "", h("p", "goal", j.goal), tl));
+  return d;
+}
+function journeys(a, D, F) {
+  const js = a.journeys || [], out = [h("h2", "", "Journeys")];
+  if (!js.length) return out.concat(h("p", "sub", "No journeys yet — the stories a person would recognise this area by are missing."));
+  out.push(h("p", "sub", "Read these first: what a person does and what the system does about it."));
+  const req = new Map(a.claims.map(c => [c.id, c.text]));
+  [...js].sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(j =>
+    out.push(journey(j, req, D && D.j.get(j.id), F && !D.j.has(j.id) && j.status === "ok")));
+  (D ? D.rj : []).forEach(j => out.push(goneRow({ id: j.id, text: j.title }, "removed")));
+  return out;
+}
 const goneRow = (x, label, tag) => h("div", (tag === "q" ? "q" : "row") + " rm", h("div", "head",
   h("span", "id mono", x.id || "?"), h("span", "tx", x.text), h("span", "badge rm", label)));
 const hid = (root, k) => { if (k) root.append(h("p", "sub", k + " unchanged item" + (k === 1 ? "" : "s") + " hidden")); };
@@ -218,12 +264,13 @@ const tile = (cls, big, label) => h("div", "tile " + cls, h("b", "", big), h("sp
 
 function stats(a) {
   const c = k => a.claims.filter(x => x.status === k).length, e = k => a.examples.filter(x => x.status === k).length;
-  return { ok: c("ok"), below: c("below target"), bad: c("violated"), exOk: e("ok"), exBad: a.examples.length - e("ok") };
+  return { ok: c("ok"), below: c("below target"), bad: c("violated"), exOk: e("ok"), exBad: a.examples.length - e("ok"),
+    jOk: (a.journeys || []).filter(x => x.status === "ok").length, jBad: (a.journeys || []).filter(x => x.status !== "ok").length };
 }
 const CODE = { "agrees": ["good", "code agrees", "ok", "✓ agrees"], "drift": ["bad", "code drift", "violated", "✕ drift"],
   "error": ["bad", "code check failed", "failed", "✕ check failed"] };
 const codeOf = a => typeof a.code === "string" ? { status: "not checked", verdict: a.code } : a.code || { status: "not checked" };
-const problem = a => { const t = stats(a), k = codeOf(a).status; return t.below + t.bad + t.exBad > 0 || k === "drift" || k === "error"; };
+const problem = a => { const t = stats(a), k = codeOf(a).status; return t.below + t.bad + t.exBad + t.jBad > 0 || k === "drift" || k === "error"; };
 
 // ---- comparison with the ledger at `since` ----
 const short = r => /^[0-9a-f]{40}$/i.test(r) ? r.slice(0, 8) : r;
@@ -234,7 +281,7 @@ const edgeKey = v => JSON.stringify([v.initial, v.edges.map(e => e.join("\0")).s
 function diff(a) {
   if (!a.since) return null;
   const b = a.before, D = { since: short(a.since), isNew: !b, c: new Map(), e: new Map(), q: new Set(), v: new Set(),
-    rc: [], re: [], rq: [], code: null, bind: false, n: 0 };
+    rc: [], re: [], rq: [], j: new Map(), rj: [], code: null, bind: false, n: 0 };
   if (!b) return D;
   const bc = new Map(b.claims.map(x => [x.id, x])), be = new Map(b.examples.map(x => [x.id, x]));
   for (const c of a.claims) { const o = bc.get(c.id), m = [];
@@ -248,6 +295,13 @@ function diff(a) {
   for (const e of a.examples) { const o = be.get(e.id);
     if (!o) D.e.set(e.id, [{ k: "new", t: "new", cls: "new" }]);
     else if (o.status !== e.status) D.e.set(e.id, [{ k: "status", t: "status changed", cls: e.status === "ok" ? "ok" : "failed", was: o.status }]); }
+  const bj = new Map((b.journeys || []).map(x => [x.id, x])), jk = x => JSON.stringify([x.title, x.goal, (x.moments || []).map(m => [m.say, m.action])]);
+  for (const j of a.journeys || []) { const o = bj.get(j.id), m = [];
+    if (!o) m.push({ k: "new", t: "new", cls: "new" });
+    else { if (jk(o) !== jk(j)) m.push({ k: "retold", t: "retold", cls: "below" });
+      if (o.status !== j.status) m.push({ k: "status", t: "status changed", cls: j.status === "ok" ? "ok" : "failed", was: o.status }); }
+    if (m.length) D.j.set(j.id, m); }
+  D.rj = (b.journeys || []).filter(x => !(a.journeys || []).some(y => y.id === x.id));
   D.rc = b.claims.filter(x => !a.claims.some(y => y.id === x.id));
   D.re = b.examples.filter(x => !a.examples.some(y => y.id === x.id));
   const now = new Set(a.questions.map(q => q.text)), was = new Set(b.questions.map(q => q.text));
@@ -257,7 +311,7 @@ function diff(a) {
   if (ca.status !== cb.status) D.code = [cb.status, ca.status];
   D.bind = bind(ca) !== bind(cb);
   for (const v of a.views) { const o = (b.views || []).find(x => x.name === v.name); if (!o || edgeKey(o) !== edgeKey(v)) D.v.add(v.name); }
-  D.n = D.c.size + D.e.size + D.q.size + D.v.size + D.rc.length + D.re.length + D.rq.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
+  D.n = D.c.size + D.e.size + D.j.size + D.rj.length + D.q.size + D.v.size + D.rc.length + D.re.length + D.rq.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
   return D;
 }
 const changed = D => !!D && (D.isNew || D.n > 0);
@@ -267,8 +321,11 @@ function changeBlock(D) {
   if (D.isNew) return box.append(h("p", "", "New area in this change.")), box;
   const ids = k => [...D.c].filter(([, m]) => m.some(x => x.k === k)).map(([id]) => id);
   const eids = k => [...D.e].filter(([, m]) => m[0].k === k).map(([id]) => id);
+  const jids = k => [...D.j].filter(([, m]) => m.some(x => x.k === k)).map(([id]) => id);
   const L = [], p = (list, one, many, w) => { const k = Array.isArray(list) ? list.length : list; if (!k) return;
     L.push(h("span", w ? "w" : "", (w ? "▲ " : "") + k + " " + (k === 1 ? one : many) + (Array.isArray(list) ? ": " + list.join(", ") : ""))); };
+  p(jids("new"), "new journey", "new journeys"); p(jids("retold"), "retold journey", "retold journeys");
+  p(jids("status"), "journey changed status", "journeys changed status"); p(D.rj.map(x => x.id), "removed journey", "removed journeys", 1);
   p(ids("new"), "new claim", "new claims"); p(D.rc.map(x => x.id), "removed claim", "removed claims", 1);
   p(ids("reworded"), "reworded", "reworded"); p(ids("weaker"), "verified more weakly", "verified more weakly", 1);
   p(ids("stronger"), "verified more strongly", "verified more strongly");
@@ -308,12 +365,17 @@ function codeSection(a, D) {
 
 function render(a, only) {
   const t = stats(a), sr = a.search, root = h("div"), D = diff(a), F = only && D && !D.isNew;
+  const inJ = new Map(); (a.journeys || []).forEach(j => (j.moments || []).forEach(m => (m.requirements || []).forEach(r => {
+    if (!inJ.has(r)) inJ.set(r, []); if (!inJ.get(r).includes(j.id)) inJ.get(r).push(j.id); })));
+  const jl = id => (a.journeys || []).length ? (inJ.has(id) ? "in journeys: " + inJ.get(id).join(", ") : "in no journey") : null;
   const keep = (m, bad) => !F || m || bad;
   const cover = sr.exhaustive ? "scope exhausted: " + n(sr.states) + " states" : "stopped at budget: " + n(sr.states) + " states, depth " + sr.depth;
   root.append(h("div", "tiles",
     tile(t.bad ? "bad" : "good", t.bad, "✕ claims violated"),
     tile(t.below ? "warn" : "good", t.below, "▲ claims below target"),
     tile("good", t.ok, "✓ claims ok"),
+    tile(t.jBad ? "bad" : "good", t.jBad, "✕ journeys failed"),
+    tile("good", t.jOk, "✓ journeys ok"),
     tile(t.exBad ? "bad" : "good", t.exBad, "✕ examples failed"),
     tile("good", t.exOk, "✓ examples ok"),
     tile(a.questions.length ? "warn" : "good", a.questions.length, "? open questions"),
@@ -323,13 +385,13 @@ function render(a, only) {
     h("p", "", "Budget " + n(sr.budget) + " states; " + n(sr.cutByBound) + " states cut by the size bound."),
     h("p", "mono", sr.actions.join("  |  ")));
   if (D) root.append(changeBlock(D));
-  root.append(det, ...codeSection(a, D));
+  root.append(...journeys(a, D, F), det, ...codeSection(a, D));
   for (const [kind, title] of [["invariant", "Invariants"], ["requirement", "Requirements"]]) {
     const all = a.claims.filter(x => x.kind === kind), gone = D ? D.rc.filter(x => x.kind === kind) : [];
     if (!all.length && !gone.length) continue;
     const cs = all.filter(x => keep(D && D.c.has(x.id), x.status !== "ok"));
     root.append(h("h2", "", title), h("p", "sub", kind === "invariant" ? "Always true, in every state." : "What must happen in response to something."));
-    cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => root.append(claimRow(c, D && D.c.get(c.id))));
+    cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => root.append(claimRow(c, D && D.c.get(c.id), jl(c.id))));
     gone.forEach(c => root.append(goneRow(c, "removed"))); hid(root, all.length - cs.length);
   }
   if (a.views.length) { const vs = a.views.filter(v => keep(D && D.v.has(v.name), 0));

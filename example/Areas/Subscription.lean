@@ -152,6 +152,21 @@ def area : Area State Action where
     { id := "EX-011", text := "Declined journey: the provider declines, the retry goes through",
       run := [.cancel_declined "alice", .cancel_subscription "alice" .InApp],
       expect := fun s => s.status.get "alice" == .Cancelled && !s.billingEnabled.get "alice" }]
+  journeys := [
+    { id := "J-001", title := "Cancelling a subscription",
+      goal := "Alice no longer wants to pay, but has paid for the current period.",
+      moments := [
+        .step "Alice cancels; the provider accepts and she gets an email." (.cancel_subscription "alice" .Email),
+        .step "She presses cancel again, and nothing changes." (.cancel_again "alice"),
+        .refusal "She asks for a refund of the unused part of the period and is turned down." (.request_refund "alice"),
+        .step "The paid period ends and her access ends with it." (.expire_period "alice")] },
+    { id := "J-002", title := "The provider does not cooperate",
+      goal := "Bob wants to cancel while the billing provider is having a bad day.",
+      moments := [
+        .step "Bob cancels, but the provider does not answer in time." (.cancel_unanswered "bob" true),
+        .step "A second try gets no answer either." (.cancel_unanswered "bob" false),
+        .step "A third try is declined by the provider. Bob is still subscribed and still billed." (.cancel_declined "bob"),
+        .step "The next try goes through, and Bob is told in the app." (.cancel_subscription "bob" .InApp)] }]
   views := [("subscription alice", statusView "alice"), ("retries alice", retryView "alice")]
 
 def entry : Entry := area.entry

@@ -28,7 +28,8 @@ Everything about one part of a system lives in an **area**:
 | Model | The state, the actions, and one function `step : action → state → new state or refused` |
 | Invariants | What must hold in every reachable state |
 | Requirements | "When this holds and that action arrives, the system shall …" or "… shall refuse" |
-| Examples | Concrete runs with an expected outcome |
+| Journeys | Customer journeys: the stories a person recognises the area by, each told as one run, moment by moment, in the person's words |
+| Examples | Concrete runs with an expected outcome, for the boundaries a story would not dwell on |
 | Scope | The finite set of actions (and an optional bound on states) the search explores |
 | Code (optional) | How the area maps onto existing code: what to run for each action, what to read after each step |
 
@@ -52,6 +53,12 @@ Each claim is reported at the strongest level it reached. The claim never change
 
 Invariants are expected to reach level 1 and requirements level 2. Anything weaker is shown as "below target".
 
+### Journeys
+
+People understand a system through the stories of its users, so the review page opens with the journeys. Each is a storyboard: one card per moment with what happens in plain words, whether the system did it or turned it down, the requirements at work in that moment, and what changed. The cards are generated from the run, so a journey cannot say something the model does not do: a moment that goes the other way fails the check. Journeys are also replayed against bound code, whatever the budget, so the stories a person has read are stories the code was seen to follow.
+
+A journey stays inside one area. A story that crosses areas is told as one journey per area for now.
+
 ### Open questions
 
 The search also finds what the requirements do not say, and reports it as questions for a person:
@@ -59,6 +66,7 @@ The search also finds what the requirements do not say, and reports it as questi
 - an action is accepted in a situation no requirement covers;
 - an action is refused in a situation no requirement covers;
 - a requirement never applies anywhere in the scope;
+- a requirement is part of no journey, or the area has no journey at all;
 - nobody has decided whether an action can interleave with others inside the implementation.
 
 Answering a question means adding a requirement, an example, or a decision. The requirements are complete, relative to the scope, when the list is empty.

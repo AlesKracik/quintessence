@@ -139,6 +139,30 @@ def area : Area State Action where
     { id := "EX-009", text := "Confirming frees a hold slot: after a seat is sold the customer may hold two more",
       run := [.hold "s1" "alice", .hold "s2" "alice", .confirm "s1" "alice", .hold "s3" "alice"],
       expect := fun s => heldBy s "alice" == 2 && statusOf s "s1" == "sold" }]
+  journeys := [
+    { id := "J-001", title := "Buying a seat",
+      goal := "Alice wants seat s1 and needs a moment to pay.",
+      moments := [
+        .step "Alice puts seat s1 on hold." (.hold "s1" "alice"),
+        .refusal "Bob wants the same seat and is turned away." (.hold "s1" "bob"),
+        .step "A moment passes while she pays." .tick,
+        .step "Alice confirms; the seat is hers." (.confirm "s1" "alice"),
+        .refusal "Bob still cannot have it." (.hold "s1" "bob")] },
+    { id := "J-002", title := "A hold that runs out",
+      goal := "Alice puts a seat on hold and then does nothing.",
+      moments := [
+        .step "Alice puts seat s1 on hold." (.hold "s1" "alice"),
+        .step "Time passes." .tick,
+        .step "More time passes; the hold has run out." .tick,
+        .refusal "Alice tries to confirm, too late." (.confirm "s1" "alice"),
+        .step "Bob takes the seat instead." (.hold "s1" "bob")] },
+    { id := "J-003", title := "Changing one's mind",
+      goal := "Alice buys a seat and later gives it back.",
+      moments := [
+        .step "Alice puts seat s2 on hold." (.hold "s2" "alice"),
+        .step "She confirms it." (.confirm "s2" "alice"),
+        .step "She cancels the sold seat, and it is free again." (.cancel "s2" "alice"),
+        .step "Bob can now hold it." (.hold "s2" "bob")] }]
   views := [("seat s1", seatView "s1"), ("seats alice holds", fun s => toString (heldBy s "alice"))]
   code := some {
     adapter := ["python3", "adapters/python.py"]
