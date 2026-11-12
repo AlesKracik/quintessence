@@ -2,9 +2,11 @@
 
 Run on 2026-11-11 against the three example areas (`auth`, `subscription`, `auth-ui`). Question: can a cheaper AI model (Sonnet), working unattended, prove this repo's invariants at the upper levels of the model ladder in [GOAL.md](../../GOAL.md)?
 
-**Answer: yes, for models of this size. Every target was proven, each in one to two minutes, and every result passed an independent re-check.** How far this carries to real, larger areas is not measured here.
+**Answer: yes, for models of this size. Every target was proven, each in one to two minutes, and every result passed an independent re-check.**
 
-## Results
+A second round on 2026-11-12 repeated the measurement on three real models of up to 2,600 lines and added Dafny. **The unattended rate did not fall: Lean and Dafny reached the correct verdict on every invariant. What broke was tooling**, namely the Quint-to-Lean generator and the Apalache route on the largest model. See "Round 2" below.
+
+## Round 1 results (example areas)
 
 | Arm | Ladder level reached | Targets | Proven | Agent effort |
 |---|---|---|---|---|
@@ -54,7 +56,62 @@ Both models were written from a one-paragraph description, with the template and
 - a `match` arm that tried to bind a variable, which Quint does not allow (one failed type-check);
 - `quint test` with its default name filter ran zero runs and reported success, in both sessions. This is a tooling trap rather than a language problem: a green result with nothing executed.
 
-## How the results were checked
+## Round 2: real models and Dafny
+
+Three models from real projects built on this template, anonymised here as A, B and C. Their files, the agents' ports and the proofs were kept out of this repository and deleted after the audit; only the numbers below remain.
+
+| Model | Size | Invariants |
+|---|---|---|
+| A | about 500 lines, 6 actions | 2, both true |
+| B | about 900 lines, 13 actions, imports A | 7, all true |
+| C | about 2,600 lines, 17 actions, all state in one large record | 5: 2 true, 3 false |
+
+The three false invariants of C were already recorded as violated in that project's own ledger, each with a counterexample. The agents were not told.
+
+### Verdicts
+
+| Model | Lean | Dafny | Apalache inductive |
+|---|---|---|---|
+| A | 2 proven, on the generated model | 2 proven | 2 proven |
+| B | 7 proven, on a model the agent ported | 7 proven | 7 proven, on the original model |
+| C | 2 proven, 3 refuted, on a model the agent ported | 2 proven, 3 refuted | 0 proven |
+| Correct verdicts out of 14 | 14 | 14 | 9 |
+
+Dafny was also run on two example areas from round 1: `auth` 5 of 5 (for any number of users and sessions) and `subscription` 4 of 4. Those two files are in `dafny/`.
+
+For the three false invariants of C, neither the Lean nor the Dafny agent forced a proof. Both reported them false, gave action sequences, and identified the same root causes the project's ledger records. The Dafny file states each counterexample as a lemma, and those lemmas verify. The two true invariants of C were proven for all steps; the project's ledger had them only to 3 steps, its deep pass skipped for budget.
+
+### Effort
+
+| Model | Lean | Dafny | Apalache |
+|---|---|---|---|
+| A | about 50 s per invariant | 34 s, 1 verifier run | 48 s, 3 checker runs |
+| B | 18 min, 224k tokens, 914-line proof | 17 min, 119k tokens, 10 runs | 3.5 min, 9 runs, 11 s per check |
+| C | 7.5 min, 150k tokens, 32 builds | 4.4 min, 82k tokens, 7 runs | 14 min, nothing proven |
+
+The round used about 1.07M tokens. Dafny was the cheapest to drive: most lemmas verified with empty bodies and a full check took 2 to 28 seconds. Two solver timeouts occurred; the agent resolved both by splitting a lemma per action.
+
+### Where it broke
+
+- **The Quint-to-Lean generator handles one of the three models.** On C its output does not compile: the model has its own type called `State`, which clashes with the generator's state structure, and record fields are lost. On B it refuses a construct it cannot translate (`actionAll`). For B and C the Lean agent therefore ported the model by hand, as the Dafny agent always does.
+- **The Apalache inductive route failed on C.** Apalache needs a membership test for each state variable before any other use. C keeps all state in one record, Quint has no constructor for a set of whole records, and enumerating the records would need on the order of 10^8 values for one field alone. No type constraint was accepted, so nothing could be checked.
+- **Bounded checking of C is slow.** One counterexample at 4 steps took 193 s; another bounded check was stopped after 20 minutes.
+
+### How round 2 was checked
+
+- **Lean:** rebuilt; scanned for forbidden constructs; the prelude is unchanged; each theorem has the required form and rests only on `propext`, `Classical.choice` and `Quot.sound`.
+- **Dafny:** re-verified with a 120 s limit per condition: 0 errors, no `assume`, `{:axiom}`, `{:verify false}` or `expect`; the required lemmas are present with the required pre- and postconditions.
+- **Apalache:** every passing command re-run on a separate port; the models only gained declarations.
+- **Refutations of C:** matched against the invariants' recorded status and counterexamples in that project's ledger.
+
+### What round 2 does not show
+
+1. **The ports are untrusted.** For B and C the Lean and Dafny models were written by the agent, which [GOAL.md](../../GOAL.md) decision 8 counts as not trusted. Their fidelity is supported only by agreement: Lean and Dafny agree with each other, with Apalache on the original model B, and with the project's ledger on C.
+2. **Fixed id sets.** The real models fix their entity ids as constants, so these proofs cover any number of steps, not any number of entities.
+3. **One attempt per target**, and effort figures are self-reported.
+4. **Not covered:** one two-state invariant of B, Verus and TLAPS.
+
+## How round 1 was checked
 
 Nothing here rests on an agent's own report.
 
@@ -64,15 +121,15 @@ Nothing here rests on an agent's own report.
 
 Reproduce the Lean audit with `python3 spike/proof-rate/audit_lean.py`.
 
-## What this does not show
+## What round 1 does not show
 
-1. **The models are small.** Three areas, at most six state variables and eight actions each. Most invariants were inductive as written or needed one or two extra facts. The rate on a real area will be lower, and this spike does not say how fast it falls.
+1. **The models are small.** Three areas, at most six state variables and eight actions each. Most invariants were inductive as written or needed one or two extra facts. Round 2 addresses this with real models.
 2. **One attempt per target.** There is no measure of run-to-run variation.
 3. **The Lean proofs are about the generated Lean model.** That it matches the Quint model rests on the generator and on trace replay, which this spike did not run.
 4. **The Apalache proofs hold for a fixed set of ids** (three users, three sessions). They cover any number of steps, not any number of users.
 5. **Subscription agents had help.** A finished proof of a different invariant of the same model was available as a style reference.
 6. **Build and run counts are self-reported** by the agents. The verdicts are audited; the effort numbers are not.
-7. **Dafny, Verus and TLAPS were not tried.** They are not installed on this machine.
+7. **Dafny was not tried in round 1** (it was in round 2); Verus and TLAPS were not tried at all.
 8. **Two fluency samples** is too few for a rate.
 
 ## What it changes
@@ -81,11 +138,16 @@ Reproduce the Lean audit with `python3 spike/proof-rate/audit_lean.py`.
 - **Both upper ladder levels are reachable unattended on the current stack**, in about a minute per claim, without a person writing a proof.
 - **The two level-2 routes complement each other.** TLC needs a finite state space and no AI. The Apalache inductive route needs an agent to supply the invariant but handles an unbounded counter.
 - **Two limits recorded in the repo are out of date.** The inductive checks that error in the example ledgers were missing only type constraints, which an agent writes routinely. And a Lean proof no longer needs a person.
-- **The next measurement should be harder targets**: one real area, to find where the unattended rate starts to fall.
+- **AI proving is not the bottleneck at this size** (round 2). On real models of up to 2,600 lines the cheaper model still reached every correct verdict, and declined to prove what was false.
+- **The path from the authored model to the prover is the bottleneck** (round 2): the generator for Lean, state typing for Apalache.
+- **Authoring directly in the prover's language looks viable** (round 2). Agents wrote 350 to 780 line Lean and Dafny models from the Quint sources in minutes. That would remove the translator, which is the part that failed, but it leaves the model's fidelity to be established another way.
+- **Dafny is the cheapest route to drive** (round 2), at the price of a larger trusted base and occasional solver timeouts.
+- **The Apalache route has a visible ceiling** (round 2): the strongest result on model B, where it ran on the original model with no port, and no result at all on model C.
 
 ## Files
 
 - `lean/` — one Lake project: the prelude, the three generated models and the nine proofs under `Spec/<Area>/Proofs/`.
 - `apalache/` — the example models with the added inductive invariants (`indInv`).
 - `fluency/` — the two agent-written models.
+- `dafny/` — the round 2 Dafny ports and proofs of the two example areas (`dafny verify <file>`). Nothing from the real models is stored here.
 - `audit_lean.py` — the Lean audit.
