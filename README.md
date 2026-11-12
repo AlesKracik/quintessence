@@ -19,6 +19,102 @@ The agent writes the model, the proofs and the code, and none of them needs to b
 
 Underneath, every command runs the same program, the **checker**: `lake exe check`. It is deterministic and involves no AI. The agent runs it, and so does CI; you do not need to. Everything below describes what it checks and how.
 
+## Starting a project
+
+A project is a directory with its own `lakefile.toml`. It can be a new repository, or a directory in an existing one, for instance the repository that holds the architecture documents or the code. You need [elan](https://github.com/leanprover/elan) and git; Lake fetches the framework for you.
+
+1. In the project directory, create four files.
+
+   `lean-toolchain`, the same as the framework's:
+
+   ```
+   leanprover/lean4:v4.22.0
+   ```
+
+   `lakefile.toml`. `rev` is a branch, tag or commit of the framework; a commit or tag keeps the project on a known version:
+
+   ```toml
+   name = "myproject"
+   defaultTargets = ["check"]
+
+   [[require]]
+   name = "quintessence"
+   git = "https://github.com/AlesKracik/quintessence"
+   rev = "framework-redesign"
+
+   [[lean_lib]]
+   name = "Areas"
+   globs = ["Areas", "Areas.+"]
+
+   [[lean_exe]]
+   name = "check"
+   root = "Main"
+   ```
+
+   `Main.lean`, exactly these lines, in every project:
+
+   ```lean
+   import Spec.Main
+   import Areas
+   checker_main Areas.all
+   ```
+
+   `Areas.lean`, the list of areas, empty for now:
+
+   ```lean
+   import Spec.Check
+
+   /-- Every area the checker runs. -/
+   def Areas.all : List Spec.Entry := []
+   ```
+
+2. Fetch the framework and take its commands:
+
+   ```
+   lake update
+   mkdir -p .claude && cp -r .lake/packages/quintessence/.claude/commands .claude/
+   ```
+
+   `lake update` puts the framework under `.lake/packages/quintessence/` and writes `lake-manifest.json`, which pins the exact version. Commit the manifest. Claude Code reads `.claude/commands/` from the directory it is started in, so in a subdirectory project either start it there or copy the commands to the repository root.
+
+3. Add to `.gitignore`:
+
+   ```
+   .lake/
+   out/
+   .spec/local.json
+   ```
+
+4. Say where things are, in `.spec/`:
+
+   `.spec/project.json` (committed): the architecture documents, if there are any, and every repository the code or the documents live in.
+
+   ```json
+   { "architecture": ["docs/architecture/", "platform-docs:services/billing.md"],
+     "repos": { "billing": "git@example.com:org/billing.git",
+                "platform-docs": "git@example.com:org/platform-docs.git" } }
+   ```
+
+   `.spec/local.json` (not committed): where you have those repositories checked out.
+
+   ```json
+   { "repo_paths": { "billing": "/home/me/src/billing", "platform-docs": "/home/me/src/platform-docs" } }
+   ```
+
+5. Check that it runs: `lake exe check` builds the checker and, with no areas yet, only writes an empty review page. The first build takes a minute or two.
+
+6. For CI, copy `.github/workflows/check.yml` from the framework and replace `example` by the project's directory (or remove those settings when the project is the repository root).
+
+From here on, work through the commands: `/spec` to write the first area, or to extract one from existing code.
+
+Where the code is:
+
+- In another repository: the binding says `repo := "billing"`, with paths relative to that repository's root.
+- In the project directory: `repo` is left out, and paths are relative to the project directory (`example/app/`).
+- In the same repository but outside the project directory: paths start with `../`.
+
+To move a project to a newer framework version, change `rev`, run `lake update quintessence`, copy the commands again, run `lake exe check --full`, and commit the manifest and whatever changed in the ledger.
+
 ## How it works
 
 Everything about one part of a system lives in an **area**:
@@ -114,8 +210,6 @@ A project (its own repository)
   .spec/project.json  architecture documents and repositories of the system
   .spec/local.json    where this developer has those repositories (not committed)
 ```
-
-To start a project, copy `.claude/commands/` into an empty repository and run `/spec`: it creates the rest. The code can live in the project's repository (as in `example/app/`) or in others.
 
 When the system is described by architecture documents, list them in `.spec/project.json`, together with the repositories they point to. Extraction starts from them: the agent reads the documents to decide what an area is and where its code lives, then reads the code, which stays the reference. A difference between the two is a question for the person.
 

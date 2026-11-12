@@ -6,50 +6,7 @@ The person you work with decides what the system must do. You write the Lean, ru
 
 ## Starting a project (once)
 
-If the repository has no `lakefile.toml` yet, create these files, then run `lake update`:
-
-- `lean-toolchain`: the same content as the framework's.
-- `lakefile.toml`:
-
-  ```toml
-  name = "<project>"
-  defaultTargets = ["check"]
-
-  [[require]]
-  name = "quintessence"
-  git = "https://github.com/AlesKracik/quintessence"
-  rev = "<branch, tag or commit>"
-
-  [[lean_lib]]
-  name = "Areas"
-  globs = ["Areas", "Areas.+"]
-
-  [[lean_exe]]
-  name = "check"
-  root = "Main"
-  ```
-
-- `Main.lean`, exactly these three lines (never anything else: this file decides what counts as verified):
-
-  ```lean
-  import Spec.Main
-  import Areas
-  checker_main Areas.all
-  ```
-
-- `Areas.lean`: `def Areas.all : List Spec.Entry := []`, plus one import and one entry per area later.
-- `.gitignore`: `.lake/`, `out/`, `.spec/local.json`.
-- `.spec/project.json` (committed), what an agent needs to find its way around:
-
-  ```json
-  { "architecture": ["docs/architecture/", "platform-docs:services/billing.md"],
-    "repos": { "billing": "git@example.com:org/billing.git", "platform-docs": "git@example.com:org/platform-docs.git" } }
-  ```
-
-  `architecture` lists the documents that describe the system: paths in this repository, or `<repo>:<path>` in a repository named under `repos`. `repos` names every repository the project's code or documents live in.
-- `.spec/local.json` (not committed), where this developer has those repositories checked out: `{"repo_paths": {"billing": "/path/to/billing"}}`. Ask the person for the paths; do not clone on your own.
-- CI: copy `.github/workflows/check.yml` from the framework and drop the `example` directory settings.
-- Copy the framework's `.claude/commands/` into the repository.
+If the directory has no `lakefile.toml` yet, set the project up first, following "Starting a project" in the framework's `README.md` step by step (the four files, `lake update`, the commands, `.gitignore`, `.spec/project.json`, `.spec/local.json`, CI). Ask the person for the framework revision to pin, for the architecture documents and repositories, and for the local checkout paths; do not clone anything on your own. `Main.lean` must be exactly the three lines given there: that file decides what counts as verified.
 
 ## 0. The change
 
