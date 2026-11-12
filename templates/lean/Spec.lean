@@ -1,7 +1,0 @@
--- The Lake project for `proof: "lean"` invariants. Copy this directory to
--- specs/lean/ (or wherever .spec/project.json `lean.project_dir` points).
--- Per area, namespace `Spec.<Area>`: `Spec/<Area>.lean` holds the proofs and
--- starts with `import Spec.<Area>.Model` — the model spec-record generates
--- from the Quint file (tools/lean_gen.py; never edit it). Import each proof
--- module here so `lake build` builds them all. See METHODOLOGY.md → "The
--- Proof Backend: Lean".

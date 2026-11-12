@@ -1,8 +1,0 @@
-name = "spec"
-defaultTargets = ["Quint", "Spec"]
-
-[[lean_lib]]
-name = "Quint"
-
-[[lean_lib]]
-name = "Spec"

@@ -1,6 +1,8 @@
 # Proof-rate spike — results
 
-Run on 2026-11-11 against the three example areas (`auth`, `subscription`, `auth-ui`). Question: can a cheaper AI model (Sonnet), working unattended, prove this repo's invariants at the upper levels of the model ladder in [GOAL.md](../../GOAL.md)?
+> Historical record. This spike led to the Lean-only design now in this repository. The scripts, models and proofs it refers to (under `spike/proof-rate/`) and the Quint tooling were removed afterwards; they are in the git history at commit `9aff340`.
+
+Run on 2026-11-11 against the three example areas (`auth`, `subscription`, `auth-ui`). Question: can a cheaper AI model (Sonnet), working unattended, prove this repo's invariants at the upper levels of the model ladder in [GOAL.md](../GOAL.md)?
 
 **Answer: yes, for models of this size. Every target was proven, each in one to two minutes, and every result passed an independent re-check.**
 
@@ -108,7 +110,7 @@ The round used about 1.07M tokens. Dafny was the cheapest to drive: most lemmas 
 
 ### What round 2 does not show
 
-1. **The ports are untrusted.** For B and C the Lean and Dafny models were written by the agent, which [GOAL.md](../../GOAL.md) decision 8 counts as not trusted. Their fidelity is supported only by agreement: Lean and Dafny agree with each other, with Apalache on the original model B, and with the project's ledger on C.
+1. **The ports are untrusted.** For B and C the Lean and Dafny models were written by the agent, which [GOAL.md](../GOAL.md) decision 8 counts as not trusted. Their fidelity is supported only by agreement: Lean and Dafny agree with each other, with Apalache on the original model B, and with the project's ledger on C.
 2. **Fixed id sets.** The real models fix their entity ids as constants, so these proofs cover any number of steps, not any number of entities.
 3. **One attempt per target**, and effort figures are self-reported.
 4. **Not covered:** one two-state invariant of B, Verus and TLAPS.
