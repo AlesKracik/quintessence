@@ -15,6 +15,7 @@ Everything about one part of a system lives in an **area**:
 | Requirements | "When this holds and that action arrives, the system shall …" or "… shall refuse" |
 | Examples | Concrete runs with an expected outcome |
 | Scope | The finite set of actions (and an optional bound on states) the search explores |
+| Code (optional) | How the area maps onto existing code: what to run for each action, what to read after each step |
 
 One command checks every area:
 
@@ -22,11 +23,12 @@ One command checks every area:
 lake exe spec
 ```
 
-It does three things.
+It does four things.
 
 1. **Audits the proofs.** The program cannot even be built unless every attached proof is accepted by the Lean kernel and rests on nothing but Lean's three standard axioms.
 2. **Searches the scope.** It runs the model through every reachable state of the scope, or until the budget is spent, and checks every invariant, requirement and example on the way.
-3. **Reports.** It writes `ledger/<area>.json` (committed, so a change in what is verified shows up in the diff) and `out/review.html` (the page a person reviews), and fails if anything is violated.
+3. **Checks the code**, for areas bound to code (see below).
+4. **Reports.** It writes `ledger/<area>.json` (committed, so a change in what is verified shows up in the diff) and `out/review.html` (the page a person reviews), and fails if anything is violated.
 
 ### How strong is a claim
 
@@ -52,6 +54,22 @@ The search also finds what the requirements do not say, and reports it as questi
 
 Answering a question means adding a requirement, an example, or a decision. The requirements are complete, relative to the scope, when the list is empty.
 
+## Existing code and drift
+
+An area can be bound to code that already exists. The binding is a table, not a program: for every action the call to make in the code, and for every observation the expression that reads it. A small per-language adapter executes the table; it judges nothing.
+
+On every run the checker drives the code through the model: every state of the scope, nearest first, every action the model accepts there, and every action it refuses in the state that follows. Each run starts from a fresh system, and after every step the checker compares what the code shows with what the model expects. The first difference is reported as drift, with the run that shows it:
+
+- the model accepts an action and the code refuses it, or the other way round;
+- an observation differs after a step;
+- the code has an operation the model never uses (reported as an open question).
+
+**Extraction** uses the same check. An agent reads the code and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the review page. `Areas/Reservation` was extracted this way from `examples/python/reservation.py`.
+
+**Drift** is the same check failing later. A person decides which of three things happened: the code is wrong, the model is wrong, or the change is deliberate and the requirement changes first.
+
+The code verdict sits on its own scale. Agreement on every transition of the scope, or of the first N steps when the budget runs out, is reported as level 4: model-driven runs, systematic instead of random. It is evidence, not proof: code that remembers more than the binding observes can still differ on a path the check did not take.
+
 ## Layout
 
 ```
@@ -60,11 +78,13 @@ Spec/Check.lean     the area records and the checker
 Spec/review.html    the review page template
 Audit.lean          the gate on what counts as proven
 Main.lean           the `spec` program
+adapters/python.py  runs model-chosen action sequences against Python code
 Areas.lean          the list of areas
 Areas/<Name>.lean   one area: claims and scope
 Areas/<Name>/       its model and proofs
 ledger/             what was verified, per area (committed)
 out/                the review page (generated, not committed)
+examples/           existing code used by the example areas
 ```
 
 `Areas/Auth` is the worked example. Copy its shape for a new area and add it to `Areas.lean`.
@@ -81,18 +101,20 @@ The agent writes the model and the proofs, and neither needs to be trusted. A pr
 - `Spec/Data.lean` and the record types in `Spec/Check.lean`: they fix what "reachable" and "proven" mean.
 - `Audit.lean`: it rejects `sorry`, added axioms, `native_decide`, and constructs that let compiled code differ from the definitions the proofs are about.
 - For levels 2 and 3 only: the search in `Spec/Check.lean`, the Lean compiler, and 64-bit state fingerprints (two different states can, with very small probability, be taken for one). These are argued and tested, not proven.
+- For the code verdict only: the adapter for the code's language, and the binding, which a person confirms on the review page.
 
 ## Not built yet
 
-- Checking code against the model. Every ledger says `"code": "not checked"`.
-- Extracting a model from existing code, and detecting drift between code and model.
+- Adapters for languages other than Python. The protocol is a few JSON messages, described at the top of `adapters/python.py`.
+- Stronger code verdicts: every action sequence to a depth, symbolic checking, proof that the code matches the model.
+- A code verdict per requirement. Today there is one per area.
 - Recording a person's acceptance of a claim that stays below its target.
 - Keeping a level reached by a long run when a later run has a smaller budget.
-- Randomized runs (level 4), and level 1 proofs for requirements.
+- For the model: randomized runs (level 4), and level 1 proofs for requirements.
 - Checking that the requirements determine the behaviour completely, beyond the questions listed above.
 
 ## Requirements
 
-[elan](https://github.com/leanprover/elan). The Lean version is pinned in `lean-toolchain`. There are no other dependencies.
+[elan](https://github.com/leanprover/elan). The Lean version is pinned in `lean-toolchain`. Areas bound to Python code also need `python3`.
 
 The measurements that led to this design are in [docs/spike-results.md](docs/spike-results.md).

@@ -51,7 +51,7 @@ button:focus-visible,.trace:focus-visible{outline:2px solid var(--acc);outline-o
 table{border-collapse:collapse;width:100%;background:var(--surf);font-size:13px}
 td,th{border:1px solid var(--line);padding:3px 8px;text-align:left;vertical-align:top}
 td.v{word-break:break-word}td.f{white-space:nowrap;width:1%}
-tr.chg td{background:var(--chg)}.old{text-decoration:line-through;color:var(--mut);margin-right:8px}
+tr.chg td{background:var(--chg)}tr.dif td.v{background:var(--badb);color:var(--bad);font-weight:600}.old{text-decoration:line-through;color:var(--mut);margin-right:8px}
 .note{font-size:13px;color:var(--bad);font-weight:600}
 .dg{background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:6px;margin-bottom:8px;overflow-x:auto}
 .dg svg{display:block}.dg text{font:12px ui-monospace,Menlo,Consolas,monospace;fill:var(--ink)}
@@ -60,6 +60,9 @@ tr.chg td{background:var(--chg)}.old{text-decoration:line-through;color:var(--mu
 .dg .tag{fill:var(--acc);font-size:10px}
 .q{background:var(--surf);border:1px solid var(--line);border-left:5px solid var(--acc);border-radius:8px;padding:8px 10px;margin-bottom:6px}
 .q>p{margin:0 0 4px}
+.cv{display:flex;gap:8px;align-items:baseline}.cv .mk{white-space:nowrap}
+pre{margin:6px 0;padding:6px 8px;background:var(--surf);border:1px solid var(--line);border-radius:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+td.c{white-space:pre-wrap;word-break:break-word}
 .empty{text-align:center;color:var(--mut);padding:60px 0}
 @media (max-width:560px){.head{grid-template-columns:auto minmax(0,1fr)}.lad,.badge{grid-column:2}.tile.wide{grid-column:span 1}}
 </style></head><body><main id="app"></main>
@@ -97,7 +100,8 @@ function stepper(steps) {
     for (const [f, v] of st.state) {
       const changed = i > 0 && before.has(f) ? before.get(f) !== v : i > 0;
       const td = h("td", "v"); if (changed) td.append(h("span", "old", before.get(f) ?? "(new)"));
-      td.append(v); body.append(h("tr", changed ? "chg" : "", h("td", "f mono", f), td));
+      const dif = /^.* in the model, .* in the code$/s.test(v); td.append(v);
+      body.append(h("tr", dif ? "dif" : changed ? "chg" : "", h("td", "f mono", f), td));
     }
     t.append(body); tw.replaceChildren(
       st.refused ? h("div", "note", "✕ This action was refused; nothing changed.") : "", t);
@@ -204,7 +208,27 @@ function stats(a) {
   const c = k => a.claims.filter(x => x.status === k).length, e = k => a.examples.filter(x => x.status === k).length;
   return { ok: c("ok"), below: c("below target"), bad: c("violated"), exOk: e("ok"), exBad: a.examples.length - e("ok") };
 }
-const problem = a => { const t = stats(a); return t.below + t.bad + t.exBad > 0; };
+const CODE = { "agrees": ["good", "code agrees", "ok", "✓ agrees"], "drift": ["bad", "code drift", "violated", "✕ drift"],
+  "error": ["bad", "code check failed", "failed", "✕ check failed"] };
+const codeOf = a => typeof a.code === "string" ? { status: "not checked", verdict: a.code } : a.code || { status: "not checked" };
+const problem = a => { const t = stats(a), k = codeOf(a).status; return t.below + t.bad + t.exBad > 0 || k === "drift" || k === "error"; };
+
+function codeSection(a) {
+  const c = codeOf(a), [, , cls, icon] = CODE[c.status] || ["warn", "", "below", "▲ not checked"], out = [h("h2", "", "Code")];
+  out.push(h("div", "cv", h("span", "badge " + cls, icon), h("span", "", c.verdict || "")));
+  if (c.status === "drift" && c.steps && c.steps.length) {
+    const d = h("details", "ex row " + cls); d.open = true;
+    d.append(h("summary", "", "Where code and model part ways (the last step differs)"), h("div", "", stepper(c.steps))); out.push(d); }
+  if (c.actions) {
+    const two = (head, rows) => h("div", "tw", h("table", "", h("thead", "", h("tr", "", head.map(x => h("th", "", x)))),
+      h("tbody", "", rows.map(([k, v]) => h("tr", "", h("td", "f act", k), h("td", "c mono", v))))));
+    out.push(h("details", "sub", h("summary", "", "what is compared"),
+      h("h3", "", "Model action → code run for it"), two(["action", "code"], Object.entries(c.actions)),
+      h("h3", "", "Observation → read from the code after every step"), two(["name", "expression"], c.observe || []),
+      h("h3", "", "Setup: builds a fresh system"), h("pre", "mono", c.setup || "")));
+  } else if (c.status === "not checked") out.push(h("p", "sub", "This area is not bound to code."));
+  return out;
+}
 
 function render(a) {
   const t = stats(a), sr = a.search, root = h("div");
@@ -217,11 +241,11 @@ function render(a) {
     tile("good", t.exOk, "✓ examples ok"),
     tile(a.questions.length ? "warn" : "good", a.questions.length, "? open questions"),
     tile(sr.exhaustive ? "good wide" : "warn wide", cover, "search coverage"),
-    tile("warn wide", "code: " + a.code, "implementation check")));
+    (k => tile((k[0] || "warn") + " wide", k[1] || "code: not checked", "implementation check"))(CODE[codeOf(a).status] || [])));
   const det = h("details", "sub", h("summary", "", "search details"),
     h("p", "", "Budget " + n(sr.budget) + " states; " + n(sr.cutByBound) + " states cut by the size bound."),
     h("p", "mono", sr.actions.join("  |  ")));
-  root.append(det);
+  root.append(det, ...codeSection(a));
   for (const [kind, title] of [["invariant", "Invariants"], ["requirement", "Requirements"]]) {
     const cs = a.claims.filter(x => x.kind === kind); if (!cs.length) continue;
     root.append(h("h2", "", title), h("p", "sub", kind === "invariant" ? "Always true, in every state." : "What must happen in response to something."));

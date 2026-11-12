@@ -12,7 +12,7 @@ def main : IO UInt32 := do
   let mut reviews := #[]
   let mut failed := []
   for e in Areas.all do
-    let r := e.report ()
+    let r ← e.report
     IO.FS.writeFile s!"ledger/{e.name}.json" (r.ledger.pretty ++ "\n")
     IO.println r.summary
     reviews := reviews.push r.review

@@ -93,7 +93,7 @@
   {"text": "Declined journey: the provider declines, the retry goes through",
    "status": "ok",
    "id": "EX-011"}],
- "code": "not checked",
+ "code": {"verdict": "not checked", "status": "not checked", "level": 6},
  "claims":
  [{"verdict": "proven for all sizes and steps",
    "text": "A cancelled or expired subscription is never billed again.",

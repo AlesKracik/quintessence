@@ -43,6 +43,24 @@ Proof writing and proof repair after a model change are mechanical: delegate the
 
 The checker lists what the requirements do not say. Go through the list with the person, one question at a time, showing the situation from the review page. Each answer becomes a requirement, a refusal requirement, an example, or an entry in `atomic` (the decision on whether an action can interleave with others inside the implementation, with the reason). Re-run the check after each answer. Leave a question open if the person has not answered it.
 
-## 5. Hand over
+## 5. Existing code
+
+When the area describes code that already exists, the model is extracted from the code, and the checker then compares the two on every run of `lake exe spec`.
+
+Extraction:
+
+1. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
+2. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
+3. Bind the area to the code with `code := some { ... }` (see `Areas/Reservation.lean`):
+   - `setup` builds a fresh system in a variable named `system`; put the clock and other surroundings under the test's control there;
+   - `actions` gives, for every action name, the code to run (`{0}`, `{1}` are the action's arguments). The action counts as refused when that code raises. Call `refuse()` to turn a return value into a refusal;
+   - `observe` lists what is compared after every step: a name, the value the model expects as text (`true`, `3`, `none`, plain text), and the expression that reads it from the code. Observe everything a caller can see.
+   The mapping must stay a table of short calls. If it needs logic to make the code fit the model, the model is wrong.
+4. Run `lake exe spec` until the code agrees. Each difference comes with the run that shows it. During extraction the code is the reference, so fix the model.
+5. "The code has operation X that the model does not use" means the model is missing something. Add it, or leave the question for the person.
+
+Drift, later: when the check reports a difference on an area that used to agree, show the run to the person. There are three outcomes and the person picks one: the code is wrong (fix the code), the model is wrong (fix the model and its claims), or the change is deliberate (change the requirement first, then both).
+
+## 6. Hand over
 
 Tell the person to open `out/review.html`. Commit the area together with `ledger/<area>.json`.

@@ -2,6 +2,7 @@ import Spec.Data
 import Std.Data.HashMap
 import Std.Data.HashSet
 import Lean.Data.Json.Printer
+import Lean.Data.Json.Parser
 
 /-!
 # Areas and the checker
@@ -16,6 +17,10 @@ runs it and reports, per claim, the strongest level reached:
 
 Invariants target level 1, requirements level 2. The search also produces the
 open questions that drive the requirements toward completeness.
+
+An area bound to existing code (`Area.code`) is also checked against it: the
+code is driven through the model's transitions and compared after every step.
+Any difference is drift.
 -/
 
 namespace Spec
@@ -49,6 +54,23 @@ structure Example (σ α : Type) where
   expect : σ → Bool := fun _ => true
   refused : Option α := none
 
+/-- The binding of an area to code. The mapping is data: what to run in the
+code for each action, and what to read from it after every step. A language
+adapter (`adapters/`) executes it; the checker compares. -/
+structure Code (σ : Type) where
+  /-- The command that starts the adapter. -/
+  adapter : List String
+  /-- Code that builds a fresh system; run before every run. -/
+  setup : String
+  /-- Per action name, the code to run; `{0}`, `{1}` are the action's arguments.
+  The action counts as refused when that code raises an error. -/
+  actions : List (String × String)
+  /-- What is compared after every step: a name, the value the model expects,
+  and the expression that reads it from the code. -/
+  observe : List (String × (σ → String) × String)
+  /-- Budget of the code check, in executed code steps. -/
+  budget : Nat := 100000
+
 structure Area (σ α : Type) where
   name : String
   init : σ
@@ -68,6 +90,7 @@ structure Area (σ α : Type) where
   /-- Per action name: the decision on whether it can interleave with other
   events inside the implementation. A missing entry is an open question. -/
   atomic : List (String × String) := []
+  code : Option (Code σ) := none
 
 /-- What one area reports. `ledger` is committed; `review` adds the traces. -/
 structure Report where
@@ -78,7 +101,7 @@ structure Report where
 
 structure Entry where
   name : String
-  report : Unit → Report
+  report : IO Report
 
 /-! ## Display -/
 
@@ -223,7 +246,131 @@ private def steps [Repr σ] [Repr α] (A : Area σ α) (run : List α) : Json :=
     | none => out := out.push (row (label a) s true)
   return .arr out
 
-private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Report := Id.run do
+/-! ## Code check -/
+
+/-- `login "alice" "s1"` as an adapter receives it: the action's name, and its
+arguments as JSON values. -/
+private def call (label : String) : Json :=
+  let (parts, cur, _, _, _) := label.foldl
+    (fun (acc : Array String × String × Nat × Bool × Bool) c =>
+      let (parts, cur, depth, inStr, esc) := acc
+      if inStr then (parts, cur.push c, depth, esc || c != '"', !esc && c == '\\')
+      else if c == '"' then (parts, cur.push c, depth, true, false)
+      else if c == '(' then (parts, cur, depth + 1, false, false)
+      else if c == ')' then (parts, cur, depth - 1, false, false)
+      else if c == ' ' && depth == 0 then (parts.push cur, "", depth, false, false)
+      else (parts, cur.push c, depth, false, false))
+    (#[], "", 0, false, false)
+  let words := (parts.push cur).toList.filter (· != "")
+  let arg (w : String) : Json := match Json.parse w with
+    | .ok (.str s) => .str s
+    | .ok (.num n) => .num n
+    | .ok (.bool b) => .bool b
+    | _ => .str w
+  Json.mkObj [("action", .str (words.headD "")), ("args", .arr ((words.drop 1).map arg).toArray)]
+
+private structure CodeResult where
+  status : String := "not checked"
+  verdict : String := "not checked"
+  /-- The run that shows the drift, as rows for the review. -/
+  drift : Option Json := none
+  questions : List String := []
+
+/-- Drive the code through the model: for every state of the scope, nearest
+first, every accepted action, and every refused action in the state it leads
+to. Each run starts from a fresh system. Stops at the first difference. -/
+private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ) : IO CodeResult := do
+  let names := A.actions.map (actionName ∘ label)
+  if let some n := names.find? fun n => !(c.actions.any (·.1 == n)) then
+    return { status := "error", verdict := s!"action `{n}` has no code mapping" }
+  let child ← IO.Process.spawn {
+    cmd := c.adapter.headD "", args := (c.adapter.drop 1).toArray, stdin := .piped, stdout := .piped }
+  let ask (j : Json) : IO Json := do
+    child.stdin.putStrLn j.compress
+    child.stdin.flush
+    let reply ← IO.ofExcept (Json.parse (← child.stdout.getLine))
+    if let .ok e := reply.getObjVal? "error" then throw (IO.userError (e.getStr?.toOption.getD e.compress))
+    return reply
+  let hello ← ask <| Json.mkObj [("setup", .str c.setup),
+    ("actions", Json.mkObj (c.actions.map fun (n, code) => (n, .str code))),
+    ("observe", .arr (c.observe.map fun (_, _, e) => .str e).toArray)]
+  let mapped := c.setup :: c.actions.map (·.2) ++ c.observe.map (·.2.2)
+  let operations := ((hello.getObjVal? "operations" >>= Json.getArr?).toOption.getD #[]).toList.filterMap
+    (·.getStr?.toOption)
+  let questions := (operations.filter fun op => !(mapped.any fun m => (m.splitOn op).length > 1)).map
+    (s!"The code has operation `{·}` that the model does not use. Should the model cover it?")
+  let expect (s : σ) : List String := c.observe.map (·.2.1 s)
+  let row (action : String) (refused : Bool) (model code : List String) : Json := Json.mkObj [
+    ("action", .str action), ("refused", .bool refused),
+    ("state", .arr ((c.observe.zip (model.zip code)).map fun ((n, _, _), m, v) =>
+      .arr #[.str n, .str (if m == v then m else s!"{m} in the model, {v} in the code")]).toArray)]
+  let differ (model code : List String) : Option String :=
+    (c.observe.zip (model.zip code)).findSome? fun ((n, _, _), m, v) =>
+      if m == v then none else some s!"`{n}` is {m} in the model and {v} in the code"
+  -- one run against the code; `some (what, rows)` on the first difference
+  let runOne (run : List α) : IO (Option (String × Json)) := do
+    let reply ← ask <| Json.mkObj [("run", .arr (run.map (call ∘ label)).toArray)]
+    let texts (j : Json) (k : String) : List String :=
+      ((j.getObjVal? k >>= Json.getArr?).toOption.getD #[]).toList.map fun v => v.getStr?.toOption.getD v.compress
+    let mut s := A.init
+    let mut rows := #[row "" false (expect s) (texts reply "initial")]
+    if let some d := differ (expect s) (texts reply "initial") then
+      return some (s!"At the start, {d}.", .arr rows)
+    for (a, r) in run.zip ((reply.getObjVal? "steps" >>= Json.getArr?).toOption.getD #[]).toList do
+      let refused := (r.getObjVal? "refused" >>= Json.getBool?).toOption.getD false
+      let next := A.step a s
+      rows := rows.push (row (label a) next.isNone (expect (next.getD s)) (texts r "observed"))
+      if next.isNone && !refused then
+        return some (s!"The model refuses `{label a}` here; the code accepts it.", .arr rows)
+      if next.isSome && refused then
+        return some (s!"The model accepts `{label a}` here; the code refuses it ({(r.getObjVal? "error" >>= Json.getStr?).toOption.getD ""}).", .arr rows)
+      s := next.getD s
+      if let some d := differ (expect s) (texts r "observed") then
+        return some (s!"After `{label a}`, {d}.", .arr rows)
+    return none
+  let refusedIn (s : σ) : List α := A.actions.filter fun a => (A.step a s).isNone
+  let mut drift ← runOne (refusedIn A.init)
+  let mut seen : Std.HashSet UInt64 := ({} : Std.HashSet UInt64).insert (hash A.init)
+  let mut queue : Array (σ × List α) := #[(A.init, [])]  -- each state with the run that reaches it, reversed
+  let mut i := 0
+  let mut used := 0
+  let mut transitions := 0
+  let mut stoppedAt : Option Nat := none
+  while i < queue.size && drift.isNone && stoppedAt.isNone do
+    let some (s, path) := queue[i]? | break
+    i := i + 1
+    for a in A.actions do
+      let some t := A.step a s | continue
+      if !A.bound t then continue
+      if used ≥ c.budget then
+        stoppedAt := some path.length
+        break
+      let isNew := !seen.contains (hash t)
+      let run := (a :: path).reverse ++ (if isNew then refusedIn t else [])
+      used := used + run.length
+      transitions := transitions + 1
+      drift ← runOne run
+      if drift.isSome then break
+      if isNew then
+        seen := seen.insert (hash t)
+        queue := queue.push (t, a :: path)
+  let (stdin, child) ← child.takeStdin  -- closing its input ends the adapter
+  discard child.wait
+  match drift with
+  | some (what, rows) => return { status := "drift", verdict := what, drift := some rows, questions }
+  | none =>
+    let reach := match stoppedAt with
+      | none => "of the scope"
+      | some d => s!"within {d} steps of the start"
+    return { status := "agrees", questions,
+             verdict := s!"the code agrees with the model on every transition and refusal {reach} "
+               ++ s!"({transitions} transitions, {used} code steps)" }
+
+private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : IO Report := do
+  let code ← match A.code with
+    | none => pure {}
+    | some c => try checkCode A c catch e =>
+        pure { status := "error", verdict := s!"the code check could not run: {e}" : CodeResult }
   let acts := A.actions.toArray
   let labels := acts.map label
   let names := labels.map actionName
@@ -270,6 +417,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Report :=
             then s!"`{n}` is refused in a situation no requirement covers. Is refusing right there?"
             else s!"`{n}` is accepted in a situation no requirement covers. What must it do there?",
            some (trace fp (some i)))
+  for q in code.questions do
+    questions := questions.push (q, none)
   for n in distinct do
     if !(A.atomic.any (·.1 == n)) then
       questions := questions.push
@@ -284,7 +433,12 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Report :=
     ("search", Json.mkObj [
       ("states", num states), ("depth", num f.depth), ("exhaustive", .bool f.exhaustive),
       ("budget", num A.budget), ("actions", .arr (labels.map .str)), ("cutByBound", num f.cut)]),
-    ("code", .str "not checked"),
+    ("code", Json.mkObj <| [("status", .str code.status), ("verdict", .str code.verdict),
+        ("level", num (if code.status == "agrees" then 4 else 6))]
+      ++ (A.code.map fun c => [("setup", Json.str c.setup),
+          ("actions", Json.mkObj (c.actions.map fun (n, x) => (n, .str x))),
+          ("observe", .arr (c.observe.map fun (n, _, x) => .arr #[.str n, .str x]).toArray)]).getD []
+      ++ (if full then (code.drift.map (("steps", ·))).toList else [])),
     ("claims", .arr <| claims.map fun (id, kind, text, level, target, verdict, cex) =>
       withSteps full cex [("id", .str id), ("kind", .str kind), ("text", .str text),
         ("level", num level), ("target", num target), ("verdict", .str verdict),
@@ -300,18 +454,19 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Report :=
         .arr #[.str a, .str n, .str b])]).toArray)]
   let failed := (claims.toList.filterMap fun (id, _, _, _, _, verdict, _) =>
       if verdict == "violated" then some s!"{id} violated" else none)
-    ++ examples.toList.filterMap fun (id, _, ok, _) => if ok then none else some s!"{id} failed"
+    ++ (examples.toList.filterMap fun (id, _, ok, _) => if ok then none else some s!"{id} failed")
+    ++ (if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else [])
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size
   let summary := s!"{A.name}: {states} states, "
     ++ (if f.exhaustive then "scope exhausted" else s!"stopped at budget, depth {f.depth}")
     ++ s!"; {claims.size} claims, {below} below target, {failed.length} failed; "
-    ++ s!"{questions.size} open questions"
+    ++ s!"{questions.size} open questions; code {code.status}"
   return { ledger := json false, review := json true, failed, summary }
 
 /-- Package an area for the checker program. -/
 def Area.entry [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Entry :=
-  { name := A.name, report := fun _ => build A }
+  { name := A.name, report := build A }
 
 end
 end Spec
