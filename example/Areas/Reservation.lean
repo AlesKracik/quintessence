@@ -173,6 +173,7 @@ def area : Area State Action where
       moments := [
         .step "Alice puts seat s2 on hold." (.hold "s2" "alice"),
         .step "She confirms it." (.confirm "s2" "alice"),
+        .refusal "Bob cannot cancel a seat that is hers." (.cancel "s2" "bob"),
         .outcome "She cancels the sold seat, and it is free again." (.cancel "s2" "alice")
           (fun s => statusOf s "s2" == "free"),
         .step "Bob can now hold it." (.hold "s2" "bob")] }]

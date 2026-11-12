@@ -115,7 +115,7 @@ Invariants are expected to reach level 1 and requirements level 2. Anything weak
 
 People understand a system through what it is for, so the readback opens with the journeys. A journey is one business case, "enrolling a VM" or "a protection run", in general terms: no particular VM or customer, no counts, only the thresholds the requirements state. It is drawn as a graph: its usual course as steps from top to bottom, a loop on a step that can repeat, and beside every step each way the system can turn it down. The author writes only the usual course. The turned-down leaves are the area's refusal requirements for that step's action, so a negative decision cannot be forgotten, and a leaf cannot claim a refusal the model does not make. The course itself is replayed on the model, and a step the model does not take fails the check.
 
-A walkthrough is one specific run worth knowing, told moment by moment: a run that fails and the next one, a boundary, a message that arrives twice. It is shown under the journey it is a case of, as a storyboard: one card per moment with what happens in plain words, whether the system did it or turned it down, the requirements at work, and what changed. A moment can state what must be true afterwards, and that is checked. Walkthroughs are what examples and test scenarios are elsewhere; there is no separate kind.
+A walkthrough is one specific run worth knowing, told moment by moment: a run that fails and the next one, a boundary, a message that arrives twice. It is shown under the journey it is a case of, as a storyboard: one card per moment with what happens in plain words, whether the system did it or turned it down, the requirements at work, and what changed. A moment can state what must be true afterwards, and that is checked. Every turned-down leaf of a journey names the walkthroughs in which it happens, and the checker asks about a leaf that none shows. Walkthroughs are what examples and test scenarios are elsewhere; there is no separate kind.
 
 Both are generated from the replay, so neither can say something the model does not do, and both are replayed against bound code, whatever the budget, so what a person has read is what the code was seen to follow.
 
@@ -129,6 +129,7 @@ The search also finds what the requirements do not say, and reports it as questi
 - an action is refused in a situation no requirement covers;
 - a requirement never applies anywhere in the scope;
 - a requirement shows in no journey and no walkthrough, or the area has no journey at all;
+- a journey's step can be turned down in a way that no walkthrough shows happening;
 - anything the agent wrote down while reading documents and code: a document and the code disagree, or a document leaves something open;
 - nobody has decided whether an action can interleave with others inside the implementation.
 

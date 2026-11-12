@@ -613,6 +613,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let viewsJson (s : σ) : Json := .arr (A.views.map fun (n, v) => .arr #[.str n, .str (v s)]).toArray
   let speaking (s : σ) (a : α) : List String := (A.requirements.filter (·.when s a)).map (·.id)
   let mut told : List String := []  -- the requirements some journey or walkthrough shows at work
+  let mut walked : List String := []  -- those a walkthrough shows happening
+  let mut leaves : List (String × String) := []  -- a refusal requirement and the journey it turns a step down in
   -- journeys: the usual course of a business case, replayed on the model
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
   for j in A.journeys do
@@ -637,7 +639,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       let turnedDown := (A.requirements.zipIdx.filter fun (q, k) =>
         q.refused && (List.range acts.size).any fun i =>
           stepNames.contains names[i]! && f.reqAct[k * acts.size + i]!).map (·.1.id)
-      told := told ++ reqs ++ turnedDown
+      told := told ++ reqs
+      leaves := leaves ++ turnedDown.map (·, j.id)
       if !went then ok := false
       rows := rows.push fun _ => Json.mkObj <| [
         ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
@@ -661,6 +664,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       let after := next.getD s
       let holds := (m.expect.map (· after)).getD true
       told := told ++ reqs
+      walked := walked ++ reqs
       if next.isNone != m.refused || !holds then ok := false
       rows := rows.push fun full => Json.mkObj <| [
         ("say", .str m.say), ("action", .str (label m.action)), ("refused", .bool next.isNone),
@@ -679,7 +683,12 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       ("The area has no journey. Which business cases should a person recognise it by?", none)
   else
     for q in A.requirements do
-      if !told.contains q.id then
+      -- a way of being turned down is only shown by a run in which it happens
+      let on := ((leaves.filter (·.1 == q.id)).map (·.2)).eraseDups
+      if !on.isEmpty && !walked.contains q.id then
+        questions := questions.push
+          (s!"{q.id} turns down a step of {", ".intercalate on}, and no walkthrough shows it happening. Which run shows it?", none)
+      else if on.isEmpty && !told.contains q.id then
         questions := questions.push
           (s!"{q.id} shows in no journey and no walkthrough. Is there a case in which it matters?", none)
   -- open questions, one per action name

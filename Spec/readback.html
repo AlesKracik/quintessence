@@ -83,6 +83,7 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .leaf{position:relative;margin-left:26px;border:1px dashed var(--warn);background:var(--warnb);border-radius:8px;padding:5px 9px;font-size:13px}
 .leaf::before{content:"";position:absolute;left:-27px;top:50%;width:26px;border-top:2px dashed var(--warn)}
 .leaf .lid{color:var(--mut);font-size:11.5px;white-space:nowrap}
+.leaf .lw{display:block;font-size:12px;color:var(--mut)}.leaf .lw.none{color:var(--bad);font-weight:600}
 .again{display:flex;align-items:center;gap:6px;margin:0 0 4px;font-size:13px;font-weight:600;color:var(--acc)}.lp{width:18px;height:18px;flex:0 0 auto}
 .fs.loop>.mo{border-color:var(--acc)}.outc{font-size:13px;color:var(--ok);font-weight:600;margin:2px 0}
 .tl{position:relative;padding-left:36px}.tl::before{content:"";position:absolute;left:11px;top:14px;bottom:14px;width:2px;background:var(--line)}
@@ -281,7 +282,7 @@ function reqChips(ids, req) {
     b.onclick = () => { p.hidden = !p.hidden; b.setAttribute("aria-expanded", String(!p.hidden)); }; more.append(p); return b; });
   return [chips.length ? h("div", "", chips) : null, more];
 }
-function journey(j, req, ms, walks, wmark) {
+function journey(j, req, ms, walks, wmark, shown) {
   const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
   const d = h("details", "row ex jr " + cls), fl = h("div", "tl flow");
   d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w));
@@ -291,8 +292,10 @@ function journey(j, req, ms, walks, wmark) {
     const off = st.asTold === false, card = h("div", "mo" + (off ? " bad" : ""), h("span", "dot", String(i + 1)), h("p", "say", st.say),
       st.repeats ? h("p", "again", LOOP(), "can repeat") : null, reqChips(st.requirements, req),
       off ? h("p", "note", "the model does not take this step as told") : null);
-    const leaves = h("div", "lvs", (st.turnedDown || []).map(id =>
-      h("div", "leaf", h("span", "badge ref", "⊘ turned down"), h("span", "", req.get(id) || id), " ", h("span", "mono lid", id))));
+    // each way of being turned down names the walkthroughs that show it happening
+    const leaves = h("div", "lvs", (st.turnedDown || []).map(id => { const ws = shown.get(id) || [];
+      return h("div", "leaf", h("span", "badge ref", "⊘ turned down"), h("span", "", req.get(id) || id), " ", h("span", "mono lid", id),
+        h("span", ws.length ? "lw" : "lw none", ws.length ? "shown in " + ws.join(", ") : "shown in no walkthrough")); }));
     fl.append(h("div", "fs" + (st.repeats ? " loop" : ""), card, leaves)); });
   const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null,
     j.given ? h("p", "given", h("b", "", "Starts with: "), j.given) : null, fl);
@@ -307,8 +310,11 @@ function journeys(a, D) {
   const js = a.journeys || [], ws = a.walkthroughs || [], out = [];
   if (!js.length) out.push(h("p", "sub", "No journeys yet — the business cases a person would recognise this area by are missing."));
   const req = new Map(a.claims.map(c => [c.id, c.text])), wmark = w => (D && D.w.get(w.id)) || null;
+  const shown = new Map();  // requirement -> the walkthroughs in which it is seen at work
+  ws.forEach(w => (w.moments || []).forEach(m => (m.requirements || []).forEach(r => {
+    if (!shown.has(r)) shown.set(r, []); if (!shown.get(r).includes(w.id)) shown.get(r).push(w.id); })));
   [...js].sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(j =>
-    out.push(journey(j, req, D && D.j.get(j.id), ws.filter(w => w.journey === j.id), wmark)));
+    out.push(journey(j, req, D && D.j.get(j.id), ws.filter(w => w.journey === j.id), wmark, shown)));
   (D ? D.rj : []).forEach(j => out.push(goneRow({ id: j.id, text: j.title }, "removed")));
   const rest = ws.filter(w => !js.some(j => j.id === w.journey));
   if (rest.length) { out.push(h("h3", "", "Other walkthroughs")); rest.forEach(w => out.push(walkthrough(w, req, wmark(w)))); }
