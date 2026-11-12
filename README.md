@@ -131,6 +131,7 @@ The search also finds what the requirements do not say, and reports it as questi
 - a requirement never applies anywhere in the scope;
 - a requirement shows in no journey and no walkthrough, or the area has no journey at all;
 - a journey's step can be turned down in a way that no walkthrough shows happening;
+- for an area extracted from code, something the code offers that the model leaves out;
 - anything the agent wrote down while reading documents and code: a document and the code disagree, or a document leaves something open;
 - nobody has decided whether an action can interleave with others inside the implementation.
 

@@ -42,17 +42,24 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
     IO.FS.writeFile s!"out/readback/{file}.html" <|
       (template.replace "/*DATA*/[]" ((Lean.Json.arr data).compress.replace "</" "<\\/")).replace "/*PAGE*/{}"
         (Lean.Json.mkObj [("kind", .str kind), ("since", (since.map Lean.Json.str).getD .null)]).compress
+  -- An area can have parts, each its own state machine: `protection/configuration`,
+  -- `protection/runs`. They are read together, on the page of the area.
+  let top (name : String) : String := (name.splitOn "/").headD name
   let mut pages := #[]
   let mut ledgers := #[]
   let mut failed := []
   for e in areas do
     let r ← e.report since (args.contains "--full")
-    IO.FS.writeFile s!"ledger/{e.name}.json" (r.ledger.pretty ++ "\n")
+    let file := System.FilePath.mk s!"ledger/{e.name}.json"
+    if let some dir := file.parent then IO.FS.createDirAll dir
+    IO.FS.writeFile file (r.ledger.pretty ++ "\n")
     IO.println r.summary
     pages := pages.push r.readback
     ledgers := ledgers.push r.ledger
-    page e.name "area" #[r.readback]  -- the area as it stands
     failed := failed ++ r.failed.map (s!"{e.name}: " ++ ·)
+  -- each area as it stands, with all its parts
+  for a in (areas.map (top ·.name)).eraseDups do
+    page a "area" ((areas.zip pages.toList).filterMap fun (e, p) => if top e.name == a then some p else none).toArray
   page "index" "index" ledgers  -- the list of areas
   -- the change, across every area it touches
   if since.isSome then page "change" "change" pages

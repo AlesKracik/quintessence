@@ -14,6 +14,8 @@ Work happens in a change, and a change is a git branch. If you are on the defaul
 
 ## 1. Model and claims
 
+An area is what the person calls one: a part of the system with its own purpose ("protection", "inventory"). When an area is too large for one state machine, give it parts, each its own model and `Area` record, named `<area>/<part>` (`protection/configuration`, `protection/runs`); the readback shows the parts together on the area's page. What one part treats as given, another part decides: say so in its `assumptions`.
+
 Ask what the area does, then write or change:
 
 - `Areas/<Name>/Model.lean`: the state, the actions, `init`, the step function (`none` means refused), and the invariant predicates. Import only `Spec.Data`.
@@ -72,16 +74,18 @@ When the area describes code that already exists, the model is extracted from th
 
 0. Orient yourself before reading code. Read what is written about the system: the documents listed in `.spec/project.json` (`documents`), and what lies around the code itself, such as READMEs, design notes, comments and tests. Follow them to the repositories they point to (`repos`, with the local checkouts in `.spec/local.json`). None of this is required to exist or to have a particular shape; use what there is. Use it to decide what one area is (one component with its own state and operations, not a whole system), where its entry points are, which repository and paths its code lives in, and what the behaviour was meant to be. Tell the person which area you will extract and from where.
    The documents give orientation and intent; the code is the reference for the model. Documents age: when one says which revision of the code it was written against, compare that with the checkout, and read what changed in between before trusting its details. Do not settle a disagreement yourself. When a document says something the code does not do, or the code does something no document mentions and it looks unintended, add it to the area's `questions` as one plain sentence naming both sources ("docs/holds.md says a hold lasts 15 minutes; the code releases it after 2"). It stays on the readback page until the person answers; then remove it and change the model, the code, or neither.
-1. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
-2. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
-3. Bind the area to the code with `code := some { ... }`. Pick the adapter for the code's language (`adapters/python.py`, `adapters/kotlin.py`) and read its header: it says exactly what `setup`, `actions` and `observe` mean in that language. In general:
+   The extent of the area is the person's. When they have named it ("protection"), model all of it; do not narrow it to the part that is easiest to model. If you must leave something for later, it goes into the list below, where the person sees it.
+1. List the surface before you model. Go through the code of the area and write down every way into it: every endpoint, every message or event handler, every scheduled job. Put each in the area's `surface`: `.modelled "<what it is for, in plain words>" "<where in the code>" ["<action>", ...]` when actions of the model stand for it, `.readOnly "<what>" "<where>"` when it only reads, `.leftOut "<what>" "<where>" "<why>"` when the model does not cover it. Make the list from the code, not from the documents and not from what you chose to model. It is how the person sees which share of the code the model speaks about: the readback shows it with the counts, and every left-out entry is an open question until the person accepts it. An action that stands for something outside this code (another area's state changing) gets an entry too, saying so.
+2. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
+3. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
+4. Bind the area to the code with `code := some { ... }`. Pick the adapter for the code's language (`adapters/python.py`, `adapters/kotlin.py`) and read its header: it says exactly what `setup`, `actions` and `observe` mean in that language. In general:
    - `repo` and `paths` say where the code lives in git (`repo` is `"."` for this repository, otherwise a name that `.spec/local.json` maps to a checkout under `repo_paths`);
    - `setup` builds a fresh system in a variable named `system`; put the clock and other surroundings under the test's control there;
    - `actions` gives, for every action name, the code to run (`{0}`, `{1}` are the action's arguments). The action counts as refused when that code raises. Call `refuse()` to turn a return value into a refusal;
    - `observe` lists what is compared after every step: a name, the value the model expects as text (`true`, `3`, `none`, plain text), and the expression that reads it from the code. Observe everything a caller can see.
    The mapping must stay a table of short calls. If it needs logic to make the code fit the model, the model is wrong.
-4. Run `lake exe check` until the code agrees. Each difference comes with the run that shows it. During extraction the code is the reference, so fix the model.
-5. "The code has operation X that the model does not use" means the model is missing something. Add it, or leave the question for the person.
+5. Run `lake exe check` until the code agrees. Each difference comes with the run that shows it. During extraction the code is the reference, so fix the model.
+6. "The code has operation X that the model does not use" means the model is missing something. Add it, or leave the question for the person.
 
 ## 6. Next
 

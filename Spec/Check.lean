@@ -148,6 +148,28 @@ structure Code (σ : Type) where
   /-- Budget of the code check, in executed code steps. -/
   budget : Nat := 100000
 
+/-- One way into the existing code of an area: an endpoint, a message
+handler, a scheduled job. An area extracted from code lists all of them, so
+that a person sees which share of the code the model speaks about. -/
+structure Surface where
+  /-- What it is for, in plain words ("create a protection group"). -/
+  what : String
+  /-- Where it is in the code ("POST /protection-groups, GroupController.kt:271"). -/
+  code : String
+  /-- The model's actions that stand for it. -/
+  actions : List String := []
+  /-- It only reads; there is nothing to model. -/
+  reads : Bool := false
+  /-- Why the model does not cover it, when it does not. -/
+  why : String := ""
+
+/-- An entry the model covers, by these actions. -/
+def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
+/-- An entry that only reads. -/
+def Surface.readOnly (what code : String) : Surface := { what, code, reads := true }
+/-- An entry the model does not cover, and why. It stays an open question. -/
+def Surface.leftOut (what code why : String) : Surface := { what, code, why }
+
 structure Area (σ α : Type) where
   name : String
   init : σ
@@ -187,6 +209,9 @@ structure Area (σ α : Type) where
   world, what was not looked at. Every claim holds only under these, so the
   readback shows them to the person and the ledger records them. -/
   assumptions : List String := []
+  /-- For an area extracted from code: every way into that code, and what the
+  model does with each. Listed from the code, not from the model. -/
+  surface : List Surface := []
   code : Option (Code σ) := none
 
 /-- What one area reports. `ledger` is committed; `readback` adds the traces. -/
@@ -443,7 +468,7 @@ files (`Areas/<Name>.lean` and `Areas/<Name>/`), the checker and the adapter
 (their files, or the Lake manifest that pins them), and the code when it
 lives here. -/
 private def inputsOf (area : String) (c : Code σ) : IO (List String) := do
-  let plain (s : String) : String := (s.toLower.replace "-" "").replace "_" ""
+  let plain (s : String) : String := ((s.toLower.replace "-" "").replace "_" "").replace "/" ""
   let own := (← System.FilePath.readDir "Areas").toList.filterMap fun e =>
     if plain (e.fileName.takeWhile (· != '.')) == plain area then some s!"Areas/{e.fileName}" else none
   let platform ← platformDir
@@ -717,6 +742,20 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
            some (trace fp (some i)))
   for q in code.questions do
     questions := questions.push (q, none)
+  -- what the code offers against what the model speaks about
+  let mut surfaceFailed : List String := []
+  for e in A.surface do
+    for n in e.actions do
+      if !distinct.contains n then
+        surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" names action `{n}`, which the model does not have"]
+    if e.actions.isEmpty && !e.reads then
+      questions := questions.push
+        (s!"The code can {e.what} ({e.code}), and the model leaves it out: {e.why}. Should the area cover it?", none)
+  if !A.surface.isEmpty then
+    for n in distinct do
+      if !(A.surface.any (·.actions.contains n)) then
+        questions := questions.push
+          (s!"`{n}` stands for nothing in the area's list of what the code offers. Where does it come from?", none)
   for n in distinct do
     if !(A.atomic.any (·.1 == n)) then
       questions := questions.push
@@ -749,6 +788,10 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("questions", .arr <| questions.map fun (text, run) => withSteps full run [("text", .str text)]),
     ("atomic", Json.mkObj (A.atomic.map fun (n, d) => (n, .str d))),
     ("assumptions", .arr (A.assumptions.map .str).toArray),
+    ("surface", .arr (A.surface.map fun e => Json.mkObj [
+      ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
+      ("status", .str (if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else "left out")),
+      ("why", .str e.why)]).toArray),
     ("lifecycles", .arr <| (A.lifecycles.zipIdx.map fun ((name, l), k) => Json.mkObj [
       ("name", .str name), ("initial", .arr ((l A.init).eraseDups.map .str).toArray),
       ("edges", .arr <| (sortedEdges.filter (·.1 == k)).map fun (_, a, n, b) =>
@@ -757,7 +800,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       if verdict == "violated" then some s!"{id} violated" else none)
     ++ ((journeys ++ walkthroughs).toList.filterMap fun (id, ok, _) =>
       if ok then none else some s!"{id} does not go as told")
-  let codeFailed := if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else []
+  let codeFailed := (if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else [])
+    ++ surfaceFailed
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size
   let summary := s!"{A.name}: {states} states, "

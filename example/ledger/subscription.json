@@ -97,6 +97,7 @@
    "journey": "J-001",
    "id": "W-003",
    "goal": "The provider never answers Alice's cancellation."}],
+ "surface": [],
  "search":
  {"states": 144,
   "exhaustive": true,
@@ -193,7 +194,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "7878652638695009991",
+  "inputs": "8622131816710551065",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",

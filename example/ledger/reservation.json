@@ -148,6 +148,7 @@
    "journey": "J-002",
    "id": "W-004",
    "goal": "Alice buys a seat and later gives it back."}],
+ "surface": [],
  "search":
  {"states": 2436,
   "exhaustive": true,
@@ -251,7 +252,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "6913934303435411056",
+  "inputs": "10478281930729162171",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",
