@@ -123,64 +123,47 @@ def area : Area State Action where
         | .request_refund _ => true
         | _ => false,
       refused := true }]
-  examples := [
-    { id := "EX-001", text := "Cancel mid-period: billing stops, access stays",
-      run := [.cancel_subscription "alice" .Email],
-      expect := fun s => s.status.get "alice" == .Cancelled && !s.billingEnabled.get "alice"
-        && s.accessUntilPeriodEnd.get "alice" && s.notice.get "alice" == .Email },
-    { id := "EX-002", text := "Cancelling twice is harmless",
-      run := [.cancel_subscription "alice" .Email, .cancel_again "alice"],
-      expect := fun s => s.status.get "alice" == .Cancelled && s.accessUntilPeriodEnd.get "alice" },
-    { id := "EX-003", text := "Provider times out: nothing moves",
-      run := [.cancel_unanswered "alice" true],
-      expect := fun s => s.status.get "alice" == .Active && s.billingEnabled.get "alice" },
-    { id := "EX-004", text := "Provider declines: the subscription stays Active",
-      run := [.cancel_declined "alice"],
-      expect := fun s => s.status.get "alice" == .Active
-        && s.lastBillingResult.get "alice" == .Declined },
-    { id := "EX-005", text := "After three unanswered tries there is no fourth",
-      run := [.cancel_unanswered "alice" true, .cancel_unanswered "alice" false,
-              .cancel_unanswered "alice" true],
-      expect := fun s => s.status.get "alice" == .Active && triesOf s "alice" == 3,
-      refused := some (.cancel_unanswered "alice" true) },
-    { id := "EX-006", text := "A refund request after cancelling is refused",
-      run := [.cancel_subscription "alice" .InApp],
-      expect := fun s => s.status.get "alice" == .Cancelled && s.accessUntilPeriodEnd.get "alice",
-      refused := some (.request_refund "alice") },
-    { id := "EX-007", text := "The paid period ends: access stops",
-      run := [.cancel_subscription "alice" .InApp, .expire_period "alice"],
-      expect := fun s => s.status.get "alice" == .Expired && !s.accessUntilPeriodEnd.get "alice" },
-    { id := "EX-008", text := "A decline after an unanswered try resets the retry count",
-      run := [.cancel_unanswered "alice" false, .cancel_declined "alice"],
-      expect := fun s => triesOf s "alice" == 0 },
-    { id := "EX-009", text := "A successful cancel after an unanswered try resets the retry count",
-      run := [.cancel_unanswered "alice" true, .cancel_subscription "alice" .InApp],
-      expect := fun s => triesOf s "alice" == 0 },
-    { id := "EX-010", text := "Cancel journey: retry succeeds, repeat is harmless, period ends, refund refused",
-      run := [.cancel_unanswered "alice" true, .cancel_subscription "alice" .Email,
-              .cancel_again "alice", .expire_period "alice"],
-      expect := fun s => s.status.get "alice" == .Expired && !s.billingEnabled.get "alice",
-      refused := some (.request_refund "alice") },
-    { id := "EX-011", text := "Declined journey: the provider declines, the retry goes through",
-      run := [.cancel_declined "alice", .cancel_subscription "alice" .InApp],
-      expect := fun s => s.status.get "alice" == .Cancelled && !s.billingEnabled.get "alice" }]
   journeys := [
     { id := "J-001",
       sources := ["written for this example"], title := "Cancelling a subscription",
-      goal := "Alice no longer wants to pay, but has paid for the current period.",
+      goal := "A customer no longer wants to pay, but has paid for the current period and keeps access until it ends.",
+      steps := [
+        .step "The customer cancels; the billing provider accepts and the customer is told." [.cancel_subscription "alice" .Email],
+        .step "The paid period ends and access ends with it." [.expire_period "alice"]] }]
+  walkthroughs := [
+    { id := "W-001", journey := "J-001",
+      sources := ["written for this example"], title := "Cancelling, and what does not change afterwards",
+      goal := "Alice cancels, presses cancel again, and asks for money back.",
       moments := [
-        .step "Alice cancels; the provider accepts and she gets an email." (.cancel_subscription "alice" .Email),
-        .step "She presses cancel again, and nothing changes." (.cancel_again "alice"),
+        .outcome "Alice cancels; billing stops, she keeps access, and she gets an email." (.cancel_subscription "alice" .Email)
+          (fun s => s.status.get "alice" == .Cancelled && !s.billingEnabled.get "alice"
+            && s.accessUntilPeriodEnd.get "alice" && s.notice.get "alice" == .Email),
+        .outcome "She presses cancel again, and nothing changes." (.cancel_again "alice")
+          (fun s => s.status.get "alice" == .Cancelled && s.accessUntilPeriodEnd.get "alice"),
         .refusal "She asks for a refund of the unused part of the period and is turned down." (.request_refund "alice"),
-        .step "The paid period ends and her access ends with it." (.expire_period "alice")] },
-    { id := "J-002",
+        .outcome "The paid period ends and her access ends with it." (.expire_period "alice")
+          (fun s => s.status.get "alice" == .Expired && !s.accessUntilPeriodEnd.get "alice" && !s.billingEnabled.get "alice"),
+        .refusal "A refund is still turned down." (.request_refund "alice")] },
+    { id := "W-002", journey := "J-001",
       sources := ["written for this example"], title := "The provider does not cooperate",
       goal := "Bob wants to cancel while the billing provider is having a bad day.",
       moments := [
-        .step "Bob cancels, but the provider does not answer in time." (.cancel_unanswered "bob" true),
+        .outcome "Bob cancels, but the provider does not answer in time; he is still subscribed and billed." (.cancel_unanswered "bob" true)
+          (fun s => s.status.get "bob" == .Active && s.billingEnabled.get "bob"),
         .step "A second try gets no answer either." (.cancel_unanswered "bob" false),
-        .step "A third try is declined by the provider. Bob is still subscribed and still billed." (.cancel_declined "bob"),
-        .step "The next try goes through, and Bob is told in the app." (.cancel_subscription "bob" .InApp)] }]
+        .outcome "A third try is declined by the provider. Bob is still subscribed, and the count of unanswered tries starts over." (.cancel_declined "bob")
+          (fun s => s.status.get "bob" == .Active && s.lastBillingResult.get "bob" == .Declined && triesOf s "bob" == 0),
+        .outcome "The next try goes through, and Bob is told in the app." (.cancel_subscription "bob" .InApp)
+          (fun s => s.status.get "bob" == .Cancelled && !s.billingEnabled.get "bob" && triesOf s "bob" == 0)] },
+    { id := "W-003", journey := "J-001",
+      sources := ["written for this example"], title := "Three tries without an answer, no fourth",
+      goal := "The provider never answers Alice's cancellation.",
+      moments := [
+        .step "Alice cancels; the provider does not answer." (.cancel_unanswered "alice" true),
+        .step "A second try gets no answer." (.cancel_unanswered "alice" false),
+        .outcome "Nor does a third. Alice is still subscribed." (.cancel_unanswered "alice" true)
+          (fun s => s.status.get "alice" == .Active && triesOf s "alice" == 3),
+        .refusal "A fourth try is not made." (.cancel_unanswered "alice" true)] }]
   views := customers.map (fun c => (s!"subscription of {c}", statusView c))
     ++ customers.map (fun c => (s!"cancellation tries of {c}", retryView c))
   assumptions := [

@@ -17,28 +17,32 @@ Work happens in a change, and a change is a git branch. If you are on the defaul
 Ask what the area does, then write or change:
 
 - `Areas/<Name>/Model.lean`: the state, the actions, `init`, the step function (`none` means refused), and the invariant predicates. Import only `Spec.Data`.
-- `Areas/<Name>.lean`: the `Area` record with journeys, invariants, requirements, examples, scope and views. It imports `Spec.Check`, `Areas.<Name>.Model`, and every proof file. Register it in `Areas.lean` (one import, one entry in the list).
+- `Areas/<Name>.lean`: the `Area` record with journeys, walkthroughs, invariants, requirements, scope, assumptions and views. It imports `Spec.Check`, `Areas.<Name>.Model`, and every proof file. Register it in `Areas.lean` (one import, one entry in the list).
 
 Use what is already written. Before asking, read the documents listed in `.spec/project.json` (`documents`) and anything the person points you to: product notes, design documents, READMEs, tickets. They are sources for journeys and requirements, not the truth: say what you took from where, and let the person confirm it. No particular documents or structure are required; when there are none, everything comes from the person.
 
-Start from the journeys. Ask the person for the stories of the people who use this part of the system: who wants what, and what happens, moment by moment, including the moments where the system says no. Write each as a `Journey` (`.step` for a moment the system goes along with, `.refusal` for one it turns down), in the person's own words, with no identifiers or technical terms in `say`. The requirements then come out of the journeys: every moment needs a requirement that covers it, and the checker asks about every requirement that no journey shows. Keep a journey to a handful of moments; boundary cases belong in examples.
+Start from the journeys. A journey is one business case of the area ("enrolling VMs", "a protection run"), told as its usual course: what the person or the business wants, and the steps that get there when nothing goes wrong. Ask the person which business cases the area serves, and keep them apart: a story that puts VMs into a group and then protects them is two journeys. Write each as a `Journey` with `steps`, each `.step "<what happens, in general words>" [<the concrete actions that show it in the scope>]`. Give more than one action when the step repeats ("the operator adds a VM", shown for two VMs); the readback draws that as a loop on the step. When a journey does not start from nothing, say where it starts in `given` and give the run that gets there in `setup`. Do not write refusals into a journey. The readback draws the journey as a graph and hangs on every step each way the system can turn it down, and it takes those from the refusal requirements that speak about the step's action, so the negative decisions cannot be left out or invented. No identifiers or technical terms in `say`.
+
+Then the walkthroughs. A `Walkthrough` is one specific run worth knowing, told moment by moment in the person's own words: a failure and what follows it, a boundary, something that arrives twice or never. Use `.step` for a moment the system goes along with, `.refusal` for one it turns down, and `.outcome` when what is true afterwards is the point: it carries that as a check on the state. Name the journey it is a case of in `journey`. Keep a walkthrough to a handful of moments. There are no separate examples: a concrete case with an expected result is a walkthrough that ends in an `.outcome` or a `.refusal`.
+
+The requirements come out of both: every step and every moment needs a requirement that covers it, and the checker asks about every requirement that shows in no journey and no walkthrough.
 
 Rules for the claims:
 
 - Every `text` is one plain sentence the person can confirm or reject.
 - When the person has not said what happens in some situation, do not decide it. Let the model refuse the action there and write no requirement for it: the checker then reports "refused in a situation no requirement covers" with an example run, and that open question is the record. Never write a requirement to silence a question the person has not answered.
 - A claim you add on your own, such as an invariant you found worth stating, is a proposal: say so in its `sources` ("proposed by the agent, not yet confirmed") and tell the person.
-- Give every requirement, invariant and journey its `sources`: where it comes from, as a history with the oldest origin first. One entry per origin: the person (and when), a document and where in it, a place in the code. When you change an existing claim, keep the entries it has and add the origin of the change, so a requirement extracted from code and later changed by a person shows both. The reviewer sees the list next to the claim. Do not invent an origin; leave the list empty when you do not know, and ask.
+- Give every requirement, invariant, journey and walkthrough its `sources`: where it comes from, as a history with the oldest origin first. One entry per origin: the person (and when), a document and where in it, a place in the code. When you change an existing claim, keep the entries it has and add the origin of the change, so a requirement extracted from code and later changed by a person shows both. The reviewer sees the list next to the claim. Do not invent an origin; leave the list empty when you do not know, and ask.
 - A requirement's `when` is the full condition under which the action is accepted (or, with `refused := true`, refused). Where `when` holds, the checker demands that the step succeeds and satisfies `shall`.
 - Keep the scope small enough that the search finishes within the budget. Add a `bound` only for values that grow without limit.
 - Say what the model assumes, in `assumptions`: one plain sentence for every bound of the scope and what it cuts off ("the group takes 2 VMs here; the real limit is 100"), for everything that stands in for the outside world, for every part of the behaviour left out, and for what you took from a document without checking it in the code. The person reads these on the readback next to the journeys; a comment in the Lean reaches nobody.
-- Give `views` for everything a journey talks about, named and valued in the person's words ("seat s1" is "held by alice"), one per thing in the scope. The readback tells the journeys in them, moment by moment, and draws each as a lifecycle diagram; a moment that changes no view shows the reader nothing.
+- Give `views` for everything a journey or walkthrough talks about, named and valued in the person's words ("seat s1" is "held by alice"), one per thing in the scope. The readback tells the journeys and walkthroughs in them, step by step, and draws each as a lifecycle diagram; a step that changes no view shows the reader nothing.
 
 ## 2. Check
 
 Run `lake exe check` from the repository root.
 
-- A violated claim or failed example comes with the shortest run that shows it (in `out/readback.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
+- A violated claim comes with the shortest run that shows it (in `out/readback.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
 - A claim "below target" is not a failure, but say so.
 
 ## 3. Prove the invariants
@@ -59,7 +63,7 @@ Proof writing and proof repair after a model change are mechanical: delegate the
 
 ## 4. Open questions
 
-The checker lists what the requirements do not say. Go through the list with the person, one question at a time, showing the situation from the readback page. Each answer becomes a requirement, a refusal requirement, an example, or an entry in `atomic` (the decision on whether an action can interleave with others inside the implementation, with the reason). Re-run the check after each answer. Leave a question open if the person has not answered it.
+The checker lists what the requirements do not say. Go through the list with the person, one question at a time, showing the situation from the readback page. Each answer becomes a requirement, a refusal requirement, a walkthrough, or an entry in `atomic` (the decision on whether an action can interleave with others inside the implementation, with the reason). Re-run the check after each answer. Leave a question open if the person has not answered it.
 
 ## 5. Existing code
 

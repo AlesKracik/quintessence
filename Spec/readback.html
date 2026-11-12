@@ -77,7 +77,14 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .mks{grid-column:2/4;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}.mk2{display:inline-flex;gap:6px;align-items:baseline}
 .was{color:var(--mut);font-size:13px}.was .old{margin:0}
 .row.rm,.q.rm{background:transparent;border-style:dashed;border-left-style:solid;border-left-color:var(--line);color:var(--mut)}.tx{text-decoration:line-through}
-.jr>summary b{font-size:15px}.goal{margin:2px 0 6px}
+.jr>summary b{font-size:15px}.goal{margin:2px 0 6px}.given{margin:0 0 10px;font-size:13.5px}
+.fs{display:flex;flex-wrap:wrap;align-items:stretch;gap:0 0;margin-bottom:8px}.fs>.mo{flex:1 1 320px;max-width:560px;margin-bottom:0}
+.lvs{flex:1 1 240px;display:flex;flex-direction:column;justify-content:center;gap:6px;padding:4px 0}
+.leaf{position:relative;margin-left:26px;border:1px dashed var(--warn);background:var(--warnb);border-radius:8px;padding:5px 9px;font-size:13px}
+.leaf::before{content:"";position:absolute;left:-27px;top:50%;width:26px;border-top:2px dashed var(--warn)}
+.leaf .lid{color:var(--mut);font-size:11.5px;white-space:nowrap}
+.again{display:flex;align-items:center;gap:6px;margin:0 0 4px;font-size:13px;font-weight:600;color:var(--acc)}.lp{width:18px;height:18px;flex:0 0 auto}
+.fs.loop>.mo{border-color:var(--acc)}.outc{font-size:13px;color:var(--ok);font-weight:600;margin:2px 0}
 .tl{position:relative;padding-left:36px}.tl::before{content:"";position:absolute;left:11px;top:14px;bottom:14px;width:2px;background:var(--line)}
 .mo{position:relative;background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px}
 .dot{position:absolute;left:-36px;top:7px;width:24px;height:24px;border-radius:50%;background:var(--surf);border:2px solid var(--acc);font-size:12px;font-weight:700;text-align:center;line-height:20px}
@@ -220,12 +227,6 @@ function claimRow(c, ms, jl) {
     r.append(b, box); }
   return r;
 }
-function exampleRow(e, ms) {
-  const cls = e.status === "ok" ? "ok" : "failed", d = h("details", "row ex " + cls);
-  d.append(h("summary", "", h("span", "id mono", e.id), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null, h("span", "", e.text)));
-  let done = false; d.ontoggle = () => { if (d.open && !done) { done = true; d.append(h("div", "", stepper(e.steps || []))); } };
-  return d;
-}
 function questionRow(q, isNew) {
   const r = h("div", "q", h("p", "", isNew ? h("span", "badge new", "new") : null, isNew ? " " : "", "? ", q.text));
   if (q.steps && q.steps.length) { const box = h("div"), b = h("button", "", "show situation");
@@ -234,9 +235,10 @@ function questionRow(q, isNew) {
     r.append(b, box); }
   return r;
 }
-// ---- journeys: a storyboard per journey, a vertical timeline of moments ----
+// ---- journeys and walkthroughs ----
+// One card of a timeline: a moment of a walkthrough, or a step of a journey.
 function moment(m, i, prev, req, prevV) {
-  const bad = m.asTold === false, more = h("div");
+  const bad = m.asTold === false || m.outcome === false, more = h("div");
   const chips = (m.requirements || []).map(id => { const t = req.get(id) || "(not a requirement of this area)";
     const b = h("button", "chip", id), p = h("p", "rt", h("b", "mono", id + " "), t);
     b.title = t; b.setAttribute("aria-expanded", "false"); p.hidden = true;
@@ -251,25 +253,57 @@ function moment(m, i, prev, req, prevV) {
     h("p", "say", m.refused ? h("span", "badge ref", "⊘ turned down") : null, m.say),
     chips.length ? h("div", "", chips) : null, more,
     named ? (vch.length ? lines(vch, prevV, "dl vw") : null) : (ch.length ? lines(ch, prev, "dl mono") : null), raw,
-    bad ? h("p", "note", "the story says otherwise: the model " + (m.refused ? "turns down" : "accepts") + " this") : null,
+    m.outcome === true ? h("p", "outc", "✓ this outcome is checked") : null,
+    m.outcome === false ? h("p", "note", "the stated outcome does not hold here") : null,
+    m.asTold === false ? h("p", "note", "the story says otherwise: the model " + (m.refused ? "turns down" : "accepts") + " this") : null,
     h("span", "act", m.action));
 }
-function journey(j, req, ms) {
-  const cls = j.status === "ok" ? "ok" : "failed", d = h("details", "row ex jr " + cls), tl = h("div", "tl");
-  d.open = j.status !== "ok" || !!(ms && ms.length); let prev = new Map(j.start || []), prevV = new Map(j.startViews || []);
-  (j.moments || []).forEach((m, i) => { tl.append(moment(m, i, prev, req, prevV));
+// A walkthrough: one specific run, moment by moment.
+function walkthrough(w, req, ms) {
+  const cls = w.status === "ok" ? "ok" : "failed", d = h("details", "row ex jr " + cls), tl = h("div", "tl");
+  d.open = w.status !== "ok" || !!(ms && ms.length); let prev = new Map(w.start || []), prevV = new Map(w.startViews || []);
+  (w.moments || []).forEach((m, i) => { tl.append(moment(m, i, prev, req, prevV));
     if (!m.refused) { if (m.state) prev = new Map(m.state); if (m.views) prevV = new Map(m.views); } });
-  d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null),
-    h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, tl));
+  d.append(h("summary", "", h("span", "id mono", w.id), h("b", "", w.title), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null),
+    h("div", "", w.goal ? h("p", "goal", w.goal) : null, (w.sources || []).length ? h("p", "verd", origin(w)) : null, tl));
+  return d;
+}
+// A journey: the usual course of a business case as a graph. The steps run down the page;
+// a step that repeats carries a loop; every way the system turns a step down hangs off it as a leaf.
+const LOOP = () => { const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 20 20"); s.setAttribute("class", "lp");
+  s.innerHTML = '<path d="M15.5 6.5A6.5 6.5 0 1 0 16.5 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.8 2.6v4.6h-4.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+  return s; };
+function journey(j, req, ms, walks, wmark) {
+  const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
+  const d = h("details", "row ex jr " + cls), fl = h("div", "tl flow");
+  d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w)); let prev = new Map(j.start || []), prevV = new Map(j.startViews || []);
+  (j.steps || []).forEach((st, i) => {
+    const n = (st.actions || []).length, card = moment({ say: st.say, action: (st.actions || []).join("   ·   "), refused: false,
+      asTold: st.asTold, requirements: st.requirements, views: st.views, state: st.state }, i, prev, req, prevV);
+    if (n > 1) card.querySelector(".say").after(h("p", "again", LOOP(), "repeats — shown here " + n + " times"));
+    const leaves = h("div", "lvs", (st.turnedDown || []).map(id =>
+      h("div", "leaf", h("span", "badge ref", "⊘ turned down"), h("span", "", req.get(id) || id), " ", h("span", "mono lid", id))));
+    fl.append(h("div", "fs" + (n > 1 ? " loop" : ""), card, leaves));
+    if (st.state) prev = new Map(st.state); if (st.views) prevV = new Map(st.views); });
+  const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null,
+    j.given ? h("p", "given", h("b", "", "Starts with: "), j.given) : null, fl);
+  if (walks.length) { body.append(h("h3", "", "Walkthroughs of this journey"));
+    walks.forEach(w => body.append(walkthrough(w, req, wmark(w)))); }
+  d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]),
+    h("span", "cnt", (j.steps || []).length + " steps" + (walks.length ? " · " + walks.length + " walkthrough" + (walks.length === 1 ? "" : "s") : "")),
+    ms ? ms.map(mark) : null), body);
   return d;
 }
 function journeys(a, D) {
-  const js = a.journeys || [], out = [];
-  if (!js.length) return [h("p", "sub", "No journeys yet — the stories a person would recognise this area by are missing.")];
-  const req = new Map(a.claims.map(c => [c.id, c.text]));
+  const js = a.journeys || [], ws = a.walkthroughs || [], out = [];
+  if (!js.length) out.push(h("p", "sub", "No journeys yet — the business cases a person would recognise this area by are missing."));
+  const req = new Map(a.claims.map(c => [c.id, c.text])), wmark = w => (D && D.w.get(w.id)) || null;
   [...js].sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(j =>
-    out.push(journey(j, req, D && D.j.get(j.id))));
+    out.push(journey(j, req, D && D.j.get(j.id), ws.filter(w => w.journey === j.id), wmark)));
   (D ? D.rj : []).forEach(j => out.push(goneRow({ id: j.id, text: j.title }, "removed")));
+  const rest = ws.filter(w => !js.some(j => j.id === w.journey));
+  if (rest.length) { out.push(h("h3", "", "Other walkthroughs")); rest.forEach(w => out.push(walkthrough(w, req, wmark(w)))); }
+  (D ? D.rw : []).forEach(w => out.push(goneRow({ id: w.id, text: w.title }, "removed")));
   return out;
 }
 const goneRow = (x, label, tag) => h("div", (tag === "q" ? "q" : "row") + " rm", h("div", "head",
@@ -278,14 +312,15 @@ const hid = (root, k) => { if (k) root.append(h("p", "sub", k + " unchanged item
 const tile = (cls, big, label) => h("div", "tile " + cls, h("b", "", big), h("span", "", label));
 
 function stats(a) {
-  const c = k => a.claims.filter(x => x.status === k).length, e = k => a.examples.filter(x => x.status === k).length;
-  return { ok: c("ok"), below: c("below target"), bad: c("violated"), exOk: e("ok"), exBad: a.examples.length - e("ok"),
+  const c = k => a.claims.filter(x => x.status === k).length, ws = a.walkthroughs || [];
+  return { ok: c("ok"), below: c("below target"), bad: c("violated"),
+    wOk: ws.filter(x => x.status === "ok").length, wBad: ws.filter(x => x.status !== "ok").length,
     jOk: (a.journeys || []).filter(x => x.status === "ok").length, jBad: (a.journeys || []).filter(x => x.status !== "ok").length };
 }
 const CODE = { "agrees": ["good", "code agrees", "ok", "✓ agrees"], "drift": ["bad", "code drift", "violated", "✕ drift"],
   "error": ["bad", "code check failed", "failed", "✕ check failed"] };
 const codeOf = a => typeof a.code === "string" ? { status: "not checked", verdict: a.code } : a.code || { status: "not checked" };
-const problem = a => { const t = stats(a), k = codeOf(a).status; return t.below + t.bad + t.exBad + t.jBad > 0 || k === "drift" || k === "error"; };
+const problem = a => { const t = stats(a), k = codeOf(a).status; return t.below + t.bad + t.wBad + t.jBad > 0 || k === "drift" || k === "error"; };
 
 // ---- comparison with the ledger at `since` ----
 const short = r => /^[0-9a-f]{40}$/i.test(r) ? r.slice(0, 8) : r;
@@ -295,10 +330,10 @@ const bind = c => JSON.stringify([c.setup, c.actions, c.observe]);
 const edgeKey = v => JSON.stringify([v.initial, v.edges.map(e => e.join("\0")).sort()]);
 function diff(a) {
   if (!a.since) return null;
-  const b = a.before, D = { since: short(a.since), isNew: !b, c: new Map(), e: new Map(), q: new Set(), v: new Set(), as: new Set(),
-    rc: [], re: [], rq: [], ras: [], j: new Map(), rj: [], code: null, bind: false, n: 0 };
+  const b = a.before, D = { since: short(a.since), isNew: !b, c: new Map(), w: new Map(), q: new Set(), v: new Set(), as: new Set(),
+    rc: [], rw: [], rq: [], ras: [], j: new Map(), rj: [], code: null, bind: false, n: 0 };
   if (!b) return D;
-  const bc = new Map(b.claims.map(x => [x.id, x])), be = new Map(b.examples.map(x => [x.id, x]));
+  const bc = new Map(b.claims.map(x => [x.id, x]));
   for (const c of a.claims) { const o = bc.get(c.id), m = [];
     if (!o) m.push({ k: "new", t: "new", cls: "new" });
     else { if (o.text !== c.text) m.push({ k: "reworded", t: "reworded", cls: "below", was: o.text, old: 1 });
@@ -309,18 +344,18 @@ function diff(a) {
       else if (c.level < o.level || (o.status !== "ok" && c.status === "ok"))
         m.push({ k: "stronger", t: "verified more strongly", cls: "ok", was: o.verdict }); }
     if (m.length) D.c.set(c.id, m); }
-  for (const e of a.examples) { const o = be.get(e.id);
-    if (!o) D.e.set(e.id, [{ k: "new", t: "new", cls: "new" }]);
-    else if (o.status !== e.status) D.e.set(e.id, [{ k: "status", t: "status changed", cls: e.status === "ok" ? "ok" : "failed", was: o.status }]); }
-  const bj = new Map((b.journeys || []).map(x => [x.id, x])), jk = x => JSON.stringify([x.title, x.goal, (x.moments || []).map(m => [m.say, m.action])]);
-  for (const j of a.journeys || []) { const o = bj.get(j.id), m = [];
-    if (!o) m.push({ k: "new", t: "new", cls: "new" });
-    else { if (jk(o) !== jk(j)) m.push({ k: "retold", t: "retold", cls: "below" });
-      if (o.status !== j.status) m.push({ k: "status", t: "status changed", cls: j.status === "ok" ? "ok" : "failed", was: o.status }); }
-    if (m.length) D.j.set(j.id, m); }
+  // a journey or a walkthrough is "retold" when its words or its run changed
+  const jk = x => JSON.stringify([x.title, x.goal, x.given, x.setup, (x.steps || []).map(s => [s.say, s.actions]), (x.moments || []).map(m => [m.say, m.action])]);
+  const told = (now, was, into) => { const old = new Map((was || []).map(x => [x.id, x]));
+    for (const x of now || []) { const o = old.get(x.id), m = [];
+      if (!o) m.push({ k: "new", t: "new", cls: "new" });
+      else { if (jk(o) !== jk(x)) m.push({ k: "retold", t: "retold", cls: "below" });
+        if (o.status !== x.status) m.push({ k: "status", t: "status changed", cls: x.status === "ok" ? "ok" : "failed", was: o.status }); }
+      if (m.length) into.set(x.id, m); } };
+  told(a.journeys, b.journeys, D.j); told(a.walkthroughs, b.walkthroughs, D.w);
   D.rj = (b.journeys || []).filter(x => !(a.journeys || []).some(y => y.id === x.id));
   D.rc = b.claims.filter(x => !a.claims.some(y => y.id === x.id));
-  D.re = b.examples.filter(x => !a.examples.some(y => y.id === x.id));
+  D.rw = (b.walkthroughs || []).filter(x => !(a.walkthroughs || []).some(y => y.id === x.id));
   const now = new Set(a.questions.map(q => q.text)), was = new Set(b.questions.map(q => q.text));
   a.questions.forEach(q => { if (!was.has(q.text)) D.q.add(q.text); });
   D.rq = b.questions.filter(q => !now.has(q.text));
@@ -331,7 +366,7 @@ function diff(a) {
   if (ca.status !== cb.status) D.code = [cb.status, ca.status];
   D.bind = bind(ca) !== bind(cb);
   for (const v of a.views) { const o = (b.views || []).find(x => x.name === v.name); if (!o || edgeKey(o) !== edgeKey(v)) D.v.add(v.name); }
-  D.n = D.c.size + D.e.size + D.j.size + D.rj.length + D.q.size + D.v.size + D.rc.length + D.re.length + D.rq.length + D.as.size + D.ras.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
+  D.n = D.c.size + D.w.size + D.j.size + D.rj.length + D.q.size + D.v.size + D.rc.length + D.rw.length + D.rq.length + D.as.size + D.ras.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
   return D;
 }
 const changed = D => !!D && (D.isNew || D.n > 0);
@@ -340,7 +375,7 @@ function changeBlock(D) {
   const box = h("div", "cb", h("b", "", "What this change does"));
   if (D.isNew) return box.append(h("p", "", "New area in this change.")), box;
   const ids = k => [...D.c].filter(([, m]) => m.some(x => x.k === k)).map(([id]) => id);
-  const eids = k => [...D.e].filter(([, m]) => m[0].k === k).map(([id]) => id);
+  const wids = k => [...D.w].filter(([, m]) => m.some(x => x.k === k)).map(([id]) => id);
   const jids = k => [...D.j].filter(([, m]) => m.some(x => x.k === k)).map(([id]) => id);
   const L = [], p = (list, one, many, w) => { const k = Array.isArray(list) ? list.length : list; if (!k) return;
     L.push(h("span", w ? "w" : "", (w ? "▲ " : "") + k + " " + (k === 1 ? one : many) + (Array.isArray(list) ? ": " + list.join(", ") : ""))); };
@@ -349,8 +384,8 @@ function changeBlock(D) {
   p(ids("new"), "new claim", "new claims"); p(D.rc.map(x => x.id), "removed claim", "removed claims", 1);
   p(ids("reworded"), "reworded", "reworded"); p(ids("weaker"), "verified more weakly", "verified more weakly", 1);
   p(ids("stronger"), "verified more strongly", "verified more strongly");
-  p(eids("new"), "new example", "new examples"); p(eids("status"), "example changed status", "examples changed status");
-  p(D.re.map(x => x.id), "removed example", "removed examples");
+  p(wids("new"), "new walkthrough", "new walkthroughs"); p(wids("retold"), "retold walkthrough", "retold walkthroughs");
+  p(wids("status"), "walkthrough changed status", "walkthroughs changed status"); p(D.rw.map(x => x.id), "removed walkthrough", "removed walkthroughs", 1);
   p(D.q.size, "new question", "new questions"); p(D.rq.length, "resolved question", "resolved questions");
   p(D.as.size, "new assumption", "new assumptions"); p(D.ras.length, "dropped assumption", "dropped assumptions", 1);
   p(D.v.size, "state diagram changed", "state diagrams changed");
@@ -397,8 +432,8 @@ function render(a, only) {
     tile("good", t.ok, "✓ claims ok"),
     tile(t.jBad ? "bad" : "good", t.jBad, "✕ journeys failed"),
     tile("good", t.jOk, "✓ journeys ok"),
-    tile(t.exBad ? "bad" : "good", t.exBad, "✕ examples failed"),
-    tile("good", t.exOk, "✓ examples ok"),
+    tile(t.wBad ? "bad" : "good", t.wBad, "✕ walkthroughs failed"),
+    tile("good", t.wOk, "✓ walkthroughs ok"),
     tile(a.questions.length ? "warn" : "good", a.questions.length, "? open questions"),
     tile(sr.exhaustive ? "good wide" : "warn wide", cover, "search coverage"),
     (k => tile((k[0] || "warn") + " wide", k[1] || "code: not checked", "implementation check"))(CODE[codeOf(a).status] || [])));
@@ -416,8 +451,9 @@ function render(a, only) {
     root.append(d); return d; };
   const some = k => k ? k : 0;
   const js = a.journeys || [];
-  sec("Journeys", js.length, t.jBad ? t.jBad + " failed" : "", D && some(D.j.size + D.rj.length),
-    js.length ? "Read these first: what a person does and what the system does about it." : "").append(...journeys(a, D));
+  sec("Journeys", js.length, t.jBad + t.wBad ? (t.jBad + t.wBad) + " failed" : "", D && some(D.j.size + D.rj.length + D.w.size + D.rw.length),
+    js.length ? "Read these first. Each is one business case: its usual course step by step, and beside every step each way the system turns it down. Walkthroughs under a journey are specific runs worth knowing." : "")
+    .append(...journeys(a, D));
   const asm = a.assumptions || [], gas = D ? D.ras : [];
   if (asm.length || gas.length) {
     const S = sec("Assumptions", asm.length, "", D && some(D.as.size + gas.length),
@@ -445,13 +481,6 @@ function render(a, only) {
     const S = sec("State diagrams", a.views.length, "", D && some(D.v.size), "How each thing the journeys talk about can change.");
     same.forEach(g => S.append(h("h3", "", g.map(v => v.name).join(", ")), diagram(g[0])));
     hid(S, a.views.length - vs.length); }
-  const gx = D ? D.re : [];
-  if (a.examples.length || gx.length) {
-    const S = sec("Examples", a.examples.length, t.exBad ? t.exBad + " failed" : "", D && some(D.e.size + gx.length),
-      "Concrete scenarios replayed against the model. Click to step through.");
-    const es = a.examples.filter(e => keep(D && D.e.has(e.id), e.status !== "ok"));
-    es.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(e => S.append(exampleRow(e, D && D.e.get(e.id))));
-    gx.forEach(e => S.append(goneRow(e, "removed"))); hid(S, a.examples.length - es.length); }
   const gq = D ? D.rq : [];
   if (a.questions.length || gq.length) {
     const S = sec("Open questions", a.questions.length, "", D && some(D.q.size + gq.length),

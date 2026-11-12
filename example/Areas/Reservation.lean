@@ -117,65 +117,64 @@ def area : Area State Action where
           | _ => false
         | _ => false,
       shall := fun _ _ t => effective t "s1" == .Free }]
-  examples := [
-    { id := "EX-001", text := "Hold a seat, then confirm it",
-      run := [.hold "s1" "alice", .confirm "s1" "alice"],
-      expect := fun s => statusOf s "s1" == "sold" && ownerOf s "s1" == "alice" },
-    { id := "EX-002", text := "A hold runs out after two time units and another customer can take the seat",
-      run := [.hold "s1" "alice", .tick, .tick, .hold "s1" "bob"],
-      expect := fun s => ownerOf s "s1" == "bob" && statusOf s "s1" == "held" },
-    { id := "EX-003", text := "One tick is not enough for a hold to run out",
-      run := [.hold "s1" "alice", .tick],
-      expect := fun s => statusOf s "s1" == "held",
-      refused := some (.hold "s1" "bob") },
-    { id := "EX-004", text := "A third hold by the same customer is refused",
-      run := [.hold "s1" "alice", .hold "s2" "alice"],
-      expect := fun s => heldBy s "alice" == 2,
-      refused := some (.hold "s3" "alice") },
-    { id := "EX-005", text := "An expired hold cannot be confirmed",
-      run := [.hold "s1" "alice", .tick, .tick],
-      expect := fun s => statusOf s "s1" == "free",
-      refused := some (.confirm "s1" "alice") },
-    { id := "EX-006", text := "The holder can cancel a sold seat, which frees it",
-      run := [.hold "s1" "alice", .confirm "s1" "alice", .cancel "s1" "alice"],
-      expect := fun s => statusOf s "s1" == "free" },
-    { id := "EX-007", text := "Another customer cannot confirm someone else's hold",
-      run := [.hold "s1" "alice"],
-      expect := fun s => ownerOf s "s1" == "alice",
-      refused := some (.confirm "s1" "bob") },
-    { id := "EX-008", text := "A seat the customer already holds cannot be held again",
-      run := [.hold "s1" "alice"],
-      expect := fun s => heldBy s "alice" == 1,
-      refused := some (.hold "s1" "alice") },
-    { id := "EX-009", text := "Confirming frees a hold slot: after a seat is sold the customer may hold two more",
-      run := [.hold "s1" "alice", .hold "s2" "alice", .confirm "s1" "alice", .hold "s3" "alice"],
-      expect := fun s => heldBy s "alice" == 2 && statusOf s "s1" == "sold" }]
   journeys := [
     { id := "J-001",
-      sources := ["written for this example"], title := "Buying a seat",
-      goal := "Alice wants seat s1 and needs a moment to pay.",
+      sources := ["written for this example"], title := "Buying seats",
+      goal := "A customer picks seats, gets a moment to pay, and ends up owning them.",
+      steps := [
+        .step "The customer puts a seat on hold." [.hold "s1" "alice", .hold "s2" "alice"],
+        .step "The customer confirms a seat on hold; it is theirs." [.confirm "s1" "alice", .confirm "s2" "alice"]] },
+    { id := "J-002",
+      sources := ["written for this example"], title := "Giving a seat back",
+      goal := "A customer who bought a seat changes their mind, and the seat goes back on sale.",
+      given := "Alice has bought seat s1.",
+      setup := [.hold "s1" "alice", .confirm "s1" "alice"],
+      steps := [
+        .step "The customer cancels the seat; it is free again." [.cancel "s1" "alice"],
+        .step "Another customer can now put it on hold." [.hold "s1" "bob"]] }]
+  walkthroughs := [
+    { id := "W-001", journey := "J-001",
+      sources := ["written for this example"], title := "Two people want the same seat",
+      goal := "Alice wants seat s1 and needs a moment to pay; Bob wants it too.",
       moments := [
         .step "Alice puts seat s1 on hold." (.hold "s1" "alice"),
         .refusal "Bob wants the same seat and is turned away." (.hold "s1" "bob"),
+        .refusal "Bob cannot confirm Alice's hold either." (.confirm "s1" "bob"),
         .step "A moment passes while she pays." .tick,
-        .step "Alice confirms; the seat is hers." (.confirm "s1" "alice"),
+        .outcome "Alice confirms; the seat is sold to her." (.confirm "s1" "alice")
+          (fun s => statusOf s "s1" == "sold" && ownerOf s "s1" == "alice"),
         .refusal "Bob still cannot have it." (.hold "s1" "bob")] },
-    { id := "J-002",
+    { id := "W-002", journey := "J-001",
       sources := ["written for this example"], title := "A hold that runs out",
       goal := "Alice puts a seat on hold and then does nothing.",
       moments := [
         .step "Alice puts seat s1 on hold." (.hold "s1" "alice"),
         .step "Time passes." .tick,
-        .step "More time passes; the hold has run out." .tick,
+        .refusal "One moment is not enough for the hold to run out: Bob is still turned away." (.hold "s1" "bob"),
+        .outcome "More time passes; the hold has run out and the seat is free." .tick
+          (fun s => statusOf s "s1" == "free"),
         .refusal "Alice tries to confirm, too late." (.confirm "s1" "alice"),
-        .step "Bob takes the seat instead." (.hold "s1" "bob")] },
-    { id := "J-003",
+        .outcome "Bob takes the seat instead." (.hold "s1" "bob")
+          (fun s => ownerOf s "s1" == "bob" && statusOf s "s1" == "held")] },
+    { id := "W-003", journey := "J-001",
+      sources := ["written for this example"], title := "No more than two seats on hold",
+      goal := "Alice tries to keep more seats on hold than a customer may.",
+      moments := [
+        .step "Alice puts seat s1 on hold." (.hold "s1" "alice"),
+        .refusal "Holding the seat she already holds is turned down." (.hold "s1" "alice"),
+        .step "She puts seat s2 on hold." (.hold "s2" "alice"),
+        .refusal "A third seat is turned down: two on hold is the limit." (.hold "s3" "alice"),
+        .step "She confirms seat s1." (.confirm "s1" "alice"),
+        .outcome "With one seat bought she has room again, and holds seat s3." (.hold "s3" "alice")
+          (fun s => heldBy s "alice" == 2 && statusOf s "s1" == "sold")] },
+    { id := "W-004", journey := "J-002",
       sources := ["written for this example"], title := "Changing one's mind",
       goal := "Alice buys a seat and later gives it back.",
       moments := [
         .step "Alice puts seat s2 on hold." (.hold "s2" "alice"),
         .step "She confirms it." (.confirm "s2" "alice"),
-        .step "She cancels the sold seat, and it is free again." (.cancel "s2" "alice"),
+        .outcome "She cancels the sold seat, and it is free again." (.cancel "s2" "alice")
+          (fun s => statusOf s "s2" == "free"),
         .step "Bob can now hold it." (.hold "s2" "bob")] }]
   views := seatNames.map (fun x => (s!"seat {x}", seatView x))
     ++ customers.map (fun c => (s!"seats on hold for {c}", fun s => toString (heldBy s c)))

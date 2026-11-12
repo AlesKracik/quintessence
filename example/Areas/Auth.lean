@@ -110,66 +110,64 @@ def area : Area State Action where
       shall := fun _ a t => match a with
         | .expire_session sid => statusOf t.sessions sid == .Expired
         | _ => true }]
-  examples := [
-    { id := "EX-001", text := "Sign in",
-      run := [.login "alice" "s1"],
-      expect := fun s => isActive s "s1" && activeSessionsOf s "alice" == FSet.ofList ["s1"] },
-    { id := "EX-002", text := "Sign in, then out",
-      run := [.login "alice" "s1", .logout "s1"],
-      expect := fun s => statusOf s.sessions "s1" == .LoggedOut },
-    { id := "EX-003", text := "The fifth failure locks the account",
-      run := List.replicate 5 (.login_failed "bob"),
-      expect := fun s => isLocked s "bob" },
-    { id := "EX-004", text := "Four failures do not lock it",
-      run := List.replicate 4 (.login_failed "bob"),
-      expect := fun s => !isLocked s "bob" },
-    { id := "EX-005", text := "A session idle for four ticks expires",
-      run := [.login "alice" "s1", .tick, .tick, .tick, .tick, .expire_session "s1"],
-      expect := fun s => statusOf s.sessions "s1" == .Expired },
-    { id := "EX-007", text := "Three idle ticks are not enough to expire",
-      run := [.login "alice" "s1", .tick, .tick, .tick],
-      expect := fun s => isActive s "s1" && idleOf s "s1" == 3,
-      refused := some (.expire_session "s1") },
-    { id := "EX-006", text := "A locked account cannot sign in",
-      run := List.replicate 5 (.login_failed "bob"),
-      expect := fun s => isLocked s "bob" && attemptsOf s "bob" == 5,
-      refused := some (.login "bob" "s2") },
-    { id := "EX-008", text := "The lockout ends a signed-in user's session",
-      run := .login "alice" "s1" :: List.replicate 5 (.login_failed "alice"),
-      expect := fun s => isLocked s "alice" && !isActive s "s1" }]
   journeys := [
     { id := "J-001",
       sources := ["written for this example"], title := "Signing in and out",
+      goal := "A user wants to use the service and then leave it.",
+      steps := [
+        .step "The user signs in." [.login "alice" "s1"],
+        .step "The user signs out." [.logout "s1"]] },
+    { id := "J-002",
+      sources := ["the earlier specification's journey 'Locked out'"], title := "Wrong passwords lock an account",
+      goal := "Someone keeps trying wrong passwords on an account; the account is locked until an administrator opens it again.",
+      steps := [
+        .step "A wrong password is tried on the account; the fifth one locks it." (List.replicate 5 (.login_failed "bob")),
+        .step "An administrator unlocks the account." [.unlock_account "bob"],
+        .step "The user signs in again." [.login "bob" "s1"]] },
+    { id := "J-003",
+      sources := ["written for this example"], title := "A session left idle expires",
+      goal := "A user signs in and walks away; the service ends the session by itself.",
+      given := "Alice is signed in.",
+      setup := [.login "alice" "s1"],
+      steps := [
+        .step "Time passes with nothing happening in the session." [.tick, .tick, .tick, .tick],
+        .step "The session expires." [.expire_session "s1"]] }]
+  walkthroughs := [
+    { id := "W-001", journey := "J-001",
+      sources := ["written for this example"], title := "Signing in twice",
       goal := "Alice wants to use the service and then leave it.",
       moments := [
-        .step "Alice signs in." (.login "alice" "s1"),
+        .outcome "Alice signs in; she has exactly this one session." (.login "alice" "s1")
+          (fun s => isActive s "s1" && activeSessionsOf s "alice" == FSet.ofList ["s1"]),
         .refusal "She tries to sign in a second time while still signed in, and is turned away." (.login "alice" "s2"),
-        .step "She signs out." (.logout "s1"),
+        .outcome "She signs out." (.logout "s1") (fun s => statusOf s.sessions "s1" == .LoggedOut),
         .step "Later she signs in again." (.login "alice" "s2")] },
-    { id := "J-002",
-      sources := ["the earlier specification's journey 'Locked out'"], title := "Locked out",
+    { id := "W-002", journey := "J-002",
+      sources := ["the earlier specification's journey 'Locked out'"], title := "Locked out while signed in",
       goal := "Someone tries wrong passwords on Alice's account while she is signed in.",
       moments := [
         .step "Alice signs in." (.login "alice" "s1"),
         .step "A wrong password is tried on her account." (.login_failed "alice"),
         .step "And a second one." (.login_failed "alice"),
         .step "A third." (.login_failed "alice"),
-        .step "A fourth. The account is still open." (.login_failed "alice"),
-        .step "The fifth wrong password locks the account and ends her session." (.login_failed "alice"),
+        .outcome "A fourth. The account is still open." (.login_failed "alice") (fun s => !isLocked s "alice"),
+        .outcome "The fifth wrong password locks the account and ends her session." (.login_failed "alice")
+          (fun s => isLocked s "alice" && !isActive s "s1" && attemptsOf s "alice" == 5),
         .refusal "Alice tries to sign in again and is turned away." (.login "alice" "s2"),
         .step "An administrator unlocks the account." (.unlock_account "alice"),
         .step "Alice signs in again." (.login "alice" "s2")] },
-    { id := "J-003",
+    { id := "W-003", journey := "J-003",
       sources := ["written for this example"], title := "Left idle",
       goal := "Alice signs in and then walks away from her desk.",
       moments := [
         .step "Alice signs in." (.login "alice" "s1"),
         .step "Time passes." .tick,
         .step "More time passes." .tick,
-        .step "And more: she has now been idle for three time units." .tick,
+        .outcome "And more: she has now been idle for three time units, and is still signed in." .tick
+          (fun s => isActive s "s1" && idleOf s "s1" == 3),
         .refusal "That is not yet long enough for the session to expire." (.expire_session "s1"),
         .step "One more time unit passes." .tick,
-        .step "Now the session expires." (.expire_session "s1"),
+        .outcome "Now the session expires." (.expire_session "s1") (fun s => statusOf s.sessions "s1" == .Expired),
         .step "Back at her desk, Alice signs in again." (.login "alice" "s2")] }]
   views := sids.map (fun x => (s!"session {x}", sessionView x))
     ++ users.map (fun u => (s!"account of {u}", accountView u))

@@ -18,6 +18,10 @@ runs it and reports, per claim, the strongest level reached:
 Invariants target level 1, requirements level 2. The search also produces the
 open questions that drive the requirements toward completeness.
 
+People read an area through its journeys (one business case each, as its
+usual course) and walkthroughs (specific runs worth knowing). Both are
+replayed on the model, and what the readback shows of them comes from that.
+
 An area bound to code (`Area.code`) is also checked against it: the code is
 driven through the model's transitions and compared after every step. Any
 difference is drift. Code and model both live in git, and git says whether
@@ -54,38 +58,67 @@ structure Requirement (σ α : Type) where
   Free text, shown to the reviewer. -/
   sources : List String := []
 
-/-- A concrete run from the initial state: every action in `run` must be
-accepted, `expect` must hold at the end, and `refused` (if any) must then be
-turned down. -/
-structure Example (σ α : Type) where
-  id : String
-  text : String
-  run : List α
-  expect : σ → Bool := fun _ => true
-  refused : Option α := none
-
-/-- One moment of a journey: what happens, in the words of the person it
-happens to, and the action that does it. -/
-structure Moment (α : Type) where
+/-- One step of a journey's usual course: what happens, in the words of the
+business, and the step as it happens in the scope: one or more concrete
+actions, taken in order. More than one means the step repeats ("the operator
+adds a VM", shown for two VMs), and the readback draws it as a loop. -/
+structure Step (α : Type) where
   say : String
-  action : α
-  refused : Bool
+  actions : List α
 
-/-- A moment in which the system does what is asked. -/
-def Moment.step {α : Type} (say : String) (action : α) : Moment α := ⟨say, action, false⟩
-/-- A moment in which the system turns the request down. -/
-def Moment.refusal {α : Type} (say : String) (action : α) : Moment α := ⟨say, action, true⟩
+/-- A step of a journey: `.step "The operator adds a VM." [.enroll "a", .enroll "b"]`. -/
+def Step.step {α : Type} (say : String) (actions : List α) : Step α := ⟨say, actions⟩
 
-/-- A customer journey: a story a person recognises, told as one run of the
-model. The readback opens with the journeys and shows, for every moment, the
-requirements at work and what changed. Every moment must go the way it is
-told: accepted for `.step`, turned down for `.refusal`. -/
+/-- A journey: one business case, such as "enrolling VMs" or "a protection
+run", as the usual course of events from start to end. The readback draws it
+as a graph: the steps in order, a loop on a step that repeats, and hanging off
+each step every way the system can turn that step down. Those are not written
+here: they are the area's refusal requirements for the step's action, so none
+can be left out. Every action of every step must be accepted, in order. -/
 structure Journey (α : Type) where
   id : String
   title : String
   /-- Who wants what. -/
   goal : String
-  moments : List (Moment α)
+  /-- Where the journey starts, in words ("two VMs are in the group") ... -/
+  given : String := ""
+  /-- ... and the run that gets there from the initial state. -/
+  setup : List α := []
+  steps : List (Step α)
+  /-- Where the journey comes from, as a history (see `Requirement.sources`). -/
+  sources : List String := []
+
+/-- One moment of a walkthrough: what happens, in the words of the person it
+happens to, the action that does it, whether the system turns it down, and
+optionally what must be true once the moment is over. -/
+structure Moment (σ α : Type) where
+  say : String
+  action : α
+  refused : Bool := false
+  expect : Option (σ → Bool) := none
+
+/-- A moment in which the system does what is asked. -/
+def Moment.step {σ α : Type} (say : String) (action : α) : Moment σ α := { say, action }
+/-- A moment in which the system turns the request down; nothing changes. -/
+def Moment.refusal {σ α : Type} (say : String) (action : α) : Moment σ α := { say, action, refused := true }
+/-- A moment in which the system does what is asked, and what must then be
+true. `say` tells the outcome; `expect` is that outcome as a check. -/
+def Moment.outcome {σ α : Type} (say : String) (action : α) (expect : σ → Bool) : Moment σ α :=
+  { say, action, expect := some expect }
+
+/-- A walkthrough: one specific run that matters, told moment by moment: a
+failure and the recovery from it, a boundary, a message that arrives twice.
+Where a journey shows the usual course of a business case, a walkthrough
+shows one telling instance. Every moment must go the way it is told, and
+every stated outcome must hold. -/
+structure Walkthrough (σ α : Type) where
+  id : String
+  title : String
+  /-- Why this run matters. -/
+  goal : String := ""
+  /-- The id of the journey this is a case of, if any; the readback shows it there. -/
+  journey : String := ""
+  moments : List (Moment σ α)
   /-- Where the story comes from, as a history (see `Requirement.sources`). -/
   sources : List String := []
 
@@ -124,11 +157,11 @@ structure Area (σ α : Type) where
   budget : Nat := 1000000
   invariants : List (Invariant init step) := []
   requirements : List (Requirement σ α) := []
-  examples : List (Example σ α) := []
   journeys : List (Journey α) := []
+  walkthroughs : List (Walkthrough σ α) := []
   /-- Named projections of the state in words a reader knows ("seat s1" is
-  "held"). The readback draws each as a diagram and tells the journeys in
-  them: a moment shows which views changed, not the raw state. -/
+  "held"). The readback draws each as a diagram and tells the journeys and
+  walkthroughs in them: a step shows which views changed, not the raw state. -/
   views : List (String × (σ → String)) := []
   /-- Per action name: the decision on whether it can interleave with other
   events inside the implementation. A missing entry is an open question. -/
@@ -214,6 +247,8 @@ private structure Found where
   invFail : Array (Option UInt64)
   reqFail : Array (Option (UInt64 × Nat))
   reqHits : Array Nat
+  /-- Whether requirement `j` applied to action `i` anywhere: at `j * actions + i`. -/
+  reqAct : Array Bool
   /-- First state where action `i` was accepted (`2*i`) or refused (`2*i+1`)
   with no requirement covering it. -/
   gaps : Array (Option UInt64)
@@ -247,6 +282,7 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
     invs.map fun i => if i.holds A.init then none else some root
   let mut reqFail : Array (Option (UInt64 × Nat)) := reqs.map fun _ => none
   let mut reqHits : Array Nat := reqs.map fun _ => 0
+  let mut reqAct : Array Bool := Array.replicate (reqs.size * acts.size) false
   let mut gaps : Array (Option UInt64) := Array.replicate (2 * acts.size) none
   let mut edges : Std.HashSet (Nat × String × String × String) := {}
   let mut cut := 0
@@ -266,6 +302,7 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
         let speaking := applying reqs s a reqs.size []
         for (q, j) in speaking do
           reqHits := reqHits.modify j (· + 1)
+          reqAct := reqAct.set! (j * acts.size + i) true
           let ok := match r with
             | none => q.refused
             | some t => !q.refused && q.shall s a t
@@ -287,7 +324,7 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
               if !inv.holds t && invFail[j]!.isNone then invFail := invFail.set! j (some ft)
     if !stopped then depth := depth + 1
     frontier := next
-  return { seen, depth, exhaustive := !stopped, cut, invFail, reqFail, reqHits, gaps, edges }
+  return { seen, depth, exhaustive := !stopped, cut, invFail, reqFail, reqHits, reqAct, gaps, edges }
 
 /-- The actions leading from the initial state to the state with this fingerprint. -/
 private def pathTo (seen : Std.HashMap UInt64 (UInt64 × Nat)) (root : UInt64) :
@@ -408,6 +445,9 @@ to. Each run starts from a fresh system. Stops at the first difference. -/
 private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
     (since : Option String) (full : Bool) : IO CodeResult := do
   let names := A.actions.map (actionName ∘ label)
+  -- the runs a person has read: every journey and every walkthrough
+  let told := A.journeys.map (fun j => j.setup ++ j.steps.flatMap (·.actions))
+    ++ A.walkthroughs.map (·.moments.map (·.action))
   if let some n := names.find? fun n => !(c.actions.any (·.1 == n)) then
     return { status := "error", verdict := s!"action `{n}` has no code mapping" }
   let inputs ← gitState "." (← inputsOf A.name c)
@@ -436,8 +476,7 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
     ("actions", Json.mkObj (c.actions.map fun (n, code) => (n, .str code))),
     ("observe", .arr (c.observe.map fun (_, _, e) => .str e).toArray),
     -- every concrete call that can follow, for adapters that compile the table
-    ("calls", .arr ((A.actions ++ A.journeys.flatMap (·.moments.map (·.action))
-        ++ A.examples.flatMap (fun e => e.run ++ e.refused.toList)).map (call ∘ label)).eraseDups.toArray)]
+    ("calls", .arr ((A.actions ++ told.flatten).map (call ∘ label)).eraseDups.toArray)]
   let mapped := c.setup :: c.actions.map (·.2) ++ c.observe.map (·.2.2)
   let operations := ((hello.getObjVal? "operations" >>= Json.getArr?).toOption.getD #[]).toList.filterMap
     (·.getStr?.toOption)
@@ -486,9 +525,9 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
         return some (s!"After {", ".intercalate done.reverse}, {d}.", .arr rows)
     return none
   let refusedIn (s : σ) : List α := A.actions.filter fun a => (A.step a s).isNone
-  -- first the runs a person has read, whatever the budget: journeys and examples
+  -- first the runs a person has read, whatever the budget
   let mut drift : Option (String × Json) := none
-  for run in A.journeys.map (·.moments.map (·.action)) ++ A.examples.map (fun e => e.run ++ e.refused.toList) do
+  for run in told do
     if drift.isNone then drift ← runOne run
   if drift.isNone then drift ← runOne (refusedIn A.init)
   let mut seen : Std.HashSet UInt64 := ({} : Std.HashSet UInt64).insert (hash A.init)
@@ -524,7 +563,7 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
       | none => "of the scope"
       | some d => s!"within {d} steps of the start"
     return { status := "agrees", questions, inputs, commit,
-             verdict := s!"the code agrees with the model on every journey and example, and on every transition and refusal {reach} "
+             verdict := s!"the code agrees with the model on every journey and walkthrough, and on every transition and refusal {reach} "
                ++ s!"({transitions} transitions, {used} code steps)" }
 
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
@@ -565,47 +604,83 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     if f.reqFail[j]!.isNone && f.reqHits[j]! == 0 then
       questions := questions.push
         (s!"{q.id} never applies in the scope. Is the scope too small, or can this never happen?", none)
-  let mut examples : Array (String × String × Bool × List α) := #[]
-  for e in A.examples do
-    let ok := match e.run.foldlM (fun s a => A.step a s) A.init with
-      | none => false
-      | some s => e.expect s && (e.refused.map fun a => (A.step a s).isNone).getD true
-    examples := examples.push (e.id, e.text, ok, e.run ++ e.refused.toList)
-  -- journeys: the stories a person reads, replayed on the model
   let stateJson (s : σ) : Json :=
     .arr ((fields (short (oneLine s))).map fun (k, v) => .arr #[.str k, .str v]).toArray
   let viewsJson (s : σ) : Json := .arr (A.views.map fun (n, v) => .arr #[.str n, .str (v s)]).toArray
+  let speaking (s : σ) (a : α) : List String := (A.requirements.filter (·.when s a)).map (·.id)
+  let mut told : List String := []  -- the requirements some journey or walkthrough shows at work
+  -- journeys: the usual course of a business case, replayed on the model
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
-  let mut told : List String := []  -- the requirements some journey shows at work
   for j in A.journeys do
+    let mut s := A.init
+    let mut ok := !j.steps.isEmpty
+    for a in j.setup do
+      match A.step a s with
+      | some t => s := t
+      | none => ok := false
+    let start := s
+    let mut rows : Array (Bool → Json) := #[]
+    for st in j.steps do
+      let mut reqs : List String := []
+      let mut went := !st.actions.isEmpty
+      for a in st.actions do
+        match A.step a s with
+        | some t =>
+          reqs := reqs ++ (speaking s a).filter (!reqs.contains ·)
+          s := t
+        | none => went := false
+      -- every way the system turns this step down: the refusal requirements that speak about its action
+      let stepNames := st.actions.map (actionName ∘ label)
+      let turnedDown := (A.requirements.zipIdx.filter fun (q, k) =>
+        q.refused && (List.range acts.size).any fun i =>
+          stepNames.contains names[i]! && f.reqAct[k * acts.size + i]!).map (·.1.id)
+      told := told ++ reqs ++ turnedDown
+      if !went then ok := false
+      let after := s
+      rows := rows.push fun full => Json.mkObj <| [
+        ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
+        ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
+        ("turnedDown", .arr (turnedDown.map .str).toArray)]
+        ++ (if full then [("views", viewsJson after), ("state", stateJson after)] else [])
+    let status := if ok then "ok" else "failed"
+    journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
+      ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
+      ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
+      ("status", .str status), ("steps", .arr (rows.map (· full)))]
+      ++ (if full then [("startViews", viewsJson start), ("start", stateJson start)] else []))
+  -- walkthroughs: specific runs that matter, replayed moment by moment
+  let mut walkthroughs : Array (String × Bool × (Bool → Json)) := #[]
+  for w in A.walkthroughs do
     let mut s := A.init
     let mut ok := true
     let mut rows : Array (Bool → Json) := #[]
-    for m in j.moments do
+    for m in w.moments do
       let next := A.step m.action s
-      let reqs := (A.requirements.filter (·.when s m.action)).map (·.id)
+      let reqs := speaking s m.action
       let after := next.getD s
+      let holds := (m.expect.map (· after)).getD true
       told := told ++ reqs
-      if next.isNone != m.refused then ok := false
+      if next.isNone != m.refused || !holds then ok := false
       rows := rows.push fun full => Json.mkObj <| [
         ("say", .str m.say), ("action", .str (label m.action)), ("refused", .bool next.isNone),
         ("asTold", .bool (next.isNone == m.refused)), ("requirements", .arr (reqs.map .str).toArray)]
+        ++ (if m.expect.isSome then [("outcome", Json.bool holds)] else [])
         ++ (if full then [("views", viewsJson after), ("state", stateJson after)] else [])
       s := after
     let status := if ok then "ok" else "failed"
-    journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
-      ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("sources", .arr (j.sources.map .str).toArray),
-      ("status", .str status),
+    walkthroughs := walkthroughs.push (w.id, ok, fun full => Json.mkObj <| [
+      ("id", .str w.id), ("title", .str w.title), ("goal", .str w.goal), ("journey", .str w.journey),
+      ("sources", .arr (w.sources.map .str).toArray), ("status", .str status),
       ("moments", .arr (rows.map (· full)))]
       ++ (if full then [("startViews", viewsJson A.init), ("start", stateJson A.init)] else []))
   if A.journeys.isEmpty then
     questions := questions.push
-      ("The area has no journey. Which stories should a person recognise it by?", none)
+      ("The area has no journey. Which business cases should a person recognise it by?", none)
   else
     for q in A.requirements do
       if !told.contains q.id then
         questions := questions.push
-          (s!"{q.id} is not part of any journey. Is there a story in which it matters?", none)
+          (s!"{q.id} shows in no journey and no walkthrough. Is there a case in which it matters?", none)
   -- open questions, one per action name
   let distinct := names.foldl (fun acc n => if acc.contains n then acc else acc.push n) #[]
   for n in distinct do
@@ -651,9 +726,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         ("level", num level), ("target", num target), ("verdict", .str verdict),
         ("status", .str (status level target verdict)), ("sources", .arr (((sources.lookup id).getD []).map .str).toArray)]),
     ("journeys", .arr <| journeys.map fun (_, _, json) => json full),
-    ("examples", .arr <| examples.map fun (id, text, ok, run) =>
-      withSteps full (some run) [("id", .str id), ("text", .str text),
-        ("status", .str (if ok then "ok" else "failed"))]),
+    ("walkthroughs", .arr <| walkthroughs.map fun (_, _, json) => json full),
     ("questions", .arr <| questions.map fun (text, run) => withSteps full run [("text", .str text)]),
     ("atomic", Json.mkObj (A.atomic.map fun (n, d) => (n, .str d))),
     ("assumptions", .arr (A.assumptions.map .str).toArray),
@@ -663,8 +736,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         .arr #[.str a, .str n, .str b])]).toArray)]
   let failed := (claims.toList.filterMap fun (id, _, _, _, _, verdict, _) =>
       if verdict == "violated" then some s!"{id} violated" else none)
-    ++ (examples.toList.filterMap fun (id, _, ok, _) => if ok then none else some s!"{id} failed")
-    ++ (journeys.toList.filterMap fun (id, ok, _) => if ok then none else some s!"{id} does not go as told")
+    ++ ((journeys ++ walkthroughs).toList.filterMap fun (id, ok, _) =>
+      if ok then none else some s!"{id} does not go as told")
   let codeFailed := if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else []
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size

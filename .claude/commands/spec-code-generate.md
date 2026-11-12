@@ -2,7 +2,7 @@
 
 Use this when an area has no code yet, or when a change to its requirements has to be carried into the code. For code that already exists and has no model, use `/spec` (existing code) instead.
 
-Before you start: `lake exe check` must show no violated claim and no failed example for the area, and the person must have seen the requirements (`/spec-readback`). Ask the person where the code goes (repository and path) and in which language, unless the project already answers that.
+Before you start: `lake exe check` must show no violated claim and no failed journey or walkthrough for the area, and the person must have seen the requirements (`/spec-readback`). Ask the person where the code goes (repository and path) and in which language, unless the project already answers that.
 
 Rules:
 
