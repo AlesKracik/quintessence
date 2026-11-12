@@ -378,17 +378,20 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
     let mut rows := #[row "" false (expect s) (texts reply "initial")]
     if let some d := differ (expect s) (texts reply "initial") then
       return some (s!"At the start, {d}.", .arr rows)
+    let mut done : List String := []  -- the actions taken so far
     for (a, r) in run.zip ((reply.getObjVal? "steps" >>= Json.getArr?).toOption.getD #[]).toList do
       let refused := (r.getObjVal? "refused" >>= Json.getBool?).toOption.getD false
       let next := A.step a s
+      let after := if done.isEmpty then "At the start" else s!"After {", ".intercalate done.reverse}"
       rows := rows.push (row (label a) next.isNone (expect (next.getD s)) (texts r "observed"))
       if next.isNone && !refused then
-        return some (s!"The model refuses `{label a}` here; the code accepts it.", .arr rows)
+        return some (s!"{after}, the model refuses `{label a}`; the code accepts it.", .arr rows)
       if next.isSome && refused then
-        return some (s!"The model accepts `{label a}` here; the code refuses it ({(r.getObjVal? "error" >>= Json.getStr?).toOption.getD ""}).", .arr rows)
+        return some (s!"{after}, the model accepts `{label a}`; the code refuses it ({(r.getObjVal? "error" >>= Json.getStr?).toOption.getD ""}).", .arr rows)
       s := next.getD s
+      if next.isSome then done := label a :: done
       if let some d := differ (expect s) (texts r "observed") then
-        return some (s!"After `{label a}`, {d}.", .arr rows)
+        return some (s!"After {", ".intercalate done.reverse}, {d}.", .arr rows)
     return none
   let refusedIn (s : σ) : List α := A.actions.filter fun a => (A.step a s).isNone
   let mut drift ← runOne (refusedIn A.init)
@@ -523,7 +526,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let failed := (claims.toList.filterMap fun (id, _, _, _, _, verdict, _) =>
       if verdict == "violated" then some s!"{id} violated" else none)
     ++ (examples.toList.filterMap fun (id, _, ok, _) => if ok then none else some s!"{id} failed")
-    ++ (if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else [])
+  let codeFailed := if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else []
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size
   let summary := s!"{A.name}: {states} states, "
@@ -531,7 +534,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ++ s!"; {claims.size} claims, {below} below target, {failed.length} failed; "
     ++ s!"{questions.size} open questions; code {code.status}"
     ++ (if code.reused then " (unchanged in git since recorded, not re-run)" else "")
-  return { ledger := json false, review := json true, failed, summary }
+  return { ledger := json false, review := json true, failed := failed ++ codeFailed, summary }
 
 /-- Package an area for the checker program. -/
 def Area.entry [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Entry :=

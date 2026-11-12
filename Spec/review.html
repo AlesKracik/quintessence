@@ -63,8 +63,17 @@ tr.chg td{background:var(--chg)}tr.dif td.v{background:var(--badb);color:var(--b
 .cv{display:flex;gap:8px;align-items:baseline}.cv .mk{white-space:nowrap}
 pre{margin:6px 0;padding:6px 8px;background:var(--surf);border:1px solid var(--line);border-radius:6px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 td.c{white-space:pre-wrap;word-break:break-word}
+.bar{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:flex-start;margin-bottom:14px}.bar .tabs{margin:0}
+.tog{display:flex;gap:6px;align-items:center;padding:6px 0;font-size:13px;cursor:pointer}
+.chgd{font-size:12px;font-weight:700;color:var(--acc)}
+.cb{background:var(--surf);border:1px solid var(--line);border-left:5px solid var(--acc);border-radius:8px;padding:8px 10px;margin:12px 0}
+.cb p{margin:4px 0 0}.w{color:var(--bad);font-weight:700}
+.badge.new{color:var(--acc)}.badge.rm{color:var(--mut)}.badge.weak{background:var(--bad);color:var(--bg);border-color:var(--bad)}
+.mks{grid-column:2/4;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}.mk2{display:inline-flex;gap:6px;align-items:baseline}
+.was{color:var(--mut);font-size:13px}.was .old{margin:0}
+.row.rm,.q.rm{background:transparent;border-style:dashed;border-left-style:solid;border-left-color:var(--line);color:var(--mut)}.tx{text-decoration:line-through}
 .empty{text-align:center;color:var(--mut);padding:60px 0}
-@media (max-width:560px){.head{grid-template-columns:auto minmax(0,1fr)}.lad,.badge{grid-column:2}.tile.wide{grid-column:span 1}}
+@media (max-width:560px){.head{grid-template-columns:auto minmax(0,1fr)}.lad,.badge,.mks{grid-column:2}.tile.wide{grid-column:span 1}}
 </style></head><body><main id="app"></main>
 <script>
 const DATA = /*DATA*/[];
@@ -178,30 +187,33 @@ function ladder(c, cls) {
   for (let k = 1; k <= 3; k++) box.append(h("span", "pip" + (k <= on ? " on" : "") + (k === tg ? " tgt" : "")));
   box.append(h("span", "", "level " + c.level + " / target " + c.target)); return box;
 }
-function claimRow(c) {
+function claimRow(c, ms) {
   const cls = CLS[c.status] || "below", r = h("div", "row " + cls);
   r.append(h("div", "head", h("span", "id mono", c.id), h("span", "", c.text), h("span", "badge " + cls, ICON[cls]),
-    h("span", "verd", c.verdict), ladder(c, cls)));
+    ms ? h("span", "mks", ms.map(mark)) : null, h("span", "verd", c.verdict), ladder(c, cls)));
   if (c.steps && c.steps.length) { const box = h("div"); const b = h("button", "", "show counterexample"); b.style.marginTop = "6px";
     b.onclick = () => { if (box.firstChild) { box.replaceChildren(); b.textContent = "show counterexample"; }
       else { box.append(stepper(c.steps)); b.textContent = "hide counterexample"; } };
     r.append(b, box); }
   return r;
 }
-function exampleRow(e) {
+function exampleRow(e, ms) {
   const cls = e.status === "ok" ? "ok" : "failed", d = h("details", "row ex " + cls);
-  d.append(h("summary", "", h("span", "id mono", e.id), h("span", "badge " + cls, ICON[cls]), h("span", "", e.text)));
+  d.append(h("summary", "", h("span", "id mono", e.id), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null, h("span", "", e.text)));
   let done = false; d.ontoggle = () => { if (d.open && !done) { done = true; d.append(h("div", "", stepper(e.steps || []))); } };
   return d;
 }
-function questionRow(q) {
-  const r = h("div", "q", h("p", "", "? ", q.text));
+function questionRow(q, isNew) {
+  const r = h("div", "q", h("p", "", isNew ? h("span", "badge new", "new") : null, isNew ? " " : "", "? ", q.text));
   if (q.steps && q.steps.length) { const box = h("div"), b = h("button", "", "show situation");
     b.onclick = () => { if (box.firstChild) { box.replaceChildren(); b.textContent = "show situation"; }
       else { box.append(stepper(q.steps)); b.textContent = "hide situation"; } };
     r.append(b, box); }
   return r;
 }
+const goneRow = (x, label, tag) => h("div", (tag === "q" ? "q" : "row") + " rm", h("div", "head",
+  h("span", "id mono", x.id || "?"), h("span", "tx", x.text), h("span", "badge rm", label)));
+const hid = (root, k) => { if (k) root.append(h("p", "sub", k + " unchanged item" + (k === 1 ? "" : "s") + " hidden")); };
 const tile = (cls, big, label) => h("div", "tile " + cls, h("b", "", big), h("span", "", label));
 
 function stats(a) {
@@ -213,25 +225,90 @@ const CODE = { "agrees": ["good", "code agrees", "ok", "✓ agrees"], "drift": [
 const codeOf = a => typeof a.code === "string" ? { status: "not checked", verdict: a.code } : a.code || { status: "not checked" };
 const problem = a => { const t = stats(a), k = codeOf(a).status; return t.below + t.bad + t.exBad > 0 || k === "drift" || k === "error"; };
 
-function codeSection(a) {
+// ---- comparison with the ledger at `since` ----
+const short = r => /^[0-9a-f]{40}$/i.test(r) ? r.slice(0, 8) : r;
+const mark = m => h("span", "mk2", h("span", "badge " + m.cls, m.t),
+  m.was != null ? h("span", "was", "was: ", m.old ? h("span", "old", m.was) : m.was) : null);
+const bind = c => JSON.stringify([c.setup, c.actions, c.observe]);
+const edgeKey = v => JSON.stringify([v.initial, v.edges.map(e => e.join("\0")).sort()]);
+function diff(a) {
+  if (!a.since) return null;
+  const b = a.before, D = { since: short(a.since), isNew: !b, c: new Map(), e: new Map(), q: new Set(), v: new Set(),
+    rc: [], re: [], rq: [], code: null, bind: false, n: 0 };
+  if (!b) return D;
+  const bc = new Map(b.claims.map(x => [x.id, x])), be = new Map(b.examples.map(x => [x.id, x]));
+  for (const c of a.claims) { const o = bc.get(c.id), m = [];
+    if (!o) m.push({ k: "new", t: "new", cls: "new" });
+    else { if (o.text !== c.text) m.push({ k: "reworded", t: "reworded", cls: "below", was: o.text, old: 1 });
+      const wk = c.level > o.level || (o.status === "ok" && c.status !== "ok");
+      if (wk) m.push({ k: "weaker", t: "▲ verified more weakly", cls: "weak", was: o.verdict });
+      else if (c.level < o.level || (o.status !== "ok" && c.status === "ok"))
+        m.push({ k: "stronger", t: "verified more strongly", cls: "ok", was: o.verdict }); }
+    if (m.length) D.c.set(c.id, m); }
+  for (const e of a.examples) { const o = be.get(e.id);
+    if (!o) D.e.set(e.id, [{ k: "new", t: "new", cls: "new" }]);
+    else if (o.status !== e.status) D.e.set(e.id, [{ k: "status", t: "status changed", cls: e.status === "ok" ? "ok" : "failed", was: o.status }]); }
+  D.rc = b.claims.filter(x => !a.claims.some(y => y.id === x.id));
+  D.re = b.examples.filter(x => !a.examples.some(y => y.id === x.id));
+  const now = new Set(a.questions.map(q => q.text)), was = new Set(b.questions.map(q => q.text));
+  a.questions.forEach(q => { if (!was.has(q.text)) D.q.add(q.text); });
+  D.rq = b.questions.filter(q => !now.has(q.text));
+  const ca = codeOf(a), cb = codeOf(b);
+  if (ca.status !== cb.status) D.code = [cb.status, ca.status];
+  D.bind = bind(ca) !== bind(cb);
+  for (const v of a.views) { const o = (b.views || []).find(x => x.name === v.name); if (!o || edgeKey(o) !== edgeKey(v)) D.v.add(v.name); }
+  D.n = D.c.size + D.e.size + D.q.size + D.v.size + D.rc.length + D.re.length + D.rq.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
+  return D;
+}
+const changed = D => !!D && (D.isNew || D.n > 0);
+
+function changeBlock(D) {
+  const box = h("div", "cb", h("b", "", "What this change does"));
+  if (D.isNew) return box.append(h("p", "", "New area in this change.")), box;
+  const ids = k => [...D.c].filter(([, m]) => m.some(x => x.k === k)).map(([id]) => id);
+  const eids = k => [...D.e].filter(([, m]) => m[0].k === k).map(([id]) => id);
+  const L = [], p = (list, one, many, w) => { const k = Array.isArray(list) ? list.length : list; if (!k) return;
+    L.push(h("span", w ? "w" : "", (w ? "▲ " : "") + k + " " + (k === 1 ? one : many) + (Array.isArray(list) ? ": " + list.join(", ") : ""))); };
+  p(ids("new"), "new claim", "new claims"); p(D.rc.map(x => x.id), "removed claim", "removed claims", 1);
+  p(ids("reworded"), "reworded", "reworded"); p(ids("weaker"), "verified more weakly", "verified more weakly", 1);
+  p(ids("stronger"), "verified more strongly", "verified more strongly");
+  p(eids("new"), "new example", "new examples"); p(eids("status"), "example changed status", "examples changed status");
+  p(D.re.map(x => x.id), "removed example", "removed examples");
+  p(D.q.size, "new question", "new questions"); p(D.rq.length, "resolved question", "resolved questions");
+  p(D.v.size, "state diagram changed", "state diagrams changed");
+  const line = [];
+  L.forEach((x, i) => { if (i) line.push(" · "); line.push(x); });
+  if (line.length) box.append(h("p", "", line));
+  if (D.code) box.append(h("p", /drift|error/.test(D.code[1]) ? "w" : "", "code: " + D.code.join(" → ")));
+  if (D.bind) box.append(h("p", "w", "▲ the code binding changed — re-confirm what is compared"));
+  if (!D.n) box.append(h("p", "", "Nothing in this area changed since " + D.since + "."));
+  return box;
+}
+
+function codeSection(a, D) {
   const c = codeOf(a), [, , cls, icon] = CODE[c.status] || ["warn", "", "below", "▲ not checked"], out = [h("h2", "", "Code")];
   out.push(h("div", "cv", h("span", "badge " + cls, icon), h("span", "", c.verdict || "")));
   if (c.status === "drift" && c.steps && c.steps.length) {
     const d = h("details", "ex row " + cls); d.open = true;
     d.append(h("summary", "", "Where code and model part ways (the last step differs)"), h("div", "", stepper(c.steps))); out.push(d); }
-  if (c.actions) {
-    const two = (head, rows) => h("div", "tw", h("table", "", h("thead", "", h("tr", "", head.map(x => h("th", "", x)))),
+  if (c.actions || c.repo || c.paths) {
+    const two = (head, rows) => h("div", "tw", h("table", "", head && h("thead", "", h("tr", "", head.map(x => h("th", "", x)))),
       h("tbody", "", rows.map(([k, v]) => h("tr", "", h("td", "f act", k), h("td", "c mono", v))))));
-    out.push(h("details", "sub", h("summary", "", "what is compared"),
+    const det = h("details", "sub", h("summary", "", "what is compared"));
+    const where = [["repo", c.repo === "." ? ". (this repository)" : c.repo], ["paths", (c.paths || []).join(", ")], ["commit", c.commit]].filter(r => r[1]);
+    if (where.length) det.append(h("h3", "", "Where the code is"), two(null, where));
+    if (c.actions) det.append(
       h("h3", "", "Model action → code run for it"), two(["action", "code"], Object.entries(c.actions)),
       h("h3", "", "Observation → read from the code after every step"), two(["name", "expression"], c.observe || []),
-      h("h3", "", "Setup: builds a fresh system"), h("pre", "mono", c.setup || "")));
+      h("h3", "", "Setup: builds a fresh system"), h("pre", "mono", c.setup || ""));
+    det.open = !!(D && D.bind); out.push(det);
   } else if (c.status === "not checked") out.push(h("p", "sub", "This area is not bound to code."));
   return out;
 }
 
-function render(a) {
-  const t = stats(a), sr = a.search, root = h("div");
+function render(a, only) {
+  const t = stats(a), sr = a.search, root = h("div"), D = diff(a), F = only && D && !D.isNew;
+  const keep = (m, bad) => !F || m || bad;
   const cover = sr.exhaustive ? "scope exhausted: " + n(sr.states) + " states" : "stopped at budget: " + n(sr.states) + " states, depth " + sr.depth;
   root.append(h("div", "tiles",
     tile(t.bad ? "bad" : "good", t.bad, "✕ claims violated"),
@@ -245,18 +322,29 @@ function render(a) {
   const det = h("details", "sub", h("summary", "", "search details"),
     h("p", "", "Budget " + n(sr.budget) + " states; " + n(sr.cutByBound) + " states cut by the size bound."),
     h("p", "mono", sr.actions.join("  |  ")));
-  root.append(det, ...codeSection(a));
+  if (D) root.append(changeBlock(D));
+  root.append(det, ...codeSection(a, D));
   for (const [kind, title] of [["invariant", "Invariants"], ["requirement", "Requirements"]]) {
-    const cs = a.claims.filter(x => x.kind === kind); if (!cs.length) continue;
+    const all = a.claims.filter(x => x.kind === kind), gone = D ? D.rc.filter(x => x.kind === kind) : [];
+    if (!all.length && !gone.length) continue;
+    const cs = all.filter(x => keep(D && D.c.has(x.id), x.status !== "ok"));
     root.append(h("h2", "", title), h("p", "sub", kind === "invariant" ? "Always true, in every state." : "What must happen in response to something."));
-    cs.slice().sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => root.append(claimRow(c)));
+    cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => root.append(claimRow(c, D && D.c.get(c.id))));
+    gone.forEach(c => root.append(goneRow(c, "removed"))); hid(root, all.length - cs.length);
   }
-  if (a.views.length) { root.append(h("h2", "", "State diagrams")); a.views.forEach(v => root.append(h("h3", "", v.name), diagram(v))); }
-  if (a.examples.length) { root.append(h("h2", "", "Examples"), h("p", "sub", "Concrete scenarios replayed against the model. Click to step through."));
-    a.examples.slice().sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(e => root.append(exampleRow(e))); }
-  if (a.questions.length) { root.append(h("h2", "", "Open questions: you must decide"),
+  if (a.views.length) { const vs = a.views.filter(v => keep(D && D.v.has(v.name), 0));
+    root.append(h("h2", "", "State diagrams")); vs.forEach(v => root.append(h("h3", "", v.name), diagram(v))); hid(root, a.views.length - vs.length); }
+  const gx = D ? D.re : [];
+  if (a.examples.length || gx.length) { root.append(h("h2", "", "Examples"), h("p", "sub", "Concrete scenarios replayed against the model. Click to step through."));
+    const es = a.examples.filter(e => keep(D && D.e.has(e.id), e.status !== "ok"));
+    es.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(e => root.append(exampleRow(e, D && D.e.get(e.id))));
+    gx.forEach(e => root.append(goneRow(e, "removed"))); hid(root, a.examples.length - es.length); }
+  const gq = D ? D.rq : [];
+  if (a.questions.length || gq.length) { root.append(h("h2", "", "Open questions: you must decide"),
     h("p", "sub", "The model does something here that no requirement covers. Say whether that is right."));
-    a.questions.forEach(q => root.append(questionRow(q))); }
+    const qs = a.questions.filter(q => keep(D && D.q.has(q.text), 0));
+    qs.forEach(q => root.append(questionRow(q, D && D.q.has(q.text))));
+    gq.forEach(q => root.append(goneRow(q, "resolved", "q"))); hid(root, a.questions.length - qs.length); }
   const at = Object.entries(a.atomic || {});
   if (at.length) { root.append(h("h2", "", "Concurrency decisions"));
     const tb = h("tbody"); at.forEach(([k, v]) => tb.append(h("tr", "", h("td", "f act", k), h("td", "", v))));
@@ -270,11 +358,15 @@ if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No revie
 else {
   app.append(h("h1", "", "Spec review"));
   const body = h("div"), tabs = h("div", "tabs"); tabs.setAttribute("role", "tablist");
-  const show = k => { [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(DATA[k])); };
+  let only = true, cur = 0;
+  const show = k => { cur = k; [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(DATA[k], only)); };
   DATA.forEach((a, k) => { const bad = problem(a), b = h("button", "tab", a.area,
-      h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"));
+      h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"), changed(diff(a)) ? h("span", "chgd", "● changed") : null);
     b.setAttribute("role", "tab"); b.onclick = () => show(k); tabs.append(b); });
-  if (DATA.length > 1) app.append(tabs);
-  app.append(body); show(DATA.findIndex(problem) >= 0 && DATA.length > 1 ? 0 : 0);
+  if (DATA.some(a => a.since)) {
+    const cb = h("input"); cb.type = "checkbox"; cb.checked = only; cb.onchange = () => { only = cb.checked; show(cur); };
+    app.append(h("div", "bar", DATA.length > 1 ? tabs : null, h("label", "tog", cb, "only what changed")));
+  } else if (DATA.length > 1) app.append(tabs);
+  app.append(body); show(0);
 }
 </script></body></html>
