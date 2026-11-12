@@ -11,7 +11,7 @@ An area's page holds:
 - under each journey its walkthroughs: specific runs worth knowing, moment by moment, told in the area's named views;
 - the assumptions: what the model takes for granted, simplifies or leaves out;
 - every invariant and requirement, in plain words, with how strongly it is verified and where it comes from;
-- the state diagrams;
+- the state machines: one diagram per kind of thing that has a life of its own;
 - the open questions that are the person's to answer;
 - the decisions already taken, with their reasons;
 - for an area bound to code: whether the code agrees, and what is compared.

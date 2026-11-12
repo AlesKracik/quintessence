@@ -172,6 +172,9 @@ def area : Area State Action where
   views := sids.map (fun x => (s!"session {x}", sessionView x))
     ++ users.map (fun u => (s!"account of {u}", accountView u))
     ++ users.map (fun u => (s!"failed sign-ins of {u}", fun s => toString (attemptsOf s u)))
+  lifecycles := [
+    ("session", fun s => sids.map (sessionView · s)),
+    ("account", fun s => users.map (accountView · s))]
   assumptions := [
     "Two users (alice, bob) and two sessions (s1, s2) stand for any number of them.",
     "Time is counted in ticks while a session is idle; the search stops one tick past the session timeout, so nothing is claimed about what happens long after a session expired.",

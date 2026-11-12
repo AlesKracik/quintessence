@@ -164,9 +164,17 @@ structure Area (σ α : Type) where
   journeys : List (Journey α) := []
   walkthroughs : List (Walkthrough σ α) := []
   /-- Named projections of the state in words a reader knows ("seat s1" is
-  "held"). The readback draws each as a diagram and tells the journeys and
-  walkthroughs in them: a step shows which views changed, not the raw state. -/
+  "held by alice"), one per thing in the scope. The readback tells the
+  walkthroughs in them: a moment shows which views changed, not the raw state. -/
   views : List (String × (σ → String)) := []
+  /-- The principal state machines of the area: one per kind of thing with a
+  life of its own (a group, a run, a copy of a recovery point at a site), with
+  its states in the person's words. The function gives the state of every
+  possible instance of that kind, always the same number of them in the same
+  order ("none" where there is none yet). The readback draws one diagram per
+  kind, over all instances together: generic, like a journey, with no
+  particular instance and no counters in it. -/
+  lifecycles : List (String × (σ → List String)) := []
   /-- Per action name: the decision on whether it can interleave with other
   events inside the implementation. A missing entry is an open question. -/
   atomic : List (String × String) := []
@@ -274,11 +282,11 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
   let acts := A.actions.toArray
   let reqs := A.requirements.toArray
   let invs := A.invariants.toArray
-  let views := A.views.toArray
+  let lifes := A.lifecycles.toArray
   -- paired with their positions once: the loops below run for every state and action
   let actsI := acts.zipIdx
   let invsI := invs.zipIdx
-  let viewsI := views.zipIdx
+  let lifesI := lifes.zipIdx
   let root := hash A.init
   let mut seen : Std.HashMap UInt64 (UInt64 × Nat) := Std.HashMap.emptyWithCapacity 1024
   seen := seen.insert root (root, 0)
@@ -300,7 +308,7 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
         stopped := true
         break
       let fs := hash s
-      let vs := views.map fun v => v.2 s
+      let ls := lifes.map fun l => l.2 s
       for (a, i) in actsI do
         let r := A.step a s
         let speaking := applying reqs s a reqs.size []
@@ -317,9 +325,10 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
         | none => pure ()
         | some t =>
           if !A.bound t then cut := cut + 1 else
-          for (v, k) in viewsI do
-            let w := v.2 t
-            if w != vs[k]! then edges := edges.insert (k, vs[k]!, names[i]!, w)
+          -- an instance that changed state is one transition of its kind's machine
+          for (l, k) in lifesI do
+            for (a, b) in ls[k]!.zip (l.2 t) do
+              if a != b then edges := edges.insert (k, a, names[i]!, b)
           let ft := hash t
           if !seen.contains ft then
             seen := seen.insert ft (fs, i)
@@ -740,8 +749,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("questions", .arr <| questions.map fun (text, run) => withSteps full run [("text", .str text)]),
     ("atomic", Json.mkObj (A.atomic.map fun (n, d) => (n, .str d))),
     ("assumptions", .arr (A.assumptions.map .str).toArray),
-    ("views", .arr <| (A.views.zipIdx.map fun ((name, v), k) => Json.mkObj [
-      ("name", .str name), ("initial", .str (v A.init)),
+    ("lifecycles", .arr <| (A.lifecycles.zipIdx.map fun ((name, l), k) => Json.mkObj [
+      ("name", .str name), ("initial", .arr ((l A.init).eraseDups.map .str).toArray),
       ("edges", .arr <| (sortedEdges.filter (·.1 == k)).map fun (_, a, n, b) =>
         .arr #[.str a, .str n, .str b])]).toArray)]
   let failed := (claims.toList.filterMap fun (id, _, _, _, _, verdict, _) =>

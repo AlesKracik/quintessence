@@ -166,6 +166,8 @@ def area : Area State Action where
         .refusal "A fourth try is not made." (.cancel_unanswered "alice" true)] }]
   views := customers.map (fun c => (s!"subscription of {c}", statusView c))
     ++ customers.map (fun c => (s!"cancellation tries of {c}", retryView c))
+  lifecycles := [
+    ("subscription", fun s => customers.map (statusView · s))]
   assumptions := [
     "Two customers (alice, bob) stand for any number; each already has an active subscription.",
     "The billing provider is outside the model: its answer to a cancellation (accepted, declined, no answer) arrives as part of the action.",

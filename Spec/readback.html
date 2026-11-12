@@ -158,10 +158,10 @@ const origin = x => (x.sources || []).length ? "from: " + x.sources.join(", then
 
 // ---- state diagram ----
 function diagram(v) {
-  const names = [...new Set([v.initial, ...v.edges.flatMap(e => [e[0], e[2]])])];
+  const inits = [].concat(v.initial), names = [...new Set([...inits, ...v.edges.flatMap(e => [e[0], e[2]])])];
   const out = {}; names.forEach(x => out[x] = []);
   v.edges.forEach(e => out[e[0]].push(e[2]));
-  const layer = {}; let queue = [v.initial]; layer[v.initial] = 0;
+  const layer = {}; let queue = [...inits]; inits.forEach(x => layer[x] = 0);
   const bfs = () => { while (queue.length) { const a = queue.shift();
     for (const b of out[a]) if (!(b in layer)) { layer[b] = layer[a] + 1; queue.push(b); } } };
   bfs();
@@ -207,9 +207,9 @@ function diagram(v) {
     const lab = s("text", { x: lx, y: ly + 4, "text-anchor": "middle", class: "lb" }, text); svg.append(lab);
   }
   for (const nm of names) { const p = pos[nm];
-    svg.append(s("rect", { x: p.x - p.w / 2, y: p.y - H / 2, width: p.w, height: H, rx: 8, class: "nd" + (nm === v.initial ? " ini" : "") }),
+    svg.append(s("rect", { x: p.x - p.w / 2, y: p.y - H / 2, width: p.w, height: H, rx: 8, class: "nd" + (inits.includes(nm) ? " ini" : "") }),
       s("text", { x: p.x, y: p.y + 4, "text-anchor": "middle" }, nm));
-    if (nm === v.initial) svg.append(s("text", { x: p.x, y: p.y + H / 2 + 14, "text-anchor": "middle", class: "tag" }, "▶ START")); }
+    if (inits.includes(nm)) svg.append(s("text", { x: p.x, y: p.y + H / 2 + 14, "text-anchor": "middle", class: "tag" }, "▶ START")); }
   return h("div", "dg", svg);
 }
 
@@ -383,7 +383,7 @@ function diff(a) {
   const ca = codeOf(a), cb = codeOf(b);
   if (ca.status !== cb.status) D.code = [cb.status, ca.status];
   D.bind = bind(ca) !== bind(cb);
-  for (const v of a.views) { const o = (b.views || []).find(x => x.name === v.name); if (!o || edgeKey(o) !== edgeKey(v)) D.v.add(v.name); }
+  for (const v of a.lifecycles || []) { const o = (b.lifecycles || []).find(x => x.name === v.name); if (!o || edgeKey(o) !== edgeKey(v)) D.v.add(v.name); }
   D.n = D.c.size + D.w.size + D.j.size + D.rj.length + D.q.size + D.v.size + D.rc.length + D.rw.length + D.rq.length + D.as.size + D.ras.length + (D.code ? 1 : 0) + (D.bind ? 1 : 0);
   return D;
 }
@@ -406,7 +406,7 @@ function changeBlock(D) {
   p(wids("status"), "walkthrough changed status", "walkthroughs changed status"); p(D.rw.map(x => x.id), "removed walkthrough", "removed walkthroughs", 1);
   p(D.q.size, "new question", "new questions"); p(D.rq.length, "resolved question", "resolved questions");
   p(D.as.size, "new assumption", "new assumptions"); p(D.ras.length, "dropped assumption", "dropped assumptions", 1);
-  p(D.v.size, "state diagram changed", "state diagrams changed");
+  p(D.v.size, "state machine changed", "state machines changed");
   const line = [];
   L.forEach((x, i) => { if (i) line.push(" · "); line.push(x); });
   if (line.length) box.append(h("p", "", line));
@@ -493,12 +493,19 @@ function render(a, only) {
     cs.sort((x, y) => (y.status !== "ok") - (x.status !== "ok")).forEach(c => S.append(claimRow(c, D && D.c.get(c.id), jl(c.id))));
     gone.forEach(c => S.append(goneRow(c, "removed"))); hid(S, all.length - cs.length);
   }
-  if (a.views.length) { const vs = a.views.filter(v => keep(D && D.v.has(v.name), 0));
-    const same = new Map();  // views with the same diagram are drawn once
-    vs.forEach(v => { const k = edgeKey(v); if (!same.has(k)) same.set(k, []); same.get(k).push(v); });
-    const S = sec("State diagrams", a.views.length, "", D && some(D.v.size), "How each thing the journeys talk about can change.");
-    same.forEach(g => S.append(h("h3", "", g.map(v => v.name).join(", ")), diagram(g[0])));
-    hid(S, a.views.length - vs.length); }
+  const lcs = a.lifecycles || [];
+  if (lcs.length) { const vs = lcs.filter(v => keep(D && D.v.has(v.name), 0));
+    const S = sec("State machines", lcs.length, "", D && some(D.v.size),
+      "The principal state machines of the area: the life of each kind of thing, over all of them together. Arrows carry the action that makes the change.");
+    vs.forEach(v => { S.append(h("h3", "", v.name), diagram(v));
+      // the same machine as a table: a crowded drawing is easier to read this way
+      const m = new Map(); v.edges.forEach(([x, act, y]) => { const k = x + "\0" + y; if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(act)) m.get(k).push(act); });
+      const tb = h("tbody"); [...m].forEach(([k, acts]) => { const [x, y] = k.split("\0");
+        tb.append(h("tr", "", h("td", "", x), h("td", "", "→ " + y), h("td", "mono", acts.join(", ")))); });
+      const d = h("details", "sub", h("summary", "", "as a table (" + m.size + " transitions)"),
+        h("div", "tw", h("table", "", h("thead", "", h("tr", "", ["from", "to", "by"].map(x => h("th", "", x)))), tb)));
+      d.open = m.size > 10; S.append(d); });
+    hid(S, lcs.length - vs.length); }
   const gq = D ? D.rq : [];
   if (a.questions.length || gq.length) {
     const S = sec("Open questions", a.questions.length, "", D && some(D.q.size + gq.length),

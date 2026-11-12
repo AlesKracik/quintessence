@@ -179,6 +179,11 @@ def area : Area State Action where
         .step "Bob can now hold it." (.hold "s2" "bob")] }]
   views := seatNames.map (fun x => (s!"seat {x}", seatView x))
     ++ customers.map (fun c => (s!"seats on hold for {c}", fun s => toString (heldBy s c)))
+  lifecycles := [
+    ("seat", fun s => seatNames.map fun x => match effective s x with
+      | .Free => "free"
+      | .Held _ _ => "on hold"
+      | .Sold _ => "sold")]
   assumptions := [
     "Three seats and two customers (alice, bob) stand for any number; three seats are needed to show the limit of two holds.",
     "A hold lasts 2 units of time here; the search stops at time 3, so later holds are never seen to expire.",

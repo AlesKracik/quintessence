@@ -97,41 +97,6 @@
    "journey": "J-001",
    "id": "W-003",
    "goal": "The provider never answers Alice's cancellation."}],
- "views":
- [{"name": "subscription of alice",
-   "initial": "active",
-   "edges":
-   [["active", "cancel_subscription", "cancelled, access until period end"],
-    ["cancelled, access until period end", "expire_period", "expired"]]},
-  {"name": "subscription of bob",
-   "initial": "active",
-   "edges":
-   [["active", "cancel_subscription", "cancelled, access until period end"],
-    ["cancelled, access until period end", "expire_period", "expired"]]},
-  {"name": "cancellation tries of alice",
-   "initial": "0 unanswered tries",
-   "edges":
-   [["0 unanswered tries", "cancel_unanswered", "1 unanswered tries"],
-    ["1 unanswered tries", "cancel_declined", "0 unanswered tries"],
-    ["1 unanswered tries", "cancel_subscription", "0 unanswered tries"],
-    ["1 unanswered tries", "cancel_unanswered", "2 unanswered tries"],
-    ["2 unanswered tries", "cancel_declined", "0 unanswered tries"],
-    ["2 unanswered tries", "cancel_subscription", "0 unanswered tries"],
-    ["2 unanswered tries", "cancel_unanswered", "3 unanswered tries"],
-    ["3 unanswered tries", "cancel_declined", "0 unanswered tries"],
-    ["3 unanswered tries", "cancel_subscription", "0 unanswered tries"]]},
-  {"name": "cancellation tries of bob",
-   "initial": "0 unanswered tries",
-   "edges":
-   [["0 unanswered tries", "cancel_unanswered", "1 unanswered tries"],
-    ["1 unanswered tries", "cancel_declined", "0 unanswered tries"],
-    ["1 unanswered tries", "cancel_subscription", "0 unanswered tries"],
-    ["1 unanswered tries", "cancel_unanswered", "2 unanswered tries"],
-    ["2 unanswered tries", "cancel_declined", "0 unanswered tries"],
-    ["2 unanswered tries", "cancel_subscription", "0 unanswered tries"],
-    ["2 unanswered tries", "cancel_unanswered", "3 unanswered tries"],
-    ["3 unanswered tries", "cancel_declined", "0 unanswered tries"],
-    ["3 unanswered tries", "cancel_subscription", "0 unanswered tries"]]}],
  "search":
  {"states": 144,
   "exhaustive": true,
@@ -178,6 +143,12 @@
    "Can `expire_period` interleave with other events inside the implementation, or is it atomic? Not decided."},
   {"text":
    "Can `request_refund` interleave with other events inside the implementation, or is it atomic? Not decided."}],
+ "lifecycles":
+ [{"name": "subscription",
+   "initial": ["active"],
+   "edges":
+   [["active", "cancel_subscription", "cancelled, access until period end"],
+    ["cancelled, access until period end", "expire_period", "expired"]]}],
  "journeys":
  [{"title": "Cancelling a subscription",
    "steps":
@@ -222,7 +193,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "3717290635108585864",
+  "inputs": "7878652638695009991",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",

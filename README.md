@@ -85,6 +85,7 @@ Everything about one part of a system lives in an **area**:
 | Invariants | What must hold in every reachable state |
 | Requirements | "When this holds and that action arrives, the system shall …" or "… shall refuse" |
 | Journeys | The business cases a person recognises the area by, each as its usual course: steps in order, a loop where a step repeats, and every way the system turns a step down |
+| State machines | The principal state machines: one per kind of thing with a life of its own, generic over all instances, drawn from what the search saw |
 | Walkthroughs | Specific runs worth knowing, told moment by moment in the person's words, with the outcome checked where it matters: a failure and what follows, a boundary, a message that arrives twice |
 | Scope | The finite set of actions (and an optional bound on states) the search explores |
 | Code (optional) | How the area maps onto existing code: what to run for each action, what to read after each step |
