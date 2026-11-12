@@ -31,24 +31,24 @@ def area : Area State Action where
        .cancel_again c, .expire_period c, .request_refund c])
   invariants := [
     { id := "INV-001",
-      source := "the earlier Quint specification of this example", text := "A cancelled or expired subscription is never billed again.",
+      sources := ["the earlier Quint specification of this example"], text := "A cancelled or expired subscription is never billed again.",
       holds := noBillingAfterCancel,
       proof := some ⟨Proofs.noBillingAfterCancel.noBillingAfterCancel_holds⟩ },
     { id := "INV-002",
-      source := "the earlier Quint specification of this example", text := "A cancelled subscriber keeps access until the paid period ends.",
+      sources := ["the earlier Quint specification of this example"], text := "A cancelled subscriber keeps access until the paid period ends.",
       holds := noRefundIssued,
       proof := some ⟨Proofs.noRefundIssued.noRefundIssued_holds⟩ },
     { id := "INV-003",
-      source := "the earlier Quint specification of this example", text := "A cancellation the provider did not accept leaves the subscription Active and billable.",
+      sources := ["the earlier Quint specification of this example"], text := "A cancellation the provider did not accept leaves the subscription Active and billable.",
       holds := unacceptedCancelLeavesActive,
       proof := some ⟨Proofs.unacceptedCancelLeavesActive.unacceptedCancelLeavesActive_holds⟩ },
     { id := "INV-004",
-      source := "the earlier Quint specification of this example", text := "Unanswered cancellation tries never exceed the retry budget of three.",
+      sources := ["the earlier Quint specification of this example"], text := "Unanswered cancellation tries never exceed the retry budget of three.",
       holds := retriesWithinBudget,
       proof := some ⟨Proofs.retriesWithinBudget.retriesWithinBudget_holds⟩ }]
   requirements := [
     { id := "REQ-001",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When a customer cancels an active subscription and the provider accepts, future billing stops.",
       when := fun s a => match a with
         | .cancel_subscription c n => s.status.get c == .Active && n != .NoNotice
@@ -58,7 +58,7 @@ def area : Area State Action where
             && t.lastBillingResult.get c == .Success
         | _ => true },
     { id := "REQ-002",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When a cancellation succeeds, access stays available until the paid period ends.",
       when := fun s a => match a with
         | .cancel_subscription c n => s.status.get c == .Active && n != .NoNotice
@@ -67,7 +67,7 @@ def area : Area State Action where
         | .cancel_subscription c _ => t.status.get c == .Cancelled && t.accessUntilPeriodEnd.get c
         | _ => true },
     { id := "REQ-007",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When a cancellation succeeds, the customer is told by email or by an in-app notice.",
       when := fun s a => match a with
         | .cancel_subscription c n => s.status.get c == .Active && n != .NoNotice
@@ -77,7 +77,7 @@ def area : Area State Action where
         | .cancel_subscription c _ => t.notice.get c == .Email || t.notice.get c == .InApp
         | _ => true },
     { id := "REQ-008",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "If the billing provider declines a cancellation, the subscription stays active and billable.",
       when := fun s a => match a with
         | .cancel_declined c => s.status.get c == .Active
@@ -87,7 +87,7 @@ def area : Area State Action where
             && t.billingEnabled.get c
         | _ => true },
     { id := "REQ-004",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "If the billing provider does not answer a cancellation, the subscription stays active and billable.",
       when := fun s a => match a with
         | .cancel_unanswered c _ => s.status.get c == .Active && decide (triesOf s c < MAX_CANCEL_RETRIES)
@@ -98,7 +98,7 @@ def area : Area State Action where
               && t.status.get c == .Active && t.billingEnabled.get c
         | _ => true },
     { id := "REQ-003",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When a customer cancels an already cancelled subscription, nothing changes.",
       when := fun s a => match a with
         | .cancel_again c => s.status.get c == .Cancelled
@@ -108,7 +108,7 @@ def area : Area State Action where
             && t.billingEnabled.get c == s.billingEnabled.get c && t.notice.get c == s.notice.get c
         | _ => true },
     { id := "REQ-005",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When the paid period of a cancelled subscription ends, access is withdrawn.",
       when := fun s a => match a with
         | .expire_period c => s.status.get c == .Cancelled
@@ -117,7 +117,7 @@ def area : Area State Action where
         | .expire_period c => t.status.get c == .Expired && !t.accessUntilPeriodEnd.get c
         | _ => true },
     { id := "REQ-006",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "A refund for the unused part of a paid period is never issued.",
       when := fun _ a => match a with
         | .request_refund _ => true
@@ -166,7 +166,7 @@ def area : Area State Action where
       expect := fun s => s.status.get "alice" == .Cancelled && !s.billingEnabled.get "alice" }]
   journeys := [
     { id := "J-001",
-      source := "written for this example", title := "Cancelling a subscription",
+      sources := ["written for this example"], title := "Cancelling a subscription",
       goal := "Alice no longer wants to pay, but has paid for the current period.",
       moments := [
         .step "Alice cancels; the provider accepts and she gets an email." (.cancel_subscription "alice" .Email),
@@ -174,7 +174,7 @@ def area : Area State Action where
         .refusal "She asks for a refund of the unused part of the period and is turned down." (.request_refund "alice"),
         .step "The paid period ends and her access ends with it." (.expire_period "alice")] },
     { id := "J-002",
-      source := "written for this example", title := "The provider does not cooperate",
+      sources := ["written for this example"], title := "The provider does not cooperate",
       goal := "Bob wants to cancel while the billing provider is having a bad day.",
       moments := [
         .step "Bob cancels, but the provider does not answer in time." (.cancel_unanswered "bob" true),

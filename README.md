@@ -89,6 +89,8 @@ Everything about one part of a system lives in an **area**:
 | Scope | The finite set of actions (and an optional bound on states) the search explores |
 | Code (optional) | How the area maps onto existing code: what to run for each action, what to read after each step |
 
+Every requirement, invariant and journey also records where it comes from, as a history: extracted from the code, later changed by a person, confirmed against a document. The reviewer sees that history next to the claim.
+
 The checker (`lake exe check`) goes through every area and does four things.
 
 1. **Audits the proofs.** The program cannot even be built unless every attached proof is accepted by the Lean kernel and rests on nothing but Lean's three standard axioms.

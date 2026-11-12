@@ -35,28 +35,28 @@ def area : Area State Action where
   bound := fun s => s.idleFor.keySet.all fun sid => decide (idleOf s sid ≤ MAX_SESSION_AGE + 1)
   invariants := [
     { id := "INV-001",
-      source := "the earlier Quint specification of this example", text := "A user has at most one active session.",
+      sources := ["the earlier Quint specification of this example"], text := "A user has at most one active session.",
       holds := atMostOneActiveSession,
       proof := some ⟨Proofs.atMostOneActiveSession.atMostOneActiveSession_holds⟩ },
     { id := "INV-002",
-      source := "the earlier Quint specification of this example", text := "A locked account has no active session.",
+      sources := ["the earlier Quint specification of this example"], text := "A locked account has no active session.",
       holds := noSessionWhileLocked,
       proof := some ⟨Proofs.noSessionWhileLocked.noSessionWhileLocked_holds⟩ },
     { id := "INV-003",
-      source := "the earlier Quint specification of this example", text := "An expired or logged-out session is never in a user's active set.",
+      sources := ["the earlier Quint specification of this example"], text := "An expired or logged-out session is never in a user's active set.",
       holds := noAccessWithInvalidToken,
       proof := some ⟨Proofs.noAccessWithInvalidToken.noAccessWithInvalidToken_holds⟩ },
     { id := "INV-004",
-      source := "the earlier Quint specification of this example", text := "Below five failed attempts the account stays unlocked.",
+      sources := ["the earlier Quint specification of this example"], text := "Below five failed attempts the account stays unlocked.",
       holds := noEarlyLockout,
       proof := some ⟨Proofs.noEarlyLockout.noEarlyLockout_holds⟩ },
     { id := "INV-005",
-      source := "the earlier Quint specification of this example", text := "No session expires before it has been idle longer than the timeout.",
+      sources := ["the earlier Quint specification of this example"], text := "No session expires before it has been idle longer than the timeout.",
       holds := noEarlyExpiry,
       proof := some ⟨Proofs.noEarlyExpiry.noEarlyExpiry_holds⟩ }]
   requirements := [
     { id := "REQ-001",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When a user who is not locked and has no active session signs in with a fresh session id, the session becomes active, belongs to the user, and the failed-attempt count resets.",
       when := fun s a => match a with
         | .login u sid => !isLocked s u && !s.sessions.contains sid && (activeSessionsOf s u).size == 0
@@ -66,14 +66,14 @@ def area : Area State Action where
             && (activeSessionsOf t u).contains sid && attemptsOf t u == 0
         | _ => true },
     { id := "REQ-005",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "While the account is locked, sign-in is refused.",
       when := fun s a => match a with
         | .login u _ => isLocked s u
         | _ => false,
       refused := true },
     { id := "REQ-002",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When the user logs out of an active session, the session is logged out.",
       when := fun s a => match a with
         | .logout sid => isActive s sid
@@ -82,7 +82,7 @@ def area : Area State Action where
         | .logout sid => statusOf t.sessions sid == .LoggedOut
         | _ => true },
     { id := "REQ-003",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When a sign-in attempt fails on an unlocked account, the failed-attempt count goes up by one, and the account is locked exactly when the count reaches five.",
       when := fun s a => match a with
         | .login_failed u => !isLocked s u
@@ -92,7 +92,7 @@ def area : Area State Action where
             && isLocked t u == decide (attemptsOf t u ≥ MAX_FAILED_ATTEMPTS)
         | _ => true },
     { id := "REQ-006",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When a failed sign-in locks the account, every active session of that user ends.",
       when := fun s a => match a with
         | .login_failed u => !isLocked s u
@@ -102,7 +102,7 @@ def area : Area State Action where
             || t.sessions.keySet.all fun sid => t.sessionOwner.get sid != u || !isActive t sid
         | _ => true },
     { id := "REQ-004",
-      source := "the earlier Quint specification of this example",
+      sources := ["the earlier Quint specification of this example"],
       text := "When an active session has been idle longer than the timeout and is expired, it becomes expired.",
       when := fun s a => match a with
         | .expire_session sid => isActive s sid && decide (idleOf s sid > MAX_SESSION_AGE)
@@ -139,7 +139,7 @@ def area : Area State Action where
       expect := fun s => isLocked s "alice" && !isActive s "s1" }]
   journeys := [
     { id := "J-001",
-      source := "written for this example", title := "Signing in and out",
+      sources := ["written for this example"], title := "Signing in and out",
       goal := "Alice wants to use the service and then leave it.",
       moments := [
         .step "Alice signs in." (.login "alice" "s1"),
@@ -147,7 +147,7 @@ def area : Area State Action where
         .step "She signs out." (.logout "s1"),
         .step "Later she signs in again." (.login "alice" "s2")] },
     { id := "J-002",
-      source := "the earlier specification's journey 'Locked out'", title := "Locked out",
+      sources := ["the earlier specification's journey 'Locked out'"], title := "Locked out",
       goal := "Someone tries wrong passwords on Alice's account while she is signed in.",
       moments := [
         .step "Alice signs in." (.login "alice" "s1"),
@@ -160,7 +160,7 @@ def area : Area State Action where
         .step "An administrator unlocks the account." (.unlock_account "alice"),
         .step "Alice signs in again." (.login "alice" "s2")] },
     { id := "J-003",
-      source := "written for this example", title := "Left idle",
+      sources := ["written for this example"], title := "Left idle",
       goal := "Alice signs in and then walks away from her desk.",
       moments := [
         .step "Alice signs in." (.login "alice" "s1"),
