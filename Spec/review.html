@@ -203,7 +203,8 @@ function ladder(c, cls) {
 function claimRow(c, ms, jl) {
   const cls = CLS[c.status] || "below", r = h("div", "row " + cls);
   r.append(h("div", "head", h("span", "id mono", c.id), h("span", "", c.text), h("span", "badge " + cls, ICON[cls]),
-    ms ? h("span", "mks", ms.map(mark)) : null, h("span", "verd", c.verdict), jl ? h("span", "verd jl", jl) : null, ladder(c, cls)));
+    ms ? h("span", "mks", ms.map(mark)) : null, h("span", "verd", c.verdict), jl ? h("span", "verd jl", jl) : null,
+    h("span", "verd jl", c.source ? "from: " + c.source : "origin not recorded"), ladder(c, cls)));
   if (c.steps && c.steps.length) { const box = h("div"); const b = h("button", "", "show counterexample"); b.style.marginTop = "6px";
     b.onclick = () => { if (box.firstChild) { box.replaceChildren(); b.textContent = "show counterexample"; }
       else { box.append(stepper(c.steps)); b.textContent = "hide counterexample"; } };
@@ -244,7 +245,7 @@ function journey(j, req, ms, fold) {
   d.open = !fold; let prev = new Map(j.start || []);
   (j.moments || []).forEach((m, i) => { tl.append(moment(m, i, prev, req)); if (m.state && !m.refused) prev = new Map(m.state); });
   d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]), ms ? ms.map(mark) : null),
-    h("div", "", h("p", "goal", j.goal), tl));
+    h("div", "", h("p", "goal", j.goal), j.source ? h("p", "verd", "from: " + j.source) : null, tl));
   return d;
 }
 function journeys(a, D, F) {

@@ -27,14 +27,17 @@ def area : Area State Action where
   -- first hold made at time 0 has run out and before later holds expire
   bound := fun s => decide (s.now ≤ 3)
   invariants := [
-    { id := "INV-001", text := "A customer never has more than two seats on hold at the same time.",
+    { id := "INV-001",
+      source := "code: app/reservation.py, hold (MAX_HOLDS)", text := "A customer never has more than two seats on hold at the same time.",
       holds := holdLimit,
       proof := some ⟨Proofs.holdLimit.holdLimit_holds⟩ },
-    { id := "INV-002", text := "No hold is valid for longer than two time units from now.",
+    { id := "INV-002",
+      source := "code: app/reservation.py, hold (HOLD_TTL)", text := "No hold is valid for longer than two time units from now.",
       holds := holdDeadline,
       proof := some ⟨Proofs.holdDeadline.holdDeadline_holds⟩ }]
   requirements := [
     { id := "REQ-001",
+      source := "code: app/reservation.py, hold",
       text := "When a customer asks to hold a free seat and has fewer than two seats on hold, the seat is held for that customer for two more time units.",
       when := fun s a => match a with
         | .hold x c => known s x && effective s x == .Free && heldBy s c < MAX_HOLDS
@@ -43,18 +46,21 @@ def area : Area State Action where
         | .hold x c => effective t x == .Held c (s.now + HOLD_TTL)
         | _ => true },
     { id := "REQ-002",
+      source := "code: app/reservation.py, hold",
       text := "A seat that is held (by anyone, including the asking customer) or sold cannot be held.",
       when := fun s a => match a with
         | .hold x _ => effective s x != .Free
         | _ => false,
       refused := true },
     { id := "REQ-003",
+      source := "code: app/reservation.py, hold (MAX_HOLDS)",
       text := "A customer who already has two seats on hold cannot hold a third, even when the seat is free.",
       when := fun s a => match a with
         | .hold x c => effective s x == .Free && heldBy s c ≥ MAX_HOLDS
         | _ => false,
       refused := true },
     { id := "REQ-004",
+      source := "code: app/reservation.py, confirm",
       text := "When a customer confirms a seat they have on hold, the seat is sold to them.",
       when := fun s a => match a with
         | .confirm x c => match effective s x with
@@ -65,6 +71,7 @@ def area : Area State Action where
         | .confirm x c => effective t x == .Sold c
         | _ => true },
     { id := "REQ-005",
+      source := "code: app/reservation.py, confirm",
       text := "Confirming a seat that is free, sold, held by someone else, or whose hold has run out is refused.",
       when := fun s a => match a with
         | .confirm x c => match effective s x with
@@ -73,6 +80,7 @@ def area : Area State Action where
         | _ => false,
       refused := true },
     { id := "REQ-006",
+      source := "code: app/reservation.py, cancel",
       text := "When a customer cancels a seat that is held or sold to them, the seat becomes free.",
       when := fun s a => match a with
         | .cancel x c => match effective s x with
@@ -84,6 +92,7 @@ def area : Area State Action where
         | .cancel x _ => effective t x == .Free
         | _ => true },
     { id := "REQ-007",
+      source := "code: app/reservation.py, cancel",
       text := "Cancelling a seat that is free (including one whose hold has run out) or that belongs to another customer is refused.",
       when := fun s a => match a with
         | .cancel x c => match effective s x with
@@ -93,12 +102,14 @@ def area : Area State Action where
         | _ => false,
       refused := true },
     { id := "REQ-008",
+      source := "code: the clock passed to ReservationService",
       text := "Time can always pass: a tick moves the clock forward by one unit.",
       when := fun _ a => match a with
         | .tick => true
         | _ => false,
       shall := fun s _ t => t.now == s.now + 1 },
     { id := "REQ-009",
+      source := "code: app/reservation.py, _entry (HOLD_TTL)",
       text := "A hold that has not been confirmed expires when the clock reaches its deadline, and the seat then reads as free.",
       when := fun s a => match a with
         | .tick => match effective s "s1" with
@@ -140,7 +151,8 @@ def area : Area State Action where
       run := [.hold "s1" "alice", .hold "s2" "alice", .confirm "s1" "alice", .hold "s3" "alice"],
       expect := fun s => heldBy s "alice" == 2 && statusOf s "s1" == "sold" }]
   journeys := [
-    { id := "J-001", title := "Buying a seat",
+    { id := "J-001",
+      source := "written for this example", title := "Buying a seat",
       goal := "Alice wants seat s1 and needs a moment to pay.",
       moments := [
         .step "Alice puts seat s1 on hold." (.hold "s1" "alice"),
@@ -148,7 +160,8 @@ def area : Area State Action where
         .step "A moment passes while she pays." .tick,
         .step "Alice confirms; the seat is hers." (.confirm "s1" "alice"),
         .refusal "Bob still cannot have it." (.hold "s1" "bob")] },
-    { id := "J-002", title := "A hold that runs out",
+    { id := "J-002",
+      source := "written for this example", title := "A hold that runs out",
       goal := "Alice puts a seat on hold and then does nothing.",
       moments := [
         .step "Alice puts seat s1 on hold." (.hold "s1" "alice"),
@@ -156,7 +169,8 @@ def area : Area State Action where
         .step "More time passes; the hold has run out." .tick,
         .refusal "Alice tries to confirm, too late." (.confirm "s1" "alice"),
         .step "Bob takes the seat instead." (.hold "s1" "bob")] },
-    { id := "J-003", title := "Changing one's mind",
+    { id := "J-003",
+      source := "written for this example", title := "Changing one's mind",
       goal := "Alice buys a seat and later gives it back.",
       moments := [
         .step "Alice puts seat s2 on hold." (.hold "s2" "alice"),

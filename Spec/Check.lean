@@ -35,6 +35,8 @@ structure Invariant {σ α : Type} (init : σ) (step : α → σ → Option σ) 
   text : String
   holds : σ → Bool
   proof : Option (PLift (∀ s, Reachable init step s → holds s = true)) := none
+  /-- Where the claim comes from: a person, a document, the code. -/
+  source : String := ""
 
 /-- "When `when` holds, the system shall `shall`", or with `refused := true`,
 "shall refuse". Checked on every explored state and action: where `when`
@@ -45,6 +47,9 @@ structure Requirement (σ α : Type) where
   when : σ → α → Bool
   shall : σ → α → σ → Bool := fun _ _ _ => true
   refused : Bool := false
+  /-- Where the requirement comes from: a person, a document, the code. Free
+  text, shown to the reviewer, e.g. `"docs/holds.md"`, `"code: reservation.py, hold"`. -/
+  source : String := ""
 
 /-- A concrete run from the initial state: every action in `run` must be
 accepted, `expect` must hold at the end, and `refused` (if any) must then be
@@ -78,6 +83,8 @@ structure Journey (α : Type) where
   /-- Who wants what. -/
   goal : String
   moments : List (Moment α)
+  /-- Where the story comes from. -/
+  source : String := ""
 
 /-- The binding of an area to code. The mapping is data: what to run in the
 code for each action, and what to read from it after every step. A language
@@ -560,7 +567,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       s := after
     let status := if ok then "ok" else "failed"
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
-      ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("status", .str status),
+      ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("source", .str j.source),
+      ("status", .str status),
       ("moments", .arr (rows.map (· full)))] ++ (if full then [("start", stateJson A.init)] else []))
   if A.journeys.isEmpty then
     questions := questions.push
@@ -593,6 +601,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let withSteps (full : Bool) (run : Option (List α)) (obj : List (String × Json)) : Json :=
     Json.mkObj (obj ++ (if full then (run.map fun r => ("steps", steps A r)).toList else []))
   let sortedEdges := f.edges.toArray.qsort fun a b => oneLine a < oneLine b
+  let sources := A.invariants.map (fun i => (i.id, i.source)) ++ A.requirements.map (fun q => (q.id, q.source))
   let json (full : Bool) : Json := Json.mkObj <| (if full then [("since", (since.map Json.str).getD .null), ("before", before)] else []) ++ [
     ("area", .str A.name),
     ("search", Json.mkObj [
@@ -609,7 +618,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("claims", .arr <| claims.map fun (id, kind, text, level, target, verdict, cex) =>
       withSteps full cex [("id", .str id), ("kind", .str kind), ("text", .str text),
         ("level", num level), ("target", num target), ("verdict", .str verdict),
-        ("status", .str (status level target verdict))]),
+        ("status", .str (status level target verdict)), ("source", .str ((sources.lookup id).getD ""))]),
     ("journeys", .arr <| journeys.map fun (_, _, json) => json full),
     ("examples", .arr <| examples.map fun (id, text, ok, run) =>
       withSteps full (some run) [("id", .str id), ("text", .str text),

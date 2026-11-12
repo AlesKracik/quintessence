@@ -6,7 +6,7 @@ The person you work with decides what the system must do. You write the Lean, ru
 
 ## Starting a project (once)
 
-If the directory has no `lakefile.toml` yet, set the project up first, following "Starting a project" in the framework's `README.md` step by step (the four files, `lake update`, the commands, `.gitignore`, `.spec/project.json`, `.spec/local.json`, CI). Ask the person for the framework revision to pin, for the repositories and whatever documents exist about the system, and for the local checkout paths; do not clone anything on your own. `Main.lean` must be exactly the three lines given there: that file decides what counts as verified.
+If the directory has no `lakefile.toml` yet, set the project up first: follow `SETUP.md` of the framework (in a project that already has the package it is at `.lake/packages/quintessence/SETUP.md`).
 
 ## 0. The change
 
@@ -26,6 +26,7 @@ Start from the journeys. Ask the person for the stories of the people who use th
 Rules for the claims:
 
 - Every `text` is one plain sentence the person can confirm or reject.
+- Give every requirement, invariant and journey its `source`: who or what it comes from (the person, a document and where in it, a place in the code). The reviewer sees it next to the claim. Do not invent one; leave it empty when you do not know, and ask.
 - A requirement's `when` is the full condition under which the action is accepted (or, with `refused := true`, refused). Where `when` holds, the checker demands that the step succeeds and satisfies `shall`.
 - Keep the scope small enough that the search finishes within the budget. Add a `bound` only for values that grow without limit, and say in a comment what it cuts off.
 - Give one or two `views` so the review page can draw the lifecycle.

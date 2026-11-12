@@ -4,9 +4,65 @@ Requirements as mathematical objects, so that the correctness of AI-written work
 
 A requirement here is a statement about a state machine, written in [Lean 4](https://lean-lang.org). The machine checks it. A person reviews a generated page, not the Lean. The goal and every decision behind it are in [GOAL.md](GOAL.md).
 
-## Using it
+## Working with it
 
-You work with an AI agent through four commands (in `.claude/commands/`, for Claude Code). They are stages of one loop, and dependencies rather than a schedule: any stage can be re-entered at any time, and a change to the requirements sends the later ones round again.
+Everything is done by talking to an AI coding agent; the commands are written for Claude Code. You do not write Lean, edit configuration or run tools. You need the agent, git, and the address of this repository:
+
+```
+https://github.com/AlesKracik/quintessence
+```
+
+### 1. Start a project
+
+Open the agent where the requirements should live: a new repository, or a directory in an existing one. Tell it:
+
+> Set up a Quintessence project here. The framework is at https://github.com/AlesKracik/quintessence, branch `framework-redesign`. Read `SETUP.md` there and follow it.
+
+It will ask you for a name, which repositories hold the code and where you have them, and what is written about the system (documents of any kind; none are required). It may ask to install Lean. It ends by running the checker once. From then on the four commands below are available.
+
+### 2. Describe a part of the system, or have it extracted from code
+
+Use `/spec` and say what you want in your own words:
+
+> /spec We sell seats for events. A customer can put a seat on hold for a short time, then buy it or lose it.
+
+> /spec Extract the billing component from the existing code. Start from docs/billing.md.
+
+The agent asks for the stories of the people who use that part of the system, journey by journey, and writes the requirements behind them. Then it checks its own work and comes back with what the check found: a run in which two requirements contradict each other, a situation no requirement covers, a place where a document and the code say different things. It asks these one at a time. You answer in plain words; it never answers for you.
+
+### 3. Read it back
+
+> /spec-readback
+
+The agent generates the review page and tells you what to look at. The page opens with the journeys as storyboards, then every requirement with how strongly it is verified and where it comes from, and for a later change only what that change did. Say what is wrong and the agent goes back to step 2. Approving the pull request is the approval.
+
+### 4. Have the code written
+
+> /spec-code-generate
+
+The agent asks where the code goes and in which language, writes it from the requirements, and connects it to them. For code that already exists this step is skipped.
+
+### 5. Check the code against the requirements
+
+> /spec-code-verify
+
+The checker drives the code through the model and compares every step. When they differ, the agent shows you the run and you decide: the code is wrong, the requirement is wrong, or the change is intended and the requirement changes first.
+
+### Later
+
+A change is the same loop on a new branch:
+
+> /spec Holds should last 15 minutes, not 2.
+
+The readback then shows only what the change did, and the code check re-runs only where git shows something changed. Several changes can be in progress at once.
+
+To use a newer version of the framework:
+
+> Move this project to the latest framework revision, following SETUP.md.
+
+### The stages at a glance
+
+They are dependencies rather than a schedule: any stage can be re-entered at any time, and a change to the requirements sends the later ones round again.
 
 | Stage | Command | What happens | Done when |
 |---|---|---|---|
@@ -15,105 +71,9 @@ You work with an AI agent through four commands (in `.claude/commands/`, for Cla
 | Code generation | `/spec-code-generate` | Write the code and its binding from the model, on the change's branch in the code repository | Code committed, binding in place |
 | Code validation | `/spec-code-verify` | Drive the code through the model; resolve any drift with the person | The ledger records agreement |
 
-The agent writes the model, the proofs and the code, and none of them needs to be trusted. A proof that is wrong does not compile. A requirement that the model breaks comes back with the shortest run that breaks it. Code that differs from the model comes back with the run that shows it. What the agent cannot settle is whether a requirement says what the person meant, which is what the readback is for.
+The agent writes the model, the proofs and the code, and none of them needs to be trusted. A proof that is wrong does not compile. A requirement that the model breaks comes back with the shortest run that breaks it. Code that differs from the model comes back with the run that shows it. What the agent cannot settle is whether a requirement says what you meant, which is what the readback is for.
 
-Underneath, every command runs the same program, the **checker**: `lake exe check`. It is deterministic and involves no AI. The agent runs it, and so does CI; you do not need to. Everything below describes what it checks and how.
-
-## Starting a project
-
-A project is a directory with its own `lakefile.toml`. It can be a new repository, or a directory in an existing one, for instance the repository that holds the architecture documents or the code. You need [elan](https://github.com/leanprover/elan) and git; Lake fetches the framework for you.
-
-1. In the project directory, create four files.
-
-   `lean-toolchain`, the same as the framework's:
-
-   ```
-   leanprover/lean4:v4.22.0
-   ```
-
-   `lakefile.toml`. `rev` is a branch, tag or commit of the framework; a commit or tag keeps the project on a known version:
-
-   ```toml
-   name = "myproject"
-   defaultTargets = ["check"]
-
-   [[require]]
-   name = "quintessence"
-   git = "https://github.com/AlesKracik/quintessence"
-   rev = "framework-redesign"
-
-   [[lean_lib]]
-   name = "Areas"
-   globs = ["Areas", "Areas.+"]
-
-   [[lean_exe]]
-   name = "check"
-   root = "Main"
-   ```
-
-   `Main.lean`, exactly these lines, in every project:
-
-   ```lean
-   import Spec.Main
-   import Areas
-   checker_main Areas.all
-   ```
-
-   `Areas.lean`, the list of areas, empty for now:
-
-   ```lean
-   import Spec.Check
-
-   /-- Every area the checker runs. -/
-   def Areas.all : List Spec.Entry := []
-   ```
-
-2. Fetch the framework and take its commands:
-
-   ```
-   lake update
-   mkdir -p .claude && cp -r .lake/packages/quintessence/.claude/commands .claude/
-   ```
-
-   `lake update` puts the framework under `.lake/packages/quintessence/` and writes `lake-manifest.json`, which pins the exact version. Commit the manifest. Claude Code reads `.claude/commands/` from the directory it is started in, so in a subdirectory project either start it there or copy the commands to the repository root.
-
-3. Add to `.gitignore`:
-
-   ```
-   .lake/
-   out/
-   .spec/local.json
-   ```
-
-4. Say where things are, in `.spec/`:
-
-   `.spec/project.json` (committed): every repository the code lives in, and whatever is written about the system: architecture and design documents, READMEs, runbooks, product notes. Nothing here is required, and no structure is expected of the documents; list what exists, as files, directories, or `<repo>:<path>`.
-
-   ```json
-   { "documents": ["docs/", "platform-docs:services/billing.md", "billing:README.md"],
-     "repos": { "billing": "git@example.com:org/billing.git",
-                "platform-docs": "git@example.com:org/platform-docs.git" } }
-   ```
-
-   `.spec/local.json` (not committed): where you have those repositories checked out.
-
-   ```json
-   { "repo_paths": { "billing": "/home/me/src/billing", "platform-docs": "/home/me/src/platform-docs" } }
-   ```
-
-5. Check that it runs: `lake exe check` builds the checker and, with no areas yet, only writes an empty review page. The first build takes a minute or two.
-
-6. For CI, copy `.github/workflows/check.yml` from the framework and replace `example` by the project's directory (or remove those settings when the project is the repository root).
-
-From here on, work through the commands: `/spec` to write the first area, or to extract one from existing code.
-
-Where the code is:
-
-- In another repository: the binding says `repo := "billing"`, with paths relative to that repository's root.
-- In the project directory: `repo` is left out, and paths are relative to the project directory (`example/app/`).
-- In the same repository but outside the project directory: paths start with `../`.
-
-To move a project to a newer framework version, change `rev`, run `lake update quintessence`, copy the commands again, run `lake exe check --full`, and commit the manifest and whatever changed in the ledger.
+Underneath, every command runs the same program, the **checker**: `lake exe check`. It is deterministic and involves no AI. The agent runs it, and so does CI. The rest of this page describes what it checks and how; you can use the framework without reading it.
 
 ## How it works
 
@@ -198,6 +158,7 @@ The framework (this repository)
   Spec/review.html    the review page template
   adapters/python.py  runs model-chosen action sequences against Python code
   .claude/commands/   the four commands
+  SETUP.md            how an agent sets up a project, step by step
   example/            a complete project, laid out as below
 
 A project (its own repository)
@@ -244,6 +205,6 @@ Git also answers "did anything change?":
 
 ## Requirements
 
-[elan](https://github.com/leanprover/elan). The Lean version is pinned in `lean-toolchain`. Areas bound to Python code also need `python3`.
+An AI coding agent, git, and Lean through [elan](https://github.com/leanprover/elan) (the agent sets it up with your consent; the version is pinned in `lean-toolchain`). Areas bound to Python code also need `python3`.
 
 The measurements that led to this design are in [docs/spike-results.md](docs/spike-results.md).
