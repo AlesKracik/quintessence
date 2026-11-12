@@ -34,7 +34,7 @@ The agent asks which business cases that part of the system serves, takes each a
 
 > /spec-readback
 
-The readback is the model in a form you can read and correct: one generated page. It opens with the journeys, each business case drawn as a graph, then the assumptions the model makes, every requirement with how strongly it is verified and where it comes from, the open questions that are yours to answer, and the decisions already taken. For a later change it can show only what that change did. The agent generates it and tells you what to look at. Say what is wrong and the agent goes back to step 2. Approving the pull request is the approval.
+The readback is the model in a form you can read and correct. It is cut two ways, and both are generated: one page per area, the area as it stands; and one page per change, across every area the change touches. Each area's page opens with the journeys, each business case drawn as a graph, then the assumptions the model makes, every requirement with how strongly it is verified and where it comes from, the open questions that are yours to answer, and the decisions already taken. The page of a change shows only what that change did. The agent generates it and tells you what to look at. Say what is wrong and the agent goes back to step 2. Approving the pull request is the approval.
 
 ### 4. Have the code written
 
@@ -96,7 +96,7 @@ The checker (`lake exe check`) goes through every area and does four things.
 1. **Audits the proofs.** The program cannot even be built unless every attached proof is accepted by the Lean kernel and rests on nothing but Lean's three standard axioms.
 2. **Searches the scope.** It runs the model through every reachable state of the scope, or until the budget is spent, and checks every invariant and requirement on the way; journeys and walkthroughs are replayed step by step.
 3. **Checks the code**, for areas bound to code (see below).
-4. **Reports.** It writes `ledger/<area>.json` (committed, so a change in what is verified shows up in the diff) and `out/readback.html` (the readback: the page a person reads), and fails if anything is violated.
+4. **Reports.** It writes `ledger/<area>.json` (committed, so a change in what is verified shows up in the diff) and the readback under `out/readback/` (the pages a person reads: one per area, and one per change), and fails if anything is violated.
 
 ### How strong is a claim
 
@@ -176,7 +176,7 @@ A project (its own repository)
   Areas/<Name>.lean   one area: claims, scope, binding to code
   Areas/<Name>/       its model and proofs
   ledger/             what was verified, per area (committed)
-  out/                the readback page (generated, not committed)
+  out/readback/       the readback: index.html, <area>.html, change.html (generated, not committed)
   .spec/project.json  repositories of the system and the documents written about it
   .spec/local.json    where this developer has those repositories (not committed)
 ```
@@ -189,7 +189,7 @@ Code is rarely the only source. Architecture and design documents, READMEs, comm
 
 Git also answers "did anything change?":
 
-- `lake exe check --since <revision>` compares with that revision. The readback page then shows what the change added, removed or altered, which is all a reviewer has to read.
+- `lake exe check --since <revision>` compares with that revision and also writes `out/readback/change.html`: every area the change touches, and in each what the change added, removed or altered. A change that crosses areas is read there in one place, and it is all a reviewer of the change has to read.
 - A code check is re-run only when git reports different content for what its verdict depends on: the area's own files, the checker, the adapter and the code's files. The ledger records the state git reported when the verdict was reached; if git reports the same state now, committed or not, the verdict stands. With `--since`, the ledger of that revision is the one that counts as recorded, which is what a pull request check uses: it trusts the base branch, not the ledger the change brings. `--full` re-runs everything.
 - A binding names where its code lives: this repository, or another one by name, with the local checkout given in `.spec/local.json` (`{"repo_paths": {"name": "/path"}}`, not committed). For another repository the ledger records the code commit the verdict is about, and a verdict on uncommitted code is never taken as recorded.
 

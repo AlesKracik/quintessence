@@ -92,7 +92,7 @@ def Areas.all : List Spec.Entry := []
 
    When there are no other repositories and no documents, the files are `{ "documents": [], "repos": {} }` and `{ "repo_paths": {} }`.
 
-8. Run `lake exe check`. With no areas yet it builds the checker (a minute or two the first time) and prints `readback: out/readback.html`. If it does not, fix that before going on.
+8. Run `lake exe check`. With no areas yet it builds the checker (a minute or two the first time) and prints `readback: out/readback/index.html`. If it does not, fix that before going on.
 
 9. **Ask** whether the project uses GitHub Actions. If so, copy `.github/workflows/check.yml` from the framework and replace `example` by the project's directory, or remove those settings when the project is the repository root.
 

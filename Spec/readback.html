@@ -100,10 +100,13 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .mo .act{display:block;color:var(--mut);font-size:12px;margin-top:3px;word-break:break-word}
 .jl{font-size:12px}
 .empty{text-align:center;color:var(--mut);padding:60px 0}
+.nav{font-size:13.5px;margin:-6px 0 12px}a{color:var(--acc)}
+.arow{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;text-decoration:none;color:var(--ink);padding:10px 12px}.arow b{font-size:16px}
 @media (max-width:560px){.head{grid-template-columns:auto minmax(0,1fr)}.lad,.badge,.mks{grid-column:2}.tile.wide{grid-column:span 1}}
 </style></head><body><main id="app"></main>
 <script>
 const DATA = /*DATA*/[];
+const PAGE = /*PAGE*/{};
 
 const h = (t, c, ...k) => { const e = document.createElement(t); if (c) e.className = c;
   for (const x of k.flat()) if (x != null) e.append(x.nodeType ? x : document.createTextNode(x)); return e; };
@@ -512,23 +515,43 @@ function render(a, only) {
 }
 
 // ---- page ----
-const app = document.getElementById("app");
+// Three kinds of page come from this template: one per area (the area as it stands),
+// one for a change (every area the change touches, and what it did there), and the list of areas.
+const app = document.getElementById("app"), KIND = PAGE.kind || "area";
+const link = (text, href, cls) => { const x = h("a", cls || "", text); x.href = href; return x; };
+const file = name => encodeURIComponent(name) + ".html";
+const pl = (k, one) => k + " " + one + (k === 1 ? "" : "s");
 if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readback data. The checker has not filled in this page yet."));
-else {
-  app.append(h("h1", "", "Readback"));
-  const body = h("div"), tabs = h("div", "tabs"); tabs.setAttribute("role", "tablist");
-  let only = true, cur = 0;
-  const all = h("button", "tab", "open all");
-  all.onclick = () => { const ds = [...body.querySelectorAll("details.sec")], open = ds.some(d => !d.open);
-    ds.forEach(d => { d.open = open; }); all.textContent = open ? "close all" : "open all"; };
-  const show = k => { cur = k; all.textContent = "open all"; [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(DATA[k], only)); };
-  DATA.forEach((a, k) => { const bad = problem(a), b = h("button", "tab", a.area,
-      h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"), changed(diff(a)) ? h("span", "chgd", "● changed") : null);
-    b.setAttribute("role", "tab"); b.onclick = () => show(k); tabs.append(b); });
-  if (DATA.some(a => a.since)) {
-    const cb = h("input"); cb.type = "checkbox"; cb.checked = only; cb.onchange = () => { only = cb.checked; show(cur); };
-    app.append(h("div", "bar", DATA.length > 1 ? tabs : null, all, h("label", "tog", cb, "only what changed")));
-  } else app.append(h("div", "bar", DATA.length > 1 ? tabs : null, all));
-  app.append(body); show(0);
+else if (KIND === "index") {
+  app.append(h("h1", "", "Readback"), h("p", "sub", "One page per area: the area as it stands."));
+  if (PAGE.since) app.append(h("p", "", link("What the change since " + short(PAGE.since) + " does, across areas", "change.html")));
+  DATA.forEach(a => { const t = stats(a), bad = problem(a), k = x => (x || []).length;
+    app.append(link([h("b", "", a.area), h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"),
+      h("span", "cnt", [pl(k(a.journeys), "journey"), pl(k(a.walkthroughs), "walkthrough"), pl(a.claims.length, "claim"),
+        t.bad ? t.bad + " violated" : null, t.below ? t.below + " below target" : null,
+        pl(k(a.questions), "open question"), "code " + codeOf(a).status].filter(Boolean).join(" · "))],
+      file(a.area), "row arow " + (bad ? "failed" : "ok"))); });
+} else {
+  const areas = KIND === "change" ? DATA.filter(a => changed(diff(a))) : DATA, since = PAGE.since ? short(PAGE.since) : "";
+  app.append(h("h1", "", KIND === "change" ? "Readback of the change since " + since : "Readback: " + DATA[0].area),
+    h("p", "nav", link("all areas", "index.html"),
+      KIND === "area" && since ? [" · ", link("the change since " + since, "change.html")] : null,
+      KIND === "change" ? areas.flatMap(a => [" · ", link(a.area + " as it stands", file(a.area))]) : null));
+  if (!areas.length) app.append(h("div", "empty", "Nothing changed since " + since + "."));
+  else {
+    const body = h("div"), tabs = h("div", "tabs"); tabs.setAttribute("role", "tablist");
+    let only = KIND === "change", cur = 0;
+    const all = h("button", "tab", "open all");
+    all.onclick = () => { const ds = [...body.querySelectorAll("details.sec")], open = ds.some(d => !d.open);
+      ds.forEach(d => { d.open = open; }); all.textContent = open ? "close all" : "open all"; };
+    const show = k => { cur = k; all.textContent = "open all"; [...tabs.children].forEach((b, j) => b.setAttribute("aria-selected", j === k)); body.replaceChildren(render(areas[k], only)); };
+    areas.forEach((a, k) => { const bad = problem(a), b = h("button", "tab", a.area,
+        h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"));
+      b.setAttribute("role", "tab"); b.onclick = () => show(k); tabs.append(b); });
+    let tog = null;
+    if (since) { const cb = h("input"); cb.type = "checkbox"; cb.checked = only; cb.onchange = () => { only = cb.checked; show(cur); };
+      tog = h("label", "tog", cb, "only what changed"); }
+    app.append(h("div", "bar", areas.length > 1 ? tabs : null, all, tog), body); show(0);
+  }
 }
 </script></body></html>

@@ -19,8 +19,8 @@ program. It compiles only if
   the definitions the proofs are about, or that skips the kernel.
 
 The program, `lake exe check`, is run from the project's root. It runs every
-area, writes `ledger/<area>.json` (committed) and `out/readback.html` (the page
-a person reads), prints one line per area, and fails if any claim is
+area, writes `ledger/<area>.json` (committed) and the readback under `out/readback/` (one page per
+area, and with `--since` one page for the change across areas), prints one line per area, and fails if any claim is
 violated, any example fails, or code and model differ.
 
     --since <rev>   compare with that git revision: the readback shows what changed
@@ -35,20 +35,30 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
     | _ :: ref :: _ => some ref
     | _ => none
   IO.FS.createDirAll "ledger"
-  IO.FS.createDirAll "out"
+  IO.FS.createDirAll "out/readback"
+  let template ← IO.FS.readFile s!"{← platformDir}/Spec/readback.html"
+  -- one page of the readback: what kind it is, and the areas it shows
+  let page (file kind : String) (data : Array Lean.Json) : IO Unit :=
+    IO.FS.writeFile s!"out/readback/{file}.html" <|
+      (template.replace "/*DATA*/[]" ((Lean.Json.arr data).compress.replace "</" "<\\/")).replace "/*PAGE*/{}"
+        (Lean.Json.mkObj [("kind", .str kind), ("since", (since.map Lean.Json.str).getD .null)]).compress
   let mut pages := #[]
+  let mut ledgers := #[]
   let mut failed := []
   for e in areas do
     let r ← e.report since (args.contains "--full")
     IO.FS.writeFile s!"ledger/{e.name}.json" (r.ledger.pretty ++ "\n")
     IO.println r.summary
     pages := pages.push r.readback
+    ledgers := ledgers.push r.ledger
+    page e.name "area" #[r.readback]  -- the area as it stands
     failed := failed ++ r.failed.map (s!"{e.name}: " ++ ·)
-  let data := (Lean.Json.arr pages).compress.replace "</" "<\\/"
-  let template ← IO.FS.readFile s!"{← platformDir}/Spec/readback.html"
-  IO.FS.writeFile "out/readback.html" (template.replace "/*DATA*/[]" data)
+  page "index" "index" ledgers  -- the list of areas
+  -- the change, across every area it touches
+  if since.isSome then page "change" "change" pages
   for f in failed do IO.eprintln f
-  IO.println "readback: out/readback.html"
+  IO.println <| "readback: out/readback/index.html"
+    ++ (if since.isSome then ", the change: out/readback/change.html" else "")
   return if failed.isEmpty then 0 else 1
 
 open Lean Elab Command in

@@ -42,7 +42,7 @@ Rules for the claims:
 
 Run `lake exe check` from the repository root.
 
-- A violated claim comes with the shortest run that shows it (in `out/readback.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
+- A violated claim comes with the shortest run that shows it (on the area's readback page, `out/readback/<area>.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
 - A claim "below target" is not a failure, but say so.
 
 ## 3. Prove the invariants

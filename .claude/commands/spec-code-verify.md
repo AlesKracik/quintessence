@@ -6,7 +6,7 @@ Read the `code` part of each summary line:
 
 - **agrees**: commit `ledger/<area>.json`. That commit is the record that this code and this model agreed. For code in another repository the ledger names the code commit; commit the code there first, because a verdict on uncommitted code is not a record.
 - **agrees, within N steps**: the budget ran out before the scope did. Say so, and raise `budget` in the binding if the person wants more.
-- **drift**: show the person the run (in `out/readback.html`, section "Code"). Exactly one of three things happened, and the person decides which:
+- **drift**: show the person the run (on the area's readback page, `out/readback/<area>.html`, section "Code"). Exactly one of three things happened, and the person decides which:
   1. the code is wrong: fix the code;
   2. the model is wrong: fix the model and its claims through `/spec`;
   3. the change is deliberate: change the requirement first through `/spec`, then the code.

@@ -28,4 +28,4 @@ jobs:
         if: always()
         with:
           name: readback
-          path: example/out/readback.html
+          path: example/out/readback/
