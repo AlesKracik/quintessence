@@ -129,8 +129,8 @@ def area : Area State Action where
   views := [("session s1", sessionView "s1"), ("account alice", accountView "alice")]
   code := some {
     adapter := ["python3", "adapters/python.py"]
-    paths := ["examples/python/auth.py"]
-    setup := "from examples.python.auth import AuthService
+    paths := ["app/auth.py"]
+    setup := "from app.auth import AuthService
 class Clock:
     now = 0
     def tick(self):

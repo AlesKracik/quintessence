@@ -1,8 +1,55 @@
 # /spec — write or change the requirements of an area
 
-Requirements here are Lean 4 objects checked by `lake exe check`. Read `README.md` first if you have not. `Areas/Auth` is the pattern for an area written from scratch, `Areas/Reservation` for one extracted from existing code.
+Requirements here are Lean 4 objects checked by `lake exe check`. The framework is the Lake package `quintessence`; read its `README.md` first if you have not (in a project it is under `.lake/packages/quintessence/`). Its `example/` directory is a complete project: `example/Areas/Auth` is the pattern for an area written from scratch, `example/Areas/Reservation` for one extracted from existing code.
 
 The person you work with decides what the system must do. You write the Lean, run the checker, and bring back what it found. Never decide a requirement on the person's behalf, and never weaken a claim to make the check pass.
+
+## Starting a project (once)
+
+If the repository has no `lakefile.toml` yet, create these files, then run `lake update`:
+
+- `lean-toolchain`: the same content as the framework's.
+- `lakefile.toml`:
+
+  ```toml
+  name = "<project>"
+  defaultTargets = ["check"]
+
+  [[require]]
+  name = "quintessence"
+  git = "https://github.com/AlesKracik/quintessence"
+  rev = "<branch, tag or commit>"
+
+  [[lean_lib]]
+  name = "Areas"
+  globs = ["Areas", "Areas.+"]
+
+  [[lean_exe]]
+  name = "check"
+  root = "Main"
+  ```
+
+- `Main.lean`, exactly these three lines (never anything else: this file decides what counts as verified):
+
+  ```lean
+  import Spec.Main
+  import Areas
+  checker_main Areas.all
+  ```
+
+- `Areas.lean`: `def Areas.all : List Spec.Entry := []`, plus one import and one entry per area later.
+- `.gitignore`: `.lake/`, `out/`, `.spec/local.json`.
+- `.spec/project.json` (committed), what an agent needs to find its way around:
+
+  ```json
+  { "architecture": ["docs/architecture/", "platform-docs:services/billing.md"],
+    "repos": { "billing": "git@example.com:org/billing.git", "platform-docs": "git@example.com:org/platform-docs.git" } }
+  ```
+
+  `architecture` lists the documents that describe the system: paths in this repository, or `<repo>:<path>` in a repository named under `repos`. `repos` names every repository the project's code or documents live in.
+- `.spec/local.json` (not committed), where this developer has those repositories checked out: `{"repo_paths": {"billing": "/path/to/billing"}}`. Ask the person for the paths; do not clone on your own.
+- CI: copy `.github/workflows/check.yml` from the framework and drop the `example` directory settings.
+- Copy the framework's `.claude/commands/` into the repository.
 
 ## 0. The change
 
@@ -51,6 +98,7 @@ The checker lists what the requirements do not say. Go through the list with the
 
 When the area describes code that already exists, the model is extracted from the code:
 
+0. Orient yourself before reading code. Read the architecture documents listed in `.spec/project.json` and follow them to the repositories they point to (`repos`, with the local checkouts in `.spec/local.json`). Use them to decide what one area is (one component with its own state and operations, not a whole system), where its entry points are, and which repository and paths its code lives in. Tell the person which area you will extract and from where, and what the documents say that the code may or may not confirm. The documents orient; the code is the reference. Where they disagree, that is a question for the person.
 1. Read the code. Write the model so that it does what the code does, including what looks like a quirk. Do not tidy the behaviour up; a quirk is a question for the person, not something to fix in the model.
 2. Write the requirements as plain statements of what the code does, so the person can confirm or reject each one.
 3. Bind the area to the code with `code := some { ... }`:

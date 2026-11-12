@@ -1,0 +1,14 @@
+name = "example"
+defaultTargets = ["check"]
+
+[[require]]
+name = "quintessence"
+path = ".."
+
+[[lean_lib]]
+name = "Areas"
+globs = ["Areas", "Areas.+"]
+
+[[lean_exe]]
+name = "check"
+root = "Main"

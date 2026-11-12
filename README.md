@@ -73,7 +73,7 @@ On every run the checker drives the code through the model: every state of the s
 - an observation differs after a step;
 - the code has an operation the model never uses (reported as an open question).
 
-**Extraction** uses the same check. An agent reads the code and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the review page. `Areas/Reservation` was extracted this way from `examples/python/reservation.py`.
+**Extraction** uses the same check. An agent reads the code and writes the model and the binding; the check then says, run by run, where that model is not what the code does. When the two agree, a person confirms the requirements and the binding on the review page. `example/Areas/Reservation` was extracted this way from `example/app/reservation.py`.
 
 **New code** goes the other way: the code and the binding are written from the model, and the same check says when they are done.
 
@@ -83,22 +83,33 @@ The code verdict sits on its own scale. Agreement on every transition of the sco
 
 ## Layout
 
+The framework is a Lake package. A project is its own repository that depends on it and holds only what is the project's.
+
 ```
-Spec/Data.lean      finite maps and sets, and the definition of "reachable"
-Spec/Check.lean     the area records and the checker
-Spec/review.html    the review page template
-Audit.lean          the gate on what counts as proven
-Main.lean           the checker program, `lake exe check`
-adapters/python.py  runs model-chosen action sequences against Python code
-Areas.lean          the list of areas
-Areas/<Name>.lean   one area: claims and scope
-Areas/<Name>/       its model and proofs
-ledger/             what was verified, per area (committed)
-out/                the review page (generated, not committed)
-examples/           existing code used by the example areas
+The framework (this repository)
+  Spec/Data.lean      finite maps and sets, and the definition of "reachable"
+  Spec/Check.lean     the area records and the checker
+  Spec/Main.lean      the checker program and the gate on what counts as proven
+  Spec/review.html    the review page template
+  adapters/python.py  runs model-chosen action sequences against Python code
+  .claude/commands/   the four commands
+  example/            a complete project, laid out as below
+
+A project (its own repository)
+  lakefile.toml       requires the framework
+  Main.lean           three fixed lines: `checker_main Areas.all`
+  Areas.lean          the list of areas
+  Areas/<Name>.lean   one area: claims, scope, binding to code
+  Areas/<Name>/       its model and proofs
+  ledger/             what was verified, per area (committed)
+  out/                the review page (generated, not committed)
+  .spec/project.json  architecture documents and repositories of the system
+  .spec/local.json    where this developer has those repositories (not committed)
 ```
 
-`Areas/Auth` is the worked example. Copy its shape for a new area and add it to `Areas.lean`.
+To start a project, copy `.claude/commands/` into an empty repository and run `/spec`: it creates the rest. The code can live in the project's repository (as in `example/app/`) or in others.
+
+When the system is described by architecture documents, list them in `.spec/project.json`, together with the repositories they point to. Extraction starts from them: the agent reads the documents to decide what an area is and where its code lives, then reads the code, which stays the reference. A difference between the two is a question for the person.
 
 ## Changes and git
 
@@ -114,7 +125,7 @@ Git also answers "did anything change?":
 
 - The Lean kernel.
 - `Spec/Data.lean` and the record types in `Spec/Check.lean`: they fix what "reachable" and "proven" mean.
-- `Audit.lean`: it rejects `sorry`, added axioms, `native_decide`, and constructs that let compiled code differ from the definitions the proofs are about.
+- `checker_main` in `Spec/Main.lean`: it rejects `sorry`, added axioms, `native_decide`, and constructs that let compiled code differ from the definitions the proofs are about. A project's `Main.lean` must stay the three fixed lines; a change to it, to the lakefile or to the CI workflow is a change to what counts as verified.
 - For levels 2 and 3 only: the search in `Spec/Check.lean`, the Lean compiler, and 64-bit state fingerprints (two different states can, with very small probability, be taken for one). These are argued and tested, not proven.
 - For the code verdict only: the adapter for the code's language, and the binding, which a person confirms on the review page.
 

@@ -92,9 +92,9 @@
   "the code agrees with the model on every transition and refusal of the scope (13899 transitions, 121452 code steps)",
   "status": "agrees",
   "setup":
-  "from examples.python.reservation import ReservationService\nclass Clock:\n    now = 0\n    def tick(self):\n        self.now += 1\nclock = Clock()\nsystem = ReservationService(['s1', 's2', 's3'], lambda: clock.now)",
+  "from app.reservation import ReservationService\nclass Clock:\n    now = 0\n    def tick(self):\n        self.now += 1\nclock = Clock()\nsystem = ReservationService(['s1', 's2', 's3'], lambda: clock.now)",
   "repo": ".",
-  "paths": ["examples/python/reservation.py"],
+  "paths": ["app/reservation.py"],
   "observe":
   [["status s1", "system.status('s1')"],
    ["owner s1", "system.owner('s1')"],
@@ -103,7 +103,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "11369803393548392700",
+  "inputs": "9924334931490259557",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",

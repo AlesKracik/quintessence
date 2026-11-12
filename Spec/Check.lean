@@ -297,10 +297,25 @@ private def git (dir : String) (args : List String) : IO (Option String) := do
     return if out.exitCode == 0 then some out.stdout.trim else none
   catch _ => return none
 
+/-- Where the framework's own files are: here, or where Lake keeps the package. -/
+def platformDir : IO String := do
+  if ← System.FilePath.pathExists "Spec/Check.lean" then return "."
+  let manifest := (Json.parse (← try IO.FS.readFile "lake-manifest.json" catch _ => pure "")).toOption.getD .null
+  let text (j : Json) (k : String) : String := (j.getObjVal? k >>= Json.getStr?).toOption.getD ""
+  for p in (manifest.getObjVal? "packages" >>= Json.getArr?).toOption.getD #[] do
+    if text p "name" == "quintessence" then
+      return if text p "type" == "path" then text p "dir" else s!"{text manifest "packagesDir"}/quintessence"
+  return "."
+
+/-- A framework file named in a binding (`adapters/python.py`), where it really is. -/
+private def platformFile (path : String) : IO String := do
+  let there := s!"{← platformDir}/{path}"
+  return if !(← System.FilePath.pathExists path) && (← System.FilePath.pathExists there) then there else path
+
 /-- This area's ledger as recorded at a git revision (`none`: as it is on disk). -/
 private def ledgerAt (area : String) (ref : Option String) : IO Json := do
   let text ← match ref with
-    | some r => pure ((← git "." ["show", s!"{r}:ledger/{area}.json"]).getD "")
+    | some r => pure ((← git "." ["show", s!"{r}:./ledger/{area}.json"]).getD "")
     | none => try IO.FS.readFile s!"ledger/{area}.json" catch _ => pure ""
   return (Json.parse text).toOption.getD .null
 
@@ -311,18 +326,23 @@ private def gitState (dir : String) (paths : List String) : IO String := do
   let mut files : List String := []
   for f in listed.splitOn "\n" do
     if f != "" && (← System.FilePath.pathExists (System.FilePath.mk dir / f)) then files := f :: files
-  let ids := (← git dir (["hash-object", "--"] ++ files.reverse)).getD "not in git"
-  return toString (hash (files, ids))
+  let sorted := (files.toArray.qsort (· < ·)).toList  -- the same whether a file is committed yet or not
+  let ids := (← git dir (["hash-object", "--"] ++ sorted)).getD "not in git"
+  return toString (hash (sorted, ids))
 
 /-- The files a code verdict depends on in this repository: the area's own
-files (`Areas/<Name>.lean` and `Areas/<Name>/`), the checker, the adapter, and
-the code when it lives here. -/
+files (`Areas/<Name>.lean` and `Areas/<Name>/`), the checker and the adapter
+(their files, or the Lake manifest that pins them), and the code when it
+lives here. -/
 private def inputsOf (area : String) (c : Code σ) : IO (List String) := do
   let plain (s : String) : String := (s.toLower.replace "-" "").replace "_" ""
   let own := (← System.FilePath.readDir "Areas").toList.filterMap fun e =>
     if plain (e.fileName.takeWhile (· != '.')) == plain area then some s!"Areas/{e.fileName}" else none
-  let adapter ← c.adapter.filterM fun (a : String) => System.FilePath.pathExists (System.FilePath.mk a)
-  return own ++ ["Spec/Check.lean", "Spec/Data.lean"] ++ adapter ++ (if c.repo == "." then c.paths else [])
+  let platform ← platformDir
+  let adapter ← (← c.adapter.mapM platformFile).filterM fun (a : String) =>
+    System.FilePath.pathExists (System.FilePath.mk a)
+  return own ++ [s!"{platform}/Spec/Check.lean", s!"{platform}/Spec/Data.lean", "lake-manifest.json"]
+    ++ adapter ++ (if c.repo == "." then c.paths else [])
 
 /-- Drive the code through the model: for every state of the scope, nearest
 first, every accepted action, and every refused action in the state it leads
@@ -345,8 +365,9 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
     let last := (← git root (["log", "-1", "--format=%H", "--"] ++ c.paths)).getD "unknown"
     let dirty := (← git root (["status", "--porcelain", "--"] ++ c.paths)) != some ""
     commit := if dirty then s!"{last} with uncommitted changes" else last
+  let adapter ← c.adapter.mapM platformFile
   let child ← IO.Process.spawn {
-    cmd := c.adapter.headD "", args := (c.adapter.drop 1 ++ [root]).toArray, stdin := .piped, stdout := .piped }
+    cmd := adapter.headD "", args := (adapter.drop 1 ++ [root]).toArray, stdin := .piped, stdout := .piped }
   let ask (j : Json) : IO Json := do
     child.stdin.putStrLn j.compress
     child.stdin.flush

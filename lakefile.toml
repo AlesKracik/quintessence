@@ -1,18 +1,6 @@
 name = "quintessence"
-defaultTargets = ["check"]
+defaultTargets = ["Spec"]
 
 [[lean_lib]]
 name = "Spec"
 globs = ["Spec.+"]
-
-[[lean_lib]]
-name = "Areas"
-globs = ["Areas", "Areas.+"]
-
-[[lean_lib]]
-name = "Audit"
-
-[[lean_exe]]
-name = "check"
-root = "Main"
-needs = ["Audit"]
