@@ -63,6 +63,7 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   page "index" "index" ledgers  -- the list of areas
   -- the change, across every area it touches
   if since.isSome then page "change" "change" pages
+  else try IO.FS.removeFile "out/readback/change.html" catch _ => pure ()  -- an earlier comparison's page would be stale
   for f in failed do IO.eprintln f
   IO.println <| "readback: out/readback/index.html"
     ++ (if since.isSome then ", the change: out/readback/change.html" else "")
