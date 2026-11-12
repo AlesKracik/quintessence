@@ -142,6 +142,7 @@ def area : Area State Action where
   views := [("seat s1", seatView "s1"), ("seats alice holds", fun s => toString (heldBy s "alice"))]
   code := some {
     adapter := ["python3", "adapters/python.py"]
+    paths := ["examples/python/reservation.py"]
     setup := "from examples.python.reservation import ReservationService
 class Clock:
     now = 0

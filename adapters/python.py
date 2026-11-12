@@ -2,7 +2,7 @@
 """Python adapter: runs model-chosen action sequences against Python code.
 
 It executes and reports; it judges nothing. The checker (`lake exe spec`)
-starts it, sends one JSON message per line on stdin and reads one JSON reply
+starts it with the root of the code's repository as its argument, sends one JSON message per line on stdin and reads one JSON reply
 per line on stdout:
 
   {"setup": code, "actions": {name: code}, "observe": [expression, ...]}
@@ -73,6 +73,8 @@ def run(config, steps):
 
 
 def main():
+    if len(sys.argv) > 1:
+        os.chdir(sys.argv[1])  # the root of the code's repository
     sys.path.insert(0, os.getcwd())
     out, sys.stdout = sys.stdout, sys.stderr  # the code under test may print
     config = None

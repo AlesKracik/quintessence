@@ -18,9 +18,10 @@ runs it and reports, per claim, the strongest level reached:
 Invariants target level 1, requirements level 2. The search also produces the
 open questions that drive the requirements toward completeness.
 
-An area bound to existing code (`Area.code`) is also checked against it: the
-code is driven through the model's transitions and compared after every step.
-Any difference is drift.
+An area bound to code (`Area.code`) is also checked against it: the code is
+driven through the model's transitions and compared after every step. Any
+difference is drift. Code and model both live in git, and git says whether
+anything changed: the code check is re-run only when it did.
 -/
 
 namespace Spec
@@ -60,6 +61,11 @@ adapter (`adapters/`) executes it; the checker compares. -/
 structure Code (σ : Type) where
   /-- The command that starts the adapter. -/
   adapter : List String
+  /-- The git repository the code lives in: `"."` for this one, otherwise a
+  name that `.spec/local.json` maps to a local checkout (`repo_paths`). -/
+  repo : String := "."
+  /-- The code's files or directories, relative to that repository's root. -/
+  paths : List String
   /-- Code that builds a fresh system; run before every run. -/
   setup : String
   /-- Per action name, the code to run; `{0}`, `{1}` are the action's arguments.
@@ -101,7 +107,9 @@ structure Report where
 
 structure Entry where
   name : String
-  report : IO Report
+  /-- `since`: the git revision to compare against (default: the commit that
+  last recorded this area's ledger). `full`: re-run the code check regardless. -/
+  report : (since : Option String) → (full : Bool) → IO Report
 
 /-! ## Display -/
 
@@ -275,16 +283,60 @@ private structure CodeResult where
   /-- The run that shows the drift, as rows for the review. -/
   drift : Option Json := none
   questions : List String := []
+  /-- For code in another repository: the commit the verdict is about. -/
+  commit : String := ""
+  reused : Bool := false
+
+/-- Run git in `dir`; `none` when it fails or exits non-zero. -/
+private def git (dir : String) (args : List String) : IO (Option String) := do
+  try
+    let out ← IO.Process.output { cmd := "git", args := (["-C", dir] ++ args).toArray }
+    return if out.exitCode == 0 then some out.stdout.trim else none
+  catch _ => return none
+
+/-- This area's ledger as recorded at a git revision (`none`: as it is on disk). -/
+private def ledgerAt (area : String) (ref : Option String) : IO Json := do
+  let text ← match ref with
+    | some r => pure ((← git "." ["show", s!"{r}:ledger/{area}.json"]).getD "")
+    | none => try IO.FS.readFile s!"ledger/{area}.json" catch _ => pure ""
+  return (Json.parse text).toOption.getD .null
+
+/-- Whether nothing the code verdict depends on differs from the reference
+revision: the areas, the checker, the adapters, the recorded ledger, and the
+code when it lives in this repository. -/
+private def unchanged (area : String) (c : Code σ) (since : Option String) : IO Bool := do
+  let ledger := s!"ledger/{area}.json"
+  let ref ← match since with
+    | some r => pure r
+    | none => pure ((← git "." ["log", "-1", "--format=%H", "--", ledger]).getD "")
+  if ref == "" then return false
+  let inputs := ["Areas", "Spec", "adapters", ledger] ++ (if c.repo == "." then c.paths else [])
+  let same ← git "." (["diff", "--quiet", ref, "--"] ++ inputs)
+  let untracked ← git "." (["ls-files", "--others", "--exclude-standard", "--"] ++ inputs)
+  return same.isSome && untracked == some ""
 
 /-- Drive the code through the model: for every state of the scope, nearest
 first, every accepted action, and every refused action in the state it leads
 to. Each run starts from a fresh system. Stops at the first difference. -/
-private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ) : IO CodeResult := do
+private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
+    (since : Option String) (full : Bool) : IO CodeResult := do
   let names := A.actions.map (actionName ∘ label)
   if let some n := names.find? fun n => !(c.actions.any (·.1 == n)) then
     return { status := "error", verdict := s!"action `{n}` has no code mapping" }
+  -- where the code is, and for another repository, which commit of it
+  let mut root := "."
+  let mut commit := ""
+  if c.repo != "." then
+    let config := (Json.parse (← try IO.FS.readFile ".spec/local.json" catch _ => pure "")).toOption.getD .null
+    let some path := ((config.getObjValD "repo_paths").getObjVal? c.repo >>= Json.getStr?).toOption
+      | return { status := "error", verdict :=
+          s!"repository `{c.repo}` has no local checkout; add it to `repo_paths` in .spec/local.json" }
+    root := path
+    let last := (← git root (["log", "-1", "--format=%H", "--"] ++ c.paths)).getD "unknown"
+    let dirty := (← git root (["status", "--porcelain", "--"] ++ c.paths)) != some ""
+    commit := if dirty then s!"{last} with uncommitted changes" else last
   let child ← IO.Process.spawn {
-    cmd := c.adapter.headD "", args := (c.adapter.drop 1).toArray, stdin := .piped, stdout := .piped }
+    cmd := c.adapter.headD "", args := (c.adapter.drop 1 ++ [root]).toArray, stdin := .piped, stdout := .piped }
   let ask (j : Json) : IO Json := do
     child.stdin.putStrLn j.compress
     child.stdin.flush
@@ -299,6 +351,16 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ) : I
     (·.getStr?.toOption)
   let questions := (operations.filter fun op => !(mapped.any fun m => (m.splitOn op).length > 1)).map
     (s!"The code has operation `{·}` that the model does not use. Should the model cover it?")
+  let finish : IO Unit := do  -- closing its input ends the adapter
+    let (_, child) ← child.takeStdin
+    discard child.wait
+  -- git says nothing changed since agreement was recorded: the verdict stands
+  let old := (← ledgerAt A.name none).getObjValD "code"
+  let was (k : String) : String := (old.getObjVal? k >>= Json.getStr?).toOption.getD ""
+  if !full && was "status" == "agrees" && was "commit" == commit
+      && !commit.endsWith "changes" && (← unchanged A.name c since) then
+    finish
+    return { status := "agrees", verdict := was "verdict", questions, commit, reused := true }
   let expect (s : σ) : List String := c.observe.map (·.2.1 s)
   let row (action : String) (refused : Bool) (model code : List String) : Json := Json.mkObj [
     ("action", .str action), ("refused", .bool refused),
@@ -354,22 +416,26 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ) : I
       if isNew then
         seen := seen.insert (hash t)
         queue := queue.push (t, a :: path)
-  let (stdin, child) ← child.takeStdin  -- closing its input ends the adapter
-  discard child.wait
+  finish
   match drift with
-  | some (what, rows) => return { status := "drift", verdict := what, drift := some rows, questions }
+  | some (what, rows) => return { status := "drift", verdict := what, drift := some rows, questions, commit }
   | none =>
     let reach := match stoppedAt with
       | none => "of the scope"
       | some d => s!"within {d} steps of the start"
-    return { status := "agrees", questions,
+    return { status := "agrees", questions, commit,
              verdict := s!"the code agrees with the model on every transition and refusal {reach} "
                ++ s!"({transitions} transitions, {used} code steps)" }
 
-private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : IO Report := do
+private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
+    (since : Option String) (rerun : Bool) : IO Report := do
+  -- what was recorded at the revision this run is compared with, for the review
+  let before ← match since with
+    | some r => ledgerAt A.name (some r)
+    | none => pure .null
   let code ← match A.code with
     | none => pure {}
-    | some c => try checkCode A c catch e =>
+    | some c => try checkCode A c since rerun catch e =>
         pure { status := "error", verdict := s!"the code check could not run: {e}" : CodeResult }
   let acts := A.actions.toArray
   let labels := acts.map label
@@ -428,16 +494,18 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : IO Report
   let withSteps (full : Bool) (run : Option (List α)) (obj : List (String × Json)) : Json :=
     Json.mkObj (obj ++ (if full then (run.map fun r => ("steps", steps A r)).toList else []))
   let sortedEdges := f.edges.toArray.qsort fun a b => oneLine a < oneLine b
-  let json (full : Bool) : Json := Json.mkObj [
+  let json (full : Bool) : Json := Json.mkObj <| (if full then [("before", before)] else []) ++ [
     ("area", .str A.name),
     ("search", Json.mkObj [
       ("states", num states), ("depth", num f.depth), ("exhaustive", .bool f.exhaustive),
       ("budget", num A.budget), ("actions", .arr (labels.map .str)), ("cutByBound", num f.cut)]),
     ("code", Json.mkObj <| [("status", .str code.status), ("verdict", .str code.verdict),
         ("level", num (if code.status == "agrees" then 4 else 6))]
-      ++ (A.code.map fun c => [("setup", Json.str c.setup),
+      ++ (A.code.map fun c => [("repo", Json.str c.repo), ("paths", .arr (c.paths.map .str).toArray),
+          ("setup", Json.str c.setup),
           ("actions", Json.mkObj (c.actions.map fun (n, x) => (n, .str x))),
           ("observe", .arr (c.observe.map fun (n, _, x) => .arr #[.str n, .str x]).toArray)]).getD []
+      ++ (if code.commit == "" then [] else [("commit", .str code.commit)])
       ++ (if full then (code.drift.map (("steps", ·))).toList else [])),
     ("claims", .arr <| claims.map fun (id, kind, text, level, target, verdict, cex) =>
       withSteps full cex [("id", .str id), ("kind", .str kind), ("text", .str text),
@@ -462,6 +530,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : IO Report
     ++ (if f.exhaustive then "scope exhausted" else s!"stopped at budget, depth {f.depth}")
     ++ s!"; {claims.size} claims, {below} below target, {failed.length} failed; "
     ++ s!"{questions.size} open questions; code {code.status}"
+    ++ (if code.reused then " (unchanged in git since recorded, not re-run)" else "")
   return { ledger := json false, review := json true, failed, summary }
 
 /-- Package an area for the checker program. -/

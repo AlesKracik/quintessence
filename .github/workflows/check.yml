@@ -9,9 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: leanprover/lean-action@v1
-      # Audits the proofs, searches every area, fails on any violated claim.
-      - run: lake exe spec
+      # Audits the proofs, searches every area, checks bound code; fails on any
+      # violated claim or drift. On a pull request it compares with the base
+      # branch: the review shows what the change does, and code checks re-run
+      # only where the change touched something. Elsewhere everything re-runs.
+      - run: lake exe spec ${{ github.event_name == 'pull_request' && format('--since origin/{0}', github.base_ref) || '--full' }}
       # The committed ledger must be what the checker produces.
       - run: test -z "$(git status --porcelain ledger)" || (git status --porcelain ledger; git diff ledger; exit 1)
       - uses: actions/upload-artifact@v4
