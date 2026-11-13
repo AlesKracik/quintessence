@@ -149,8 +149,10 @@ structure Code (σ : Type) where
   budget : Nat := 100000
 
 /-- One way into the existing code of an area: an endpoint, a message
-handler, a scheduled job. An area extracted from code lists all of them, so
-that a person sees which share of the code the model speaks about. -/
+handler, a scheduled job. An area extracted from code lists all of its own,
+so that a person sees which share of the area's code the model speaks about.
+The measure is the area, not the repository: code that serves another area
+is that area's to list, and does not appear here. -/
 structure Surface where
   /-- What it is for, in plain words ("create a protection group"). -/
   what : String
@@ -162,13 +164,21 @@ structure Surface where
   reads : Bool := false
   /-- Why the model does not cover it, when it does not. -/
   why : String := ""
+  /-- Not code of this area at all: something another area decides, which
+  the model has an action for because this area depends on it. -/
+  elsewhere : Bool := false
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
 /-- An entry that only reads. -/
 def Surface.readOnly (what code : String) : Surface := { what, code, reads := true }
-/-- An entry the model does not cover, and why. It stays an open question. -/
+/-- An entry of this area that the model does not cover, and why. It stays an
+open question. -/
 def Surface.leftOut (what code why : String) : Surface := { what, code, why }
+/-- Something decided outside this area that the model has actions for
+("the recovery side changes the state of the group's plan"). -/
+def Surface.outside (what : String) (actions : List String) : Surface :=
+  { what, code := "", actions, elsewhere := true }
 
 structure Area (σ α : Type) where
   name : String
@@ -790,7 +800,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("assumptions", .arr (A.assumptions.map .str).toArray),
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
-      ("status", .str (if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else "left out")),
+      ("status", .str (if e.elsewhere then "outside" else if !e.actions.isEmpty then "modelled"
+        else if e.reads then "reads" else "left out")),
       ("why", .str e.why)]).toArray),
     ("lifecycles", .arr <| (A.lifecycles.zipIdx.map fun ((name, l), k) => Json.mkObj [
       ("name", .str name), ("initial", .arr ((l A.init).eraseDups.map .str).toArray),

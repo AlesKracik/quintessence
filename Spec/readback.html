@@ -484,12 +484,12 @@ function render(a, only) {
     gas.forEach(x => ul.append(h("li", "gone", h("span", "badge below", "dropped"), " ", x)));
     S.append(ul); hid(S, asm.length - shown.length); }
   const sf = a.surface || [];
-  if (sf.length) { const out = sf.filter(e => e.status === "left out").length, rd = sf.filter(e => e.status === "reads").length;
-    const S = sec("What the code offers", (sf.length - out - rd) + " of " + (sf.length - rd) + " operations modelled", out ? out + " left out" : "", 0,
-      "Every way into the existing code of this area, listed from the code, and what the model does with each. What is left out, the model says nothing about.");
+  if (sf.length) { const out = sf.filter(e => e.status === "left out").length, md = sf.filter(e => e.status === "modelled").length;
+    const S = sec("What the code offers", md + " of " + (md + out) + " operations modelled", out ? out + " left out" : "", 0,
+      "Every way into the code of this area, listed from the code, and what the model does with each. What is left out, the model says nothing about. Code that serves other areas is not listed here.");
     const tb = h("tbody"); [...sf].sort((x, y) => (y.status === "left out") - (x.status === "left out")).forEach(e => {
       const r = h("tr", e.status === "left out" ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
-        h("td", "", e.status === "modelled" ? ["modelled: ", h("span", "mono", e.actions.join(", "))] : e.status === "reads" ? "only reads" : [h("b", "", "left out: "), e.why]));
+        h("td", "", e.status === "modelled" ? ["modelled: ", h("span", "mono", e.actions.join(", "))] : e.status === "reads" ? "only reads" : e.status === "outside" ? ["decided outside this area; here as: ", h("span", "mono", e.actions.join(", "))] : [h("b", "", "left out: "), e.why]));
       tb.append(r); });
     S.append(h("div", "tw", h("table", "", h("thead", "", h("tr", "", ["the code can", "where", "in the model"].map(x => h("th", "", x)))), tb))); }
   const cs0 = codeOf(a).status;
