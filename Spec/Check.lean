@@ -285,14 +285,21 @@ structure Report where
   failed : List String
   summary : String
 
+/-- What an area or part shows of itself to the others, for comparing them. -/
+structure Peer where
+  name : String
+  /-- The ways into the code that it lists. -/
+  surface : List Surface := []
+  /-- Its journeys told in general: id, title, and the actions the steps take, in order. -/
+  journeys : List (String × String × List String) := []
+
 structure Entry where
   name : String
-  /-- The ways into the code that this area or part lists, for comparing parts. -/
-  surface : List Surface := []
+  peer : Peer
   /-- `since`: the git revision to compare against; its ledger, not the one on
   disk, is then what counts as recorded. `full`: re-run the code check regardless.
-  `others`: what every other area and part lists as its ways into the code. -/
-  report : (since : Option String) → (full : Bool) → (others : List (String × List Surface)) → IO Report
+  `others`: what every other area and part shows of itself. -/
+  report : (since : Option String) → (full : Bool) → (others : List Peer) → IO Report
 
 /-! ## Display -/
 
@@ -672,7 +679,7 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
                ++ s!"({transitions} transitions, {used} code steps)" }
 
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
-    (since : Option String) (rerun : Bool) (others : List (String × List Surface)) : IO Report := do
+    (since : Option String) (rerun : Bool) (others : List Peer) : IO Report := do
   -- what was recorded at the revision this run is compared with, for the readback
   let before ← match since with
     | some r => ledgerAt A.name (some r)
@@ -753,7 +760,20 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
         ("turnedDown", .arr (turnedDown.map .str).toArray)]
     let status := if ok then "ok" else "failed"
+    -- A journey begins where something comes in: a person's request, a call or message from
+    -- outside, a schedule. One that begins with a way in another part owns is what follows
+    -- here from that part's journey.
+    let follows : Option Json := do
+      let n := actionName (label (← (← j.steps.head?).actions.head?))
+      let e ← A.surface.find? fun e => e.owner != "" && e.actions.contains n
+      let p ← others.find? (·.name == e.owner)
+      let o ← p.surface.find? fun x => x.owns && x.meets e
+      let whole := p.journeys.filter fun (_, _, acts) => !acts.isEmpty && acts.all o.actions.contains
+      let told := if whole.isEmpty then p.journeys.filter fun (_, _, acts) => (acts.head?.map o.actions.contains).getD false else whole
+      pure <| Json.mkObj [("part", .str p.name), ("what", .str o.what),
+        ("journeys", .arr (told.map fun (id, title, _) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
+      ("follows", follows.getD .null),
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
       ("about", .str j.about), ("variantOf", .str (if general j then "" else j.variantOf)), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
       ("status", .str status), ("steps", .arr (rows.map (· full)))])
@@ -832,9 +852,9 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       if !distinct.contains n then
         surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" names action `{n}`, which the model does not have"]
     -- one way in has one owner: what other parts say about the same place in the code
-    let owners := others.filterMap fun (part, sf) => (sf.find? fun x => x.owns && x.meets e).map (part, ·)
+    let owners := others.filterMap fun p => (p.surface.find? fun x => x.owns && x.meets e).map (p.name, ·)
     if e.owner != "" then
-      if !(others.any (·.1 == e.owner)) then
+      if !(others.any (·.name == e.owner)) then
         surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" is said to be ruled in `{e.owner}`, and there is no such part"]
       else if !(owners.any (·.1 == e.owner)) then
         surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" ({e.code}) is said to be ruled in `{e.owner}`, and that part models nothing at that place in the code"]
@@ -886,9 +906,9 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
       ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner),
-      ("shared", .arr <| (others.toArray.flatMap fun (part, sf) => (sf.filter fun x =>
+      ("shared", .arr <| (others.toArray.flatMap fun p => (p.surface.filter fun x =>
           !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>
-        Json.mkObj [("part", .str part), ("what", .str x.what), ("status", .str x.status)]))]).toArray),
+        Json.mkObj [("part", .str p.name), ("what", .str x.what), ("status", .str x.status)]))]).toArray),
     ("lifecycles", .arr <| (A.lifecycles.zipIdx.map fun ((name, l), k) => Json.mkObj [
       ("name", .str name), ("initial", .arr ((l A.init).eraseDups.map .str).toArray),
       ("edges", .arr <| (sortedEdges.filter (·.1 == k)).map fun (_, a, n, b) =>
@@ -910,7 +930,10 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
 
 /-- Package an area for the checker program. -/
 def Area.entry [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Entry :=
-  { name := A.name, surface := A.surface, report := build A }
+  { name := A.name, report := build A,
+    peer := { name := A.name, surface := A.surface,
+              journeys := (A.journeys.filter (·.variantOf == "")).map fun j =>
+                (j.id, j.title, ((j.steps.flatMap (·.actions)).map (actionName ∘ label)).eraseDups) } }
 
 end
 end Spec

@@ -71,7 +71,7 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   let mut failed := []
   for e in areas.filter (wanted ·.name) do
     let r ← e.report since (args.contains "--full")
-      ((areas.filter (·.name != e.name)).map fun o => (o.name, o.surface))
+      ((areas.filter (·.name != e.name)).map (·.peer))
     let file := System.FilePath.mk s!"ledger/{e.name}.json"
     if let some dir := file.parent then IO.FS.createDirAll dir
     IO.FS.writeFile file (r.ledger.pretty ++ "\n")
