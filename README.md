@@ -194,6 +194,7 @@ Git also answers "did anything change?":
 - `lake exe check --since <revision>` compares with that revision and also writes `out/readback/change.html`: every area the change touches, and in each what the change added, removed or altered. A change that crosses areas is read there in one place, and it is all a reviewer of the change has to read.
 - A code check is re-run only when git reports different content for what its verdict depends on: the area's own files, the checker, the adapter and the code's files. The ledger records the state git reported when the verdict was reached; if git reports the same state now, committed or not, the verdict stands. With `--since`, the ledger of that revision is the one that counts as recorded, which is what a pull request check uses: it trusts the base branch, not the ledger the change brings. `--full` re-runs everything.
 - A binding names where its code lives: this repository, or another one by name, with the local checkout given in `.spec/local.json` (`{"repo_paths": {"name": "/path"}}`, not committed). For another repository the ledger records the code commit the verdict is about, and a verdict on uncommitted code is never taken as recorded.
+- An area says which commit of each repository it was read from (`readAt`). When a file it cites has changed since, the checker asks, until someone reads the file again and moves the commit. This also covers areas that are not bound to code, and documents.
 
 ## What is trusted
 

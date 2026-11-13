@@ -277,6 +277,12 @@ structure Area (σ α : Type) where
   model does with each. Listed from the code, not from the model. -/
   surface : List Surface := []
   code : Option (Code σ) := none
+  /-- What the model was read from, as it stood then: per repository its
+  sources name (code or documents, by the name `.spec/local.json` maps to a
+  checkout, `"."` for this one), the commit that was read. When a file the
+  model cites has changed since, the checker asks; the question stays until
+  someone reads the file again and moves the commit here. -/
+  readAt : List (String × String) := []
 
 /-- What one area reports. `ledger` is committed; `readback` adds the traces. -/
 structure Report where
@@ -867,6 +873,34 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       questions := questions.push
         (s!"{j.id} takes the same steps as {p.id} ({", ".intercalate (stepsOf j)}). Are they one business case? "
           ++ "Then tell it once in general and name the others as its variants with `variantOf`.", none)
+  -- what the model was read from: has a file it cites changed since?
+  let cited := ((A.surface.map (·.code) ++ A.invariants.flatMap (·.sources) ++ A.requirements.flatMap (·.sources)
+    ++ A.journeys.flatMap (·.sources) ++ A.walkthroughs.flatMap (·.sources)).flatMap fun c => (places c).map (·.1)).eraseDups
+  let checkouts := (Json.parse (← try IO.FS.readFile ".spec/local.json" catch _ => pure "")).toOption.getD .null
+    |>.getObjValD "repo_paths"
+  let mut readAt : Array Json := #[]
+  for (repo, commit) in A.readAt do
+    let dir := if repo == "." then some "." else (checkouts.getObjVal? repo >>= Json.getStr?).toOption
+    let head := (← match dir with | some d => git d ["rev-parse", "HEAD"] | none => pure none).getD ""
+    let mut changed : List String := []
+    if head != "" && commit != "" && !head.startsWith commit then
+      if let some out := ← git (dir.getD ".") ["diff", "--name-only", commit, "HEAD"] then
+        changed := (out.splitOn "\n").filter fun f => f != "" && cited.any fun c =>
+          ((c.splitOn "/").reverse.zip (f.splitOn "/").reverse).all fun (x, y) => x == y
+        if !changed.isEmpty then
+          questions := questions.push
+            (s!"This part was read from `{repo}` at {commit.take 10}; it is now at {head.take 10}, and files the part cites have changed since: "
+              ++ s!"{", ".intercalate changed}. Read them again, correct the part where it no longer holds, and move the commit in `readAt`.", none)
+      else
+        questions := questions.push
+          (s!"This part was read from `{repo}` at {commit.take 10}, and the checkout, now at {head.take 10}, cannot be compared with that commit. "
+            ++ "Is what the part says still what is there?", none)
+    readAt := readAt.push <| Json.mkObj [("repo", .str repo), ("commit", .str commit), ("now", .str head),
+      ("changed", .arr (changed.map .str).toArray)]
+  if A.readAt.isEmpty && A.code.isNone && !cited.isEmpty then
+    questions := questions.push
+      ("This part cites code or documents and does not say which commit they were read from (`readAt`). "
+        ++ "Without it nobody can tell later whether what it cites has changed.", none)
   -- what the code offers against what the model speaks about
   let mut surfaceFailed : List String := []
   for e in A.surface do
@@ -925,6 +959,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("questions", .arr <| questions.map fun (text, run) => withSteps full run [("text", .str text)]),
     ("atomic", Json.mkObj (A.atomic.map fun (n, d) => (n, .str d))),
     ("assumptions", .arr (A.assumptions.map .str).toArray),
+    ("readAt", if full then .arr readAt else .arr (A.readAt.map fun (r, c) => Json.mkObj [("repo", .str r), ("commit", .str c)]).toArray),
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
       ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner),

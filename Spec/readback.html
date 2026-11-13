@@ -452,6 +452,11 @@ function codeSection(a, D) {
       h("h3", "", "Setup: builds a fresh system"), h("pre", "mono", c.setup || ""));
     det.open = !!(D && D.bind); out.push(det);
   } else if (c.status === "not checked") out.push(h("p", "sub", "This area is not bound to code."));
+  for (const r of a.readAt || []) {
+    const moved = r.now && !r.now.startsWith(r.commit), ch = r.changed || [];
+    out.push(h("p", "sub", "Read from ", h("span", "mono", r.repo), " at ", h("span", "mono", r.commit.slice(0, 10)),
+      !r.now ? " (no checkout here to compare with)" : !moved ? ", where it still is."
+        : [", now at ", h("span", "mono", r.now.slice(0, 10)), ch.length ? [": ", h("b", "", ch.length + " cited " + (ch.length === 1 ? "file" : "files") + " changed since"), " (", ch.join(", "), ")."] : ": nothing the part cites has changed."])); }
   return out;
 }
 

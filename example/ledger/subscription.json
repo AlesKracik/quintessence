@@ -121,6 +121,7 @@
    "cancel_again \"bob\"",
    "expire_period \"bob\"",
    "request_refund \"bob\""]},
+ "readAt": [],
  "questions":
  [{"text":
    "`cancel_subscription \"alice\" (Email)` is refused after cancel_subscription \"alice\" (Email), and no requirement covers that. Is refusing right there?"},
@@ -198,7 +199,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "6657990961551876102",
+  "inputs": "208552810251155142",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",
