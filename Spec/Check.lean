@@ -197,6 +197,10 @@ def Surface.ruledIn (what code part : String) (actions : List String := []) : Su
 /-- The model of this part is the one that speaks for this way in. -/
 def Surface.owns (e : Surface) : Bool := e.owner == "" && !e.actions.isEmpty && !e.elsewhere
 
+/-- A way in that another part owns and that this part has actions for: what
+this part does with it can itself be what a third part follows from. -/
+def Surface.passesOn (e : Surface) : Bool := e.owner != "" && !e.actions.isEmpty
+
 def Surface.status (e : Surface) : String :=
   if e.elsewhere then "outside" else if e.owner != "" then "ruled in"
   else if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else "left out"
@@ -227,6 +231,20 @@ def Surface.meets (a b : Surface) : Bool :=
     ((f.splitOn "/").reverse.zip (g.splitOn "/").reverse).all (fun (x, y) => x == y)
       && (ls.isEmpty || ms.isEmpty || ls.any fun (l, h) => ms.any fun (m, k) => l ≤ k && m ≤ h)
 
+/-- Two entries stand for the same way in: the place one of them names first,
+which is the way in itself, is a place the other names too. Code that lies
+behind two different ways in and is cited by both does not make them one. -/
+def Surface.sameWayIn (a b : Surface) : Bool :=
+  let first (x y : Surface) : Bool := match places x.code with
+    | (f, ls) :: _ => (places y.code).any fun (g, ms) =>
+        ((f.splitOn "/").reverse.zip (g.splitOn "/").reverse).all (fun (p, q) => p == q)
+          && (ls.isEmpty || ms.isEmpty || ls.any fun (l, h) => ms.any fun (m, k) => l ≤ k && m ≤ h)
+    | [] => false
+  first a b || first b a
+
+#guard (Surface.modelled "x" "rest/A.kt:10; service/Base.kt:1-90" ["a"]).sameWayIn (.modelled "y" "rest/A.kt:10" ["b"])
+#guard !(Surface.modelled "x" "rest/A.kt:10; service/Base.kt:1-90" ["a"]).sameWayIn (.modelled "y" "rest/A.kt:40; service/Base.kt:1-90" ["b"])
+#guard (Surface.modelled "x" "rest/A.kt:10; service/Base.kt:1-90" ["a"]).sameWayIn (.modelled "y" "service/Base.kt:20-30" ["b"])
 #guard places "POST /groups, rest/GroupController.kt:57,104-120" == [("rest/GroupController.kt", [(57, 57), (104, 120)])]
 #guard places "repo: a/b/Listener.kt:10; Service.kt (see e.g. the notes)." == [("a/b/Listener.kt", [(10, 10)]), ("Service.kt", [])]
 #guard (Surface.modelled "x" "rest/A.kt:10-20" ["a"]).meets (.modelled "y" "repo: src/rest/A.kt:20" ["b"])
@@ -304,7 +322,8 @@ structure Peer where
 in a part whose ways into the code are `sf`: `n` must stand for a way in that `owner` owns. -/
 def Peer.followedBy (owner : Peer) (sf : List Surface) (n : String) : Option (Surface × List (String × String)) := do
   let e ← sf.find? fun e => e.owner == owner.name && e.actions.contains n
-  let o ← owner.surface.find? fun x => x.owns && x.meets e
+  -- the way in as `owner` has it: its own, or one it was itself handed by the part before it
+  let o ← (owner.surface.find? fun x => x.owns && x.meets e) <|> (owner.surface.find? fun x => x.passesOn && x.meets e)
   -- the journeys that are about this way in and nothing else, else those that begin with it;
   -- a business case told in general before its variants
   let pick (js : List (String × String × String × List String)) :=
@@ -312,6 +331,21 @@ def Peer.followedBy (owner : Peer) (sf : List Surface) (n : String) : Option (Su
     if whole.isEmpty then js.filter fun (_, _, _, acts) => (acts.head?.map o.actions.contains).getD false else whole
   let told := pick (owner.journeys.filter (·.2.2.1 == ""))
   pure (o, (if told.isEmpty then pick owner.journeys else told).map fun (id, title, _, _) => (id, title))
+
+/-- The part named for a ruled-in way in does lead to its owner: it models that
+place itself, or it has actions for it and names, in turn, a part that leads
+to the owner. A chain that comes back on itself leads nowhere. -/
+def leadsToOwner (peers : List Peer) : Nat → String → Surface → Bool
+  | 0, _, _ => false
+  | fuel + 1, part, e => (peers.find? (·.name == part)).any fun p => p.surface.any fun x =>
+      x.meets e && (x.owns || (x.passesOn && leadsToOwner peers fuel x.owner x))
+
+#guard leadsToOwner [{ name := "a", surface := [.modelled "x" "A.kt:1" ["a"]] }, { name := "b", surface := [.ruledIn "y" "A.kt:1; B.kt:2" "a" ["b"]] }]
+  8 "b" (.ruledIn "z" "B.kt:2" "b" ["c"])
+#guard !leadsToOwner [{ name := "a", surface := [.modelled "x" "A.kt:1" ["a"]] }, { name := "b", surface := [.ruledIn "y" "A.kt:1" "a" []] }]
+  8 "b" (.ruledIn "z" "A.kt:1" "b" ["c"])
+#guard !leadsToOwner [{ name := "a", surface := [.ruledIn "x" "A.kt:1" "b" ["a"]] }, { name := "b", surface := [.ruledIn "y" "A.kt:1" "a" ["b"]] }]
+  8 "b" (.ruledIn "z" "A.kt:1" "b" ["c"])
 
 structure Entry where
   name : String
@@ -912,12 +946,12 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       if !distinct.contains n then
         surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" names action `{n}`, which the model does not have"]
     -- one way in has one owner: what other parts say about the same place in the code
-    let owners := others.filterMap fun p => (p.surface.find? fun x => x.owns && x.meets e).map (p.name, ·)
+    let owners := others.filterMap fun p => (p.surface.find? fun x => x.owns && x.sameWayIn e).map (p.name, ·)
     if e.owner != "" then
       if !(others.any (·.name == e.owner)) then
         surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" is said to be ruled in `{e.owner}`, and there is no such part"]
-      else if !(owners.any (·.1 == e.owner)) then
-        surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" ({e.code}) is said to be ruled in `{e.owner}`, and that part models nothing at that place in the code"]
+      else if !(leadsToOwner others 8 e.owner e) then
+        surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" ({e.code}) is said to be ruled in `{e.owner}`, and that part neither models that place in the code nor passes it on from the part that does"]
     else if !e.reads && !e.elsewhere then
       for (part, x) in owners do
         questions := questions.push
@@ -969,7 +1003,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner),
       ("shared", .arr <| (others.toArray.flatMap fun p => (p.surface.filter fun x =>
           !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>
-        Json.mkObj [("part", .str p.name), ("what", .str x.what), ("status", .str x.status)]))]).toArray),
+        Json.mkObj [("part", .str p.name), ("what", .str x.what), ("status", .str x.status),
+          ("same", .bool (x.sameWayIn e))]))]).toArray),
     ("lifecycles", .arr <| (A.lifecycles.zipIdx.map fun ((name, l), k) => Json.mkObj [
       ("name", .str name), ("initial", .arr ((l A.init).eraseDups.map .str).toArray),
       ("edges", .arr <| (sortedEdges.filter (·.1 == k)).map fun (_, a, n, b) =>

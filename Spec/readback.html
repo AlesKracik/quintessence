@@ -520,7 +520,7 @@ function render(a, only) {
           : e.status === "ruled in" ? ["ruled in ", link(e.owner, file(e.owner)), as ? ["; what follows here: ", as] : null]
           : [h("b", "", "left out: "), e.why],
           others(e).filter(x => !(e.status === "ruled in" && x.part === e.owner && x.status === "modelled")).map(x =>
-            h("div", "cnt", clash(e) && x.status === "modelled" ? h("b", "", "two owners: ") : "also ", x.status, " in ", link(x.part, file(x.part))))));
+            h("div", "cnt", x.same === false ? "code behind it is also " : clash(e) && x.status === "modelled" ? h("b", "", "two owners: ") : "also ", x.status, " in ", link(x.part, file(x.part))))));
       tb.append(r); });
     S.append(h("div", "tw", h("table", "", h("thead", "", h("tr", "", ["the code can", "where", "in the model"].map(x => h("th", "", x)))), tb))); }
   const cs0 = codeOf(a).status;
@@ -576,7 +576,7 @@ const pl = (k, one) => k + " " + one + (k === 1 ? "" : "s");
 // one way in has one owner: an entry a part models or leaves out, which another part models too
 // what other parts say about a way in, once per part and standing
 const others = e => (e.shared || []).filter((x, i, l) => l.findIndex(y => y.part === x.part && y.status === x.status) === i);
-const clash = e => /modelled|left out/.test(e.status) && (e.shared || []).some(x => x.status === "modelled");
+const clash = e => /modelled|left out/.test(e.status) && (e.shared || []).some(x => x.status === "modelled" && x.same !== false);
 // the ways in that several parts speak about, each with its owner and the parts that take it as given
 const sharedWays = areas => {
   const rows = areas.flatMap(a => (a.surface || []).filter(e => e.status === "modelled" && (e.shared || []).length).map(e => [a, e]));
@@ -588,7 +588,7 @@ const sharedWays = areas => {
   const tb = h("tbody"); rows.sort((x, y) => clash(y[1]) - clash(x[1])).forEach(([a, e]) =>
     tb.append(h("tr", clash(e) ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code), h("td", "", link(a.area, file(a.area))),
       h("td", "", others(e).map(x => h("div", "", link(x.part, file(x.part)), ": ",
-        x.status === "modelled" ? h("b", "", "models it too") : x.status === "ruled in" ? "takes it as given" : "leaves it out"))))));
+        x.same === false ? "shares the code behind it" : x.status === "modelled" ? h("b", "", "models it too") : x.status === "ruled in" ? "takes it as given" : "leaves it out"))))));
   d.append(h("div", "tw", h("table", "", h("thead", "", h("tr", "", ["the code can", "where", "owned by", "also in"].map(x => h("th", "", x)))), tb)));
   return d; };
 if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readback data. The checker has not filled in this page yet."));
