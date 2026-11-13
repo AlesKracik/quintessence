@@ -518,7 +518,7 @@ private structure CodeResult where
   reused : Bool := false
 
 /-- Run git in `dir`; `none` when it fails or exits non-zero. -/
-private def git (dir : String) (args : List String) : IO (Option String) := do
+def git (dir : String) (args : List String) : IO (Option String) := do
   try
     let out ← IO.Process.output { cmd := "git", args := (["-C", dir] ++ args).toArray }
     return if out.exitCode == 0 then some out.stdout.trim else none
@@ -881,10 +881,14 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let mut readAt : Array Json := #[]
   for (repo, commit) in A.readAt do
     let dir := if repo == "." then some "." else (checkouts.getObjVal? repo >>= Json.getStr?).toOption
-    let head := (← match dir with | some d => git d ["rev-parse", "HEAD"] | none => pure none).getD ""
+    let here := (← match dir with | some d => git d ["rev-parse", "HEAD"] | none => pure none).getD ""
+    -- where the repository itself stands, as last fetched: a checkout that is behind it is not what to compare with
+    let behind := ((← match dir with | some d => git d ["rev-list", "--count", "HEAD..@{u}"] | none => pure none).bind (·.toNat?)).getD 0
+    let remote := (← match dir with | some d => git d ["rev-parse", "@{u}"] | none => pure none).getD here
+    let head := if behind == 0 then here else remote
     let mut changed : List String := []
     if head != "" && commit != "" && !head.startsWith commit then
-      if let some out := ← git (dir.getD ".") ["diff", "--name-only", commit, "HEAD"] then
+      if let some out := ← git (dir.getD ".") ["diff", "--name-only", commit, head] then
         changed := (out.splitOn "\n").filter fun f => f != "" && cited.any fun c =>
           ((c.splitOn "/").reverse.zip (f.splitOn "/").reverse).all fun (x, y) => x == y
         if !changed.isEmpty then
@@ -896,7 +900,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           (s!"This part was read from `{repo}` at {commit.take 10}, and the checkout, now at {head.take 10}, cannot be compared with that commit. "
             ++ "Is what the part says still what is there?", none)
     readAt := readAt.push <| Json.mkObj [("repo", .str repo), ("commit", .str commit), ("now", .str head),
-      ("changed", .arr (changed.map .str).toArray)]
+      ("behind", num behind), ("changed", .arr (changed.map .str).toArray)]
   if A.readAt.isEmpty && A.code.isNone && !cited.isEmpty then
     questions := questions.push
       ("This part cites code or documents and does not say which commit they were read from (`readAt`). "

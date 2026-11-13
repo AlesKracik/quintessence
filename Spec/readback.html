@@ -456,7 +456,8 @@ function codeSection(a, D) {
     const moved = r.now && !r.now.startsWith(r.commit), ch = r.changed || [];
     out.push(h("p", "sub", "Read from ", h("span", "mono", r.repo), " at ", h("span", "mono", r.commit.slice(0, 10)),
       !r.now ? " (no checkout here to compare with)" : !moved ? ", where it still is."
-        : [", now at ", h("span", "mono", r.now.slice(0, 10)), ch.length ? [": ", h("b", "", ch.length + " cited " + (ch.length === 1 ? "file" : "files") + " changed since"), " (", ch.join(", "), ")."] : ": nothing the part cites has changed."])); }
+        : [", now at ", h("span", "mono", r.now.slice(0, 10)), ch.length ? [": ", h("b", "", ch.length + " cited " + (ch.length === 1 ? "file" : "files") + " changed since"), " (", ch.join(", "), ")."] : ": nothing the part cites has changed."],
+      r.behind ? [" The checkout here is ", h("b", "", r.behind + " commits behind"), " that: bring it up to date before reading from it."] : null)); }
   return out;
 }
 

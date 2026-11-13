@@ -29,9 +29,53 @@ violated, any example fails, or code and model differ.
     --only <name>   run only that area or part (`protection`, `protection/runs`);
                     the others are still compared with it, and keep their ledgers.
                     The readback is written only for areas that were run whole.
+    --fresh-within <days>
+                    how old the last fetch of a source checkout may be before it
+                    is fetched again, for this run: `0` fetches now, a large
+                    number uses what is there. Without it the project's
+                    `fresh_within_days` in `.spec/project.json` counts, or one day.
+
+Sources are read fresh. Before anything else the program looks at every
+checkout named in `.spec/local.json` (`repo_paths`): one that was not fetched
+within the threshold is fetched (the remote's state only; the working tree is
+not touched), and one that is behind its remote is named, so that nobody reads
+from it unawares. What an area was read from (`readAt`) is then compared with
+the remote as fetched.
 -/
 
 namespace Spec
+
+/-- Sources are read fresh: fetch every checkout that was not fetched within
+the threshold, and name the ones that are behind their remote. Fetching takes
+the remote's state only; no working tree is changed. -/
+def freshen (override : Option Nat) : IO Unit := do
+  let file (path : String) : IO Lean.Json :=
+    return (Lean.Json.parse (← try IO.FS.readFile path catch _ => pure "")).toOption.getD .null
+  let days := override.getD <|
+    (((← file ".spec/project.json").getObjVal? "fresh_within_days" >>= Lean.Json.getNat?).toOption.getD 1)
+  let now := ((← IO.Process.output { cmd := "date", args := #["+%s"] }).stdout.trim.toNat?).getD 0
+  let checkouts := match (← file ".spec/local.json").getObjVal? "repo_paths" with
+    | .ok (.obj kvs) => kvs.fold (fun (acc : List (String × String)) k (v : Lean.Json) => acc ++ [(k, v.getStr?.toOption.getD "")]) []
+    | _ => []
+  for (name, dir) in checkouts do
+    -- when the remote was last asked: the last fetch, or the clone
+    let mut last := 0
+    for f in [".git/FETCH_HEAD", ".git/HEAD"] do
+      if last == 0 then
+        let seen ← try some <$> System.FilePath.metadata (System.FilePath.mk dir / f) catch _ => pure none
+        last := match seen with | some m => m.modified.sec.toNat | none => 0
+    if last == 0 then continue  -- not a git checkout: nothing to ask
+    if now ≥ last + days * 86400 then
+      -- never wait for a password or a hanging connection
+      let quiet : Array (String × Option String) :=
+        #[("GIT_TERMINAL_PROMPT", some "0"), ("GIT_SSH_COMMAND", some "ssh -oBatchMode=yes -oConnectTimeout=10")]
+      let fetch : IO.Process.SpawnArgs := { cmd := "git", args := #["-C", dir, "fetch", "--quiet"], env := quiet }
+      let fetched ← try (fun (out : IO.Process.Output) => out.exitCode == 0) <$> IO.Process.output fetch catch _ => pure false
+      IO.eprintln <| if fetched then s!"sources: fetched `{name}` (last asked {(now - last) / 86400} days ago)"
+        else s!"sources: `{name}` could not be fetched; what was last fetched {(now - last) / 86400} days ago is used"
+    let behind := ((← git dir ["rev-list", "--count", "HEAD..@{u}"]).bind (·.toNat?)).getD 0
+    if behind > 0 then
+      IO.eprintln s!"sources: the checkout of `{name}` ({dir}) is {behind} commits behind its remote; bring it up to date, or read from a fresh copy, before reading from it"
 
 def run (areas : List Entry) (args : List String) : IO UInt32 := do
   let since := match args.dropWhile (· != "--since") with
@@ -41,14 +85,19 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
     | _ :: name :: _ => some name
     | _ => none
   -- anything else on the command line is a mistake, not a reason to run everything
+  let fresh := match args.dropWhile (· != "--fresh-within") with
+    | _ :: days :: _ => days.toNat?
+    | _ => none
   let rec known : List String → Bool
     | [] => true
     | "--full" :: rest => known rest
     | "--since" :: _ :: rest | "--only" :: _ :: rest => known rest
+    | "--fresh-within" :: days :: rest => days.toNat?.isSome && known rest
     | _ => false
   if !known args then
-    IO.eprintln "usage: lake exe check [--since <rev>] [--full] [--only <area or part>]"
+    IO.eprintln "usage: lake exe check [--since <rev>] [--full] [--only <area or part>] [--fresh-within <days>]"
     return (1 : UInt32)
+  freshen fresh
   let wanted (name : String) : Bool := match only with
     | some o => name == o || name.startsWith (o ++ "/")
     | none => true
