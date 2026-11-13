@@ -110,7 +110,7 @@ const DATA = /*DATA*/[];
 const PAGE = /*PAGE*/{};
 
 const h = (t, c, ...k) => { const e = document.createElement(t); if (c) e.className = c;
-  for (const x of k.flat()) if (x != null) e.append(x.nodeType ? x : document.createTextNode(x)); return e; };
+  for (const x of k.flat(Infinity)) if (x != null) e.append(x.nodeType ? x : document.createTextNode(x)); return e; };
 const NS = "http://www.w3.org/2000/svg";
 const s = (t, a, text) => { const e = document.createElementNS(NS, t);
   for (const k in a) e.setAttribute(k, a[k]); if (text != null) e.textContent = text; return e; };
@@ -484,12 +484,20 @@ function render(a, only) {
     gas.forEach(x => ul.append(h("li", "gone", h("span", "badge below", "dropped"), " ", x)));
     S.append(ul); hid(S, asm.length - shown.length); }
   const sf = a.surface || [];
-  if (sf.length) { const out = sf.filter(e => e.status === "left out").length, md = sf.filter(e => e.status === "modelled").length;
-    const S = sec("What the code offers", md + " of " + (md + out) + " operations modelled", out ? out + " left out" : "", 0,
-      "Every way into the code of this area, listed from the code, and what the model does with each. What is left out, the model says nothing about. Code that serves other areas is not listed here.");
-    const tb = h("tbody"); [...sf].sort((x, y) => (y.status === "left out") - (x.status === "left out")).forEach(e => {
-      const r = h("tr", e.status === "left out" ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
-        h("td", "", e.status === "modelled" ? ["modelled: ", h("span", "mono", e.actions.join(", "))] : e.status === "reads" ? "only reads" : e.status === "outside" ? ["decided outside this area; here as: ", h("span", "mono", e.actions.join(", "))] : [h("b", "", "left out: "), e.why]));
+  if (sf.length) { const out = sf.filter(e => e.status === "left out").length, md = sf.filter(e => e.status === "modelled").length,
+      ri = sf.filter(e => e.status === "ruled in").length, two = sf.filter(clash).length;
+    const S = sec("What the code offers", md + " of " + (md + out) + " operations modelled" + (ri ? ", " + ri + " ruled in another part" : ""),
+      [out ? out + " left out" : "", two ? two + " with two owners" : ""].filter(Boolean).join(", "), 0,
+      "Every way into the code of this area, listed from the code, and what the model does with each. What is left out, the model says nothing about. A way in has one owner: the part whose model says when it is accepted and what it does; another part that needs it names it as ruled there. Code that serves other areas is not listed here.");
+    const tb = h("tbody"); [...sf].sort((x, y) => (clash(y) - clash(x)) || ((y.status === "left out") - (x.status === "left out"))).forEach(e => {
+      const as = e.actions.length ? h("span", "mono", e.actions.join(", ")) : null;
+      const r = h("tr", e.status === "left out" || clash(e) ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
+        h("td", "", e.status === "modelled" ? ["modelled: ", as] : e.status === "reads" ? "only reads"
+          : e.status === "outside" ? ["decided outside this area; here as: ", as]
+          : e.status === "ruled in" ? ["ruled in ", link(e.owner, file(e.owner)), as ? ["; what follows here: ", as] : null]
+          : [h("b", "", "left out: "), e.why],
+          others(e).filter(x => !(e.status === "ruled in" && x.part === e.owner && x.status === "modelled")).map(x =>
+            h("div", "cnt", clash(e) && x.status === "modelled" ? h("b", "", "two owners: ") : "also ", x.status, " in ", link(x.part, file(x.part))))));
       tb.append(r); });
     S.append(h("div", "tw", h("table", "", h("thead", "", h("tr", "", ["the code can", "where", "in the model"].map(x => h("th", "", x)))), tb))); }
   const cs0 = codeOf(a).status;
@@ -542,6 +550,24 @@ const link = (text, href, cls) => { const x = h("a", cls || "", text); x.href = 
 const areaOf = name => name.split("/")[0], partOf = name => name.split("/").slice(1).join("/");
 const file = name => encodeURIComponent(areaOf(name)) + ".html" + (partOf(name) ? "#" + encodeURIComponent(partOf(name)) : "");
 const pl = (k, one) => k + " " + one + (k === 1 ? "" : "s");
+// one way in has one owner: an entry a part models or leaves out, which another part models too
+// what other parts say about a way in, once per part and standing
+const others = e => (e.shared || []).filter((x, i, l) => l.findIndex(y => y.part === x.part && y.status === x.status) === i);
+const clash = e => /modelled|left out/.test(e.status) && (e.shared || []).some(x => x.status === "modelled");
+// the ways in that several parts speak about, each with its owner and the parts that take it as given
+const sharedWays = areas => {
+  const rows = areas.flatMap(a => (a.surface || []).filter(e => e.status === "modelled" && (e.shared || []).length).map(e => [a, e]));
+  if (!rows.length) return null;
+  const two = rows.filter(([, e]) => clash(e)).length, d = h("details", "sec"); d.open = !!two;
+  d.append(h("summary", "", h("h2", "", "Ways in shared between parts"), h("span", "cnt", String(rows.length)),
+      two ? h("span", "badge failed", two + " with two owners") : null),
+    h("p", "sub", "A way into the code that more than one part speaks about. One part owns it: its model says when the way in is accepted and what it does. The others take that as given and say what follows for their own things."));
+  const tb = h("tbody"); rows.sort((x, y) => clash(y[1]) - clash(x[1])).forEach(([a, e]) =>
+    tb.append(h("tr", clash(e) ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code), h("td", "", link(a.area, file(a.area))),
+      h("td", "", others(e).map(x => h("div", "", link(x.part, file(x.part)), ": ",
+        x.status === "modelled" ? h("b", "", "models it too") : x.status === "ruled in" ? "takes it as given" : "leaves it out"))))));
+  d.append(h("div", "tw", h("table", "", h("thead", "", h("tr", "", ["the code can", "where", "owned by", "also in"].map(x => h("th", "", x)))), tb)));
+  return d; };
 if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readback data. The checker has not filled in this page yet."));
 else if (KIND === "index") {
   app.append(h("h1", "", "Readback"), h("p", "sub", "One page per area: the area as it stands."));
@@ -574,7 +600,9 @@ else if (KIND === "index") {
     if (since) { const cb = h("input"); cb.type = "checkbox"; cb.checked = only; cb.onchange = () => { only = cb.checked; show(cur); };
       tog = h("label", "tog", cb, "only what changed"); }
     const want = decodeURIComponent(location.hash.slice(1)), at = areas.findIndex(a => partOf(a.area) === want);
+    const ways = KIND === "area" ? sharedWays(areas) : null; if (ways) app.append(ways);
     app.append(h("div", "bar", areas.length > 1 ? tabs : null, all, tog), body); show(want && at >= 0 ? at : 0);
+    addEventListener("hashchange", () => { const to = areas.findIndex(a => partOf(a.area) === decodeURIComponent(location.hash.slice(1))); if (to >= 0) show(to); });
   }
 }
 </script></body></html>

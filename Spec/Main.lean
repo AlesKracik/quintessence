@@ -26,6 +26,9 @@ violated, any example fails, or code and model differ.
     --since <rev>   compare with that git revision: the readback shows what changed
                     since, and that revision's ledger is what counts as recorded
     --full          re-run every code check
+    --only <name>   run only that area or part (`protection`, `protection/runs`);
+                    the others are still compared with it, and keep their ledgers.
+                    The readback is written only for areas that were run whole.
 -/
 
 namespace Spec
@@ -34,6 +37,15 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   let since := match args.dropWhile (· != "--since") with
     | _ :: ref :: _ => some ref
     | _ => none
+  let only := match args.dropWhile (· != "--only") with
+    | _ :: name :: _ => some name
+    | _ => none
+  let wanted (name : String) : Bool := match only with
+    | some o => name == o || name.startsWith (o ++ "/")
+    | none => true
+  if !areas.any (wanted ·.name) then
+    IO.eprintln s!"no area or part is called {only.getD ""}"
+    return (1 : UInt32)
   IO.FS.createDirAll "ledger"
   IO.FS.createDirAll "out/readback"
   let template ← IO.FS.readFile s!"{← platformDir}/Spec/readback.html"
@@ -48,8 +60,9 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   let mut pages := #[]
   let mut ledgers := #[]
   let mut failed := []
-  for e in areas do
+  for e in areas.filter (wanted ·.name) do
     let r ← e.report since (args.contains "--full")
+      ((areas.filter (·.name != e.name)).map fun o => (o.name, o.surface))
     let file := System.FilePath.mk s!"ledger/{e.name}.json"
     if let some dir := file.parent then IO.FS.createDirAll dir
     IO.FS.writeFile file (r.ledger.pretty ++ "\n")
@@ -58,16 +71,19 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
     ledgers := ledgers.push r.ledger
     failed := failed ++ r.failed.map (s!"{e.name}: " ++ ·)
   -- each area as it stands, with all its parts
-  for a in (areas.map (top ·.name)).eraseDups do
-    page a "area" ((areas.zip pages.toList).filterMap fun (e, p) => if top e.name == a then some p else none).toArray
-  page "index" "index" ledgers  -- the list of areas
-  -- the change, across every area it touches
-  if since.isSome then page "change" "change" pages
-  else try IO.FS.removeFile "out/readback/change.html" catch _ => pure ()  -- an earlier comparison's page would be stale
+  let ran := areas.filter (wanted ·.name)
+  for a in (ran.map (top ·.name)).eraseDups do
+    if areas.all fun e => top e.name != a || wanted e.name then
+      page a "area" ((ran.zip pages.toList).filterMap fun (e, p) => if top e.name == a then some p else none).toArray
+  if only.isNone then
+    page "index" "index" ledgers  -- the list of areas
+    -- the change, across every area it touches
+    if since.isSome then page "change" "change" pages
+    else try IO.FS.removeFile "out/readback/change.html" catch _ => pure ()  -- an earlier comparison's page would be stale
   for f in failed do IO.eprintln f
-  IO.println <| "readback: out/readback/index.html"
-    ++ (if since.isSome then ", the change: out/readback/change.html" else "")
-  return if failed.isEmpty then 0 else 1
+  IO.println <| (if only.isNone then "readback: out/readback/index.html" else s!"only {only.getD ""} was run")
+    ++ (if since.isSome && only.isNone then ", the change: out/readback/change.html" else "")
+  return (if failed.isEmpty then 0 else 1 : UInt32)
 
 open Lean Elab Command in
 elab "checker_main " id:ident : command => do

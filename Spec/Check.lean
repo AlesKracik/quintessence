@@ -167,6 +167,8 @@ structure Surface where
   /-- Not code of this area at all: something another area decides, which
   the model has an action for because this area depends on it. -/
   elsewhere : Bool := false
+  /-- The part that owns this way in, when it is not this one. -/
+  owner : String := ""
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
@@ -179,6 +181,51 @@ def Surface.leftOut (what code why : String) : Surface := { what, code, why }
 ("the recovery side changes the state of the group's plan"). -/
 def Surface.outside (what : String) (actions : List String) : Surface :=
   { what, code := "", actions, elsewhere := true }
+/-- A way in that another part owns: that part says when it is accepted and
+what it does. This part takes that as given, and its actions for it, if it
+has any, say only what follows for its own things. -/
+def Surface.ruledIn (what code part : String) (actions : List String := []) : Surface :=
+  { what, code, actions, owner := part }
+
+/-- The model of this part is the one that speaks for this way in. -/
+def Surface.owns (e : Surface) : Bool := e.owner == "" && !e.actions.isEmpty && !e.elsewhere
+
+def Surface.status (e : Surface) : String :=
+  if e.elsewhere then "outside" else if e.owner != "" then "ruled in"
+  else if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else "left out"
+
+/-- The places in the code that a surface entry names. `code` is free text;
+a place in it is a file, with the lines given for it or, with none given, all
+of it: "POST /groups, rest/GroupController.kt:57,104-120" names lines 57 and
+104 to 120 of `rest/GroupController.kt`. -/
+def places (code : String) : List (String × List (Nat × Nat)) :=
+  (code.split fun c => c.isWhitespace || c == ';' || c == '(' || c == ')').filterMap fun raw =>
+    let tok := raw.dropRightWhile fun c => c == ',' || c == '.' || c == ':'
+    let range (r : String) : Option (Nat × Nat) := match r.splitOn "-" with
+      | [a] => a.toNat?.map fun n => (n, n)
+      | [a, b] => a.toNat?.bind fun n => b.toNat?.map fun m => (n, m)
+      | _ => none
+    let (path, lines) : String × List (Nat × Nat) := match tok.splitOn ":" with
+      | [p, l] => (p, (l.splitOn ",").filterMap range)
+      | _ => (tok, [])
+    let name := ((path.splitOn "/").getLast?).getD ""
+    let ext := name.takeRightWhile (· != '.')
+    if ext.length < name.length - 1 && ext.all Char.isAlpha && (!lines.isEmpty || ext.length ≥ 2)
+    then some (path, lines) else none
+
+/-- Two surface entries name the same place: the same file (one path ends
+with the other) and lines that meet. -/
+def Surface.meets (a b : Surface) : Bool :=
+  (places a.code).any fun (f, ls) => (places b.code).any fun (g, ms) =>
+    ((f.splitOn "/").reverse.zip (g.splitOn "/").reverse).all (fun (x, y) => x == y)
+      && (ls.isEmpty || ms.isEmpty || ls.any fun (l, h) => ms.any fun (m, k) => l ≤ k && m ≤ h)
+
+#guard places "POST /groups, rest/GroupController.kt:57,104-120" == [("rest/GroupController.kt", [(57, 57), (104, 120)])]
+#guard places "repo: a/b/Listener.kt:10; Service.kt (see e.g. the notes)." == [("a/b/Listener.kt", [(10, 10)]), ("Service.kt", [])]
+#guard (Surface.modelled "x" "rest/A.kt:10-20" ["a"]).meets (.modelled "y" "repo: src/rest/A.kt:20" ["b"])
+#guard !(Surface.modelled "x" "rest/A.kt:10-20" ["a"]).meets (.modelled "y" "rest/A.kt:21-30" ["b"])
+#guard !(Surface.modelled "x" "rest/A.kt:10" ["a"]).meets (.modelled "y" "other/A.kt:10" ["b"])
+#guard (Surface.modelled "x" "A.kt" ["a"]).meets (.modelled "y" "rest/A.kt:10" ["b"])
 
 structure Area (σ α : Type) where
   name : String
@@ -233,9 +280,12 @@ structure Report where
 
 structure Entry where
   name : String
+  /-- The ways into the code that this area or part lists, for comparing parts. -/
+  surface : List Surface := []
   /-- `since`: the git revision to compare against; its ledger, not the one on
-  disk, is then what counts as recorded. `full`: re-run the code check regardless. -/
-  report : (since : Option String) → (full : Bool) → IO Report
+  disk, is then what counts as recorded. `full`: re-run the code check regardless.
+  `others`: what every other area and part lists as its ways into the code. -/
+  report : (since : Option String) → (full : Bool) → (others : List (String × List Surface)) → IO Report
 
 /-! ## Display -/
 
@@ -615,7 +665,7 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
                ++ s!"({transitions} transitions, {used} code steps)" }
 
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
-    (since : Option String) (rerun : Bool) : IO Report := do
+    (since : Option String) (rerun : Bool) (others : List (String × List Surface)) : IO Report := do
   -- what was recorded at the revision this run is compared with, for the readback
   let before ← match since with
     | some r => ledgerAt A.name (some r)
@@ -758,9 +808,21 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     for n in e.actions do
       if !distinct.contains n then
         surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" names action `{n}`, which the model does not have"]
-    if e.actions.isEmpty && !e.reads then
-      questions := questions.push
-        (s!"The code can {e.what} ({e.code}), and the model leaves it out: {e.why}. Should the area cover it?", none)
+    -- one way in has one owner: what other parts say about the same place in the code
+    let owners := others.filterMap fun (part, sf) => (sf.find? fun x => x.owns && x.meets e).map (part, ·)
+    if e.owner != "" then
+      if !(others.any (·.1 == e.owner)) then
+        surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" is said to be ruled in `{e.owner}`, and there is no such part"]
+      else if !(owners.any (·.1 == e.owner)) then
+        surfaceFailed := surfaceFailed ++ [s!"surface: \"{e.what}\" ({e.code}) is said to be ruled in `{e.owner}`, and that part models nothing at that place in the code"]
+    else if !e.reads && !e.elsewhere then
+      for (part, x) in owners do
+        questions := questions.push
+          (s!"\"{e.what}\" ({e.code}) is also modelled in {part} (\"{x.what}\"). One way in has one owner: "
+            ++ (if e.owns then "which part owns it? The other names it with `.ruledIn`." else "name it here as ruled there."), none)
+      if e.actions.isEmpty && owners.isEmpty then
+        questions := questions.push
+          (s!"The code can {e.what} ({e.code}), and the model leaves it out: {e.why}. Should the area cover it?", none)
   if !A.surface.isEmpty then
     for n in distinct do
       if !(A.surface.any (·.actions.contains n)) then
@@ -800,9 +862,10 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("assumptions", .arr (A.assumptions.map .str).toArray),
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
-      ("status", .str (if e.elsewhere then "outside" else if !e.actions.isEmpty then "modelled"
-        else if e.reads then "reads" else "left out")),
-      ("why", .str e.why)]).toArray),
+      ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner),
+      ("shared", .arr <| (others.toArray.flatMap fun (part, sf) => (sf.filter fun x =>
+          !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>
+        Json.mkObj [("part", .str part), ("what", .str x.what), ("status", .str x.status)]))]).toArray),
     ("lifecycles", .arr <| (A.lifecycles.zipIdx.map fun ((name, l), k) => Json.mkObj [
       ("name", .str name), ("initial", .arr ((l A.init).eraseDups.map .str).toArray),
       ("edges", .arr <| (sortedEdges.filter (·.1 == k)).map fun (_, a, n, b) =>
@@ -824,7 +887,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
 
 /-- Package an area for the checker program. -/
 def Area.entry [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Entry :=
-  { name := A.name, report := build A }
+  { name := A.name, surface := A.surface, report := build A }
 
 end
 end Spec
