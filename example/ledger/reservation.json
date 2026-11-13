@@ -214,7 +214,8 @@
    "id": "J-001",
    "goal":
    "A customer picks a seat, gets a moment to pay, and ends up owning it.",
-   "given": ""},
+   "given": "",
+   "about": ""},
   {"title": "Giving a seat back",
    "steps":
    [{"turnedDown": ["REQ-007"],
@@ -235,7 +236,8 @@
    "id": "J-002",
    "goal":
    "A customer who bought a seat changes their mind, and the seat goes back on sale.",
-   "given": "A customer has bought a seat."}],
+   "given": "A customer has bought a seat.",
+   "about": ""}],
  "code":
  {"verdict":
   "the code agrees with the model on every journey and walkthrough, and on every transition and refusal of the scope (13899 transitions, 121452 code steps)",
@@ -252,7 +254,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "8026402128114568899",
+  "inputs": "1285320797102934232",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",

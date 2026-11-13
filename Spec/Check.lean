@@ -84,6 +84,9 @@ structure Journey (α : Type) where
   title : String
   /-- Who wants what. -/
   goal : String
+  /-- The thing the journey is about ("policy", "protection group"). The
+  readback keeps the journeys about one thing together, under its name. -/
+  about : String := ""
   /-- Where the journey starts, in general words ("the group has VMs") ... -/
   given : String := ""
   /-- ... and the run that gets there from the initial state. -/
@@ -711,7 +714,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let mut leaves : List (String × String) := []  -- a refusal requirement and the journey it turns a step down in
   -- journeys: the usual course of a business case, replayed on the model
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
-  for j in A.journeys do
+  -- in the order they are listed, with the journeys about one thing kept together
+  for j in (A.journeys.map (·.about)).eraseDups.flatMap fun k => A.journeys.filter (·.about == k) do
     let mut s := A.init
     let mut ok := !j.steps.isEmpty
     for a in j.setup do
@@ -744,7 +748,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     let status := if ok then "ok" else "failed"
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
-      ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
+      ("about", .str j.about), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
       ("status", .str status), ("steps", .arr (rows.map (· full)))])
   -- walkthroughs: specific runs that matter, replayed moment by moment
   let mut walkthroughs : Array (String × Bool × (Bool → Json)) := #[]

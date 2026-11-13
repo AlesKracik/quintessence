@@ -112,26 +112,29 @@ def area : Area State Action where
         | _ => true }]
   journeys := [
     { id := "J-001",
+      about := "Session",
       sources := ["written for this example"], title := "Signing in and out",
       goal := "A user wants to use the service and then leave it.",
       steps := [
         .step "The user signs in." [.login "alice" "s1"],
         .step "The user signs out." [.logout "s1"]] },
     { id := "J-002",
-      sources := ["the earlier specification's journey 'Locked out'"], title := "Wrong passwords lock an account",
-      goal := "Someone keeps trying wrong passwords on an account; the account is locked until an administrator opens it again.",
-      steps := [
-        .step "A wrong password is tried on the account; the fifth one locks it." (List.replicate 5 (.login_failed "bob")),
-        .step "An administrator unlocks the account." [.unlock_account "bob"],
-        .step "The user signs in again." [.login "bob" "s1"]] },
-    { id := "J-003",
+      about := "Session",
       sources := ["written for this example"], title := "A session left idle expires",
       goal := "A user signs in and walks away; the service ends the session by itself.",
       given := "A user is signed in.",
       setup := [.login "alice" "s1"],
       steps := [
         .step "Time passes with nothing happening in the session." [.tick, .tick, .tick, .tick],
-        .step "The session expires." [.expire_session "s1"]] }]
+        .step "The session expires." [.expire_session "s1"]] },
+    { id := "J-003",
+      about := "Account",
+      sources := ["the earlier specification's journey 'Locked out'"], title := "Wrong passwords lock an account",
+      goal := "Someone keeps trying wrong passwords on an account; the account is locked until an administrator opens it again.",
+      steps := [
+        .step "A wrong password is tried on the account; the fifth one locks it." (List.replicate 5 (.login_failed "bob")),
+        .step "An administrator unlocks the account." [.unlock_account "bob"],
+        .step "The user signs in again." [.login "bob" "s1"]] }]
   walkthroughs := [
     { id := "W-001", journey := "J-001",
       sources := ["written for this example"], title := "Signing in twice",
@@ -142,7 +145,7 @@ def area : Area State Action where
         .refusal "She tries to sign in a second time while still signed in, and is turned away." (.login "alice" "s2"),
         .outcome "She signs out." (.logout "s1") (fun s => statusOf s.sessions "s1" == .LoggedOut),
         .step "Later she signs in again." (.login "alice" "s2")] },
-    { id := "W-002", journey := "J-002",
+    { id := "W-002", journey := "J-003",
       sources := ["the earlier specification's journey 'Locked out'"], title := "Locked out while signed in",
       goal := "Someone tries wrong passwords on Alice's account while she is signed in.",
       moments := [
@@ -156,7 +159,7 @@ def area : Area State Action where
         .refusal "Alice tries to sign in again and is turned away." (.login "alice" "s2"),
         .step "An administrator unlocks the account." (.unlock_account "alice"),
         .step "Alice signs in again." (.login "alice" "s2")] },
-    { id := "W-003", journey := "J-003",
+    { id := "W-003", journey := "J-002",
       sources := ["written for this example"], title := "Left idle",
       goal := "Alice signs in and then walks away from her desk.",
       moments := [

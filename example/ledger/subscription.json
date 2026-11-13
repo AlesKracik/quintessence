@@ -172,7 +172,8 @@
    "id": "J-001",
    "goal":
    "A customer no longer wants to pay, but has paid for the current period and keeps access until it ends.",
-   "given": ""}],
+   "given": "",
+   "about": ""}],
  "code":
  {"verdict":
   "the code agrees with the model on every journey and walkthrough, and on every transition and refusal of the scope (960 transitions, 5186 code steps)",
@@ -194,7 +195,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "16591090427136731645",
+  "inputs": "7730569414907438699",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",
