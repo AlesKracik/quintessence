@@ -175,6 +175,7 @@
    "A customer no longer wants to pay, but has paid for the current period and keeps access until it ends.",
    "given": "",
    "follows": null,
+   "continued": [],
    "about": ""}],
  "code":
  {"verdict":
@@ -197,7 +198,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "10387322420955210304",
+  "inputs": "6657990961551876102",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",

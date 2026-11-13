@@ -290,8 +290,22 @@ structure Peer where
   name : String
   /-- The ways into the code that it lists. -/
   surface : List Surface := []
-  /-- Its journeys told in general: id, title, and the actions the steps take, in order. -/
-  journeys : List (String × String × List String) := []
+  /-- Its journeys: id, title, the journey it is a variant of (or ""), and the actions
+  the steps take, in order. -/
+  journeys : List (String × String × String × List String) := []
+
+/-- The journeys of `owner` that a journey follows from, when it begins with the action `n`
+in a part whose ways into the code are `sf`: `n` must stand for a way in that `owner` owns. -/
+def Peer.followedBy (owner : Peer) (sf : List Surface) (n : String) : Option (Surface × List (String × String)) := do
+  let e ← sf.find? fun e => e.owner == owner.name && e.actions.contains n
+  let o ← owner.surface.find? fun x => x.owns && x.meets e
+  -- the journeys that are about this way in and nothing else, else those that begin with it;
+  -- a business case told in general before its variants
+  let pick (js : List (String × String × String × List String)) :=
+    let whole := js.filter fun (_, _, _, acts) => !acts.isEmpty && acts.all o.actions.contains
+    if whole.isEmpty then js.filter fun (_, _, _, acts) => (acts.head?.map o.actions.contains).getD false else whole
+  let told := pick (owner.journeys.filter (·.2.2.1 == ""))
+  pure (o, (if told.isEmpty then pick owner.journeys else told).map fun (id, title, _, _) => (id, title))
 
 structure Entry where
   name : String
@@ -678,6 +692,12 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
              verdict := s!"the code agrees with the model on every journey and walkthrough, and on every transition and refusal {reach} "
                ++ s!"({transitions} transitions, {used} code steps)" }
 
+/-- What an area or part shows of itself to the others. -/
+def Area.peer [Repr α] (A : Area σ α) : Peer :=
+  { name := A.name, surface := A.surface,
+    journeys := A.journeys.map fun j =>
+      (j.id, j.title, j.variantOf, ((j.steps.flatMap (·.actions)).map (actionName ∘ label)).eraseDups) }
+
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     (since : Option String) (rerun : Bool) (others : List Peer) : IO Report := do
   -- what was recorded at the revision this run is compared with, for the readback
@@ -727,6 +747,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
   -- in the order they are listed, with the journeys about one thing kept together
   -- and the variants of a business case right after it
+  let me := A.peer
   let general (j : Journey α) : Bool := !(A.journeys.any fun p => p.id == j.variantOf && p.variantOf == "")
   let listed := (A.journeys.map (·.about)).eraseDups.flatMap fun k => A.journeys.filter (·.about == k)
   for j in (listed.filter general).flatMap fun p => p :: listed.filter fun v => !general v && v.variantOf == p.id do
@@ -765,15 +786,16 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     -- here from that part's journey.
     let follows : Option Json := do
       let n := actionName (label (← (← j.steps.head?).actions.head?))
-      let e ← A.surface.find? fun e => e.owner != "" && e.actions.contains n
-      let p ← others.find? (·.name == e.owner)
-      let o ← p.surface.find? fun x => x.owns && x.meets e
-      let whole := p.journeys.filter fun (_, _, acts) => !acts.isEmpty && acts.all o.actions.contains
-      let told := if whole.isEmpty then p.journeys.filter fun (_, _, acts) => (acts.head?.map o.actions.contains).getD false else whole
+      let (p, o, told) ← others.findSome? fun p => (p.followedBy A.surface n).map fun (o, js) => (p, o, js)
       pure <| Json.mkObj [("part", .str p.name), ("what", .str o.what),
-        ("journeys", .arr (told.map fun (id, title, _) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
+        ("journeys", .arr (told.map fun (id, title) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
+    -- and the other way round: the journeys of other parts that follow from this one
+    let continued := others.flatMap fun p => p.journeys.filterMap fun (id, title, variantOf, acts) => do
+      if variantOf != "" then none
+      let (_, js) ← me.followedBy p.surface (← acts.head?)
+      if js.any (·.1 == j.id) then some (Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title)]) else none
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
-      ("follows", follows.getD .null),
+      ("follows", follows.getD .null), ("continued", .arr continued.toArray),
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
       ("about", .str j.about), ("variantOf", .str (if general j then "" else j.variantOf)), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
       ("status", .str status), ("steps", .arr (rows.map (· full)))])
@@ -929,11 +951,9 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   return { ledger := json false, readback := json true, failed := failed ++ codeFailed, summary }
 
 /-- Package an area for the checker program. -/
+-- (what it shows of itself to the others is `Area.peer`, above)
 def Area.entry [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Entry :=
-  { name := A.name, report := build A,
-    peer := { name := A.name, surface := A.surface,
-              journeys := (A.journeys.filter (·.variantOf == "")).map fun j =>
-                (j.id, j.title, ((j.steps.flatMap (·.actions)).map (actionName ∘ label)).eraseDups) } }
+  { name := A.name, report := build A, peer := A.peer }
 
 end
 end Spec
