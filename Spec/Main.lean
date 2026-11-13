@@ -40,6 +40,15 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   let only := match args.dropWhile (· != "--only") with
     | _ :: name :: _ => some name
     | _ => none
+  -- anything else on the command line is a mistake, not a reason to run everything
+  let rec known : List String → Bool
+    | [] => true
+    | "--full" :: rest => known rest
+    | "--since" :: _ :: rest | "--only" :: _ :: rest => known rest
+    | _ => false
+  if !known args then
+    IO.eprintln "usage: lake exe check [--since <rev>] [--full] [--only <area or part>]"
+    return (1 : UInt32)
   let wanted (name : String) : Bool := match only with
     | some o => name == o || name.startsWith (o ++ "/")
     | none => true
