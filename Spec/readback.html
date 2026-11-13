@@ -13,6 +13,7 @@ main{max-width:1000px;margin:0 auto;padding:16px}
 .mono,code,td.v,.act{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
 h1{font-size:20px;margin:0 0 12px}h2{font-size:16px;margin:26px 0 8px}h3{font-size:13px;margin:14px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
 .sub{color:var(--mut);font-size:13px;margin:-4px 0 8px}
+.vars{margin:0 0 10px 22px;padding-left:12px;border-left:2px solid var(--line)}.vars>.sub{margin:4px 0}
 .sec{border-top:1px solid var(--line)}.sec[open]{padding-bottom:12px}
 .sec>summary{cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;padding:11px 0;list-style:none}
 .sec>summary::-webkit-details-marker{display:none}.sec>summary::before{content:"▸";color:var(--mut);width:12px}.sec[open]>summary::before{content:"▾"}
@@ -318,8 +319,11 @@ function journeys(a, D) {
   ws.forEach(w => (w.moments || []).forEach(m => (m.requirements || []).forEach(r => {
     if (!shown.has(r)) shown.set(r, []); if (!shown.get(r).includes(w.id)) shown.get(r).push(w.id); })));
   // in the order of the area's flow, the journeys about one thing under its name
-  js.forEach((j, k) => { if (j.about && (!k || js[k - 1].about !== j.about)) out.push(h("h3", "about", j.about));
-    out.push(journey(j, req, D && D.j.get(j.id), ws.filter(w => w.journey === j.id), wmark, shown)); });
+  // and under each business case its variants: the same case taken one particular way
+  const one = j => journey(j, req, D && D.j.get(j.id), ws.filter(w => w.journey === j.id), wmark, shown);
+  js.filter(j => !j.variantOf).forEach((j, k, tops) => { if (j.about && (!k || tops[k - 1].about !== j.about)) out.push(h("h3", "about", j.about));
+    const vs = js.filter(v => v.variantOf === j.id);
+    out.push(one(j)); if (vs.length) out.push(h("div", "vars", h("p", "sub", pl(vs.length, "variant") + " of " + j.id + ": the same business case, taken one particular way"), vs.map(one))); });
   (D ? D.rj : []).forEach(j => out.push(goneRow({ id: j.id, text: j.title }, "removed")));
   const rest = ws.filter(w => !js.some(j => j.id === w.journey));
   if (rest.length) { out.push(h("h3", "", "Other walkthroughs")); rest.forEach(w => out.push(walkthrough(w, req, wmark(w)))); }

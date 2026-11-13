@@ -194,7 +194,8 @@
     ["on hold", "tick", "free"],
     ["sold", "cancel", "free"]]}],
  "journeys":
- [{"title": "Buying a seat",
+ [{"variantOf": "",
+   "title": "Buying a seat",
    "steps":
    [{"turnedDown": ["REQ-002", "REQ-003"],
      "say": "The customer puts a seat on hold.",
@@ -216,7 +217,8 @@
    "A customer picks a seat, gets a moment to pay, and ends up owning it.",
    "given": "",
    "about": ""},
-  {"title": "Giving a seat back",
+  {"variantOf": "",
+   "title": "Giving a seat back",
    "steps":
    [{"turnedDown": ["REQ-007"],
      "say": "The customer cancels the seat; it is free again.",
@@ -254,7 +256,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "1285320797102934232",
+  "inputs": "12033759356638534143",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",

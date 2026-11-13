@@ -151,7 +151,8 @@
    [["active", "cancel_subscription", "cancelled, access until period end"],
     ["cancelled, access until period end", "expire_period", "expired"]]}],
  "journeys":
- [{"title": "Cancelling a subscription",
+ [{"variantOf": "",
+   "title": "Cancelling a subscription",
    "steps":
    [{"turnedDown": [],
      "say":
@@ -195,7 +196,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "7730569414907438699",
+  "inputs": "18277454698989260679",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",

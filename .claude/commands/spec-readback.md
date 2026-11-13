@@ -7,7 +7,7 @@ The person never reads the Lean. The readback is the model in a form a person ca
 
 An area's page holds:
 
-- the journeys: each business case in general terms, as a graph of its usual course, with a loop on a step that can repeat and, beside every step, each way the system turns it down; they come in the order of the area's flow, the journeys about one thing together under its name;
+- the journeys: each business case in general terms, as a graph of its usual course, with a loop on a step that can repeat and, beside every step, each way the system turns it down; they come in the order of the area's flow, the journeys about one thing together under its name, and the variants of a business case under it;
 - under each journey its walkthroughs: specific runs worth knowing, moment by moment, told in the area's named views;
 - the assumptions: what the model takes for granted, simplifies or leaves out;
 - for an area extracted from code, what the code offers: every way into it, and whether the model covers it, with the count of what is left out;

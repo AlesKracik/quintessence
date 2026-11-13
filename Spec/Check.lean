@@ -87,6 +87,10 @@ structure Journey (α : Type) where
   /-- The thing the journey is about ("policy", "protection group"). The
   readback keeps the journeys about one thing together, under its name. -/
   about : String := ""
+  /-- The journey this one is a specific case of: the same business case,
+  taken one particular way ("enrolling a VM" with a workflow named). The
+  readback shows it under that journey. -/
+  variantOf : String := ""
   /-- Where the journey starts, in general words ("the group has VMs") ... -/
   given : String := ""
   /-- ... and the run that gets there from the initial state. -/
@@ -715,7 +719,10 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   -- journeys: the usual course of a business case, replayed on the model
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
   -- in the order they are listed, with the journeys about one thing kept together
-  for j in (A.journeys.map (·.about)).eraseDups.flatMap fun k => A.journeys.filter (·.about == k) do
+  -- and the variants of a business case right after it
+  let general (j : Journey α) : Bool := !(A.journeys.any fun p => p.id == j.variantOf && p.variantOf == "")
+  let listed := (A.journeys.map (·.about)).eraseDups.flatMap fun k => A.journeys.filter (·.about == k)
+  for j in (listed.filter general).flatMap fun p => p :: listed.filter fun v => !general v && v.variantOf == p.id do
     let mut s := A.init
     let mut ok := !j.steps.isEmpty
     for a in j.setup do
@@ -748,7 +755,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     let status := if ok then "ok" else "failed"
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
-      ("about", .str j.about), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
+      ("about", .str j.about), ("variantOf", .str (if general j then "" else j.variantOf)), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
       ("status", .str status), ("steps", .arr (rows.map (· full)))])
   -- walkthroughs: specific runs that matter, replayed moment by moment
   let mut walkthroughs : Array (String × Bool × (Bool → Json)) := #[]
@@ -806,6 +813,18 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
            some (trace fp (some i)))
   for q in code.questions do
     questions := questions.push (q, none)
+  -- one business case is told once: journeys that take the same steps are variants of one
+  let stepsOf (j : Journey α) : List String :=
+    ((j.steps.flatMap (·.actions)).map (actionName ∘ label)).eraseDups.toArray.qsort (· < ·) |>.toList
+  let family (j : Journey α) : String := if general j then j.id else j.variantOf
+  let mut journeyFailed : List String := []
+  for (j, k) in A.journeys.zipIdx do
+    if j.variantOf != "" && general j then
+      journeyFailed := journeyFailed ++ [s!"{j.id} is said to be a variant of {j.variantOf}, which is not a journey told in general"]
+    if let some p := (A.journeys.take k).find? fun p => !(stepsOf p).isEmpty && stepsOf p == stepsOf j && family p != family j then
+      questions := questions.push
+        (s!"{j.id} takes the same steps as {p.id} ({", ".intercalate (stepsOf j)}). Are they one business case? "
+          ++ "Then tell it once in general and name the others as its variants with `variantOf`.", none)
   -- what the code offers against what the model speaks about
   let mut surfaceFailed : List String := []
   for e in A.surface do
@@ -879,7 +898,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ++ ((journeys ++ walkthroughs).toList.filterMap fun (id, ok, _) =>
       if ok then none else some s!"{id} does not go as told")
   let codeFailed := (if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else [])
-    ++ surfaceFailed
+    ++ surfaceFailed ++ journeyFailed
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size
   let summary := s!"{A.name}: {states} states, "
