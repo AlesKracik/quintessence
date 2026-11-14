@@ -322,7 +322,7 @@ function journey(j, req, ms, walks, wmark, shown) {
   // from one that happens here the way a step that is turned down is.
   const parts = [...new Set(on.map(o => o.part))];
   if (on.length) fl.append(h("div", "fs", h("div", "mo next", h("span", "dot", "→"),
-    h("p", "say", h("span", "badge next", "→ continues"), "What follows is told in " + parts.join(", ") + "."),
+    h("p", "say", h("span", "badge next", "→ continues"), "What follows is told in " + (parts.length > 1 ? "other parts:" : parts[0] + ".")),
     parts.map(p => [parts.length > 1 ? h("p", "rt", h("b", "", p)) : null, on.filter(o => o.part === p).map(o => h("p", "rt", jlink(p, o)))])), h("div", "lvs")));
   const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null,
     fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
