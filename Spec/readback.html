@@ -103,7 +103,18 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .jl{font-size:12px}
 .empty{text-align:center;color:var(--mut);padding:60px 0}
 .nav{font-size:13.5px;margin:-6px 0 12px}a{color:var(--acc)}
-.arow{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;text-decoration:none;color:var(--ink);padding:10px 12px}.arow b{font-size:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(400px,100%),1fr));gap:10px;margin:14px 0}
+.card{display:block;text-decoration:none;color:var(--ink);background:var(--surf);border:1px solid var(--line);border-left:5px solid var(--ok);border-radius:8px;padding:12px 14px}
+.card.below{border-left-color:var(--warn)}.card.violated{border-left-color:var(--bad)}
+.card:hover{box-shadow:0 0 0 1px var(--acc)}.card:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.ctop{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.ctop b{font-size:17px}.card .cnt{margin:2px 0 10px}
+.meter{display:flex;gap:2px;height:8px;border-radius:4px;overflow:hidden}
+.meter .ok{background:var(--ok)}.meter .below{background:var(--warn)}.meter .violated{background:var(--bad)}
+.leg{display:flex;flex-wrap:wrap;gap:2px 14px;font-size:13px;margin-top:5px}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.pill{font-size:12.5px;border-radius:10px;padding:1px 9px;border:1px solid var(--line);color:var(--mut)}
+.pill.bad{color:var(--bad);border-color:var(--bad);background:var(--badb)}.pill.ask{color:var(--acc);border-color:var(--acc)}
+.pill.warn{color:var(--warn);border-color:var(--warn)}.pill.good{color:var(--ok);border-color:var(--ok)}
 @media (max-width:560px){.head{grid-template-columns:auto minmax(0,1fr)}.lad,.badge,.mks{grid-column:2}.tile.wide{grid-column:span 1}}
 </style></head><body><main id="app"></main>
 <script>
@@ -593,15 +604,45 @@ const sharedWays = areas => {
   return d; };
 if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readback data. The checker has not filled in this page yet."));
 else if (KIND === "index") {
-  app.append(h("h1", "", "Readback"), h("p", "sub", "One page per area: the area as it stands."));
+  // One card per area. An area's parts are added up here; they are told apart on the area's own page.
+  const by = new Map(); DATA.forEach(a => { const k = areaOf(a.area); if (!by.has(k)) by.set(k, []); by.get(k).push(a); });
+  const sum = ps => { const z = { j: 0, jBad: 0, wBad: 0, c: 0, ok: 0, below: 0, bad: 0, q: 0, md: 0, out: 0, code: new Set() };
+    ps.forEach(a => { const t = stats(a), sf = a.surface || [];
+      z.j += (a.journeys || []).length; z.jBad += t.jBad; z.wBad += t.wBad; z.c += a.claims.length; z.ok += t.ok; z.below += t.below; z.bad += t.bad;
+      z.q += a.questions.length; z.md += sf.filter(e => e.status === "modelled").length; z.out += sf.filter(e => e.status === "left out").length;
+      z.code.add(codeOf(a).status); });
+    return z; };
+  const nice = name => { const t = name.replace(/[-_]/g, " "); return t.charAt(0).toUpperCase() + t.slice(1); };
+  const num = (k, one, many) => n(k) + " " + (k === 1 ? one : many || one + "s");
+  const codeWord = c => c.has("drift") ? ["bad", "✕ code drifted from the model"] : c.has("error") ? ["bad", "✕ code check failed"]
+    : c.has("agrees") ? (c.size === 1 ? ["good", "✓ code agrees with the model"] : ["warn", "▲ code checked only in part"]) : ["", "code not checked"];
+  const red = z => z.bad + z.jBad + z.wBad > 0 || z.code.has("drift") || z.code.has("error");
+  const card = (name, z) => { const cls = red(z) ? "violated" : z.below ? "below" : "ok", [cc, ct] = codeWord(z.code);
+    const pill = (k, c, text) => k ? h("span", "pill " + c, text) : null;
+    const bar = h("div", "meter", [["ok", z.ok], ["below", z.below], ["violated", z.bad]].filter(([, k]) => k).map(([c, k]) => {
+      const x = h("span", c); x.style.flex = k + " 0 4px"; return x; }));
+    bar.setAttribute("role", "img"); bar.setAttribute("aria-label", z.ok + " claims ok, " + z.below + " below target, " + z.bad + " violated");
+    return link([
+      h("div", "ctop", h("b", "", nice(name)), h("span", "badge " + cls, cls === "violated" ? "✕ needs attention" : cls === "below" ? "▲ below target" : "✓ ok")),
+      h("p", "cnt", [num(z.j, "journey"), num(z.c, "claim"),
+        z.md + z.out ? n(z.md) + " of " + num(z.md + z.out, "way", "ways") + " into the code modelled" : null].filter(Boolean).join(" · ")),
+      z.c ? [bar, h("div", "leg", h("span", "mk ok", "✓ " + n(z.ok) + " ok"),
+        z.below ? h("span", "mk below", "▲ " + n(z.below) + " below target") : null,
+        z.bad ? h("span", "mk violated", "✕ " + n(z.bad) + " violated") : null)] : null,
+      h("div", "pills", pill(z.jBad, "bad", "✕ " + num(z.jBad, "journey") + " failed"), pill(z.wBad, "bad", "✕ " + num(z.wBad, "walkthrough") + " failed"),
+        pill(z.q, "ask", "? " + num(z.q, "open question")), pill(z.out, "", num(z.out, "way", "ways") + " into the code left out"), pill(1, cc, ct))],
+      file(name), "card " + cls); };
+  const each = [...by].map(([name, ps]) => [name, sum(ps)]), all = sum(DATA);
+  app.append(h("h1", "", "Readback"),
+    h("p", "sub", "Every area as it stands. Open one to read its journeys, what is claimed and checked, and what is still yours to decide."));
   if (PAGE.since) app.append(h("p", "", link("What the change since " + short(PAGE.since) + " does, across areas", "change.html")));
-  DATA.forEach(a => { const t = stats(a), bad = problem(a), k = x => (x || []).length;
-    app.append(link([h("b", "", a.area.replace("/", " / ")), h("span", "mk " + (bad ? "violated" : "ok"), bad ? "▲ attention" : "✓ ok"),
-      h("span", "cnt", [pl(k(a.journeys), "journey"), pl(k(a.walkthroughs), "walkthrough"), pl(a.claims.length, "claim"),
-        t.bad ? t.bad + " violated" : null, t.below ? t.below + " below target" : null,
-        (a.surface || []).some(e => e.status === "left out") ? (a.surface.filter(e => e.status === "left out").length + " of the code's operations left out") : null,
-        pl(k(a.questions), "open question"), "code " + codeOf(a).status].filter(Boolean).join(" · "))],
-      file(a.area), "row arow " + (bad ? "failed" : "ok"))); });
+  app.append(h("div", "tiles",
+      tile("", n(each.length), each.length === 1 ? "area" : "areas"), tile("", n(all.j), "journeys"),
+      tile("good", n(all.ok), "✓ claims ok"), tile(all.below ? "warn" : "good", n(all.below), "▲ claims below target"),
+      tile(all.bad ? "bad" : "good", n(all.bad), "✕ claims violated"), tile(all.q ? "warn" : "good", n(all.q), "? open questions")),
+    h("div", "cards", each.map(([name, z]) => card(name, z))),
+    h("p", "sub", h("b", "", "ok"), ": verified as strongly as asked. ", h("b", "", "below target"), ": holds as far as it was checked, but more weakly than asked. ",
+      h("b", "", "violated"), ": the model breaks it; the area's page shows how."));
 } else {
   const areas = KIND === "change" ? DATA.filter(a => changed(diff(a))) : DATA, since = PAGE.since ? short(PAGE.since) : "";
   app.append(h("h1", "", KIND === "change" ? "Readback of the change since " + since : "Readback: " + areaOf(DATA[0].area)),
