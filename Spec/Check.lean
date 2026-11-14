@@ -324,11 +324,14 @@ def Peer.followedBy (owner : Peer) (sf : List Surface) (n : String) : Option (Su
   let e ← sf.find? fun e => e.owner == owner.name && e.actions.contains n
   -- the way in as `owner` has it: its own, or one it was itself handed by the part before it
   let o ← (owner.surface.find? fun x => x.owns && x.meets e) <|> (owner.surface.find? fun x => x.passesOn && x.meets e)
-  -- the journeys that are about this way in and nothing else, else those that begin with it;
-  -- a business case told in general before its variants
+  -- the journeys that are about this way in and nothing else, else those that begin with it,
+  -- else those that come to it on their way (a run that ends with its finish, which another
+  -- part takes up); a business case told in general before its variants
   let pick (js : List (String × String × String × List String)) :=
     let whole := js.filter fun (_, _, _, acts) => !acts.isEmpty && acts.all o.actions.contains
-    if whole.isEmpty then js.filter fun (_, _, _, acts) => (acts.head?.map o.actions.contains).getD false else whole
+    let begins := js.filter fun (_, _, _, acts) => (acts.head?.map o.actions.contains).getD false
+    if !whole.isEmpty then whole else if !begins.isEmpty then begins
+    else js.filter fun (_, _, _, acts) => acts.any o.actions.contains
   let told := pick (owner.journeys.filter (·.2.2.1 == ""))
   pure (o, (if told.isEmpty then pick owner.journeys else told).map fun (id, title, _, _) => (id, title))
 

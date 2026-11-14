@@ -4,9 +4,9 @@
 <title>Readback</title>
 <style>
 :root{--bg:#f6f7f9;--surf:#fff;--ink:#1c2230;--mut:#5d667a;--line:#dde1e8;--acc:#2b5fd9;
---ok:#1a7f4b;--okb:#e3f4ea;--warn:#9a5b00;--warnb:#fff0d6;--bad:#c4271f;--badb:#fde6e4;--chg:#fff3b8}
+--accb:#e9effc;--ok:#1a7f4b;--okb:#e3f4ea;--warn:#9a5b00;--warnb:#fff0d6;--bad:#c4271f;--badb:#fde6e4;--chg:#fff3b8}
 @media (prefers-color-scheme:dark){:root{--bg:#12151c;--surf:#1b2029;--ink:#e6e9f0;--mut:#9aa3b5;--line:#2e3542;--acc:#7aa2ff;
---ok:#4cc38a;--okb:#14301f;--warn:#f0b44c;--warnb:#33270f;--bad:#ff7b72;--badb:#3a1816;--chg:#4a4210}}
+--accb:#18233a;--ok:#4cc38a;--okb:#14301f;--warn:#f0b44c;--warnb:#33270f;--bad:#ff7b72;--badb:#3a1816;--chg:#4a4210}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:1000px;margin:0 auto;padding:16px}
@@ -91,6 +91,8 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .tl{position:relative;padding-left:36px}.tl::before{content:"";position:absolute;left:11px;top:14px;bottom:14px;width:2px;background:var(--line)}
 .mo{position:relative;background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px}
 .dot{position:absolute;left:-36px;top:7px;width:24px;height:24px;border-radius:50%;background:var(--surf);border:2px solid var(--acc);font-size:12px;font-weight:700;text-align:center;line-height:20px}
+.mo.next{border:1px dashed var(--acc);background:var(--accb)}.mo.next .dot{border:2px dashed var(--acc)}.mo.next .rt{font-size:13.5px}
+.badge.next{color:var(--acc);margin-right:6px;font-weight:700}.jr.hit{box-shadow:0 0 0 2px var(--acc)}
 .mo.ref{border:1px dashed var(--warn);background:var(--warnb)}.mo.ref .dot{border:2px dashed var(--warn)}
 .mo.bad{border:1px solid var(--bad);border-left-width:5px;background:var(--badb)}.mo.bad .dot{border-color:var(--bad);color:var(--bad)}
 .say{font-size:15.5px;font-weight:600;margin:0 0 4px}.badge.ref{color:var(--warn);margin-right:6px;font-weight:700}
@@ -301,7 +303,7 @@ function reqChips(ids, req) {
 function journey(j, req, ms, walks, wmark, shown) {
   const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
   const d = h("details", "row ex jr " + cls), fl = h("div", "tl flow");
-  d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w));
+  d.dataset.j = j.id; d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w));
   // A journey is generic: a step shows what happens and the requirements behind it, never a particular
   // VM, customer, count or value. Those belong to the walkthroughs.
   (j.steps || []).forEach((st, i) => {
@@ -314,14 +316,21 @@ function journey(j, req, ms, walks, wmark, shown) {
         h("span", ws.length ? "lw" : "lw none", ws.length ? "shown in " + ws.join(", ") : "shown in no walkthrough")); }));
     fl.append(h("div", "fs" + (st.repeats ? " loop" : ""), card, leaves)); });
   const fo = j.follows, on = j.continued || [];
+  const jlink = (part, o) => link([h("span", "mono", o.id), " ", o.title], file(part, o.id));
+  // Where the journey goes on: the journeys of other parts that take up what this one comes to.
+  // It is the last step of the flow, above the walkthroughs: shaped as any step, and told apart
+  // from one that happens here the way a step that is turned down is.
+  const parts = [...new Set(on.map(o => o.part))];
+  if (on.length) fl.append(h("div", "fs", h("div", "mo next", h("span", "dot", "→"),
+    h("p", "say", h("span", "badge next", "→ continues"), "What follows is told in " + parts.join(", ") + "."),
+    parts.map(p => [parts.length > 1 ? h("p", "rt", h("b", "", p)) : null, on.filter(o => o.part === p).map(o => h("p", "rt", jlink(p, o)))])), h("div", "lvs")));
   const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null,
-    fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? fo.journeys.map((o, i) => [i ? ", " : "", h("span", "mono", o.id), " ", o.title]) : fo.what,
+    fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
+        fo.journeys.length > 3 ? " and " + (fo.journeys.length - 3) + " more" : null] : fo.what,
       " in ", link(fo.part, file(fo.part)), ". That part says when it is accepted; this is what follows here.") : null,
     j.given ? h("p", "given", h("b", "", "Starts with: "), j.given) : null, fl);
   if (walks.length) { body.append(h("h3", "", "Walkthroughs of this journey"));
     walks.forEach(w => body.append(walkthrough(w, req, wmark(w)))); }
-  if (on.length) body.append(h("h3", "", "What follows in other parts"),
-    h("ul", "asm", on.map(o => h("li", "", link(o.part, file(o.part)), ": ", h("span", "mono", o.id), " ", o.title))));
   d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]),
     h("span", "cnt", (j.steps || []).length + " step" + ((j.steps || []).length === 1 ? "" : "s") + (walks.length ? " · " + walks.length + " walkthrough" + (walks.length === 1 ? "" : "s") : "")),
     ms ? ms.map(mark) : null), body);
@@ -582,7 +591,8 @@ const app = document.getElementById("app"), KIND = PAGE.kind || "area";
 const link = (text, href, cls) => { const x = h("a", cls || "", text); x.href = href; return x; };
 // an area can have parts ("protection/runs"): one page per area, one tab per part
 const areaOf = name => name.split("/")[0], partOf = name => name.split("/").slice(1).join("/");
-const file = name => encodeURIComponent(areaOf(name)) + ".html" + (partOf(name) ? "#" + encodeURIComponent(partOf(name)) : "");
+const file = (name, id) => encodeURIComponent(areaOf(name)) + ".html"
+  + (partOf(name) || id ? "#" + encodeURIComponent(partOf(name)) + (id ? "@" + encodeURIComponent(id) : "") : "");
 const pl = (k, one) => k + " " + one + (k === 1 ? "" : "s");
 // one way in has one owner: an entry a part models or leaves out, which another part models too
 // what other parts say about a way in, once per part and standing
@@ -663,10 +673,15 @@ else if (KIND === "index") {
     let tog = null;
     if (since) { const cb = h("input"); cb.type = "checkbox"; cb.checked = only; cb.onchange = () => { only = cb.checked; show(cur); };
       tog = h("label", "tog", cb, "only what changed"); }
-    const want = decodeURIComponent(location.hash.slice(1)), at = areas.findIndex(a => partOf(a.area) === want);
+    // the address names a part and, after "@", one journey of it: that journey is opened and brought into view
+    const reveal = id => { const d = [...body.querySelectorAll("details.jr")].find(x => x.dataset.j === id); if (!d) return;
+      for (let e = d; e && e !== body; e = e.parentElement) if (e.tagName === "DETAILS") e.open = true;
+      d.classList.add("hit"); d.scrollIntoView({ block: "start" }); };
+    const go = first => { const [p, id] = decodeURIComponent(location.hash.slice(1)).split("@"), at = areas.findIndex(a => partOf(a.area) === p);
+      if (first || (at >= 0 && (at !== cur || id))) show(at >= 0 ? at : 0); if (id) reveal(id); };
     const ways = KIND === "area" ? sharedWays(areas) : null; if (ways) app.append(ways);
-    app.append(h("div", "bar", areas.length > 1 ? tabs : null, all, tog), body); show(want && at >= 0 ? at : 0);
-    addEventListener("hashchange", () => { const to = areas.findIndex(a => partOf(a.area) === decodeURIComponent(location.hash.slice(1))); if (to >= 0) show(to); });
+    app.append(h("div", "bar", areas.length > 1 ? tabs : null, all, tog), body); go(true);
+    addEventListener("hashchange", () => go(false));
   }
 }
 </script></body></html>
