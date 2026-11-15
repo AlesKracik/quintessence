@@ -51,6 +51,11 @@ structure Requirement (σ α : Type) where
   when : σ → α → Bool
   shall : σ → α → σ → Bool := fun _ _ _ => true
   refused : Bool := false
+  /-- The actions the requirement can speak about at all, whatever the state:
+  `when` is asked only for these. Left out, it is asked for every action. A
+  part with many requirements and many actions gives it, so that the search
+  asks each requirement only about its own actions. -/
+  on : α → Bool := fun _ => true
   /-- Where the requirement comes from, as a history, oldest first: one entry
   per origin, each a person, a document or a place in the code. A requirement
   extracted from code and later changed by a person has both entries, e.g.
@@ -422,15 +427,16 @@ private structure Found where
   gaps : Array (Option UInt64)
   edges : Std.HashSet (Nat × String × String × String)
 
-/-- The requirements, with their positions, whose `when` holds for doing `a` in
-`s`. Asked for every state and action, and nearly always answered "none", so it
-is a plain loop that allocates only for the ones that apply. -/
-private def applying (reqs : Array (Requirement σ α)) (s : σ) (a : α) :
+/-- Of the requirements that can speak about `a` (with their positions), those
+whose `when` holds for doing it in `s`. Asked for every state and action, and
+nearly always answered "none", so it is a plain loop that allocates only for
+the ones that apply. -/
+private def applying (reqs : Array (Requirement σ α × Nat)) (s : σ) (a : α) :
     Nat → List (Requirement σ α × Nat) → List (Requirement σ α × Nat)
   | 0, acc => acc
   | j + 1, acc =>
     if h : j < reqs.size then
-      applying reqs s a j (if reqs[j].when s a then (reqs[j], j) :: acc else acc)
+      applying reqs s a j (if reqs[j].1.when s a then reqs[j] :: acc else acc)
     else applying reqs s a j acc
 
 /-- Breadth-first over the scope. States are remembered by 64-bit fingerprint. -/
@@ -441,6 +447,8 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
   let lifes := A.lifecycles.toArray
   -- paired with their positions once: the loops below run for every state and action
   let actsI := acts.zipIdx
+  -- for each action, the requirements that can speak about it at all
+  let reqsOf := acts.map fun a => reqs.zipIdx.filter fun (q, _) => q.on a
   let invsI := invs.zipIdx
   let lifesI := lifes.zipIdx
   let root := hash A.init
@@ -467,7 +475,7 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
       let ls := lifes.map fun l => l.2 s
       for (a, i) in actsI do
         let r := A.step a s
-        let speaking := applying reqs s a reqs.size []
+        let speaking := applying reqsOf[i]! s a reqsOf[i]!.size []
         for (q, j) in speaking do
           reqHits := reqHits.modify j (· + 1)
           reqAct := reqAct.set! (j * acts.size + i) true
@@ -782,7 +790,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let stateJson (s : σ) : Json :=
     .arr ((fields (short (oneLine s))).map fun (k, v) => .arr #[.str k, .str v]).toArray
   let viewsJson (s : σ) : Json := .arr (A.views.map fun (n, v) => .arr #[.str n, .str (v s)]).toArray
-  let speaking (s : σ) (a : α) : List String := (A.requirements.filter (·.when s a)).map (·.id)
+  let speaking (s : σ) (a : α) : List String := (A.requirements.filter fun q => q.on a && q.when s a).map (·.id)
   let mut told : List String := []  -- the requirements some journey or walkthrough shows at work
   let mut walked : List String := []  -- those a walkthrough shows happening
   let mut leaves : List (String × String) := []  -- a refusal requirement and the journey it turns a step down in
