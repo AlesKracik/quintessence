@@ -56,6 +56,12 @@ structure Requirement (σ α : Type) where
   part with many requirements and many actions gives it, so that the search
   asks each requirement only about its own actions. -/
   on : α → Bool := fun _ => true
+  /-- When given, the requirement can speak only when the area's `reason` for
+  doing the action in the state is this number: `when` is asked only then.
+  Many requirements of a part ask the same question of a step first ("is it
+  refused, and why?"); the area answers it once for a state and an action,
+  and `when` is asked of the few it leaves. -/
+  reason : Option Nat := none
   /-- Where the requirement comes from, as a history, oldest first: one entry
   per origin, each a person, a document or a place in the code. A requirement
   extracted from code and later changed by a person has both entries, e.g.
@@ -262,6 +268,10 @@ structure Area (σ α : Type) where
   init : σ
   /-- One step; `none` means the action is refused in that state. -/
   step : α → σ → Option σ
+  /-- Why doing `a` in `s` is refused, as a number the area chooses; 0 when it
+  is accepted. The search asks it once for a state and an action, for the
+  requirements that give `reason`. -/
+  reason : σ → α → Nat := fun _ _ => 0
   /-- Scope of the search: the actions tried in every state. -/
   actions : List α
   /-- Scope of the search: states outside are not explored. -/
@@ -428,16 +438,19 @@ private structure Found where
   edges : Std.HashSet (Nat × String × String × String)
 
 /-- Of the requirements that can speak about `a` (with their positions), those
-whose `when` holds for doing it in `s`. Asked for every state and action, and
+whose `when` holds for doing it in `s`, where `why` is the area's reason for it. Asked for every state and action, and
 nearly always answered "none", so it is a plain loop that allocates only for
 the ones that apply. -/
-private def applying (reqs : Array (Requirement σ α × Nat)) (s : σ) (a : α) :
+private def applying (reqs : Array (Requirement σ α × Nat)) (s : σ) (a : α) (why : Nat) :
     Nat → List (Requirement σ α × Nat) → List (Requirement σ α × Nat)
   | 0, acc => acc
   | j + 1, acc =>
     if h : j < reqs.size then
-      applying reqs s a j (if reqs[j].1.when s a then reqs[j] :: acc else acc)
-    else applying reqs s a j acc
+      let speaks := (match reqs[j].1.reason with
+        | some r => why == r
+        | none => true) && reqs[j].1.when s a
+      applying reqs s a why j (if speaks then reqs[j] :: acc else acc)
+    else applying reqs s a why j acc
 
 /-- Breadth-first over the scope. States are remembered by 64-bit fingerprint. -/
 private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found := Id.run do
@@ -449,6 +462,8 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
   let actsI := acts.zipIdx
   -- for each action, the requirements that can speak about it at all
   let reqsOf := acts.map fun a => reqs.zipIdx.filter fun (q, _) => q.on a
+  -- the area's reason is asked only for actions some requirement compares it for
+  let asksWhy := reqsOf.map fun qs => qs.any fun (q, _) => q.reason.isSome
   let invsI := invs.zipIdx
   let lifesI := lifes.zipIdx
   let root := hash A.init
@@ -475,7 +490,8 @@ private def search [Hashable σ] (A : Area σ α) (names : Array String) : Found
       let ls := lifes.map fun l => l.2 s
       for (a, i) in actsI do
         let r := A.step a s
-        let speaking := applying reqsOf[i]! s a reqsOf[i]!.size []
+        let why := if asksWhy[i]! then A.reason s a else 0
+        let speaking := applying reqsOf[i]! s a why reqsOf[i]!.size []
         for (q, j) in speaking do
           reqHits := reqHits.modify j (· + 1)
           reqAct := reqAct.set! (j * acts.size + i) true
