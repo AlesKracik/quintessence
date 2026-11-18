@@ -817,6 +817,13 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let me := A.peer
   let general (j : Journey α) : Bool := !(A.journeys.any fun p => p.id == j.variantOf && p.variantOf == "")
   let listed := (A.journeys.map (·.about)).eraseDups.flatMap fun k => A.journeys.filter (·.about == k)
+  -- where a step goes on: the journeys of other parts that begin with a way in of this part,
+  -- with this part's actions for that way in. A step that takes one of them is taken up there,
+  -- in whichever journey it stands, a business case told in general or one of its variants.
+  let takenUp : List (List String × Json) := others.flatMap fun p => p.journeys.filterMap fun (id, title, variantOf, acts) => do
+    if variantOf != "" then none
+    let (o, _) ← me.followedBy p.surface (← acts.head?)
+    some (o.actions, Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title)])
   for j in (listed.filter general).flatMap fun p => p :: listed.filter fun v => !general v && v.variantOf == p.id do
     let mut s := A.init
     let mut ok := !j.steps.isEmpty
@@ -844,6 +851,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       if !went then ok := false
       rows := rows.push fun _ => Json.mkObj <| [
         ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
+        ("names", .arr (stepNames.eraseDups.map .str).toArray),
+        ("continues", .arr ((takenUp.filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
         ("repeats", .bool (st.actions.length > 1)),
         ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
         ("turnedDown", .arr (turnedDown.map .str).toArray)]
@@ -856,13 +865,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       let (p, o, told) ← others.findSome? fun p => (p.followedBy A.surface n).map fun (o, js) => (p, o, js)
       pure <| Json.mkObj [("part", .str p.name), ("what", .str o.what),
         ("journeys", .arr (told.map fun (id, title) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
-    -- and the other way round: the journeys of other parts that follow from this one
-    let continued := others.flatMap fun p => p.journeys.filterMap fun (id, title, variantOf, acts) => do
-      if variantOf != "" then none
-      let (_, js) ← me.followedBy p.surface (← acts.head?)
-      if js.any (·.1 == j.id) then some (Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title)]) else none
     journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
-      ("follows", follows.getD .null), ("continued", .arr continued.toArray),
+      ("follows", follows.getD .null),
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
       ("about", .str j.about), ("variantOf", .str (if general j then "" else j.variantOf)), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
       ("status", .str status), ("steps", .arr (rows.map (· full)))])

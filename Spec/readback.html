@@ -93,6 +93,25 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .dot{position:absolute;left:-36px;top:7px;width:24px;height:24px;border-radius:50%;background:var(--surf);border:2px solid var(--acc);font-size:12px;font-weight:700;text-align:center;line-height:20px}
 .mo.next{border:1px dashed var(--acc);background:var(--accb)}.mo.next .dot{border:2px dashed var(--acc)}.mo.next .rt{font-size:13.5px}
 .badge.next{color:var(--acc);margin-right:6px;font-weight:700}.jr.hit{box-shadow:0 0 0 2px var(--acc)}
+.leaf.on{border-color:var(--acc);background:var(--accb)}.leaf.on::before{border-top-color:var(--acc)}.leaf.on a{display:block}
+.fam{margin:6px 0 14px;padding:10px 12px 4px;background:var(--surf);border:1px solid var(--line);border-radius:8px}
+.fam>.sub{margin:0 0 10px}.fam .tr{position:relative;padding-left:26px}
+.fam .tr::before{content:"";position:absolute;left:8px;top:0;bottom:0;width:3px;background:var(--acc);border-radius:2px}
+.fam .tr::before{top:6px}.fam .tr>.tk:last-child::after{content:"";position:absolute;left:-20px;top:20px;bottom:0;width:7px;background:var(--surf)}
+.fam .tk{position:relative;padding:0 0 10px}.fam .tk::before{content:"";position:absolute;left:-24px;top:3px;width:11px;height:11px;border-radius:50%;background:var(--surf);border:3px solid var(--acc)}
+.fam .tk.fk::before{border-radius:2px;transform:rotate(45deg);background:var(--acc)}
+.fam .tt{margin:0;font-weight:600}.fam .tt+.tt{margin-top:2px}.fam .tg{font-size:12px;color:var(--mut);font-weight:400;margin-left:6px;white-space:nowrap}
+.fam .tg.td{color:var(--warn)}.fam .tg.nx{color:var(--acc)}.fam .how{margin:2px 0 0;font-size:12.5px;color:var(--mut)}
+.fam .lns{margin:0 0 12px;padding:2px 0 0}
+.fam .ln{position:relative;margin:0 0 0 22px;padding:0 0 8px 0}
+.fam .ln::before{content:"";position:absolute;left:-38px;top:-8px;width:30px;height:18px;border-left:2px solid var(--acc);border-bottom:2px solid var(--acc);border-bottom-left-radius:10px}
+.fam .ln::after{content:"";position:absolute;left:-38px;top:10px;bottom:-2px;width:2px;background:var(--acc)}
+.fam .ln:last-child::after{display:none}
+.fam .lnt{font-size:13px;font-weight:600}.fam .lnt .mono{font-weight:400;margin-right:4px}.fam .lw2{font-size:12.5px;color:var(--mut);margin-left:6px}
+.fam .lst{display:flex;flex-wrap:wrap;gap:4px 0;align-items:center;margin-top:3px}
+.fam .ls{display:inline-block;max-width:300px;padding:2px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:13px;line-height:1.3}
+.fam .ar{color:var(--mut);padding:0 5px}.fam .ln.none .lnt{font-weight:400;color:var(--mut)}
+.fam .ln.hi .ls{border-color:var(--acc);background:var(--accb)}.fam .ln.hi .lnt a{text-decoration:underline}
 .mo.ref{border:1px dashed var(--warn);background:var(--warnb)}.mo.ref .dot{border:2px dashed var(--warn)}
 .mo.bad{border:1px solid var(--bad);border-left-width:5px;background:var(--badb)}.mo.bad .dot{border-color:var(--bad);color:var(--bad)}
 .say{font-size:15.5px;font-weight:600;margin:0 0 4px}.badge.ref{color:var(--warn);margin-right:6px;font-weight:700}
@@ -300,10 +319,59 @@ function reqChips(ids, req) {
     b.onclick = () => { p.hidden = !p.hidden; b.setAttribute("aria-expanded", String(!p.hidden)); }; more.append(p); return b; });
   return [chips.length ? h("div", "", chips) : null, more];
 }
-function journey(j, req, ms, walks, wmark, shown) {
+// One business case with its variants as one flow. The case told in general is the trunk. Where a variant
+// takes a step another way (more steps, other steps, none) it leaves the trunk there and comes back to it.
+// Steps are compared by the actions they take: a run of steps with the same actions stands for one step of the trunk.
+const runsOf = j => { const g = []; (j.steps || []).forEach(st => { const k = (st.names || []).join(","), l = g[g.length - 1];
+  if (l && l.k === k) l.steps.push(st); else g.push({ k, steps: [st] }); }); return g; };
+function alignRuns(G, V) {
+  const n = G.length, m = V.length, L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let k = m - 1; k >= 0; k--)
+    L[i][k] = G[i].k === V[k].k ? L[i + 1][k + 1] + 1 : Math.max(L[i + 1][k], L[i][k + 1]);
+  const at = new Array(n).fill(null), extra = Array.from({ length: n + 1 }, () => []);
+  let i = 0, k = 0;
+  while (i < n && k < m) {
+    if (G[i].k === V[k].k) { at[i] = V[k]; i++; k++; }
+    else if (L[i + 1][k] > L[i][k + 1]) i++;
+    else { extra[i].push(...V[k].steps); k++; } }
+  for (; k < m; k++) extra[n].push(...V[k].steps);
+  return { at, extra };
+}
+function family(j, vs, area) {
+  const G = runsOf(j), al = vs.map(v => alignRuns(G, runsOf(v)));
+  const tags = st => [(st.turnedDown || []).length ? h("span", "tg td", "⊘ " + pl(st.turnedDown.length, "way") + " turned down") : null,
+    (st.continues || []).length ? h("span", "tg nx", "→ continues in " + [...new Set(st.continues.map(o => o.part))].join(", ")) : null];
+  const goes = st => (st.continues || []).length ? h("span", "tg nx", "→ continues in " + [...new Set(st.continues.map(o => o.part))].join(", ")) : null;
+  const chain = sts => h("div", "lst", sts.map((st, q) => [q ? h("span", "ar", "→") : null, h("span", "ls", st.say, goes(st))]));
+  const name = v => link([h("span", "mono", v.id), v.title], file(area, v.id));
+  const lane = (v, sts, why) => { const d = h("div", "ln" + (sts.length ? "" : " none"), h("div", "lnt", name(v), why ? h("span", "lw2", why) : null), sts.length ? chain(sts) : null);
+    d.dataset.v = v.id; return d; };
+  const box = h("div", "fam"), tr = h("div", "tr"); let forks = 0;
+  G.forEach((g, i) => {
+    const lanes = [], same = [];
+    vs.forEach((v, q) => { const m = al[q].at[i], ex = al[q].extra[i];
+      if (m && !ex.length && m.steps.length === g.steps.length) same.push(v.id);
+      else if (m) lanes.push(lane(v, [...ex, ...m.steps], ex.length ? "with more before it" : "in " + pl(m.steps.length, "step")));
+      else lanes.push(lane(v, ex, ex.length ? "instead of this step" : "does not take this step")); });
+    if (lanes.length) forks++;
+    tr.append(h("div", "tk" + (lanes.length ? " fk" : ""), g.steps.map(st => h("p", "tt", st.say, st.repeats ? h("span", "tg nx", "↻ can repeat") : null, tags(st))),
+      lanes.length ? h("p", "how", same.length ? "In general, and so in " + same.join(", ") + ". Taken another way in:" : "In general. Each variant takes it its own way:") : null));
+    if (lanes.length) tr.append(h("div", "lns", lanes)); });
+  const on = vs.map((v, q) => [v, al[q].extra[G.length]]).filter(x => x[1].length);
+  if (on.length) { forks++; tr.append(h("div", "tk fk", h("p", "how", "Some variants go on from here:")), h("div", "lns", on.map(x => lane(x[0], x[1], "")))); }
+  if (!forks) return null;
+  // pointing at a variant shows its way through the whole flow
+  box.addEventListener("mouseover", e => { const l = e.target.closest && e.target.closest(".ln"), id = l && l.dataset.v;
+    box.querySelectorAll(".ln").forEach(x => x.classList.toggle("hi", !!id && x.dataset.v === id)); });
+  box.addEventListener("mouseleave", () => box.querySelectorAll(".ln.hi").forEach(x => x.classList.remove("hi")));
+  box.append(h("p", "sub", "The whole case as one flow: the line down the left is what every variant shares, and a variant branches off where it takes a step its own way."), tr);
+  return box;
+}
+function journey(j, req, ms, walks, wmark, shown, vs, area) {
   const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
   const d = h("details", "row ex jr " + cls), fl = h("div", "tl flow");
   d.dataset.j = j.id; d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w));
+  const jlink = (part, o) => link([h("span", "mono", o.id), " ", o.title], file(part, o.id));
   // A journey is generic: a step shows what happens and the requirements behind it, never a particular
   // VM, customer, count or value. Those belong to the walkthroughs.
   (j.steps || []).forEach((st, i) => {
@@ -314,17 +382,14 @@ function journey(j, req, ms, walks, wmark, shown) {
     const leaves = h("div", "lvs", (st.turnedDown || []).map(id => { const ws = shown.get(id) || [];
       return h("div", "leaf", h("span", "badge ref", "⊘ turned down"), h("span", "", req.get(id) || id), " ", h("span", "mono lid", id),
         h("span", ws.length ? "lw" : "lw none", ws.length ? "shown in " + ws.join(", ") : "shown in no walkthrough")); }));
+    // where the step goes on: the journeys of other parts that take up what it comes to. It hangs off
+    // the step as a way of being turned down does, and is told apart from one by its colour.
+    const on = st.continues || [];
+    [...new Set(on.map(o => o.part))].forEach(p => leaves.append(h("div", "leaf on", h("span", "badge next", "→ continues"), "in ", link(p, file(p)), ":",
+      on.filter(o => o.part === p).map(o => jlink(p, o)))));
     fl.append(h("div", "fs" + (st.repeats ? " loop" : ""), card, leaves)); });
-  const fo = j.follows, on = j.continued || [];
-  const jlink = (part, o) => link([h("span", "mono", o.id), " ", o.title], file(part, o.id));
-  // Where the journey goes on: the journeys of other parts that take up what this one comes to.
-  // It is the last step of the flow, above the walkthroughs: shaped as any step, and told apart
-  // from one that happens here the way a step that is turned down is.
-  const parts = [...new Set(on.map(o => o.part))];
-  if (on.length) fl.append(h("div", "fs", h("div", "mo next", h("span", "dot", "→"),
-    h("p", "say", h("span", "badge next", "→ continues"), "What follows is told in " + (parts.length > 1 ? "other parts:" : parts[0] + ".")),
-    parts.map(p => [parts.length > 1 ? h("p", "rt", h("b", "", p)) : null, on.filter(o => o.part === p).map(o => h("p", "rt", jlink(p, o)))])), h("div", "lvs")));
-  const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null,
+  const fo = j.follows, fam = vs && vs.length ? family(j, vs, area) : null;
+  const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, fam,
     fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
         fo.journeys.length > 3 ? " and " + (fo.journeys.length - 3) + " more" : null] : fo.what,
       " in ", link(fo.part, file(fo.part)), ". That part says when it is accepted; this is what follows here.") : null,
@@ -347,10 +412,10 @@ function journeys(a, D) {
   // and under each business case its variants: the same case taken one particular way
   // A journey begins where something comes in. Those that begin with a way in another part owns come last:
   // they are what follows here from that part's journeys.
-  const one = j => journey(j, req, D && D.j.get(j.id), ws.filter(w => w.journey === j.id), wmark, shown);
+  const one = (j, vs) => journey(j, req, D && D.j.get(j.id), ws.filter(w => w.journey === j.id), wmark, shown, vs, a.area);
   const list = tops => tops.forEach((j, k) => { if (j.about && (!k || tops[k - 1].about !== j.about)) out.push(h("h3", "about", j.about));
     const vs = js.filter(v => v.variantOf === j.id);
-    out.push(one(j)); if (vs.length) out.push(h("div", "vars", h("p", "sub", pl(vs.length, "variant") + " of " + j.id + ": the same business case, taken one particular way"), vs.map(one))); });
+    out.push(one(j, vs)); if (vs.length) out.push(h("div", "vars", h("p", "sub", pl(vs.length, "variant") + " of " + j.id + ": the same business case, taken one particular way"), vs.map(v => one(v)))); });
   const tops = js.filter(j => !j.variantOf), after = tops.filter(j => j.follows);
   list(tops.filter(j => !j.follows));
   if (after.length) { out.push(h("h2", "", "What follows here from journeys of other parts"),

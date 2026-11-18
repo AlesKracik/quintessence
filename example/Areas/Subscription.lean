@@ -129,6 +129,13 @@ def area : Area State Action where
       goal := "A customer no longer wants to pay, but has paid for the current period and keeps access until it ends.",
       steps := [
         .step "The customer cancels; the billing provider accepts and the customer is told." [.cancel_subscription "alice" .Email],
+        .step "The paid period ends and access ends with it." [.expire_period "alice"]] },
+    { id := "J-002", variantOf := "J-001",
+      sources := ["written for this example"], title := "Cancelling when the billing provider does not answer at first",
+      goal := "A customer cancels while the billing provider cannot be reached, and cancels again later.",
+      steps := [
+        .step "The customer cancels and the billing provider does not answer: nothing changes." [.cancel_unanswered "alice" true],
+        .step "The customer cancels again; the billing provider accepts and the customer is told." [.cancel_subscription "alice" .Email],
         .step "The paid period ends and access ends with it." [.expire_period "alice"]] }]
   walkthroughs := [
     { id := "W-001", journey := "J-001",
