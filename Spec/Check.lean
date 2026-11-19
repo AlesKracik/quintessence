@@ -105,21 +105,28 @@ structure Stage (α : Type) where
   /-- Other evidence for a step that every run takes: the actions that take it after a way that
   leaves things differently (another run's number, say). The first that the model accepts counts. -/
   orElse : List (List α) := []
+  /-- The step goes the way an earlier choice went, and makes no choice of its own. -/
+  tied : Bool := false
 
 /-- A step of a journey: `.step "The operator adds a VM." [.enroll "a", .enroll "b"]`. -/
 def Stage.step {α : Type} (say : String) (actions : List α) : Stage α := { say, actions }
 /-- A step that can go several ways: `.choice "A run starts." [.way "on schedule" [...], .way "on demand" [...]]`. -/
 def Stage.choice {α : Type} (say : String) (ways : List (Way α)) : Stage α := { say, ways }
+/-- A step that goes the way a choice of the journey went: one decision that shows at several steps
+is made once. Its ways carry the names of that choice's ways, and a way that is not listed has
+nothing to do here:
+`.asChosen "The cutover makes the machine." [.way "to a new instance" [...], .way "over the original" [...]]`. -/
+def Stage.asChosen {α : Type} (say : String) (ways : List (Way α)) : Stage α := { say, ways, tied := true }
 /-- The same step with other evidence for where the first is not accepted: `(.step "The run is reported finished." [.finish 1]).or [.finish 2]`. -/
 def Stage.or {α : Type} (st : Stage α) (actions : List α) : Stage α := { st with orElse := st.orElse ++ [actions] }
 instance {α : Type} : Coe (Step α) (Stage α) := ⟨fun s => { say := s.say, actions := s.actions }⟩
 
 /-- The steps the stage comes to in state `s` when its choice is taken the `k`-th way. -/
-def Stage.taken {σ α : Type} (step : α → σ → Option σ) (s : σ) (st : Stage α) (k : Nat) : List (Step α) :=
+def Stage.taken {σ α : Type} (step : α → σ → Option σ) (s : σ) (st : Stage α) (w : Option (Way α)) : List (Step α) :=
   if st.ways.isEmpty then
     let goes (as : List α) := (as.foldl (init := some s) fun s a => s.bind (step a)).isSome
     [⟨st.say, ((st.actions :: st.orElse).find? goes).getD st.actions⟩]
-  else ((st.ways[k]?).map (·.steps)).getD []
+  else (w.map (·.steps)).getD []
 /-- Every action a stage can take, whichever way. -/
 def Stage.all {α : Type} (st : Stage α) : List α := st.actions ++ st.orElse.flatten ++ st.ways.flatMap (·.steps.flatMap (·.actions))
 
@@ -148,18 +155,24 @@ structure Journey (α : Type) where
   /-- Where the journey comes from, as a history (see `Requirement.sources`). -/
   sources : List String := []
 
+/-- The way each stage goes when the choices are taken as `pick` names (by position, one number per
+stage): a choice goes the way picked, and a step that goes as chosen goes the way of that name. -/
+def Journey.ways {α : Type} (j : Journey α) (pick : List Nat) : List (Option (Way α)) :=
+  let sts := j.steps.zip pick
+  let names := sts.filterMap fun (st, k) => if st.tied then none else (st.ways[k]?).map (·.name)
+  sts.map fun (st, k) => if st.tied then st.ways.find? (names.contains ·.name) else st.ways[k]?
 /-- The run of a journey with each choice taken the way `pick` names (by position, one number per stage). -/
 def Journey.run {σ α : Type} (step : α → σ → Option σ) (init : σ) (j : Journey α) (pick : List Nat) : Option (List α) := do
-  let sts := j.steps.zip pick
+  let sts := j.steps.zip (j.ways pick)
   let go (acc : σ × List α) (as : List α) : Option (σ × List α) :=
     as.foldlM (init := acc) fun (s, run) a => (step a s).map (·, run ++ [a])
-  let start ← go (init, []) (j.setup ++ sts.flatMap fun (st, k) => ((st.ways[k]?).map (·.setup)).getD [])
-  let (_, run) ← sts.foldlM (init := start) fun acc (st, k) => go acc ((st.taken step acc.1 k).flatMap (·.actions))
+  let start ← go (init, []) (j.setup ++ sts.flatMap fun (_, w) => (w.map (·.setup)).getD [])
+  let (_, run) ← sts.foldlM (init := start) fun acc (st, w) => go acc ((st.taken step acc.1 w).flatMap (·.actions))
   pure run
 /-- The combinations of ways a journey is walked in: all of them, or, when there are too many, the
 first way of every choice and then each other way with the rest left at the first. -/
 def Journey.picks {α : Type} (j : Journey α) : List (List Nat) × Bool :=
-  let dims := j.steps.map fun st => max 1 st.ways.length
+  let dims := j.steps.map fun st => if st.tied then 1 else max 1 st.ways.length
   if dims.foldl (· * ·) 1 ≤ 512 then
     (dims.foldr (fun n acc => (List.range n).flatMap fun k => acc.map (k :: ·)) [[]], true)
   else
@@ -883,17 +896,17 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   -- one run of a journey, with each choice taken one way: is every action accepted, and for every
   -- step that is taken, did it go and which requirements spoke
   let walk (j : Journey α) (pick : List Nat) : Bool × List (List (Step α × Bool × List String)) := Id.run do
-    let sts := j.steps.zip pick
+    let sts := j.steps.zip (j.ways pick)
     let mut s := A.init
     let mut ok := !j.steps.isEmpty
-    for a in j.setup ++ sts.flatMap (fun (st, k) => ((st.ways[k]?).map (·.setup)).getD []) do
+    for a in j.setup ++ sts.flatMap (fun (_, w) => (w.map (·.setup)).getD []) do
       match A.step a s with
       | some t => s := t
       | none => ok := false
     let mut out : List (List (Step α × Bool × List String)) := []
-    for (stage, k) in sts do
+    for (stage, w) in sts do
       let mut row : List (Step α × Bool × List String) := []
-      let steps := stage.taken A.step s k
+      let steps := stage.taken A.step s w
       for st in steps do
         let mut reqs : List String := []
         let mut went := !st.actions.isEmpty
@@ -942,8 +955,10 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           rows := rows.push js
       else
         let mut ways : Array Json := #[]
-        for (w, k) in stage.ways.zipIdx do
-          let mine := runs.filter fun (c, _) => c[i]? == some k
+        for w in stage.ways do
+          let mine := runs.filter fun (c, _) => match (j.ways c)[i]? with
+            | some (some x) => x.name == w.name
+            | _ => false
           let went := mine.filter (·.2.1)
           if went.isEmpty then ok := false
           let mut steps : Array Json := #[]
@@ -955,12 +970,12 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           let only : List Json := if !all || went.isEmpty then [] else
             j.steps.zipIdx.filterMap fun (o, i') =>
               let with_ := (o.ways.zipIdx.filter fun (_, k') => went.any fun (c, _) => c[i']? == some k').map (·.1.name)
-              if i' == i || o.ways.isEmpty || with_.length == o.ways.length then none
+              if i' == i || o.ways.isEmpty || o.tied || stage.tied || with_.length == o.ways.length then none
               else some (Json.mkObj [("step", .str o.say), ("ways", .arr (with_.map .str).toArray)])
           ways := ways.push <| Json.mkObj [
             ("name", .str w.name), ("given", .str w.given), ("sources", .arr (w.sources.map .str).toArray),
             ("status", .str (if went.isEmpty then "failed" else "ok")), ("only", .arr only.toArray), ("steps", .arr steps)]
-        rows := rows.push <| Json.mkObj [("say", .str stage.say), ("ways", .arr ways)]
+        rows := rows.push <| Json.mkObj [("say", .str stage.say), ("asChosen", .bool stage.tied), ("ways", .arr ways)]
     let status := if ok then "ok" else "failed"
     -- A journey begins where something comes in: a person's request, a call or message from
     -- outside, a schedule. One that begins with a way in another part owns is what follows

@@ -219,7 +219,8 @@
        "name": "the billing provider declines at first",
        "given": ""}],
      "say":
-     "The customer cancels; the billing provider accepts and the customer is told."},
+     "The customer cancels; the billing provider accepts and the customer is told.",
+     "asChosen": false},
     {"turnedDown": [],
      "say": "The paid period ends and access ends with it.",
      "requirements": ["REQ-005"],
@@ -258,7 +259,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "144040845101488368",
+  "inputs": "4184828644499055764",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",

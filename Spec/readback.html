@@ -369,7 +369,7 @@ function flow(j, open) {
       (w.steps || []).forEach(x => row.append(h("span", "wi to"), h("span", "sb", x.say)));
       if (!(w.steps || []).length) row.append(h("span", "wi"), h("span", "skip", "nothing to do"));
       row.append(h("span", "wi fill")); return h("div", "ln", row); });
-    gx.append(h("div", "cap", h("div", "", h("p", "tt", st.say), h("p", "sub", "goes one of " + pl(st.ways.length, "way") + ":"))),
+    gx.append(h("div", "cap", h("div", "", h("p", "tt", st.say), h("p", "sub", st.asChosen ? "goes as chosen above:" : "goes one of " + pl(st.ways.length, "way") + ":"))),
       h("div", "lns", lanes), h("div", "ret")); });
   gx.firstChild.classList.add("first");
   const end = gx.lastChild; if (end.classList.contains("nd")) end.classList.add("last"); else end.classList.add("half");
@@ -402,18 +402,25 @@ function journey(j, req, ms, walks, wmark, shown) {
     if (!st.ways) { fl.append(card(st, String(i + 1))); return; }
     const body = h("div", "wy"), tabs = st.ways.map((w, k) => { const b = h("button", "tab", w.status === "ok" ? null : h("span", "mk violated", "✕ "), w.name);
       b.type = "button"; b.onclick = () => show(k); return b; });
-    const show = (k, scroll) => { const w = st.ways[k]; tabs.forEach((b, q) => b.classList.toggle("on", q === k));
+    // a step that goes as chosen follows the choice: choosing a way in either shows the same way in the other
+    const none = name => { tabs.forEach(b => b.classList.remove("on")); body.replaceChildren(h("p", "sub", "Nothing to do here when “" + name + "” is chosen.")); };
+    const show = (k, scroll, quiet) => { const w = st.ways[k]; tabs.forEach((b, q) => b.classList.toggle("on", q === k));
+      if (!quiet) pick.forEach((o, q) => { if (q !== i && (o.tied || st.asChosen)) o.name(w.name); });
       body.replaceChildren(...[w.given ? h("p", "given", h("b", "", "When: "), w.given) : null,
         (w.only || []).map(o => h("p", "given", h("b", "", "Only where "), "“" + o.step + "” goes: ", o.ways.join(", ") || "no way", ".")),
         w.status === "ok" ? null : h("p", "note", "the model does not take this way as told"),
         (w.sources || []).length ? h("p", "verd", origin(w)) : null,
         (w.steps || []).length ? h("div", "tl flow", w.steps.map((x, q) => card(x, (i + 1) + "." + (q + 1)))) : h("p", "sub", "This way has nothing to do at this step.")].flat().filter(Boolean));
       if (scroll) box.scrollIntoView({ block: "nearest", behavior: "smooth" }); };
-    const box = h("div", "fs ch", h("div", "mo", h("span", "dot", String(i + 1)), h("p", "own me", "goes one of " + pl(st.ways.length, "way")), h("p", "say", st.say),
+    const box = h("div", "fs ch", h("div", "mo", h("span", "dot", String(i + 1)), h("p", "own me", st.asChosen ? "goes as chosen above" : "goes one of " + pl(st.ways.length, "way")), h("p", "say", st.say),
       h("div", "tabs", tabs), body));
-    pick.set(i, show); const first = st.ways.findIndex(w => w.status !== "ok"); show(first < 0 ? 0 : first); fl.append(box); });
+    pick.set(i, { show, tied: !!st.asChosen, name: n => { const k = st.ways.findIndex(w => w.name === n); if (k >= 0) show(k, false, true); else if (st.asChosen) none(n); } });
+    fl.append(box); });
+  // each choice starts at its first way (a failed one first); the steps that go as chosen follow
+  (j.steps || []).forEach((st, i) => { if (st.ways && !st.asChosen) { const k = st.ways.findIndex(w => w.status !== "ok"); pick.get(i).show(k < 0 ? 0 : k); } });
+  (j.steps || []).forEach((st, i) => { if (st.ways && st.asChosen && !fl.children[i].querySelector(".wy").childNodes.length) pick.get(i).show(0, false, true); });
   const fo = j.follows, n = (j.steps || []).length;
-  const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, flow(j, (i, k, sc) => pick.get(i)(k, sc)),
+  const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, flow(j, (i, k, sc) => pick.get(i).show(k, sc)),
     fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
         fo.journeys.length > 3 ? " and " + (fo.journeys.length - 3) + " more" : null] : fo.what,
       " in ", link(fo.part, file(fo.part)), ". That part says when it is accepted; this is what follows here.") : null,
@@ -449,7 +456,7 @@ function journeys(a, D) {
     if (push) { if (location.hash !== at(id)) history.pushState(null, "", at(id));
       if (jx.getBoundingClientRect().top < 0) jx.scrollIntoView({ block: "start" }); }
     return true; };
-  const item = j => { const k = (j.steps || []).filter(st => st.ways).length, x = link([bad(j) ? h("span", "mk violated", "✕") : null, h("span", "mono", j.id), j.title,
+  const item = j => { const k = (j.steps || []).filter(st => st.ways && !st.asChosen).length, x = link([bad(j) ? h("span", "mk violated", "✕") : null, h("span", "mono", j.id), j.title,
       k ? h("span", "cnt", pl(k, "choice")) : null, chg(j) ? h("span", "chgd", " ●") : null], at(j.id), "ji");
     x.onclick = e => { e.preventDefault(); sel(j.id, true); }; items.set(j.id, x); return x; };
   const group = tops => tops.forEach((j, k) => { if (j.about && (!k || tops[k - 1].about !== j.about)) nav.append(h("h3", "about", j.about)); nav.append(item(j)); });
