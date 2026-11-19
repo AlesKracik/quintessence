@@ -94,24 +94,36 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .mo.next{border:1px dashed var(--acc);background:var(--accb)}.mo.next .dot{border:2px dashed var(--acc)}.mo.next .rt{font-size:13.5px}
 .badge.next{color:var(--acc);margin-right:6px;font-weight:700}.jr.hit{box-shadow:0 0 0 2px var(--acc)}
 .leaf.on{border-color:var(--acc);background:var(--accb)}.leaf.on::before{border-top-color:var(--acc)}.leaf.on a{display:block}
-.fam{margin:6px 0 14px;padding:10px 12px 4px;background:var(--surf);border:1px solid var(--line);border-radius:8px}
-.fam>.sub{margin:0 0 10px}.fam .tr{position:relative;padding-left:26px}
-.fam .tr::before{content:"";position:absolute;left:8px;top:0;bottom:0;width:3px;background:var(--acc);border-radius:2px}
-.fam .tr::before{top:6px}.fam .tr>.tk:last-child::after{content:"";position:absolute;left:-20px;top:20px;bottom:0;width:7px;background:var(--surf)}
-.fam .tk{position:relative;padding:0 0 10px}.fam .tk::before{content:"";position:absolute;left:-24px;top:3px;width:11px;height:11px;border-radius:50%;background:var(--surf);border:3px solid var(--acc)}
-.fam .tk.fk::before{border-radius:2px;transform:rotate(45deg);background:var(--acc)}
-.fam .tt{margin:0;font-weight:600}.fam .tt+.tt{margin-top:2px}.fam .tg{font-size:12px;color:var(--mut);font-weight:400;margin-left:6px;white-space:nowrap}
-.fam .ls .tg{white-space:normal;margin-left:4px}.fam .tg.td{color:var(--warn)}.fam .tg.nx{color:var(--acc)}.fam .how{margin:2px 0 0;font-size:12.5px;color:var(--mut)}
-.fam .lns{margin:0 0 12px;padding:2px 0 0}
-.fam .ln{position:relative;margin:0 0 0 22px;padding:0 0 8px 0}
-.fam .ln::before{content:"";position:absolute;left:-38px;top:-8px;width:30px;height:18px;border-left:2px solid var(--acc);border-bottom:2px solid var(--acc);border-bottom-left-radius:10px}
-.fam .ln::after{content:"";position:absolute;left:-38px;top:10px;bottom:-2px;width:2px;background:var(--acc)}
-.fam .ln:last-child::after{display:none}
-.fam .lnt{font-size:13px;font-weight:600}.fam .lnt .mono{font-weight:400;margin-right:4px}.fam .lw2{font-size:12.5px;color:var(--mut);margin-left:6px}
-.fam .lst{display:flex;flex-wrap:wrap;gap:4px 0;align-items:center;margin-top:3px}
-.fam .ls{display:inline-block;max-width:300px;padding:2px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:13px;line-height:1.3}
-.fam .ar{color:var(--mut);padding:0 5px}.fam .ln.none .lnt{font-weight:400;color:var(--mut)}
-.fam .ln.hi .ls{border-color:var(--acc);background:var(--accb)}.fam .ln.hi .lnt a{text-decoration:underline}
+.fam{margin:6px 0 14px;padding:10px 12px 12px;background:var(--surf);border:1px solid var(--line);border-radius:8px;overflow-x:auto}
+.fam>.sub{margin:0 0 10px}.fam .gx{--w:3px;--x:9px;min-width:560px}
+.fam .nd,.fam .cap{position:relative;padding:5px 0 5px 30px}
+.fam .nd::before,.fam .cap::before{content:"";position:absolute;left:var(--x);top:0;bottom:0;width:var(--w);background:var(--acc)}
+.fam .gx>.first::before{top:50%}.fam .gx>.last::before{bottom:50%}
+.fam .nd::after{content:"";position:absolute;left:3px;top:calc(50% - 8px);width:9px;height:9px;border-radius:50%;background:var(--surf);border:3px solid var(--acc)}
+.fam .cap::after{content:"";position:absolute;left:4px;top:calc(50% - 7px);width:13px;height:13px;transform:rotate(45deg);border-radius:2px;background:var(--acc)}
+.fam .bx{display:inline-block;max-width:640px;padding:6px 10px;border:1.5px solid var(--acc);border-radius:8px;background:var(--surf)}
+.fam .tt{margin:0;font-weight:600}.fam .tt+.tt{margin-top:3px}
+.fam .cap .tt{font-weight:400;font-style:italic;color:var(--mut)}.fam .cap .k{font-style:normal;font-weight:700;color:var(--acc);margin-right:6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.fam .tg{display:inline-block;font-size:12px;color:var(--mut);font-weight:400;font-style:normal;margin-right:10px}.fam .tg.td{color:var(--warn)}.fam .tg.nx{color:var(--acc)}
+.fam .lns{position:relative;margin-left:var(--x)}
+.fam .ln{position:relative;padding:5px 0}
+.fam .ln::before,.fam .ln::after{content:"";position:absolute;top:0;bottom:0;width:var(--w);background:var(--acc)}
+.fam .ln::before{left:0}.fam .ln::after{right:0}
+.fam .ln:last-child::before{bottom:50%}.fam .ln:first-child::after{top:50%}
+.fam .lns.open .ln::after{display:none}
+.fam .rw{display:flex;align-items:center}
+.fam .wi{flex:0 0 16px;height:0;border-top:var(--w) solid var(--acc);position:relative}
+.fam .wi.to::after{content:"";position:absolute;right:-1px;top:calc(var(--w) / -2 - 5px);border:5px solid transparent;border-left:7px solid var(--acc);border-right:0}
+.fam .wi.fill{flex:1 1 16px}.fam .lns.open .wi.fill{border-top-style:dotted;flex:0 0 28px}
+.fam .pill{flex:0 0 186px;padding:3px 9px;border-radius:14px;background:var(--acc);color:var(--surf);font-size:12.5px;line-height:1.25}
+.fam .pill a{color:inherit;text-decoration:none;font-weight:600}.fam .pill a:hover{text-decoration:underline}.fam .pill .mono{font-size:11.5px;margin-right:4px;opacity:.9;white-space:nowrap}
+.fam .pill .more{opacity:.85}
+.fam .sb{flex:0 1 auto;min-width:92px;max-width:250px;padding:4px 8px;border:1.5px solid var(--line);border-radius:8px;background:var(--bg);font-size:13px;line-height:1.3}
+.fam .sb .tg{display:block;margin:2px 0 0}
+.fam .skip{font-size:12.5px;color:var(--mut);font-style:italic;padding:0 8px;white-space:nowrap}
+.fam .ret{height:14px;margin-left:var(--x);border:var(--w) solid var(--acc);border-top:0;border-left:0;border-radius:0 0 12px 0}
+.fam .ret.half{border-bottom:0;border-radius:0;height:0}
+.fam .ln.hi .sb{border-color:var(--acc);background:var(--accb)}.fam .gx.pick .ln:not(.hi){opacity:.3}
 .mo.ref{border:1px dashed var(--warn);background:var(--warnb)}.mo.ref .dot{border:2px dashed var(--warn)}
 .mo.bad{border:1px solid var(--bad);border-left-width:5px;background:var(--badb)}.mo.bad .dot{border-color:var(--bad);color:var(--bad)}
 .say{font-size:15.5px;font-weight:600;margin:0 0 4px}.badge.ref{color:var(--warn);margin-right:6px;font-weight:700}
@@ -339,36 +351,46 @@ function alignRuns(G, V) {
 }
 function family(j, vs, area) {
   const G = runsOf(j), al = vs.map(v => alignRuns(G, runsOf(v)));
-  const tags = st => [(st.turnedDown || []).length ? h("span", "tg td", "⊘ " + pl(st.turnedDown.length, "way") + " turned down") : null,
-    (st.continues || []).length ? h("span", "tg nx", "→ continues in " + [...new Set(st.continues.map(o => o.part))].join(", ")) : null];
-  // a step of a branch names where it goes on only when the step of the trunk it stands for does not say so already
   const partsOf = sts => new Set(sts.flatMap(st => (st.continues || []).map(o => o.part)));
-  const goes = (st, said) => { const ps = [...partsOf([st])].filter(p => !said.has(p));
-    return ps.length ? h("span", "tg nx", "→ continues in " + ps.join(", ")) : null; };
-  const chain = (sts, said) => h("div", "lst", sts.map((st, q) => [q ? h("span", "ar", "→") : null, h("span", "ls", st.say, goes(st, said))]));
-  const name = v => link([h("span", "mono", v.id), v.title], file(area, v.id));
-  const lane = (v, sts, why, said) => { const d = h("div", "ln" + (sts.length ? "" : " none"), h("div", "lnt", name(v), why ? h("span", "lw2", why) : null), sts.length ? chain(sts, said) : null);
-    d.dataset.v = v.id; return d; };
-  const box = h("div", "fam"), tr = h("div", "tr"); let forks = 0;
+  const tags = sts => { const td = sts.reduce((k, st) => k + (st.turnedDown || []).length, 0), ps = [...partsOf(sts)];
+    return [sts.some(st => st.repeats) ? h("span", "tg nx", "↻ can repeat") : null, td ? h("span", "tg td", "⊘ " + pl(td, "way") + " turned down") : null,
+      ps.length ? h("span", "tg nx", "→ continues in " + ps.join(", ")) : null]; };
+  const texts = sts => sts.map(st => h("p", "tt", st.say));
+  // one lane: the variants that take the step the same way, then their steps in order, then on to where the lanes meet
+  const lane = (who, sts, said, why) => {
+    const names = who.length === 1 ? link([h("span", "mono", who[0].id), who[0].title], file(area, who[0].id))
+      : [who.slice(0, 3).map((v, q) => [q ? ", " : "", link(h("span", "mono", v.id), file(area, v.id))]), who.length > 3 ? h("span", "more", " and " + (who.length - 3) + " more") : null];
+    const pill = h("span", "pill", names); pill.title = who.map(v => v.id + " " + v.title).join("\n");
+    const row = h("div", "rw", h("span", "wi"), pill);
+    sts.forEach(st => { const more = [...partsOf([st])].filter(p => !said.has(p));
+      row.append(h("span", "wi to"), h("span", "sb", st.say, more.length ? h("span", "tg nx", "→ continues in " + more.join(", ")) : null)); });
+    if (!sts.length) row.append(h("span", "wi"), h("span", "skip", why));
+    row.append(h("span", "wi fill"));
+    const d = h("div", "ln", row); d.dataset.v = who.map(v => v.id).join(" "); return d; };
+  // the variants that take the step in the same steps, told in the same words, share a lane
+  const lanesOf = (ways, said, why) => { const by = new Map();
+    ways.forEach(([v, sts]) => { const k = sts.map(st => (st.names || []).join(",") + ":" + st.say).join("|"); if (!by.has(k)) by.set(k, { who: [], sts }); by.get(k).who.push(v); });
+    return [...by.values()].map(x => lane(x.who, x.sts, said, why)); };
+  const gx = h("div", "gx"); let forks = 0;
   G.forEach((g, i) => {
-    const lanes = [], same = [], said = partsOf(g.steps);
-    vs.forEach((v, q) => { const m = al[q].at[i], ex = al[q].extra[i];
-      if (m && !ex.length && m.steps.length === g.steps.length) same.push(v.id);
-      else if (m) lanes.push(lane(v, [...ex, ...m.steps], ex.length ? "with more before it" : "in " + pl(m.steps.length, "step"), said));
-      else lanes.push(lane(v, ex, ex.length ? "instead of this step" : "does not take this step", said)); });
-    if (lanes.length) forks++;
-    tr.append(h("div", "tk" + (lanes.length ? " fk" : ""), g.steps.map(st => h("p", "tt", st.say, st.repeats ? h("span", "tg nx", "↻ can repeat") : null, tags(st))),
-      lanes.length ? h("p", "how", same.length ? "In general, and so in " + same.join(", ") + ". Taken another way in:" : "In general. Each variant takes it its own way:") : null));
-    if (lanes.length) tr.append(h("div", "lns", lanes)); });
+    const ways = vs.map((v, q) => [v, [...al[q].extra[i], ...(al[q].at[i] ? al[q].at[i].steps : [])]]);
+    const told = vs.every((v, q) => al[q].at[i] && !al[q].extra[i].length && al[q].at[i].steps.length === g.steps.length);
+    if (told) { gx.append(h("div", "nd", h("div", "bx", texts(g.steps), h("div", "", tags(g.steps))))); return; }
+    forks++;
+    gx.append(h("div", "cap", h("div", "", h("p", "tt", h("span", "k", "in general"), g.steps.map(st => st.say).join(" ")), h("div", "", tags(g.steps)))),
+      h("div", "lns", lanesOf(ways, partsOf(g.steps), "not taken")), h("div", "ret")); });
   const on = vs.map((v, q) => [v, al[q].extra[G.length]]).filter(x => x[1].length);
-  if (on.length) { forks++; tr.append(h("div", "tk fk", h("p", "how", "Some variants go on from here:")), h("div", "lns", on.map(x => lane(x[0], x[1], "", new Set())))); }
+  if (on.length) { forks++; gx.append(h("div", "cap", h("p", "tt", h("span", "k", "some go on"), "after the case as told in general ends")),
+    h("div", "lns open", lanesOf(on, new Set(), ""))); }
   if (!forks) return null;
-  // pointing at a variant shows its way through the whole flow
-  box.addEventListener("mouseover", e => { const l = e.target.closest && e.target.closest(".ln"), id = l && l.dataset.v;
-    box.querySelectorAll(".ln").forEach(x => x.classList.toggle("hi", !!id && x.dataset.v === id)); });
-  box.addEventListener("mouseleave", () => box.querySelectorAll(".ln.hi").forEach(x => x.classList.remove("hi")));
-  box.append(h("p", "sub", "The whole case as one flow: the line down the left is what every variant shares, and a variant branches off where it takes a step its own way."), tr);
-  return box;
+  gx.firstChild.classList.add("first");
+  const end = gx.lastChild; if (end.classList.contains("nd")) end.classList.add("last"); else if (end.classList.contains("ret")) end.classList.add("half");
+  // pointing at a lane shows the way of its variants through the whole flow
+  const pick = ids => { gx.classList.toggle("pick", !!ids.length);
+    gx.querySelectorAll(".ln").forEach(x => x.classList.toggle("hi", ids.some(id => x.dataset.v.split(" ").includes(id)))); };
+  gx.addEventListener("mouseover", e => { const l = e.target.closest && e.target.closest(".ln"); pick(l ? l.dataset.v.split(" ") : []); });
+  gx.addEventListener("mouseleave", () => pick([]));
+  return h("div", "fam", h("p", "sub", "The whole case as one flow. The line runs from the top; where the variants take a step in different ways it splits into one lane for each way and comes together again. Point at a lane to follow its variants through; the name opens the variant."), gx);
 }
 function journey(j, req, ms, walks, wmark, shown, vs, area) {
   const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
