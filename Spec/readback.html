@@ -366,7 +366,7 @@ function flow(j, open) {
     const lanes = st.ways.map((w, k) => { const pill = h("span", "pill" + (w.status === "ok" ? "" : " bad"), w.name);
       pill.title = "show this way below"; pill.onclick = () => open(i, k, true);
       const row = h("div", "rw", h("span", "wi"), pill);
-      (w.steps || []).forEach(x => row.append(h("span", "wi to"), h("span", "sb", x.say, tags([x]))));
+      (w.steps || []).forEach(x => row.append(h("span", "wi to"), h("span", "sb", x.say)));
       if (!(w.steps || []).length) row.append(h("span", "wi"), h("span", "skip", "nothing to do"));
       row.append(h("span", "wi fill")); return h("div", "ln", row); });
     gx.append(h("div", "cap", h("div", "", h("p", "tt", st.say), h("p", "sub", "goes one of " + pl(st.ways.length, "way") + ":"))),
