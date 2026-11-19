@@ -391,8 +391,11 @@ function family(j, vs, area) {
     const told = vs.every((v, q) => al[q].at[i] && !al[q].extra[i].length && al[q].at[i].steps.length === g.steps.length);
     if (told) { gx.append(h("div", "nd", h("div", "bx", texts(g.steps), h("div", "", tags(g.steps))))); return; }
     forks++;
-    gx.append(h("div", "cap", h("div", "", h("p", "tt", h("span", "k", "in general"), g.steps.map(st => st.say).join(" ")), h("div", "", tags(g.steps)))),
-      h("div", "lns", lanesOf(ways, partsOf(g.steps), "not taken")), h("div", "ret")); });
+    // a variant that tells the step as the general journey does has not chosen a way: it is no lane
+    const gen = g.steps.map(st => st.say).join("|"), its = ways.filter(([, sts]) => sts.map(st => st.say).join("|") !== gen), rest = ways.length - its.length;
+    gx.append(h("div", "cap", h("div", "", h("p", "tt", h("span", "k", "in general"), g.steps.map(st => st.say).join(" ")), h("div", "", tags(g.steps)),
+        h("p", "sub", rest ? "The ways it can go are below; " + pl(rest, "other variant") + (rest === 1 ? " does" : " do") + " not say which, and can go any of them." : null))),
+      h("div", "lns", lanesOf(its, partsOf(g.steps), "not taken")), h("div", "ret")); });
   const on = vs.map((v, q) => [v, al[q].extra[G.length]]).filter(x => x[1].length);
   if (on.length) { forks++; gx.append(h("div", "cap", h("p", "tt", h("span", "k", "some go on"), "after the case as told in general ends")),
     h("div", "lns open", lanesOf(on, new Set(), ""))); }
