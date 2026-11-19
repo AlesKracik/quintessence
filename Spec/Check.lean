@@ -765,6 +765,51 @@ def Area.peer [Repr α] (A : Area σ α) : Peer :=
     journeys := A.journeys.map fun j =>
       (j.id, j.title, j.variantOf, ((j.steps.flatMap (·.actions)).map (actionName ∘ label)).eraseDups) }
 
+/-- The steps of a journey in runs: consecutive steps that take the same actions stand for one step
+of the journey told in general. -/
+private def stepRuns {α : Type} (key : Step α → String) (steps : List (Step α)) : Array (String × List (Step α)) :=
+  steps.foldl (init := #[]) fun acc st =>
+    let k := key st
+    match acc.back? with
+    | some (k', sts) => if k' == k then acc.pop.push (k, sts ++ [st]) else acc.push (k, [st])
+    | none => acc.push (k, [st])
+
+/-- How a variant takes each step of the journey told in general: the steps of the variant that stand
+for it, with those it takes before it, and whether it takes it one for one as told. The runs are
+matched by their actions, in order (the longest common subsequence). The last entry is what the
+variant does after the general journey has ended. -/
+private def waysOf {α : Type} (G V : Array (String × List (Step α))) : Array (List (Step α) × Bool) := Id.run do
+  let n := G.size
+  let m := V.size
+  let mut L : Array (Array Nat) := Array.replicate (n + 1) (Array.replicate (m + 1) 0)
+  for i' in [0:n] do
+    let i := n - 1 - i'
+    for k' in [0:m] do
+      let k := m - 1 - k'
+      let x := if G[i]!.1 == V[k]!.1 then L[i + 1]![k + 1]! + 1 else Nat.max L[i + 1]![k]! L[i]![k + 1]!
+      L := L.set! i (L[i]!.set! k x)
+  let mut out : Array (List (Step α) × Bool) := Array.replicate (n + 1) ([], false)
+  let mut i := 0
+  let mut k := 0
+  let mut before : List (Step α) := []
+  for _ in [0:n + m] do
+    if i < n && k < m then
+      if G[i]!.1 == V[k]!.1 then
+        out := out.set! i (before ++ V[k]!.2, before.isEmpty && V[k]!.2.length == G[i]!.2.length)
+        before := []
+        i := i + 1
+        k := k + 1
+      else if L[i + 1]![k]! > L[i]![k + 1]! then
+        out := out.set! i (before, false)
+        before := []
+        i := i + 1
+      else
+        before := before ++ V[k]!.2
+        k := k + 1
+  let rest := before ++ (V.toList.drop k).flatMap (·.2)
+  if i < n then out := out.set! i (rest, false) else out := out.set! n (rest, false)
+  return out
+
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     (since : Option String) (rerun : Bool) (others : List Peer) : IO Report := do
   -- what was recorded at the revision this run is compared with, for the readback
@@ -938,6 +983,48 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       questions := questions.push
         (s!"{j.id} takes the same steps as {p.id} ({", ".intercalate (stepsOf j)}). Are they one business case? "
           ++ "Then tell it once in general and name the others as its variants with `variantOf`.", none)
+  -- A variant is about the step it takes its own way. Where a variant tells two steps its own way,
+  -- and the model lets each of the two go with another variant's way of the other, the two do not
+  -- depend on each other, and the variant reads as if they always went together. The combinations
+  -- are tried on the model, from where either variant starts.
+  let keyOf (st : Step α) : String := ",".intercalate ((st.actions.map (actionName ∘ label)).eraseDups)
+  for g in A.journeys do
+    let vs := A.journeys.filter fun v => v.variantOf == g.id && !general v
+    if g.variantOf == "" && vs.length ≥ 2 then
+      let G := stepRuns keyOf g.steps
+      let ways := vs.map fun v => (v, waysOf G (stepRuns keyOf v.steps))
+      let acts (sts : List (Step α)) : List String := sts.flatMap (·.actions.map label)
+      -- a step the variant tells its own way: some variant does not take it one for one, and this
+      -- one takes it, in other words than the general journey
+      let own (w : Array (List (Step α) × Bool)) (i : Nat) : Bool :=
+        (ways.any fun (_, u) => !u[i]!.2) && !w[i]!.1.isEmpty && w[i]!.1.map (·.say) != G[i]!.2.map (·.say)
+      -- the run of one variant with one step taken the way another takes it
+      let goes (b : Journey α) (wb wo : Array (List (Step α) × Bool)) (r : Nat) : Bool :=
+        let run := b.setup ++ (List.range (G.size + 1)).flatMap fun i => ((if i == r then wo[i]! else wb[i]!).1).flatMap (·.actions)
+        (run.foldl (init := some A.init) fun s a => s.bind (A.step a)).isSome
+      -- the variants whose way of step j goes with this variant's way of step i
+      let with_ (v : Journey α) (w : Array (List (Step α) × Bool)) (i j : Nat) : List String :=
+        ways.filterMap fun (u, wu) =>
+          if u.id != v.id && !wu[j]!.1.isEmpty && acts wu[j]!.1 != acts w[j]!.1 && (goes v w wu j || goes u wu w i)
+          then some u.id else none
+      for i in List.range G.size do
+        for j in List.range G.size do
+          if i < j then
+            let found := ways.filterMap fun (v, w) =>
+              if own w i && own w j then
+                match with_ v w i j, with_ v w j i with
+                | a :: _, b :: _ => some (v.id, a, b)
+                | _, _ => none
+              else none
+            if let some (v, a, b) := found.head? then
+              let said (i : Nat) : String := " ".intercalate (G[i]!.2.map (·.say))
+              let ids := found.map (·.1)
+              questions := questions.push
+                (s!"The variants of {g.id} take the steps \"{said i}\" and \"{said j}\" in several ways, and the model lets those ways go together freely: "
+                  ++ s!"the way {v} takes the first goes with the way {a} takes the second, and the way {v} takes the second with the way {b} takes the first. "
+                  ++ s!"{", ".intercalate ids} {if ids.length == 1 then "tells" else "each tell"} both steps in {if ids.length == 1 then "its" else "their"} own words, and so "
+                  ++ s!"{if ids.length == 1 then "reads" else "read"} as if the two ways always went together. If they do not depend on each other, a variant is about one of them: "
+                  ++ s!"tell the other step in the words of {g.id}.", none)
   -- what the model was read from: has a file it cites changed since?
   let cited := ((A.surface.map (·.code) ++ A.invariants.flatMap (·.sources) ++ A.requirements.flatMap (·.sources)
     ++ A.journeys.flatMap (·.sources) ++ A.walkthroughs.flatMap (·.sources)).flatMap fun c => (places c).map (·.1)).eraseDups
