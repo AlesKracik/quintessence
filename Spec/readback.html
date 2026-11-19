@@ -101,7 +101,7 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .fam .tk{position:relative;padding:0 0 10px}.fam .tk::before{content:"";position:absolute;left:-24px;top:3px;width:11px;height:11px;border-radius:50%;background:var(--surf);border:3px solid var(--acc)}
 .fam .tk.fk::before{border-radius:2px;transform:rotate(45deg);background:var(--acc)}
 .fam .tt{margin:0;font-weight:600}.fam .tt+.tt{margin-top:2px}.fam .tg{font-size:12px;color:var(--mut);font-weight:400;margin-left:6px;white-space:nowrap}
-.fam .tg.td{color:var(--warn)}.fam .tg.nx{color:var(--acc)}.fam .how{margin:2px 0 0;font-size:12.5px;color:var(--mut)}
+.fam .ls .tg{white-space:normal;margin-left:4px}.fam .tg.td{color:var(--warn)}.fam .tg.nx{color:var(--acc)}.fam .how{margin:2px 0 0;font-size:12.5px;color:var(--mut)}
 .fam .lns{margin:0 0 12px;padding:2px 0 0}
 .fam .ln{position:relative;margin:0 0 0 22px;padding:0 0 8px 0}
 .fam .ln::before{content:"";position:absolute;left:-38px;top:-8px;width:30px;height:18px;border-left:2px solid var(--acc);border-bottom:2px solid var(--acc);border-bottom-left-radius:10px}
@@ -341,24 +341,27 @@ function family(j, vs, area) {
   const G = runsOf(j), al = vs.map(v => alignRuns(G, runsOf(v)));
   const tags = st => [(st.turnedDown || []).length ? h("span", "tg td", "⊘ " + pl(st.turnedDown.length, "way") + " turned down") : null,
     (st.continues || []).length ? h("span", "tg nx", "→ continues in " + [...new Set(st.continues.map(o => o.part))].join(", ")) : null];
-  const goes = st => (st.continues || []).length ? h("span", "tg nx", "→ continues in " + [...new Set(st.continues.map(o => o.part))].join(", ")) : null;
-  const chain = sts => h("div", "lst", sts.map((st, q) => [q ? h("span", "ar", "→") : null, h("span", "ls", st.say, goes(st))]));
+  // a step of a branch names where it goes on only when the step of the trunk it stands for does not say so already
+  const partsOf = sts => new Set(sts.flatMap(st => (st.continues || []).map(o => o.part)));
+  const goes = (st, said) => { const ps = [...partsOf([st])].filter(p => !said.has(p));
+    return ps.length ? h("span", "tg nx", "→ continues in " + ps.join(", ")) : null; };
+  const chain = (sts, said) => h("div", "lst", sts.map((st, q) => [q ? h("span", "ar", "→") : null, h("span", "ls", st.say, goes(st, said))]));
   const name = v => link([h("span", "mono", v.id), v.title], file(area, v.id));
-  const lane = (v, sts, why) => { const d = h("div", "ln" + (sts.length ? "" : " none"), h("div", "lnt", name(v), why ? h("span", "lw2", why) : null), sts.length ? chain(sts) : null);
+  const lane = (v, sts, why, said) => { const d = h("div", "ln" + (sts.length ? "" : " none"), h("div", "lnt", name(v), why ? h("span", "lw2", why) : null), sts.length ? chain(sts, said) : null);
     d.dataset.v = v.id; return d; };
   const box = h("div", "fam"), tr = h("div", "tr"); let forks = 0;
   G.forEach((g, i) => {
-    const lanes = [], same = [];
+    const lanes = [], same = [], said = partsOf(g.steps);
     vs.forEach((v, q) => { const m = al[q].at[i], ex = al[q].extra[i];
       if (m && !ex.length && m.steps.length === g.steps.length) same.push(v.id);
-      else if (m) lanes.push(lane(v, [...ex, ...m.steps], ex.length ? "with more before it" : "in " + pl(m.steps.length, "step")));
-      else lanes.push(lane(v, ex, ex.length ? "instead of this step" : "does not take this step")); });
+      else if (m) lanes.push(lane(v, [...ex, ...m.steps], ex.length ? "with more before it" : "in " + pl(m.steps.length, "step"), said));
+      else lanes.push(lane(v, ex, ex.length ? "instead of this step" : "does not take this step", said)); });
     if (lanes.length) forks++;
     tr.append(h("div", "tk" + (lanes.length ? " fk" : ""), g.steps.map(st => h("p", "tt", st.say, st.repeats ? h("span", "tg nx", "↻ can repeat") : null, tags(st))),
       lanes.length ? h("p", "how", same.length ? "In general, and so in " + same.join(", ") + ". Taken another way in:" : "In general. Each variant takes it its own way:") : null));
     if (lanes.length) tr.append(h("div", "lns", lanes)); });
   const on = vs.map((v, q) => [v, al[q].extra[G.length]]).filter(x => x[1].length);
-  if (on.length) { forks++; tr.append(h("div", "tk fk", h("p", "how", "Some variants go on from here:")), h("div", "lns", on.map(x => lane(x[0], x[1], "")))); }
+  if (on.length) { forks++; tr.append(h("div", "tk fk", h("p", "how", "Some variants go on from here:")), h("div", "lns", on.map(x => lane(x[0], x[1], "", new Set())))); }
   if (!forks) return null;
   // pointing at a variant shows its way through the whole flow
   box.addEventListener("mouseover", e => { const l = e.target.closest && e.target.closest(".ln"), id = l && l.dataset.v;
