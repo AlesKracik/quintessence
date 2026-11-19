@@ -124,6 +124,17 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .fam .ret{height:14px;margin-left:var(--x);border:var(--w) solid var(--acc);border-top:0;border-left:0;border-radius:0 0 12px 0}
 .fam .ret.half{border-bottom:0;border-radius:0;height:0}
 .fam .ln.hi .sb{border-color:var(--acc);background:var(--accb)}.fam .gx.pick .ln:not(.hi){opacity:.3}
+.fam .ways{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 12px}
+.fam .wy{font:inherit;font-size:12.5px;padding:2px 9px;border:1.5px solid var(--line);border-radius:14px;background:var(--surf);color:var(--ink);cursor:pointer;text-align:left}
+.fam .wy .mono{font-size:11.5px;color:var(--mut)}.fam .wy:hover{border-color:var(--acc)}
+.fam .wy[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:var(--surf)}.fam .wy[aria-pressed=true] .mono{color:inherit}
+.fam .pill{cursor:pointer}
+.fam .gx.one .off,.fam .gx.one .ret,.fam .gx.one .wi,.fam .gx.one .pill,.fam .gx.one .ln::after{display:none}
+.fam .gx.one .ln::before{bottom:0}.fam .gx.one .ln{padding:0}
+.fam .gx.one .rw{flex-direction:column;align-items:flex-start;padding-left:21px}
+.fam .gx.one .sb{position:relative;flex:0 0 auto;max-width:640px;margin:5px 0;padding:6px 10px;font-size:15px;font-weight:600;border-color:var(--acc);background:var(--accb)}
+.fam .gx.one .sb::before{content:"";position:absolute;left:-28px;top:calc(50% - 8px);width:9px;height:9px;border-radius:50%;background:var(--acc);border:3px solid var(--acc)}
+.fam .gx.one .sb .tg{font-weight:400}.fam .gx.one .skip{padding:6px 0}
 .mo.ref{border:1px dashed var(--warn);background:var(--warnb)}.mo.ref .dot{border:2px dashed var(--warn)}
 .mo.bad{border:1px solid var(--bad);border-left-width:5px;background:var(--badb)}.mo.bad .dot{border-color:var(--bad);color:var(--bad)}
 .say{font-size:15.5px;font-weight:600;margin:0 0 4px}.badge.ref{color:var(--warn);margin-right:6px;font-weight:700}
@@ -361,6 +372,7 @@ function family(j, vs, area) {
     const names = who.length === 1 ? link([h("span", "mono", who[0].id), who[0].title], file(area, who[0].id))
       : [who.slice(0, 3).map((v, q) => [q ? ", " : "", link(h("span", "mono", v.id), file(area, v.id))]), who.length > 3 ? h("span", "more", " and " + (who.length - 3) + " more") : null];
     const pill = h("span", "pill", names); pill.title = who.map(v => v.id + " " + v.title).join("\n");
+    pill.onclick = e => { if (!e.target.closest("a")) ctl.only(who[0].id); };
     const row = h("div", "rw", h("span", "wi"), pill);
     sts.forEach(st => { const more = [...partsOf([st])].filter(p => !said.has(p));
       row.append(h("span", "wi to"), h("span", "sb", st.say, more.length ? h("span", "tg nx", "→ continues in " + more.join(", ")) : null)); });
@@ -371,7 +383,7 @@ function family(j, vs, area) {
   const lanesOf = (ways, said, why) => { const by = new Map();
     ways.forEach(([v, sts]) => { const k = sts.map(st => (st.names || []).join(",") + ":" + st.say).join("|"); if (!by.has(k)) by.set(k, { who: [], sts }); by.get(k).who.push(v); });
     return [...by.values()].map(x => lane(x.who, x.sts, said, why)); };
-  const gx = h("div", "gx"); let forks = 0;
+  const gx = h("div", "gx"), ctl = {}; let forks = 0;
   G.forEach((g, i) => {
     const ways = vs.map((v, q) => [v, [...al[q].extra[i], ...(al[q].at[i] ? al[q].at[i].steps : [])]]);
     const told = vs.every((v, q) => al[q].at[i] && !al[q].extra[i].length && al[q].at[i].steps.length === g.steps.length);
@@ -388,9 +400,18 @@ function family(j, vs, area) {
   // pointing at a lane shows the way of its variants through the whole flow
   const pick = ids => { gx.classList.toggle("pick", !!ids.length);
     gx.querySelectorAll(".ln").forEach(x => x.classList.toggle("hi", ids.some(id => x.dataset.v.split(" ").includes(id)))); };
-  gx.addEventListener("mouseover", e => { const l = e.target.closest && e.target.closest(".ln"); pick(l ? l.dataset.v.split(" ") : []); });
+  gx.addEventListener("mouseover", e => { const l = !gx.classList.contains("one") && e.target.closest && e.target.closest(".ln"); pick(l ? l.dataset.v.split(" ") : []); });
   gx.addEventListener("mouseleave", () => pick([]));
-  return h("div", "fam", h("p", "sub", "The whole case as one flow. The line runs from the top; where the variants take a step in different ways it splits into one lane for each way and comes together again. Point at a lane to follow its variants through; the name opens the variant."), gx);
+  // one way at a time: the flow of one variant alone, as a straight line, with the steps it takes its own way marked
+  const all = h("button", "wy", "all ways"), btns = vs.map(v => h("button", "wy", h("span", "mono", v.id), " ", v.title));
+  ctl.only = id => { pick([]); gx.classList.toggle("one", !!id);
+    all.setAttribute("aria-pressed", String(!id)); btns.forEach((b, q) => b.setAttribute("aria-pressed", String(vs[q].id === id)));
+    gx.querySelectorAll(".ln").forEach(x => x.classList.toggle("off", !!id && !x.dataset.v.split(" ").includes(id)));
+    gx.querySelectorAll(".lns").forEach(x => { const none = !!id && ![...x.children].some(l => !l.classList.contains("off"));
+      x.classList.toggle("off", none); x.previousSibling.classList.toggle("off", none); }); };
+  all.onclick = () => ctl.only(""); btns.forEach((b, q) => { b.onclick = () => ctl.only(vs[q].id); }); ctl.only("");
+  return h("div", "fam", h("p", "sub", "The whole case as one flow. The line runs from the top; where the variants take a step in different ways it splits into one lane for each way and comes together again. Point at a lane to follow its variants through, or choose one way to see it alone."),
+    h("div", "ways", all, btns), gx);
 }
 function journey(j, req, ms, walks, wmark, shown, vs, area) {
   const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
