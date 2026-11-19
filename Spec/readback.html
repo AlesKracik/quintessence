@@ -132,10 +132,13 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .ji:hover{background:var(--accb)}.ji.on{background:var(--acc);color:var(--surf)}
 .ji .mono{font-size:11px;color:var(--mut);margin-right:4px}.ji .cnt{margin-left:6px;font-size:11.5px;color:var(--mut);white-space:nowrap}
 .ji.on .mono,.ji.on .cnt,.ji.on .mk,.ji.on .chgd{color:inherit}.ji .mk{margin-right:4px}
-.jv{display:none;margin:0 0 4px 14px;padding-left:4px;border-left:2px solid var(--line)}.jv.open{display:block}.ji.v{font-size:13px}
 .jp{min-width:0}.crumb{margin:0 0 6px;font-size:13px;color:var(--mut)}.crumb b{color:var(--ink)}
 .own{margin:0 0 3px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}.own.me{color:var(--acc)}
-.mo.mine{border-color:var(--acc);background:var(--accb)}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.tab{font:inherit;font-size:13px;padding:2px 10px;border-radius:14px;border:1.5px solid var(--acc);background:var(--surf);color:var(--acc);cursor:pointer}
+.tab.on{background:var(--acc);color:var(--surf)}.tab.on .mk{color:inherit}
+.fs.ch{display:block}.fs.ch>.mo{border-color:var(--acc);max-width:none}.wy{margin-top:8px;padding-top:6px;border-top:1px dashed var(--line)}
+.fam .pill.bad{background:var(--bad)}
 @media (max-width:820px){.jx{grid-template-columns:1fr}.jn{position:static;max-height:230px}}
 .mo.ref{border:1px dashed var(--warn);background:var(--warnb)}.mo.ref .dot{border:2px dashed var(--warn)}
 .mo.bad{border:1px solid var(--bad);border-left-width:5px;background:var(--badb)}.mo.bad .dot{border-color:var(--bad);color:var(--bad)}
@@ -347,79 +350,40 @@ function reqChips(ids, req) {
 // One business case with its variants as one flow. The case told in general is the trunk. Where a variant
 // takes a step another way (more steps, other steps, none) it leaves the trunk there and comes back to it.
 // Steps are compared by the actions they take: a run of steps with the same actions stands for one step of the trunk.
-const runsOf = j => { const g = []; (j.steps || []).forEach(st => { const k = (st.names || []).join(","), l = g[g.length - 1];
-  if (l && l.k === k) l.steps.push(st); else g.push({ k, steps: [st] }); }); return g; };
-function alignRuns(G, V) {
-  const n = G.length, m = V.length, L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let k = m - 1; k >= 0; k--)
-    L[i][k] = G[i].k === V[k].k ? L[i + 1][k + 1] + 1 : Math.max(L[i + 1][k], L[i][k + 1]);
-  const at = new Array(n).fill(null), extra = Array.from({ length: n + 1 }, () => []);
-  let i = 0, k = 0;
-  while (i < n && k < m) {
-    if (G[i].k === V[k].k) { at[i] = V[k]; i++; k++; }
-    else if (L[i + 1][k] > L[i][k + 1]) i++;
-    else { extra[i].push(...V[k].steps); k++; } }
-  for (; k < m; k++) extra[n].push(...V[k].steps);
-  return { at, extra };
-}
-function family(j, vs, area) {
-  const G = runsOf(j), al = vs.map(v => alignRuns(G, runsOf(v)));
-  const partsOf = sts => new Set(sts.flatMap(st => (st.continues || []).map(o => o.part)));
-  const tags = sts => { const td = sts.reduce((k, st) => k + (st.turnedDown || []).length, 0), ps = [...partsOf(sts)];
+// every step a journey can take, whichever way its choices go
+const plain = j => (j.steps || []).flatMap(st => st.ways ? st.ways.flatMap(w => w.steps || []) : [st]);
+// The whole case as one flow, as it is written: a step every run takes stands on the line; a step
+// that can go several ways splits the line into one lane for each way, and the lanes come together.
+function flow(j, open) {
+  if (!(j.steps || []).some(st => st.ways)) return null;
+  const partsOf = sts => [...new Set(sts.flatMap(st => (st.continues || []).map(o => o.part)))];
+  const tags = sts => { const td = new Set(sts.flatMap(st => st.turnedDown || [])).size, ps = partsOf(sts);
     return [sts.some(st => st.repeats) ? h("span", "tg nx", "↻ can repeat") : null, td ? h("span", "tg td", "⊘ " + pl(td, "way") + " turned down") : null,
       ps.length ? h("span", "tg nx", "→ continues in " + ps.join(", ")) : null]; };
-  const texts = sts => sts.map(st => h("p", "tt", st.say));
-  // one lane: the variants that take the step the same way, then their steps in order, then on to where the lanes meet
-  const lane = (who, sts, said, why) => {
-    const names = who.length === 1 ? link([h("span", "mono", who[0].id), who[0].title], file(area, who[0].id))
-      : [who.slice(0, 3).map((v, q) => [q ? ", " : "", link(h("span", "mono", v.id), file(area, v.id))]), who.length > 3 ? h("span", "more", " and " + (who.length - 3) + " more") : null];
-    const pill = h("span", "pill", names); pill.title = who.map(v => v.id + " " + v.title).join("\n");
-    pill.onclick = e => { if (!e.target.closest("a")) location.hash = "#" + file(area, who[0].id).split("#")[1]; };
-    const row = h("div", "rw", h("span", "wi"), pill);
-    sts.forEach(st => { const more = [...partsOf([st])].filter(p => !said.has(p));
-      row.append(h("span", "wi to"), h("span", "sb", st.say, more.length ? h("span", "tg nx", "→ continues in " + more.join(", ")) : null)); });
-    if (!sts.length) row.append(h("span", "wi"), h("span", "skip", why));
-    row.append(h("span", "wi fill"));
-    const d = h("div", "ln", row); d.dataset.v = who.map(v => v.id).join(" "); return d; };
-  // the variants that take the step in the same steps, told in the same words, share a lane
-  const lanesOf = (ways, said, why) => { const by = new Map();
-    ways.forEach(([v, sts]) => { const k = sts.map(st => (st.names || []).join(",") + ":" + st.say).join("|"); if (!by.has(k)) by.set(k, { who: [], sts }); by.get(k).who.push(v); });
-    return [...by.values()].map(x => lane(x.who, x.sts, said, why)); };
-  const gx = h("div", "gx"); let forks = 0;
-  G.forEach((g, i) => {
-    const ways = vs.map((v, q) => [v, [...al[q].extra[i], ...(al[q].at[i] ? al[q].at[i].steps : [])]]);
-    const told = vs.every((v, q) => al[q].at[i] && !al[q].extra[i].length && al[q].at[i].steps.length === g.steps.length);
-    if (told) { gx.append(h("div", "nd", h("div", "bx", texts(g.steps), h("div", "", tags(g.steps))))); return; }
-    forks++;
-    // a variant that tells the step as the general journey does has not chosen a way: it is no lane
-    const gen = g.steps.map(st => st.say).join("|"), its = ways.filter(([, sts]) => sts.map(st => st.say).join("|") !== gen), rest = ways.length - its.length;
-    gx.append(h("div", "cap", h("div", "", h("p", "tt", h("span", "k", "in general"), g.steps.map(st => st.say).join(" ")), h("div", "", tags(g.steps)),
-        h("p", "sub", rest ? "The ways it can go are below; " + pl(rest, "other variant") + (rest === 1 ? " does" : " do") + " not say which, and can go any of them." : null))),
-      h("div", "lns", lanesOf(its, partsOf(g.steps), "not taken")), h("div", "ret")); });
-  const on = vs.map((v, q) => [v, al[q].extra[G.length]]).filter(x => x[1].length);
-  if (on.length) { forks++; gx.append(h("div", "cap", h("p", "tt", h("span", "k", "some go on"), "after the case as told in general ends")),
-    h("div", "lns open", lanesOf(on, new Set(), ""))); }
-  if (!forks) return null;
+  const gx = h("div", "gx");
+  (j.steps || []).forEach((st, i) => {
+    if (!st.ways) { gx.append(h("div", "nd", h("div", "bx", h("p", "tt", st.say), h("div", "", tags([st]))))); return; }
+    const lanes = st.ways.map((w, k) => { const pill = h("span", "pill" + (w.status === "ok" ? "" : " bad"), w.name);
+      pill.title = "show this way below"; pill.onclick = () => open(i, k, true);
+      const row = h("div", "rw", h("span", "wi"), pill);
+      (w.steps || []).forEach(x => row.append(h("span", "wi to"), h("span", "sb", x.say, tags([x]))));
+      if (!(w.steps || []).length) row.append(h("span", "wi"), h("span", "skip", "nothing to do"));
+      row.append(h("span", "wi fill")); return h("div", "ln", row); });
+    gx.append(h("div", "cap", h("div", "", h("p", "tt", st.say), h("p", "sub", "goes one of " + pl(st.ways.length, "way") + ":"))),
+      h("div", "lns", lanes), h("div", "ret")); });
   gx.firstChild.classList.add("first");
-  const end = gx.lastChild; if (end.classList.contains("nd")) end.classList.add("last"); else if (end.classList.contains("ret")) end.classList.add("half");
-  // pointing at a lane shows the way of its variants through the whole flow
-  const pick = ids => { gx.classList.toggle("pick", !!ids.length);
-    gx.querySelectorAll(".ln").forEach(x => x.classList.toggle("hi", ids.some(id => x.dataset.v.split(" ").includes(id)))); };
-  gx.addEventListener("mouseover", e => { const l = e.target.closest && e.target.closest(".ln"); pick(l ? l.dataset.v.split(" ") : []); });
-  gx.addEventListener("mouseleave", () => pick([]));
-  return h("div", "fam", h("p", "sub", "The whole case as one flow. The line runs from the top; where the variants take a step in different ways it splits into one lane for each way and comes together again. Point at a lane to follow its variants through; its name opens that variant."), gx);
+  const end = gx.lastChild; if (end.classList.contains("nd")) end.classList.add("last"); else end.classList.add("half");
+  return h("div", "fam", h("p", "sub", "The whole case as one flow. The line runs from the top; where a step can go several ways it splits into one lane for each way and comes together again. A way's name shows its steps in full below."), gx);
 }
-function journey(j, req, ms, walks, wmark, shown, vs, area, own) {
+function journey(j, req, ms, walks, wmark, shown) {
   const bad = j.status !== "ok" || walks.some(w => w.status !== "ok"), cls = bad ? "failed" : "ok";
   const d = h("details", "row ex jr " + cls), fl = h("div", "tl flow");
   d.dataset.j = j.id; d.open = bad || !!(ms && ms.length) || walks.some(w => wmark(w));
   const jlink = (part, o) => link([h("span", "mono", o.id), " ", o.title], file(part, o.id));
   // A journey is generic: a step shows what happens and the requirements behind it, never a particular
   // VM, customer, count or value. Those belong to the walkthroughs.
-  (j.steps || []).forEach((st, i) => {
-    const mine = own && own.has(st);
-    const off = st.asTold === false, card = h("div", "mo" + (off ? " bad" : mine ? " mine" : ""), h("span", "dot", String(i + 1)),
-      own ? h("p", "own" + (mine ? " me" : ""), mine ? "this variant's own way" : "as in general") : null, h("p", "say", st.say),
+  const card = (st, n) => {
+    const off = st.asTold === false, c = h("div", "mo" + (off ? " bad" : ""), h("span", "dot", n), h("p", "say", st.say),
       st.repeats ? h("p", "again", LOOP(), "can repeat") : null, reqChips(st.requirements, req),
       off ? h("p", "note", "the model does not take this step as told") : null);
     // each way of being turned down names the walkthroughs that show it happening
@@ -431,9 +395,25 @@ function journey(j, req, ms, walks, wmark, shown, vs, area, own) {
     const on = st.continues || [];
     [...new Set(on.map(o => o.part))].forEach(p => leaves.append(h("div", "leaf on", h("span", "badge next", "→ continues"), "in ", link(p, file(p)), ":",
       on.filter(o => o.part === p).map(o => jlink(p, o)))));
-    fl.append(h("div", "fs" + (st.repeats ? " loop" : ""), card, leaves)); });
-  const fo = j.follows, fam = vs && vs.length ? family(j, vs, area) : null;
-  const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, fam,
+    return h("div", "fs" + (st.repeats ? " loop" : ""), c, leaves); };
+  // a step that can go several ways shows one way at a time: its name chooses it
+  const pick = new Map();
+  (j.steps || []).forEach((st, i) => {
+    if (!st.ways) { fl.append(card(st, String(i + 1))); return; }
+    const body = h("div", "wy"), tabs = st.ways.map((w, k) => { const b = h("button", "tab", w.status === "ok" ? null : h("span", "mk violated", "✕ "), w.name);
+      b.type = "button"; b.onclick = () => show(k); return b; });
+    const show = (k, scroll) => { const w = st.ways[k]; tabs.forEach((b, q) => b.classList.toggle("on", q === k));
+      body.replaceChildren(...[w.given ? h("p", "given", h("b", "", "When: "), w.given) : null,
+        (w.only || []).map(o => h("p", "given", h("b", "", "Only where "), "“" + o.step + "” goes: ", o.ways.join(", ") || "no way", ".")),
+        w.status === "ok" ? null : h("p", "note", "the model does not take this way as told"),
+        (w.sources || []).length ? h("p", "verd", origin(w)) : null,
+        (w.steps || []).length ? h("div", "tl flow", w.steps.map((x, q) => card(x, (i + 1) + "." + (q + 1)))) : h("p", "sub", "This way has nothing to do at this step.")].flat().filter(Boolean));
+      if (scroll) box.scrollIntoView({ block: "nearest", behavior: "smooth" }); };
+    const box = h("div", "fs ch", h("div", "mo", h("span", "dot", String(i + 1)), h("p", "own me", "goes one of " + pl(st.ways.length, "way")), h("p", "say", st.say),
+      h("div", "tabs", tabs), body));
+    pick.set(i, show); const first = st.ways.findIndex(w => w.status !== "ok"); show(first < 0 ? 0 : first); fl.append(box); });
+  const fo = j.follows, n = (j.steps || []).length;
+  const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, flow(j, (i, k, sc) => pick.get(i)(k, sc)),
     fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
         fo.journeys.length > 3 ? " and " + (fo.journeys.length - 3) + " more" : null] : fo.what,
       " in ", link(fo.part, file(fo.part)), ". That part says when it is accepted; this is what follows here.") : null,
@@ -441,7 +421,7 @@ function journey(j, req, ms, walks, wmark, shown, vs, area, own) {
   if (walks.length) { body.append(h("h3", "", "Walkthroughs of this journey"));
     walks.forEach(w => body.append(walkthrough(w, req, wmark(w)))); }
   d.append(h("summary", "", h("span", "id mono", j.id), h("b", "", j.title), h("span", "badge " + cls, ICON[cls]),
-    h("span", "cnt", (j.steps || []).length + " step" + ((j.steps || []).length === 1 ? "" : "s") + (walks.length ? " · " + walks.length + " walkthrough" + (walks.length === 1 ? "" : "s") : "")),
+    h("span", "cnt", pl(n, "step") + (walks.length ? " · " + pl(walks.length, "walkthrough") : "")),
     ms ? ms.map(mark) : null), body);
   return d;
 }
@@ -453,44 +433,33 @@ function journeys(a, D) {
   ws.forEach(w => (w.moments || []).forEach(m => (m.requirements || []).forEach(r => {
     if (!shown.has(r)) shown.set(r, []); if (!shown.get(r).includes(w.id)) shown.get(r).push(w.id); })));
   // The journeys are walked through, not scrolled through. On the left they stand in the order of the
-  // area's flow, the journeys about one thing under its name, and under a business case its variants:
-  // the same case taken one particular way. On the right stands the one that is chosen. Those that begin
-  // with a way in another part owns come last: they are what follows here from that part's journeys.
-  const fam = j => js.filter(v => v.variantOf === j.id), top = j => (j.variantOf && js.find(x => x.id === j.variantOf)) || j;
+  // area's flow, the journeys about one thing under its name. On the right stands the one that is
+  // chosen. Those that begin with a way in another part owns come last: they are what follows here
+  // from that part's journeys.
   const walksOf = j => ws.filter(w => w.journey === j.id);
   const bad = j => j.status !== "ok" || walksOf(j).some(w => w.status !== "ok");
   const chg = j => !!(D && (D.j.get(j.id) || walksOf(j).some(w => wmark(w))));
   const at = id => "#" + file(a.area, id).split("#")[1];
-  // the steps a variant takes its own way: those that do not stand for a step of the general journey one for one
-  const ownOf = (g, v) => { const G = runsOf(g), al = alignRuns(G, runsOf(v)), own = new Set(al.extra[G.length]);
-    G.forEach((x, i) => { const m = al.at[i], ex = al.extra[i];
-      if (!(m && !ex.length && m.steps.length === x.steps.length)) [...ex, ...(m ? m.steps : [])].forEach(st => own.add(st)); });
-    return own; };
   const nav = h("nav", "jn"), pane = h("div", "jp"), jx = h("div", "jx", nav, pane), items = new Map();
   nav.setAttribute("aria-label", "journeys");
   const sel = (id, push) => { const j = js.find(x => x.id === id); if (!j) return false;
-    const g = top(j), vs = fam(g);
     items.forEach((x, k) => { x.classList.toggle("on", k === id); if (k === id) x.setAttribute("aria-current", "true"); else x.removeAttribute("aria-current"); });
-    nav.querySelectorAll(".jv").forEach(x => x.classList.toggle("open", x.dataset.of === g.id));
-    const d = journey(j, req, D && D.j.get(j.id), walksOf(j), wmark, shown, j === g ? vs : null, a.area, j === g ? null : ownOf(g, j)); d.open = true;
-    const up = link(g.title, at(g.id)); up.onclick = e => { e.preventDefault(); sel(g.id, true); };
-    pane.replaceChildren(h("p", "crumb", a.area.replace("/", " › "), " › ", j === g ? h("b", "", g.title)
-      : [up, " › ", h("b", "", j.title), h("span", "", " — one way of " + g.id + "; its flow with all " + pl(vs.length, "variant") + " is one step up")]), d);
+    const d = journey(j, req, D && D.j.get(j.id), walksOf(j), wmark, shown); d.open = true;
+    pane.replaceChildren(h("p", "crumb", a.area.replace("/", " › "), " › ", h("b", "", j.title)), d);
     if (push) { if (location.hash !== at(id)) history.pushState(null, "", at(id));
       if (jx.getBoundingClientRect().top < 0) jx.scrollIntoView({ block: "start" }); }
     return true; };
-  const item = (j, cls) => { const k = fam(j).length, x = link([bad(j) ? h("span", "mk violated", "✕") : null, h("span", "mono", j.id), j.title,
-      !j.variantOf && k ? h("span", "cnt", pl(k, "variant")) : null, chg(j) ? h("span", "chgd", " ●") : null], at(j.id), "ji" + (cls || ""));
+  const item = j => { const k = (j.steps || []).filter(st => st.ways).length, x = link([bad(j) ? h("span", "mk violated", "✕") : null, h("span", "mono", j.id), j.title,
+      k ? h("span", "cnt", pl(k, "choice")) : null, chg(j) ? h("span", "chgd", " ●") : null], at(j.id), "ji");
     x.onclick = e => { e.preventDefault(); sel(j.id, true); }; items.set(j.id, x); return x; };
-  const group = tops => tops.forEach((j, k) => { if (j.about && (!k || tops[k - 1].about !== j.about)) nav.append(h("h3", "about", j.about));
-    const vs = fam(j); nav.append(item(j)); if (vs.length) { const box = h("div", "jv", vs.map(v => item(v, " v"))); box.dataset.of = j.id; nav.append(box); } });
-  const tops = js.filter(j => !j.variantOf), after = tops.filter(j => j.follows);
-  group(tops.filter(j => !j.follows));
+  const group = tops => tops.forEach((j, k) => { if (j.about && (!k || tops[k - 1].about !== j.about)) nav.append(h("h3", "about", j.about)); nav.append(item(j)); });
+  const after = js.filter(j => j.follows);
+  group(js.filter(j => !j.follows));
   if (after.length) { const hd = h("h3", "about", "What follows here from other parts");
     hd.title = "These do not begin here: a person, a call from outside or a schedule starts them in another part, which says when they are accepted. This part says what follows for its own things.";
     nav.append(hd); group(after); }
   jx.sel = sel;
-  if (js.length) { out.push(jx); sel((js.find(bad) || js.find(chg) || tops[0] || js[0]).id, false); }
+  if (js.length) { out.push(jx); sel((js.find(bad) || js.find(chg) || js[0]).id, false); }
   (D ? D.rj : []).forEach(j => out.push(goneRow({ id: j.id, text: j.title }, "removed")));
   const rest = ws.filter(w => !js.some(j => j.id === w.journey));
   if (rest.length) { out.push(h("h3", "", "Other walkthroughs")); rest.forEach(w => out.push(walkthrough(w, req, wmark(w)))); }
@@ -536,7 +505,7 @@ function diff(a) {
         m.push({ k: "stronger", t: "verified more strongly", cls: "ok", was: o.verdict }); }
     if (m.length) D.c.set(c.id, m); }
   // a journey or a walkthrough is "retold" when its words or its run changed
-  const jk = x => JSON.stringify([x.title, x.goal, x.given, x.setup, (x.steps || []).map(s => [s.say, s.actions]), (x.moments || []).map(m => [m.say, m.action])]);
+  const jk = x => JSON.stringify([x.title, x.goal, x.given, x.setup, (x.steps || []).map(s => [s.say, s.actions, (s.ways || []).map(w => [w.name, w.given, (w.steps || []).map(y => [y.say, y.actions])])]), (x.moments || []).map(m => [m.say, m.action])]);
   const told = (now, was, into) => { const old = new Map((was || []).map(x => [x.id, x]));
     for (const x of now || []) { const o = old.get(x.id), m = [];
       if (!o) m.push({ k: "new", t: "new", cls: "new" });
@@ -620,7 +589,7 @@ function render(a, only) {
   const t = stats(a), sr = a.search, root = h("div"), D = diff(a), F = only && D && !D.isNew;
   // where each requirement shows: on a journey (at work in a step, or as a way a step is turned down) and in walkthroughs
   const inJ = new Map(), note = (r, id) => { if (!inJ.has(r)) inJ.set(r, []); if (!inJ.get(r).includes(id)) inJ.get(r).push(id); };
-  (a.journeys || []).forEach(j => (j.steps || []).forEach(st => [...(st.requirements || []), ...(st.turnedDown || [])].forEach(r => note(r, j.id))));
+  (a.journeys || []).forEach(j => plain(j).forEach(st => [...(st.requirements || []), ...(st.turnedDown || [])].forEach(r => note(r, j.id))));
   (a.walkthroughs || []).forEach(w => (w.moments || []).forEach(m => (m.requirements || []).forEach(r => note(r, w.id))));
   const jl = id => (a.journeys || []).length ? (inJ.has(id) ? "shown in " + inJ.get(id).join(", ") : "shown in no journey or walkthrough") : null;
   const keep = (m, bad) => !F || m || bad;
@@ -651,7 +620,7 @@ function render(a, only) {
   const some = k => k ? k : 0;
   const js = a.journeys || [];
   const jsec = sec("Journeys", js.length, t.jBad + t.wBad ? (t.jBad + t.wBad) + " failed" : "", D && some(D.j.size + D.rj.length + D.w.size + D.rw.length),
-    js.length ? "Read these first. Each is one business case: its usual course step by step, and beside every step each way the system turns it down. Choose one on the left; where a case has variants, its flow shows them all and each lane leads to its variant. Walkthroughs under a journey are specific runs worth knowing." : "");
+    js.length ? "Read these first. Each is one business case: its usual course step by step, and beside every step each way the system turns it down. Choose one on the left; where a step can go several ways, the flow shows them side by side and a way's name shows its steps in full. Walkthroughs under a journey are specific runs worth knowing." : "");
   jsec.open = true; jsec.append(...journeys(a, D));
   const asm = a.assumptions || [], gas = D ? D.ras : [];
   if (asm.length || gas.length) {

@@ -81,6 +81,40 @@ structure Step (α : Type) where
 /-- A step of a journey: `.step "The operator adds a VM." [.enroll "a", .enroll "b"]`. -/
 def Step.step {α : Type} (say : String) (actions : List α) : Step α := ⟨say, actions⟩
 
+/-- One way a step of a journey can go: "on demand", "to another vCenter". Its own steps, in order
+(none when this way skips the step), when it applies, and the run that makes it apply, taken
+after the journey's own `setup`. -/
+structure Way (α : Type) where
+  name : String
+  steps : List (Step α)
+  given : String := ""
+  setup : List α := []
+  sources : List String := []
+
+/-- A way of a choice: `.way "on demand" [.step "The operator asks to protect now." [.protectNow]]`. -/
+def Way.way {α : Type} (name : String) (steps : List (Step α)) : Way α := { name, steps }
+
+/-- One stage of a journey: a step every run of the case takes, or a choice, a step that can go
+several ways. A choice says what happens in general and lists the ways; the case goes on the
+same after any of them. The choices of a journey are independent unless the model says
+otherwise: the checker walks every way and says which ways only go together. -/
+structure Stage (α : Type) where
+  say : String
+  actions : List α := []
+  ways : List (Way α) := []
+
+/-- A step of a journey: `.step "The operator adds a VM." [.enroll "a", .enroll "b"]`. -/
+def Stage.step {α : Type} (say : String) (actions : List α) : Stage α := { say, actions }
+/-- A step that can go several ways: `.choice "A run starts." [.way "on schedule" [...], .way "on demand" [...]]`. -/
+def Stage.choice {α : Type} (say : String) (ways : List (Way α)) : Stage α := { say, ways }
+instance {α : Type} : Coe (Step α) (Stage α) := ⟨fun s => { say := s.say, actions := s.actions }⟩
+
+/-- The steps the stage comes to when its choice is taken the `k`-th way. -/
+def Stage.taken {α : Type} (st : Stage α) (k : Nat) : List (Step α) :=
+  if st.ways.isEmpty then [⟨st.say, st.actions⟩] else ((st.ways[k]?).map (·.steps)).getD []
+/-- Every action a stage can take, whichever way. -/
+def Stage.all {α : Type} (st : Stage α) : List α := st.actions ++ st.ways.flatMap (·.steps.flatMap (·.actions))
+
 /-- A journey: one business case, such as "enrolling a VM" or "a protection
 run", as the usual course of events from start to end, in general terms: no
 particular VM, customer or run, and no numbers except thresholds that a
@@ -98,17 +132,33 @@ structure Journey (α : Type) where
   /-- The thing the journey is about ("policy", "protection group"). The
   readback keeps the journeys about one thing together, under its name. -/
   about : String := ""
-  /-- The journey this one is a specific case of: the same business case,
-  taken one particular way ("enrolling a VM" with a workflow named). The
-  readback shows it under that journey. -/
-  variantOf : String := ""
   /-- Where the journey starts, in general words ("the group has VMs") ... -/
   given : String := ""
   /-- ... and the run that gets there from the initial state. -/
   setup : List α := []
-  steps : List (Step α)
+  steps : List (Stage α)
   /-- Where the journey comes from, as a history (see `Requirement.sources`). -/
   sources : List String := []
+
+/-- The run of a journey with each choice taken the way `pick` names (by position, one number per stage). -/
+def Journey.run {α : Type} (j : Journey α) (pick : List Nat) : List α :=
+  let sts := j.steps.zip pick
+  j.setup ++ sts.flatMap (fun (st, k) => ((st.ways[k]?).map (·.setup)).getD [])
+    ++ sts.flatMap fun (st, k) => (st.taken k).flatMap (·.actions)
+/-- The combinations of ways a journey is walked in: all of them, or, when there are too many, the
+first way of every choice and then each other way with the rest left at the first. -/
+def Journey.picks {α : Type} (j : Journey α) : List (List Nat) × Bool :=
+  let dims := j.steps.map fun st => max 1 st.ways.length
+  if dims.foldl (· * ·) 1 ≤ 512 then
+    (dims.foldr (fun n acc => (List.range n).flatMap fun k => acc.map (k :: ·)) [[]], true)
+  else
+    let zero := dims.map fun _ => 0
+    (zero :: (dims.zipIdx.flatMap fun (n, i) => (List.range n).tail.map fun k => zero.set i k), false)
+/-- The actions a journey can begin with, and all it can take. -/
+def Journey.heads {α : Type} (j : Journey α) : List α :=
+  match j.steps.head? with
+  | some st => if st.ways.isEmpty then st.actions.take 1 else st.ways.flatMap fun w => (w.steps.flatMap (·.actions)).take 1
+  | none => []
 
 /-- One moment of a walkthrough: what happens, in the words of the person it
 happens to, the action that does it, whether the system turns it down, and
@@ -329,9 +379,9 @@ structure Peer where
   name : String
   /-- The ways into the code that it lists. -/
   surface : List Surface := []
-  /-- Its journeys: id, title, the journey it is a variant of (or ""), and the actions
-  the steps take, in order. -/
-  journeys : List (String × String × String × List String) := []
+  /-- Its journeys: id, title, the actions it can begin with, and the actions the steps take,
+  in order. -/
+  journeys : List (String × String × List String × List String) := []
 
 /-- The journeys of `owner` that a journey follows from, when it begins with the action `n`
 in a part whose ways into the code are `sf`: `n` must stand for a way in that `owner` owns. -/
@@ -341,14 +391,13 @@ def Peer.followedBy (owner : Peer) (sf : List Surface) (n : String) : Option (Su
   let o ← (owner.surface.find? fun x => x.owns && x.meets e) <|> (owner.surface.find? fun x => x.passesOn && x.meets e)
   -- the journeys that are about this way in and nothing else, else those that begin with it,
   -- else those that come to it on their way (a run that ends with its finish, which another
-  -- part takes up); a business case told in general before its variants
-  let pick (js : List (String × String × String × List String)) :=
-    let whole := js.filter fun (_, _, _, acts) => !acts.isEmpty && acts.all o.actions.contains
-    let begins := js.filter fun (_, _, _, acts) => (acts.head?.map o.actions.contains).getD false
-    if !whole.isEmpty then whole else if !begins.isEmpty then begins
+  -- part takes up)
+  let js := owner.journeys
+  let whole := js.filter fun (_, _, _, acts) => !acts.isEmpty && acts.all o.actions.contains
+  let begins := js.filter fun (_, _, heads, _) => heads.any o.actions.contains
+  let told := if !whole.isEmpty then whole else if !begins.isEmpty then begins
     else js.filter fun (_, _, _, acts) => acts.any o.actions.contains
-  let told := pick (owner.journeys.filter (·.2.2.1 == ""))
-  pure (o, (if told.isEmpty then pick owner.journeys else told).map fun (id, title, _, _) => (id, title))
+  pure (o, told.map fun (id, title, _, _) => (id, title))
 
 /-- The part named for a ruled-in way in does lead to its owner: it models that
 place itself, or it has actions for it and names, in turn, a part that leads
@@ -639,7 +688,8 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
     (since : Option String) (full : Bool) : IO CodeResult := do
   let names := A.actions.map (actionName ∘ label)
   -- the runs a person has read: every journey and every walkthrough
-  let told := A.journeys.map (fun j => j.setup ++ j.steps.flatMap (·.actions))
+  let told := A.journeys.flatMap (fun j => (j.picks.1.map j.run).filter fun run =>
+      (run.foldl (init := some A.init) fun s a => s.bind (A.step a)).isSome)
     ++ A.walkthroughs.map (·.moments.map (·.action))
   if let some n := names.find? fun n => !(c.actions.any (·.1 == n)) then
     return { status := "error", verdict := s!"action `{n}` has no code mapping" }
@@ -763,52 +813,7 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
 def Area.peer [Repr α] (A : Area σ α) : Peer :=
   { name := A.name, surface := A.surface,
     journeys := A.journeys.map fun j =>
-      (j.id, j.title, j.variantOf, ((j.steps.flatMap (·.actions)).map (actionName ∘ label)).eraseDups) }
-
-/-- The steps of a journey in runs: consecutive steps that take the same actions stand for one step
-of the journey told in general. -/
-private def stepRuns {α : Type} (key : Step α → String) (steps : List (Step α)) : Array (String × List (Step α)) :=
-  steps.foldl (init := #[]) fun acc st =>
-    let k := key st
-    match acc.back? with
-    | some (k', sts) => if k' == k then acc.pop.push (k, sts ++ [st]) else acc.push (k, [st])
-    | none => acc.push (k, [st])
-
-/-- How a variant takes each step of the journey told in general: the steps of the variant that stand
-for it, with those it takes before it, and whether it takes it one for one as told. The runs are
-matched by their actions, in order (the longest common subsequence). The last entry is what the
-variant does after the general journey has ended. -/
-private def waysOf {α : Type} (G V : Array (String × List (Step α))) : Array (List (Step α) × Bool) := Id.run do
-  let n := G.size
-  let m := V.size
-  let mut L : Array (Array Nat) := Array.replicate (n + 1) (Array.replicate (m + 1) 0)
-  for i' in [0:n] do
-    let i := n - 1 - i'
-    for k' in [0:m] do
-      let k := m - 1 - k'
-      let x := if G[i]!.1 == V[k]!.1 then L[i + 1]![k + 1]! + 1 else Nat.max L[i + 1]![k]! L[i]![k + 1]!
-      L := L.set! i (L[i]!.set! k x)
-  let mut out : Array (List (Step α) × Bool) := Array.replicate (n + 1) ([], false)
-  let mut i := 0
-  let mut k := 0
-  let mut before : List (Step α) := []
-  for _ in [0:n + m] do
-    if i < n && k < m then
-      if G[i]!.1 == V[k]!.1 then
-        out := out.set! i (before ++ V[k]!.2, before.isEmpty && V[k]!.2.length == G[i]!.2.length)
-        before := []
-        i := i + 1
-        k := k + 1
-      else if L[i + 1]![k]! > L[i]![k + 1]! then
-        out := out.set! i (before, false)
-        before := []
-        i := i + 1
-      else
-        before := before ++ V[k]!.2
-        k := k + 1
-  let rest := before ++ (V.toList.drop k).flatMap (·.2)
-  if i < n then out := out.set! i (rest, false) else out := out.set! n (rest, false)
-  return out
+      (j.id, j.title, (j.heads.map (actionName ∘ label)).eraseDups, ((j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups) }
 
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     (since : Option String) (rerun : Bool) (others : List Peer) : IO Report := do
@@ -858,63 +863,107 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   -- journeys: the usual course of a business case, replayed on the model
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
   -- in the order they are listed, with the journeys about one thing kept together
-  -- and the variants of a business case right after it
   let me := A.peer
-  let general (j : Journey α) : Bool := !(A.journeys.any fun p => p.id == j.variantOf && p.variantOf == "")
   let listed := (A.journeys.map (·.about)).eraseDups.flatMap fun k => A.journeys.filter (·.about == k)
   -- where a step goes on: the journeys of other parts that begin with a way in of this part,
-  -- with this part's actions for that way in. A step that takes one of them is taken up there,
-  -- in whichever journey it stands, a business case told in general or one of its variants.
-  let takenUp : List (List String × Json) := others.flatMap fun p => p.journeys.filterMap fun (id, title, variantOf, acts) => do
-    if variantOf != "" then none
-    let (o, _) ← me.followedBy p.surface (← acts.head?)
+  -- with this part's actions for that way in. A step that takes one of them is taken up there.
+  let takenUp : List (List String × Json) := others.flatMap fun p => p.journeys.filterMap fun (id, title, heads, _) => do
+    let (o, _) ← heads.findSome? (me.followedBy p.surface)
     some (o.actions, Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title)])
-  for j in (listed.filter general).flatMap fun p => p :: listed.filter fun v => !general v && v.variantOf == p.id do
+  -- one run of a journey, with each choice taken one way: is every action accepted, and for every
+  -- step that is taken, did it go and which requirements spoke
+  let walk (j : Journey α) (pick : List Nat) : Bool × List (List (Bool × List String)) := Id.run do
+    let sts := j.steps.zip pick
     let mut s := A.init
     let mut ok := !j.steps.isEmpty
-    for a in j.setup do
+    for a in j.setup ++ sts.flatMap (fun (st, k) => ((st.ways[k]?).map (·.setup)).getD []) do
       match A.step a s with
       | some t => s := t
       | none => ok := false
-    let mut rows : Array (Bool → Json) := #[]
-    for st in j.steps do
-      let mut reqs : List String := []
-      let mut went := !st.actions.isEmpty
-      for a in st.actions do
-        match A.step a s with
-        | some t =>
-          reqs := reqs ++ (speaking s a).filter (!reqs.contains ·)
-          s := t
-        | none => went := false
-      -- every way the system turns this step down: the refusal requirements that speak about its action
-      let stepNames := st.actions.map (actionName ∘ label)
-      let turnedDown := (A.requirements.zipIdx.filter fun (q, k) =>
-        q.refused && (List.range acts.size).any fun i =>
-          stepNames.contains names[i]! && f.reqAct[k * acts.size + i]!).map (·.1.id)
-      told := told ++ reqs
-      leaves := leaves ++ turnedDown.map (·, j.id)
-      if !went then ok := false
-      rows := rows.push fun _ => Json.mkObj <| [
-        ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
-        ("names", .arr (stepNames.eraseDups.map .str).toArray),
-        ("continues", .arr ((takenUp.filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
-        ("repeats", .bool (st.actions.length > 1)),
-        ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
-        ("turnedDown", .arr (turnedDown.map .str).toArray)]
+    let mut out : List (List (Bool × List String)) := []
+    for (stage, k) in sts do
+      let mut row : List (Bool × List String) := []
+      for st in stage.taken k do
+        let mut reqs : List String := []
+        let mut went := !st.actions.isEmpty
+        for a in st.actions do
+          match A.step a s with
+          | some t =>
+            reqs := reqs ++ (speaking s a).filter (!reqs.contains ·)
+            s := t
+          | none => went := false
+        if !went then ok := false
+        row := row ++ [(went, reqs)]
+      out := out ++ [row]
+    return (ok, out)
+  for j in listed do
+    -- every way of every choice is walked: in all combinations, so that the page can say which
+    -- ways only go together
+    let (picks, all) := j.picks
+    let runs := picks.map fun c => (c, walk j c)
+    let good := runs.filter (·.2.1)
+    let main := (good.head? <|> runs.head?).getD ([], (false, []))
+    let mut ok := !good.isEmpty
+    let mut rows : Array Json := #[]
+    for (stage, i) in j.steps.zipIdx do
+      -- one step as it went in the run that shows it
+      let stepJson (st : Step α) (went : Bool) (reqs : List String) : Json × List String :=
+        let stepNames := st.actions.map (actionName ∘ label)
+        -- every way the system turns this step down: the refusal requirements that speak about its action
+        let turnedDown := (A.requirements.zipIdx.filter fun (q, k) =>
+          q.refused && (List.range acts.size).any fun i =>
+            stepNames.contains names[i]! && f.reqAct[k * acts.size + i]!).map (·.1.id)
+        (Json.mkObj [
+          ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
+          ("names", .arr (stepNames.eraseDups.map .str).toArray),
+          ("continues", .arr ((takenUp.filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
+          ("repeats", .bool (st.actions.length > 1)),
+          ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
+          ("turnedDown", .arr (turnedDown.map .str).toArray)], turnedDown)
+      let shown (run : List Nat × Bool × List (List (Bool × List String))) (k : Nat) : List (Json × List String × List String) :=
+        ((stage.taken k).zip (run.2.2[i]?.getD [])).map fun (st, went, reqs) =>
+          let (js, td) := stepJson st went reqs
+          (js, reqs, td)
+      if stage.ways.isEmpty then
+        for (js, reqs, td) in shown main 0 do
+          told := told ++ reqs
+          leaves := leaves ++ td.map (·, j.id)
+          rows := rows.push js
+      else
+        let mut ways : Array Json := #[]
+        for (w, k) in stage.ways.zipIdx do
+          let mine := runs.filter fun (c, _) => c[i]? == some k
+          let went := mine.filter (·.2.1)
+          if went.isEmpty then ok := false
+          let mut steps : Array Json := #[]
+          for (js, reqs, td) in shown ((went.head? <|> mine.head?).getD main) k do
+            told := told ++ reqs
+            leaves := leaves ++ td.map (·, j.id)
+            steps := steps.push js
+          -- the ways of the other choices this way goes with, where it does not go with all
+          let only : List Json := if !all || went.isEmpty then [] else
+            j.steps.zipIdx.filterMap fun (o, i') =>
+              let with_ := (o.ways.zipIdx.filter fun (_, k') => went.any fun (c, _) => c[i']? == some k').map (·.1.name)
+              if i' == i || o.ways.isEmpty || with_.length == o.ways.length then none
+              else some (Json.mkObj [("step", .str o.say), ("ways", .arr (with_.map .str).toArray)])
+          ways := ways.push <| Json.mkObj [
+            ("name", .str w.name), ("given", .str w.given), ("sources", .arr (w.sources.map .str).toArray),
+            ("status", .str (if went.isEmpty then "failed" else "ok")), ("only", .arr only.toArray), ("steps", .arr steps)]
+        rows := rows.push <| Json.mkObj [("say", .str stage.say), ("ways", .arr ways)]
     let status := if ok then "ok" else "failed"
     -- A journey begins where something comes in: a person's request, a call or message from
     -- outside, a schedule. One that begins with a way in another part owns is what follows
     -- here from that part's journey.
     let follows : Option Json := do
-      let n := actionName (label (← (← j.steps.head?).actions.head?))
-      let (p, o, told) ← others.findSome? fun p => (p.followedBy A.surface n).map fun (o, js) => (p, o, js)
+      let (p, o, told) ← j.heads.findSome? fun a => others.findSome? fun p =>
+        (p.followedBy A.surface (actionName (label a))).map fun (o, js) => (p, o, js)
       pure <| Json.mkObj [("part", .str p.name), ("what", .str o.what),
         ("journeys", .arr (told.map fun (id, title) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
-    journeys := journeys.push (j.id, ok, fun full => Json.mkObj <| [
+    journeys := journeys.push (j.id, ok, fun _ => Json.mkObj <| [
       ("follows", follows.getD .null),
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
-      ("about", .str j.about), ("variantOf", .str (if general j then "" else j.variantOf)), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
-      ("status", .str status), ("steps", .arr (rows.map (· full)))])
+      ("about", .str j.about), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
+      ("status", .str status), ("steps", .arr rows)])
   -- walkthroughs: specific runs that matter, replayed moment by moment
   let mut walkthroughs : Array (String × Bool × (Bool → Json)) := #[]
   for w in A.walkthroughs do
@@ -971,63 +1020,17 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
            some (trace fp (some i)))
   for q in code.questions do
     questions := questions.push (q, none)
-  -- one business case is told once: journeys that take the same steps are variants of one
+  -- one business case is told once: journeys that take the same steps are one journey
   let stepsOf (j : Journey α) : List String :=
-    ((j.steps.flatMap (·.actions)).map (actionName ∘ label)).eraseDups.toArray.qsort (· < ·) |>.toList
-  let family (j : Journey α) : String := if general j then j.id else j.variantOf
-  let mut journeyFailed : List String := []
+    ((j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups.toArray.qsort (· < ·) |>.toList
   for (j, k) in A.journeys.zipIdx do
-    if j.variantOf != "" && general j then
-      journeyFailed := journeyFailed ++ [s!"{j.id} is said to be a variant of {j.variantOf}, which is not a journey told in general"]
-    if let some p := (A.journeys.take k).find? fun p => !(stepsOf p).isEmpty && stepsOf p == stepsOf j && family p != family j then
+    if let some p := (A.journeys.take k).find? fun p => !(stepsOf p).isEmpty && stepsOf p == stepsOf j then
       questions := questions.push
         (s!"{j.id} takes the same steps as {p.id} ({", ".intercalate (stepsOf j)}). Are they one business case? "
-          ++ "Then tell it once in general and name the others as its variants with `variantOf`.", none)
-  -- A variant is about the step it takes its own way. Where a variant tells two steps its own way,
-  -- and the model lets each of the two go with another variant's way of the other, the two do not
-  -- depend on each other, and the variant reads as if they always went together. The combinations
-  -- are tried on the model, from where either variant starts.
-  let keyOf (st : Step α) : String := ",".intercalate ((st.actions.map (actionName ∘ label)).eraseDups)
-  for g in A.journeys do
-    let vs := A.journeys.filter fun v => v.variantOf == g.id && !general v
-    if g.variantOf == "" && vs.length ≥ 2 then
-      let G := stepRuns keyOf g.steps
-      let ways := vs.map fun v => (v, waysOf G (stepRuns keyOf v.steps))
-      let acts (sts : List (Step α)) : List String := sts.flatMap (·.actions.map label)
-      -- a step the variant tells its own way: some variant does not take it one for one, and this
-      -- one takes it, in other words than the general journey
-      let own (w : Array (List (Step α) × Bool)) (i : Nat) : Bool :=
-        (ways.any fun (_, u) => !u[i]!.2) && !w[i]!.1.isEmpty && w[i]!.1.map (·.say) != G[i]!.2.map (·.say)
-      -- the run of one variant with one step taken the way another takes it
-      let goes (b : Journey α) (wb wo : Array (List (Step α) × Bool)) (r : Nat) : Bool :=
-        let run := b.setup ++ (List.range (G.size + 1)).flatMap fun i => ((if i == r then wo[i]! else wb[i]!).1).flatMap (·.actions)
-        (run.foldl (init := some A.init) fun s a => s.bind (A.step a)).isSome
-      -- the variants whose way of step j goes with this variant's way of step i
-      let with_ (v : Journey α) (w : Array (List (Step α) × Bool)) (i j : Nat) : List String :=
-        ways.filterMap fun (u, wu) =>
-          if u.id != v.id && !wu[j]!.1.isEmpty && acts wu[j]!.1 != acts w[j]!.1 && (goes v w wu j || goes u wu w i)
-          then some u.id else none
-      for i in List.range G.size do
-        for j in List.range G.size do
-          if i < j then
-            let found := ways.filterMap fun (v, w) =>
-              if own w i && own w j then
-                match with_ v w i j, with_ v w j i with
-                | a :: _, b :: _ => some (v.id, a, b)
-                | _, _ => none
-              else none
-            if let some (v, a, b) := found.head? then
-              let said (i : Nat) : String := " ".intercalate (G[i]!.2.map (·.say))
-              let ids := found.map (·.1)
-              questions := questions.push
-                (s!"The variants of {g.id} take the steps \"{said i}\" and \"{said j}\" in several ways, and the model lets those ways go together freely: "
-                  ++ s!"the way {v} takes the first goes with the way {a} takes the second, and the way {v} takes the second with the way {b} takes the first. "
-                  ++ s!"{", ".intercalate ids} {if ids.length == 1 then "tells" else "each tell"} both steps in {if ids.length == 1 then "its" else "their"} own words, and so "
-                  ++ s!"{if ids.length == 1 then "reads" else "read"} as if the two ways always went together. If they do not depend on each other, a variant is about one of them: "
-                  ++ s!"tell the other step in the words of {g.id}.", none)
+          ++ "Then tell it once, and tell a step that can go several ways as a choice with its ways.", none)
   -- what the model was read from: has a file it cites changed since?
   let cited := ((A.surface.map (·.code) ++ A.invariants.flatMap (·.sources) ++ A.requirements.flatMap (·.sources)
-    ++ A.journeys.flatMap (·.sources) ++ A.walkthroughs.flatMap (·.sources)).flatMap fun c => (places c).map (·.1)).eraseDups
+    ++ A.journeys.flatMap (fun j => j.sources ++ j.steps.flatMap (·.ways.flatMap (·.sources))) ++ A.walkthroughs.flatMap (·.sources)).flatMap fun c => (places c).map (·.1)).eraseDups
   let checkouts := (Json.parse (← try IO.FS.readFile ".spec/local.json" catch _ => pure "")).toOption.getD .null
     |>.getObjValD "repo_paths"
   let mut readAt : Array Json := #[]
@@ -1132,7 +1135,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ++ ((journeys ++ walkthroughs).toList.filterMap fun (id, ok, _) =>
       if ok then none else some s!"{id} does not go as told")
   let codeFailed := (if code.status == "drift" || code.status == "error" then [s!"code: {code.verdict}"] else [])
-    ++ surfaceFailed ++ journeyFailed
+    ++ surfaceFailed
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size
   let summary := s!"{A.name}: {states} states, "
