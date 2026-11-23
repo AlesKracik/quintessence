@@ -428,7 +428,8 @@ function journey(j, req, ms, walks, wmark, shown) {
   const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, flow(j, (i, k, sc) => pick.get(i).show(k, sc)),
     fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
         fo.journeys.length > 3 ? " and " + (fo.journeys.length - 3) + " more" : null] : fo.what,
-      " in ", link(fo.part, file(fo.part)), fo.led ? ", which comes to it on its way. Another system brings it in here; this part says when it is accepted and what it does." : ". That part says when it is accepted; this is what follows here.") : null,
+      " in ", link(fo.part, file(fo.part)), (fo.also || []).map(o => ["; ", o.journeys.slice(0, 3).map((x, i) => [i ? ", " : "", jlink(o.part, x)]),
+        o.journeys.length > 3 ? " and " + (o.journeys.length - 3) + " more" : null, " in ", link(o.part, file(o.part))]), fo.led ? ", which comes to it on its way. Another system brings it in here; this part says when it is accepted and what it does." : ". That part says when it is accepted; this is what follows here.") : null,
     !fo && j.by ? h("p", "given", h("b", "", "Started by: "), j.by === "outside" ? "something outside the model" : j.by) : null,
     j.given ? h("p", "given", h("b", "", "Starts with: "), j.given) : null, fl);
   if (walks.length) { body.append(h("h3", "", "Walkthroughs of this journey"));

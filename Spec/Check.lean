@@ -1033,10 +1033,13 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     -- one that begins with a way in of this part that another system uses follows from the
     -- journeys of the parts that come to that way in
     let ledBy : Option Json := do
-      let (p, x, told) ← j.heads.findSome? fun a => others.findSome? fun p =>
+      let all := j.heads.flatMap fun a => others.filterMap fun p =>
         (p.leadsTo A.name A.surface (actionName (label a))).map fun (x, js) => (p, x, js)
-      pure <| Json.mkObj [("part", .str p.name), ("what", .str x.what), ("led", .bool true),
+      let one := fun ((p, x, told) : Peer × Surface × List (String × String)) => [("part", Json.str p.name), ("what", .str x.what),
         ("journeys", .arr (told.map fun (id, title) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
+      let first ← all.head?
+      -- every part that comes to it is named: the first as what it follows from, the others beside it
+      pure <| Json.mkObj (one first ++ [("led", .bool true), ("also", .arr ((all.drop 1).map (Json.mkObj ∘ one)).toArray)])
     let follows := follows <|> ledBy
     -- who starts it: the one who uses the way in it begins with
     let headNames := (j.heads.map (actionName ∘ label)).eraseDups
