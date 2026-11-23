@@ -450,6 +450,16 @@ def Peer.followedBy (owner : Peer) (sf : List Surface) (n : String) : Option (Su
     else js.filter fun (_, _, _, acts, _) => acts.any o.actions.contains
   pure (o, told.map fun (id, title, _, _, _) => (id, title))
 
+/-- The journeys of `q` that lead to a journey of the part `me` beginning with the action `n`,
+which stands for a way in of `me` that another system uses: `q` names that way in as ruled in
+`me`, and a journey of `q` comes to it on its way (one that begins with it is what follows from
+`me`, not what leads to it). -/
+def Peer.leadsTo (q : Peer) (me : String) (sf : List Surface) (n : String) : Option (Surface × List (String × String)) := do
+  let e ← sf.find? fun e => e.owns && e.starter == .system && e.actions.contains n
+  let x ← q.surface.find? fun x => x.owner == me && !x.actions.isEmpty && x.meets e
+  let told := q.journeys.filter fun (_, _, heads, acts, _) => acts.any x.actions.contains && !heads.any x.actions.contains
+  if told.isEmpty then none else pure (x, told.map fun (id, title, _, _, _) => (id, title))
+
 /-- The part named for a ruled-in way in does lead to its owner: it models that
 place itself, or it has actions for it and names, in turn, a part that leads
 to the owner. A chain that comes back on itself leads nowhere. -/
@@ -922,6 +932,12 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let takenUp : List (List String × Json) := others.flatMap fun p => p.journeys.filterMap fun (id, title, heads, _, says) => do
     let (o, _) ← heads.findSome? (me.followedBy p.surface)
     some (o.actions, Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title), ("steps", .arr (says.map .str).toArray)])
+  -- and the journeys of other parts that begin with a way in of theirs that another system uses,
+  -- which this part names as ruled there: a step that takes this part's actions for it leads to them
+  let leadsOn : List (List String × Json) := others.flatMap fun p => p.journeys.filterMap fun (id, title, heads, _, says) => do
+    let e ← p.surface.find? fun e => e.owns && e.starter == .system && e.actions.any heads.contains
+    let x ← A.surface.find? fun x => x.owner == p.name && !x.actions.isEmpty && x.meets e
+    some (x.actions, Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title), ("steps", .arr (says.map .str).toArray)])
   -- one run of a journey, with each choice taken one way: is every action accepted, and for every
   -- step that is taken, did it go and which requirements spoke
   let walk (j : Journey α) (pick : List Nat) : Bool × List (List (Step α × Bool × List String)) := Id.run do
@@ -969,7 +985,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         (Json.mkObj [
           ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
           ("names", .arr (stepNames.eraseDups.map .str).toArray),
-          ("continues", .arr ((takenUp.filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
+          ("continues", .arr (((takenUp ++ leadsOn).filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
           ("repeats", .bool (st.actions.length > 1)),
           ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
           ("turnedDown", .arr (turnedDown.map .str).toArray)], turnedDown)
@@ -1014,6 +1030,14 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         (p.followedBy A.surface (actionName (label a))).map fun (o, js) => (p, o, js)
       pure <| Json.mkObj [("part", .str p.name), ("what", .str o.what),
         ("journeys", .arr (told.map fun (id, title) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
+    -- one that begins with a way in of this part that another system uses follows from the
+    -- journeys of the parts that come to that way in
+    let ledBy : Option Json := do
+      let (p, x, told) ← j.heads.findSome? fun a => others.findSome? fun p =>
+        (p.leadsTo A.name A.surface (actionName (label a))).map fun (x, js) => (p, x, js)
+      pure <| Json.mkObj [("part", .str p.name), ("what", .str x.what), ("led", .bool true),
+        ("journeys", .arr (told.map fun (id, title) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
+    let follows := follows <|> ledBy
     -- who starts it: the one who uses the way in it begins with
     let headNames := (j.heads.map (actionName ∘ label)).eraseDups
     let starters := (A.surface.filter fun e => e.owns && e.actions.any headNames.contains).map (·.starter)

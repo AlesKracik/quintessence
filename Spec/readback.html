@@ -428,7 +428,7 @@ function journey(j, req, ms, walks, wmark, shown) {
   const body = h("div", "", h("p", "goal", j.goal), (j.sources || []).length ? h("p", "verd", origin(j)) : null, flow(j, (i, k, sc) => pick.get(i).show(k, sc)),
     fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
         fo.journeys.length > 3 ? " and " + (fo.journeys.length - 3) + " more" : null] : fo.what,
-      " in ", link(fo.part, file(fo.part)), ". That part says when it is accepted; this is what follows here.") : null,
+      " in ", link(fo.part, file(fo.part)), fo.led ? ", which comes to it on its way. Another system brings it in here; this part says when it is accepted and what it does." : ". That part says when it is accepted; this is what follows here.") : null,
     !fo && j.by ? h("p", "given", h("b", "", "Started by: "), j.by === "outside" ? "something outside the model" : j.by) : null,
     j.given ? h("p", "given", h("b", "", "Starts with: "), j.given) : null, fl);
   if (walks.length) { body.append(h("h3", "", "Walkthroughs of this journey"));
@@ -477,7 +477,7 @@ function journeys(a, D) {
   if (unsaid.length) { if (told) head("Not said who starts", "The way in these begin with does not say who uses it."); group(unsaid); }
   if (sys.length) { head("Another system starts", "These begin with a message, a job's result or a call from a system no part models. They are no business cases of their own: something a person, an API client or a schedule started leads to them.", true); group(sys); }
   const after = js.filter(j => j.follows);
-  if (after.length) { head("What follows here from other parts", "These do not begin here: a person, an API client or a schedule starts them in another part, which says when they are accepted. This part says what follows for its own things.", true);
+  if (after.length) { head("What follows here from other parts", "These do not begin here: a person, an API client or a schedule starts them in another part, and they come here on their way.", true);
     group(after); }
   jx.sel = sel;
   if (js.length) { out.push(jx); sel((js.find(bad) || js.find(chg) || js.find(j => kinds.some(k => k[0] === j.by)) || js[0]).id, false); }
