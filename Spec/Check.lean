@@ -1164,7 +1164,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   for e in A.surface do
     if e.owns && e.starter.starts && !(e.actions.any inJourneys.contains) then
       questions := questions.push
-        (s!"{e.starter.word.capitalize} can {e.what} ({e.code}), and no journey tells it. Which business case is it, or which one is it a step of?", none)
+        (s!"{e.starter.word.capitalize} uses \"{e.what}\" ({e.code}), and no journey tells it. Which business case is it, or which one is it a step of?", none)
   for e in A.surface do
     for n in e.actions do
       if !distinct.contains n then
