@@ -221,6 +221,7 @@
    "A customer picks a seat, gets a moment to pay, and ends up owning it.",
    "given": "",
    "follows": null,
+   "by": "",
    "about": ""},
   {"title": "Giving a seat back",
    "steps":
@@ -248,6 +249,7 @@
    "A customer who bought a seat changes their mind, and the seat goes back on sale.",
    "given": "A customer has bought a seat.",
    "follows": null,
+   "by": "",
    "about": ""}],
  "code":
  {"verdict":
@@ -265,7 +267,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "10070633692309079718",
+  "inputs": "1249267882099663376",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",

@@ -240,6 +240,22 @@ structure Code (σ : Type) where
   /-- Budget of the code check, in executed code steps. -/
   budget : Nat := 100000
 
+/-- Who uses a way into the code. A journey is a business case that a person, a client of the
+public API or a schedule starts; what another system sends in (a message, a job's result, a call
+between services) follows from one of those. -/
+inductive Starter where
+  | person | client | schedule | system | unknown
+  deriving DecidableEq, Repr
+
+def Starter.word : Starter → String
+  | .person => "a person" | .client => "an API client" | .schedule => "a schedule"
+  | .system => "another system" | .unknown => ""
+
+/-- It starts a business case: the journeys begin with these. -/
+def Starter.starts : Starter → Bool
+  | .person | .client | .schedule => true
+  | _ => false
+
 /-- One way into the existing code of an area: an endpoint, a message
 handler, a scheduled job. An area extracted from code lists all of its own,
 so that a person sees which share of the area's code the model speaks about.
@@ -261,9 +277,20 @@ structure Surface where
   elsewhere : Bool := false
   /-- The part that owns this way in, when it is not this one. -/
   owner : String := ""
+  /-- Who uses this way in, for one this part owns. -/
+  starter : Starter := .unknown
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
+/-- A way in the model covers that a person uses, through a screen or a console. -/
+def Surface.person (what code : String) (actions : List String) : Surface := { what, code, actions, starter := .person }
+/-- A way in the model covers that a client of the public API uses. -/
+def Surface.client (what code : String) (actions : List String) : Surface := { what, code, actions, starter := .client }
+/-- A way in the model covers that a schedule uses. -/
+def Surface.schedule (what code : String) (actions : List String) : Surface := { what, code, actions, starter := .schedule }
+/-- A way in the model covers that another system uses: a message, a job's result, a call between
+services whose sender no part models. -/
+def Surface.system (what code : String) (actions : List String) : Surface := { what, code, actions, starter := .system }
 /-- An entry that only reads. -/
 def Surface.readOnly (what code : String) : Surface := { what, code, reads := true }
 /-- An entry of this area that the model does not cover, and why. It stays an
@@ -403,9 +430,9 @@ structure Peer where
   name : String
   /-- The ways into the code that it lists. -/
   surface : List Surface := []
-  /-- Its journeys: id, title, the actions it can begin with, and the actions the steps take,
-  in order. -/
-  journeys : List (String × String × List String × List String) := []
+  /-- Its journeys: id, title, the actions it can begin with, the actions the steps take,
+  in order, and what the steps say. -/
+  journeys : List (String × String × List String × List String × List String) := []
 
 /-- The journeys of `owner` that a journey follows from, when it begins with the action `n`
 in a part whose ways into the code are `sf`: `n` must stand for a way in that `owner` owns. -/
@@ -417,11 +444,11 @@ def Peer.followedBy (owner : Peer) (sf : List Surface) (n : String) : Option (Su
   -- else those that come to it on their way (a run that ends with its finish, which another
   -- part takes up)
   let js := owner.journeys
-  let whole := js.filter fun (_, _, _, acts) => !acts.isEmpty && acts.all o.actions.contains
-  let begins := js.filter fun (_, _, heads, _) => heads.any o.actions.contains
+  let whole := js.filter fun (_, _, _, acts, _) => !acts.isEmpty && acts.all o.actions.contains
+  let begins := js.filter fun (_, _, heads, _, _) => heads.any o.actions.contains
   let told := if !whole.isEmpty then whole else if !begins.isEmpty then begins
-    else js.filter fun (_, _, _, acts) => acts.any o.actions.contains
-  pure (o, told.map fun (id, title, _, _) => (id, title))
+    else js.filter fun (_, _, _, acts, _) => acts.any o.actions.contains
+  pure (o, told.map fun (id, title, _, _, _) => (id, title))
 
 /-- The part named for a ruled-in way in does lead to its owner: it models that
 place itself, or it has actions for it and names, in turn, a part that leads
@@ -836,7 +863,8 @@ private def checkCode [Hashable σ] [Repr α] (A : Area σ α) (c : Code σ)
 def Area.peer [Repr α] (A : Area σ α) : Peer :=
   { name := A.name, surface := A.surface,
     journeys := A.journeys.map fun j =>
-      (j.id, j.title, (j.heads.map (actionName ∘ label)).eraseDups, ((j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups) }
+      (j.id, j.title, (j.heads.map (actionName ∘ label)).eraseDups, ((j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups,
+       j.steps.map (·.say)) }
 
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     (since : Option String) (rerun : Bool) (others : List Peer) : IO Report := do
@@ -885,14 +913,15 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let mut leaves : List (String × String) := []  -- a refusal requirement and the journey it turns a step down in
   -- journeys: the usual course of a business case, replayed on the model
   let mut journeys : Array (String × Bool × (Bool → Json)) := #[]
+  let mut startQs : Array String := #[]
   -- in the order they are listed, with the journeys about one thing kept together
   let me := A.peer
   let listed := (A.journeys.map (·.about)).eraseDups.flatMap fun k => A.journeys.filter (·.about == k)
   -- where a step goes on: the journeys of other parts that begin with a way in of this part,
   -- with this part's actions for that way in. A step that takes one of them is taken up there.
-  let takenUp : List (List String × Json) := others.flatMap fun p => p.journeys.filterMap fun (id, title, heads, _) => do
+  let takenUp : List (List String × Json) := others.flatMap fun p => p.journeys.filterMap fun (id, title, heads, _, says) => do
     let (o, _) ← heads.findSome? (me.followedBy p.surface)
-    some (o.actions, Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title)])
+    some (o.actions, Json.mkObj [("part", .str p.name), ("id", .str id), ("title", .str title), ("steps", .arr (says.map .str).toArray)])
   -- one run of a journey, with each choice taken one way: is every action accepted, and for every
   -- step that is taken, did it go and which requirements spoke
   let walk (j : Journey α) (pick : List Nat) : Bool × List (List (Step α × Bool × List String)) := Id.run do
@@ -985,8 +1014,19 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         (p.followedBy A.surface (actionName (label a))).map fun (o, js) => (p, o, js)
       pure <| Json.mkObj [("part", .str p.name), ("what", .str o.what),
         ("journeys", .arr (told.map fun (id, title) => Json.mkObj [("id", .str id), ("title", .str title)]).toArray)]
+    -- who starts it: the one who uses the way in it begins with
+    let headNames := (j.heads.map (actionName ∘ label)).eraseDups
+    let starters := (A.surface.filter fun e => e.owns && e.actions.any headNames.contains).map (·.starter)
+    let startedBy : String :=
+      if follows.isSome then "follows"
+      else match [Starter.person, .client, .schedule, .system].find? starters.contains with
+        | some k => k.word
+        | none => if A.surface.any (fun e => e.elsewhere && e.actions.any headNames.contains) then "outside"
+                  else ""
+    if !A.surface.isEmpty && follows.isNone && (startedBy == Starter.system.word || startedBy == "outside") then
+      startQs := startQs.push s!"The journey {j.id} \"{j.title}\" begins with what {if startedBy == "outside" then "something outside the model" else "another system"} does, not with a person, an API client or a schedule. Which business case leads to it? Tell it as what follows there; if another part owns what leads to it, name the way in as ruled in that part."
     journeys := journeys.push (j.id, ok, fun _ => Json.mkObj <| [
-      ("follows", follows.getD .null),
+      ("follows", follows.getD .null), ("by", .str startedBy),
       ("id", .str j.id), ("title", .str j.title), ("goal", .str j.goal), ("given", .str j.given),
       ("about", .str j.about), ("setup", .arr (j.setup.map (.str ∘ label)).toArray), ("sources", .arr (j.sources.map .str).toArray),
       ("status", .str status), ("steps", .arr rows)])
@@ -1088,6 +1128,19 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         ++ "Without it nobody can tell later whether what it cites has changed.", none)
   -- what the code offers against what the model speaks about
   let mut surfaceFailed : List String := []
+  for q in startQs do questions := questions.push (q, none)
+  -- who uses each way in this part owns, and whether a journey begins with what starts a business case
+  let nobody := A.surface.filter fun e => e.owns && e.starter == .unknown
+  if !nobody.isEmpty then
+    questions := questions.push
+      (s!"Who uses these ways in: a person, a client of the public API, a schedule, or another system? {nobody.length} of this part's own do not say: "
+        ++ "; ".intercalate ((nobody.take 5).map fun e => s!"\"{e.what}\"") ++ (if nobody.length > 5 then "; and more" else "")
+        ++ ". Journeys begin with what a person, an API client or a schedule starts.", none)
+  let inJourneys := (A.journeys.flatMap fun j => (j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups
+  for e in A.surface do
+    if e.owns && e.starter.starts && !(e.actions.any inJourneys.contains) then
+      questions := questions.push
+        (s!"{e.starter.word.capitalize} can {e.what} ({e.code}), and no journey tells it. Which business case is it, or which one is it a step of?", none)
   for e in A.surface do
     for n in e.actions do
       if !distinct.contains n then
@@ -1147,7 +1200,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("readAt", if full then .arr readAt else .arr (A.readAt.map fun (r, c) => Json.mkObj [("repo", .str r), ("commit", .str c)]).toArray),
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
-      ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner),
+      ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner), ("by", .str e.starter.word),
       ("shared", .arr <| (others.toArray.flatMap fun p => (p.surface.filter fun x =>
           !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>
         Json.mkObj [("part", .str p.name), ("what", .str x.what), ("status", .str x.status),

@@ -128,6 +128,9 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .jx{display:grid;grid-template-columns:minmax(210px,290px) minmax(0,1fr);gap:16px;align-items:start;margin-top:8px}
 .jn{position:sticky;top:8px;max-height:calc(100vh - 16px);overflow:auto;background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:6px}
 .jn .about{margin:12px 8px 4px}.jn .about:first-child{margin-top:4px}
+.jn .by{margin:16px 8px 2px;font-size:13px;font-weight:700;color:var(--ink);border-top:1px solid var(--line);padding-top:10px}.jn .by:first-child{margin-top:4px;border-top:0;padding-top:0}
+.jn .by.low{color:var(--mut);font-weight:600}
+.onj{margin:2px 0}.onj summary{cursor:pointer}.onj summary a{display:inline}.onj ol{margin:4px 0 6px 20px;padding:0;font-size:13px}
 .ji{display:block;padding:4px 8px;border-radius:6px;color:var(--ink);text-decoration:none;font-size:13.5px;line-height:1.3}
 .ji:hover{background:var(--accb)}.ji.on{background:var(--acc);color:var(--surf)}
 .ji .mono{font-size:11px;color:var(--mut);margin-right:4px}.ji .cnt{margin-left:6px;font-size:11.5px;color:var(--mut);white-space:nowrap}
@@ -394,7 +397,9 @@ function journey(j, req, ms, walks, wmark, shown) {
     // the step as a way of being turned down does, and is told apart from one by its colour.
     const on = st.continues || [];
     [...new Set(on.map(o => o.part))].forEach(p => leaves.append(h("div", "leaf on", h("span", "badge next", "→ continues"), "in ", link(p, file(p)), ":",
-      on.filter(o => o.part === p).map(o => jlink(p, o)))));
+      on.filter(o => o.part === p).map(o => (o.steps || []).length
+        ? h("details", "onj", h("summary", "", jlink(p, o), h("span", "cnt", pl(o.steps.length, "step"))), h("ol", "", o.steps.map(t => h("li", "", t))))
+        : jlink(p, o)))));
     return h("div", "fs" + (st.repeats ? " loop" : ""), c, leaves); };
   // a step that can go several ways shows one way at a time: its name chooses it
   const pick = new Map();
@@ -424,6 +429,7 @@ function journey(j, req, ms, walks, wmark, shown) {
     fo ? h("p", "given", h("b", "", "Follows from: "), fo.journeys.length ? [fo.journeys.slice(0, 3).map((o, i) => [i ? ", " : "", jlink(fo.part, o)]),
         fo.journeys.length > 3 ? " and " + (fo.journeys.length - 3) + " more" : null] : fo.what,
       " in ", link(fo.part, file(fo.part)), ". That part says when it is accepted; this is what follows here.") : null,
+    !fo && j.by ? h("p", "given", h("b", "", "Started by: "), j.by === "outside" ? "something outside the model" : j.by) : null,
     j.given ? h("p", "given", h("b", "", "Starts with: "), j.given) : null, fl);
   if (walks.length) { body.append(h("h3", "", "Walkthroughs of this journey"));
     walks.forEach(w => body.append(walkthrough(w, req, wmark(w)))); }
@@ -460,13 +466,21 @@ function journeys(a, D) {
       k ? h("span", "cnt", pl(k, "choice")) : null, chg(j) ? h("span", "chgd", " ●") : null], at(j.id), "ji");
     x.onclick = e => { e.preventDefault(); sel(j.id, true); }; items.set(j.id, x); return x; };
   const group = tops => tops.forEach((j, k) => { if (j.about && (!k || tops[k - 1].about !== j.about)) nav.append(h("h3", "about", j.about)); nav.append(item(j)); });
+  // first the business cases, by who starts them; then what another system starts, and what follows
+  // here from other parts: those are no business cases of their own
+  const kinds = [["a person", "A person starts"], ["an API client", "An API client starts"], ["a schedule", "A schedule starts"]];
+  const told = js.some(j => kinds.some(k => k[0] === j.by));
+  const head = (t, tip, sub) => { const hd = h("h3", "by" + (sub ? " low" : ""), t); if (tip) hd.title = tip; nav.append(hd); };
+  if (told) kinds.forEach(k => { const mine = js.filter(j => !j.follows && j.by === k[0]); if (mine.length) { head(k[1]); group(mine); } });
+  const loose = js.filter(j => !j.follows && !kinds.some(k => k[0] === j.by)), sys = loose.filter(j => j.by === "another system" || j.by === "outside"),
+    unsaid = loose.filter(j => !sys.includes(j));
+  if (unsaid.length) { if (told) head("Not said who starts", "The way in these begin with does not say who uses it."); group(unsaid); }
+  if (sys.length) { head("Another system starts", "These begin with a message, a job's result or a call from a system no part models. They are no business cases of their own: something a person, an API client or a schedule started leads to them.", true); group(sys); }
   const after = js.filter(j => j.follows);
-  group(js.filter(j => !j.follows));
-  if (after.length) { const hd = h("h3", "about", "What follows here from other parts");
-    hd.title = "These do not begin here: a person, a call from outside or a schedule starts them in another part, which says when they are accepted. This part says what follows for its own things.";
-    nav.append(hd); group(after); }
+  if (after.length) { head("What follows here from other parts", "These do not begin here: a person, an API client or a schedule starts them in another part, which says when they are accepted. This part says what follows for its own things.", true);
+    group(after); }
   jx.sel = sel;
-  if (js.length) { out.push(jx); sel((js.find(bad) || js.find(chg) || js[0]).id, false); }
+  if (js.length) { out.push(jx); sel((js.find(bad) || js.find(chg) || js.find(j => kinds.some(k => k[0] === j.by)) || js[0]).id, false); }
   (D ? D.rj : []).forEach(j => out.push(goneRow({ id: j.id, text: j.title }, "removed")));
   const rest = ws.filter(w => !js.some(j => j.id === w.journey));
   if (rest.length) { out.push(h("h3", "", "Other walkthroughs")); rest.forEach(w => out.push(walkthrough(w, req, wmark(w)))); }
@@ -646,7 +660,7 @@ function render(a, only) {
     const tb = h("tbody"); [...sf].sort((x, y) => (clash(y) - clash(x)) || ((y.status === "left out") - (x.status === "left out"))).forEach(e => {
       const as = e.actions.length ? h("span", "mono", e.actions.join(", ")) : null;
       const r = h("tr", e.status === "left out" || clash(e) ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
-        h("td", "", e.status === "modelled" ? ["modelled: ", as] : e.status === "reads" ? "only reads"
+        h("td", "", e.status === "modelled" ? ["modelled: ", as, e.by ? h("div", "cnt", "used by " + e.by) : null] : e.status === "reads" ? "only reads"
           : e.status === "outside" ? ["decided outside this area; here as: ", as]
           : e.status === "ruled in" ? ["ruled in ", link(e.owner, file(e.owner)), as ? ["; what follows here: ", as] : null]
           : [h("b", "", "left out: "), e.why],
