@@ -284,7 +284,7 @@ structure Surface where
   screen : String := ""
   /-- What the person works there: the button, the form, the menu entry ("Run failover"). -/
   control : String := ""
-  /-- Where that is in the code of the user interface. -/
+  /-- Where that is in the code of the user interface, or, before it is built, in its design. -/
   ui : String := ""
   /-- A picture of the screen: a file of the project, from the project's folder. -/
   shot : String := ""
@@ -302,7 +302,8 @@ services whose sender no part models. -/
 def Surface.system (what code : String) (actions : List String) : Surface := { what, code, actions, starter := .system }
 /-- The same way in, with the screen and the control a person meets it on, where that is in the
 code of the user interface, and a picture of the screen when there is one. A project whose user
-interface can be read says this for every way in a person uses. -/
+interface can be read says this for every way in a person uses; one whose user interface is not built
+yet says it from the designs. -/
 def Surface.onScreen (screen control : String) (ui : String := "") (shot : String := "") (e : Surface) : Surface :=
   { e with screen, control, ui, shot }
 /-- The screen and the control as one reads them. -/
