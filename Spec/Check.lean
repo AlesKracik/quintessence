@@ -256,6 +256,22 @@ def Starter.starts : Starter → Bool
   | .person | .client | .schedule => true
   | _ => false
 
+/-- A place in the user interface that reaches a way in. -/
+structure Seen where
+  /-- The screen, in the words of the screen ("Recovery plan"); for a way in a person uses without
+  the product's screens, the tool ("by hand, over HTTP"). -/
+  screen : String
+  /-- What the person works there: the button, the form, the menu entry ("Run failover"). -/
+  control : String := ""
+  /-- Where that is in the code of the user interface, or, before it is built, in its design. -/
+  ui : String := ""
+  /-- A picture of the screen with the control on it: a file of the project, from the project's folder. -/
+  shot : String := ""
+
+/-- The screen and the control as one reads them. -/
+def Seen.shownAs (x : Seen) : String :=
+  if x.control == "" then x.screen else s!"{x.screen} › {x.control}"
+
 /-- One way into the existing code of an area: an endpoint, a message
 handler, a scheduled job. An area extracted from code lists all of its own,
 so that a person sees which share of the area's code the model speaks about.
@@ -279,15 +295,8 @@ structure Surface where
   owner : String := ""
   /-- Who uses this way in, for one this part owns. -/
   starter : Starter := .unknown
-  /-- The screen a person meets it on, in the words of the screen ("Recovery plan"); for a way in
-  a person uses without the product's screens, the tool ("by hand, over HTTP"). -/
-  screen : String := ""
-  /-- What the person works there: the button, the form, the menu entry ("Run failover"). -/
-  control : String := ""
-  /-- Where that is in the code of the user interface, or, before it is built, in its design. -/
-  ui : String := ""
-  /-- A picture of the screen: a file of the project, from the project's folder. -/
-  shot : String := ""
+  /-- Where a person meets it: every screen and control that reach it. -/
+  seen : List Seen := []
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
@@ -305,12 +314,13 @@ code of the user interface, and a picture of the screen when there is one. A pro
 interface can be read says this for every way in a person uses; one whose user interface is not built
 yet says it from the designs. -/
 def Surface.onScreen (screen control : String) (ui : String := "") (shot : String := "") (e : Surface) : Surface :=
-  { e with screen, control, ui, shot }
-/-- The screen and the control as one reads them. -/
-def Surface.shownAs (e : Surface) : String :=
-  if e.control == "" then e.screen else s!"{e.screen} › {e.control}"
+  { e with seen := { screen, control, ui, shot } :: e.seen }
+/-- The screens and controls as one reads them. A way in reached from several places is wrapped once
+for each; the outermost comes first. -/
+def Surface.shownAs (e : Surface) : String := ", ".intercalate (e.seen.map (·.shownAs))
 #guard (Surface.onScreen "Plan" "Run failover" "plan.ts:10" "" (.person "x" "A.kt:1" ["a"])).shownAs == "Plan › Run failover"
 #guard (Surface.onScreen "Plan" "" "" "" (.person "x" "A.kt:1" ["a"])).starter == .person
+#guard (Surface.onScreen "Plans" "Run" "" "" (.onScreen "Plan" "Run failover" "" "" (.person "x" "A.kt:1" ["a"]))).shownAs == "Plans › Run, Plan › Run failover"
 /-- An entry that only reads. -/
 def Surface.readOnly (what code : String) : Surface := { what, code, reads := true }
 /-- An entry of this area that the model does not cover, and why. It stays an
@@ -1019,8 +1029,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
           ("names", .arr (stepNames.eraseDups.map .str).toArray),
           ("continues", .arr (((takenUp ++ leadsOn).filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
-          ("screens", .arr ((A.surface.filter fun e => e.owns && e.screen != "" && e.actions.any stepNames.contains).map fun e =>
-            Json.mkObj [("screen", .str e.screen), ("control", .str e.control), ("ui", .str e.ui), ("shot", .str e.shot)]).toArray),
+          ("screens", .arr (((A.surface.filter fun e => e.owns && e.actions.any stepNames.contains).flatMap (·.seen)).map fun x =>
+            Json.mkObj [("screen", .str x.screen), ("control", .str x.control), ("ui", .str x.ui), ("shot", .str x.shot)]).toArray),
           ("repeats", .bool (st.actions.length > 1)),
           ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
           ("turnedDown", .arr (turnedDown.map .str).toArray)], turnedDown)
@@ -1212,14 +1222,14 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         ++ ". Journeys begin with what a person, an API client or a schedule starts.", none)
   -- where the user interface can be read (some part names a screen), every way in a person uses
   -- says the screen it is met on; and a picture that is named is there
-  let hasUi := (A.surface ++ others.flatMap (·.surface)).any (·.screen != "")
-  let blind := A.surface.filter fun e => e.owns && e.starter == .person && e.screen == ""
+  let hasUi := (A.surface ++ others.flatMap (·.surface)).any (!·.seen.isEmpty)
+  let blind := A.surface.filter fun e => e.owns && e.starter == .person && e.seen.isEmpty
   if hasUi && !blind.isEmpty then
     questions := questions.push
       (s!"On which screen does a person meet these ways in? {blind.length} of this part's own name none: "
         ++ "; ".intercalate ((blind.take 5).map fun e => s!"\"{e.what}\"") ++ (if blind.length > 5 then "; and more" else "")
         ++ ". Name the screen and the control; when no screen of the product reaches it, say what does (a client of the public API, a person by hand), or whether it is still used at all.", none)
-  for shot in (A.surface.map (·.shot)).eraseDups do
+  for shot in (A.surface.flatMap fun e => e.seen.map (·.shot)).eraseDups do
     if shot != "" && !(← System.FilePath.pathExists shot) then
       questions := questions.push (s!"The picture `{shot}` of a screen is named and is not there.", none)
   let inJourneys := (A.journeys.flatMap fun j => (j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups
@@ -1287,7 +1297,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
       ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner), ("by", .str e.starter.word),
-      ("screen", .str e.shownAs), ("ui", .str e.ui), ("shot", .str e.shot),
+      ("screen", .str e.shownAs), ("ui", .str ("; ".intercalate ((e.seen.map (·.ui)).filter (· != "")).eraseDups)),
       ("shared", .arr <| (others.toArray.flatMap fun p => (p.surface.filter fun x =>
           !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>
         Json.mkObj [("part", .str p.name), ("what", .str x.what), ("status", .str x.status),

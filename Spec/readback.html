@@ -391,11 +391,12 @@ function journey(j, req, ms, walks, wmark, shown) {
   // the project has one (a small one that opens in full)
   const screens = ss => { const seen = new Set(), out = [];
     (ss || []).forEach(x => { const k = x.screen + "|" + x.control; if (seen.has(k)) return; seen.add(k);
-      const p = h("p", "scr", h("span", "tg", "on screen"), " ", x.screen, x.control ? [" › ", h("b", "", x.control)] : null);
+      const p = h("p", "scr", h("span", "tg", "on screen"), " ", x.screen, x.control ? [" › ", h("b", "", x.control)] : null), d = h("div", "", p);
       if (x.ui) p.title = x.ui;
-      out.push(p);
-      if (x.shot && !seen.has(x.shot)) { seen.add(x.shot); const a = h("a", "shot"), i = h("img"); a.href = i.src = "../../" + x.shot; a.target = "_blank"; i.alt = x.screen; i.loading = "lazy"; a.append(i); out.push(a); } });
-    return out; };
+      if (x.shot) { const a = h("a", "shot"), i = h("img"); a.href = i.src = "../../" + x.shot; a.target = "_blank"; i.alt = x.screen; i.loading = "lazy"; a.append(i); d.append(a); }
+      out.push(d); });
+    // the first place is shown; the others open on demand
+    return out.length > 1 ? [out[0], h("details", "onj", h("summary", "", "reached from " + (out.length - 1) + " more place" + (out.length > 2 ? "s" : "")), out.slice(1))] : out; };
   const card = (st, n) => {
     const off = st.asTold === false, c = h("div", "mo" + (off ? " bad" : ""), h("span", "dot", n), h("p", "say", st.say),
       st.repeats ? h("p", "again", LOOP(), "can repeat") : null, screens(st.screens), reqChips(st.requirements, req),
