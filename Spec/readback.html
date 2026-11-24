@@ -130,6 +130,8 @@ td.c{white-space:pre-wrap;word-break:break-word}
 .jn .about{margin:12px 8px 4px}.jn .about:first-child{margin-top:4px}
 .jn .by{margin:16px 8px 2px;font-size:13px;font-weight:700;color:var(--ink);border-top:1px solid var(--line);padding-top:10px}.jn .by:first-child{margin-top:4px;border-top:0;padding-top:0}
 .jn .by.low{color:var(--mut);font-weight:600}
+.scr{margin:0 0 4px;font-size:13px;color:var(--mut)}.scr b{color:var(--ink)}
+.shot{display:block;margin:0 0 6px}.shot img{max-width:100%;max-height:220px;border:1px solid var(--line);border-radius:4px;display:block}
 .onj{margin:2px 0}.onj summary{cursor:pointer}.onj summary a{display:inline}.onj ol{margin:4px 0 6px 20px;padding:0;font-size:13px}
 .ji{display:block;padding:4px 8px;border-radius:6px;color:var(--ink);text-decoration:none;font-size:13.5px;line-height:1.3}
 .ji:hover{background:var(--accb)}.ji.on{background:var(--acc);color:var(--surf)}
@@ -385,9 +387,18 @@ function journey(j, req, ms, walks, wmark, shown) {
   const jlink = (part, o) => link([h("span", "mono", o.id), " ", o.title], file(part, o.id));
   // A journey is generic: a step shows what happens and the requirements behind it, never a particular
   // VM, customer, count or value. Those belong to the walkthroughs.
+  // where a person does the step: the screen and the control, with the picture of the screen when
+  // the project has one (a small one that opens in full)
+  const screens = ss => { const seen = new Set(), out = [];
+    (ss || []).forEach(x => { const k = x.screen + "|" + x.control; if (seen.has(k)) return; seen.add(k);
+      const p = h("p", "scr", h("span", "tg", "on screen"), " ", x.screen, x.control ? [" › ", h("b", "", x.control)] : null);
+      if (x.ui) p.title = x.ui;
+      out.push(p);
+      if (x.shot && !seen.has(x.shot)) { seen.add(x.shot); const a = h("a", "shot"), i = h("img"); a.href = i.src = "../../" + x.shot; a.target = "_blank"; i.alt = x.screen; i.loading = "lazy"; a.append(i); out.push(a); } });
+    return out; };
   const card = (st, n) => {
     const off = st.asTold === false, c = h("div", "mo" + (off ? " bad" : ""), h("span", "dot", n), h("p", "say", st.say),
-      st.repeats ? h("p", "again", LOOP(), "can repeat") : null, reqChips(st.requirements, req),
+      st.repeats ? h("p", "again", LOOP(), "can repeat") : null, screens(st.screens), reqChips(st.requirements, req),
       off ? h("p", "note", "the model does not take this step as told") : null);
     // each way of being turned down names the walkthroughs that show it happening
     const leaves = h("div", "lvs", (st.turnedDown || []).map(id => { const ws = shown.get(id) || [];
@@ -661,7 +672,7 @@ function render(a, only) {
     const tb = h("tbody"); [...sf].sort((x, y) => (clash(y) - clash(x)) || ((y.status === "left out") - (x.status === "left out"))).forEach(e => {
       const as = e.actions.length ? h("span", "mono", e.actions.join(", ")) : null;
       const r = h("tr", e.status === "left out" || clash(e) ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
-        h("td", "", e.status === "modelled" ? ["modelled: ", as, e.by ? h("div", "cnt", "used by " + e.by) : null] : e.status === "reads" ? "only reads"
+        h("td", "", e.status === "modelled" ? ["modelled: ", as, e.by ? h("div", "cnt", "used by " + e.by, e.screen ? [" on ", h("span", "", e.screen)] : null) : null, e.ui ? h("div", "cnt mono wr", e.ui) : null] : e.status === "reads" ? "only reads"
           : e.status === "outside" ? ["decided outside this area; here as: ", as]
           : e.status === "ruled in" ? ["ruled in ", link(e.owner, file(e.owner)), as ? ["; what follows here: ", as] : null]
           : [h("b", "", "left out: "), e.why],

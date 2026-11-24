@@ -279,6 +279,15 @@ structure Surface where
   owner : String := ""
   /-- Who uses this way in, for one this part owns. -/
   starter : Starter := .unknown
+  /-- The screen a person meets it on, in the words of the screen ("Recovery plan"); for a way in
+  a person uses without the product's screens, the tool ("by hand, over HTTP"). -/
+  screen : String := ""
+  /-- What the person works there: the button, the form, the menu entry ("Run failover"). -/
+  control : String := ""
+  /-- Where that is in the code of the user interface. -/
+  ui : String := ""
+  /-- A picture of the screen: a file of the project, from the project's folder. -/
+  shot : String := ""
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
@@ -291,6 +300,16 @@ def Surface.schedule (what code : String) (actions : List String) : Surface := {
 /-- A way in the model covers that another system uses: a message, a job's result, a call between
 services whose sender no part models. -/
 def Surface.system (what code : String) (actions : List String) : Surface := { what, code, actions, starter := .system }
+/-- The same way in, with the screen and the control a person meets it on, where that is in the
+code of the user interface, and a picture of the screen when there is one. A project whose user
+interface can be read says this for every way in a person uses. -/
+def Surface.onScreen (screen control : String) (ui : String := "") (shot : String := "") (e : Surface) : Surface :=
+  { e with screen, control, ui, shot }
+/-- The screen and the control as one reads them. -/
+def Surface.shownAs (e : Surface) : String :=
+  if e.control == "" then e.screen else s!"{e.screen} › {e.control}"
+#guard (Surface.onScreen "Plan" "Run failover" "plan.ts:10" "" (.person "x" "A.kt:1" ["a"])).shownAs == "Plan › Run failover"
+#guard (Surface.onScreen "Plan" "" "" "" (.person "x" "A.kt:1" ["a"])).starter == .person
 /-- An entry that only reads. -/
 def Surface.readOnly (what code : String) : Surface := { what, code, reads := true }
 /-- An entry of this area that the model does not cover, and why. It stays an
@@ -986,6 +1005,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
           ("names", .arr (stepNames.eraseDups.map .str).toArray),
           ("continues", .arr (((takenUp ++ leadsOn).filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
+          ("screens", .arr ((A.surface.filter fun e => e.owns && e.screen != "" && e.actions.any stepNames.contains).map fun e =>
+            Json.mkObj [("screen", .str e.screen), ("control", .str e.control), ("ui", .str e.ui), ("shot", .str e.shot)]).toArray),
           ("repeats", .bool (st.actions.length > 1)),
           ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
           ("turnedDown", .arr (turnedDown.map .str).toArray)], turnedDown)
@@ -1167,6 +1188,18 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       (s!"Who uses these ways in: a person, a client of the public API, a schedule, or another system? {nobody.length} of this part's own do not say: "
         ++ "; ".intercalate ((nobody.take 5).map fun e => s!"\"{e.what}\"") ++ (if nobody.length > 5 then "; and more" else "")
         ++ ". Journeys begin with what a person, an API client or a schedule starts.", none)
+  -- where the user interface can be read (some part names a screen), every way in a person uses
+  -- says the screen it is met on; and a picture that is named is there
+  let hasUi := (A.surface ++ others.flatMap (·.surface)).any (·.screen != "")
+  let blind := A.surface.filter fun e => e.owns && e.starter == .person && e.screen == ""
+  if hasUi && !blind.isEmpty then
+    questions := questions.push
+      (s!"On which screen does a person meet these ways in? {blind.length} of this part's own name none: "
+        ++ "; ".intercalate ((blind.take 5).map fun e => s!"\"{e.what}\"") ++ (if blind.length > 5 then "; and more" else "")
+        ++ ". Name the screen and the control; when no screen of the product reaches it, say what does (a client of the public API, a person by hand), or whether it is still used at all.", none)
+  for shot in (A.surface.map (·.shot)).eraseDups do
+    if shot != "" && !(← System.FilePath.pathExists shot) then
+      questions := questions.push (s!"The picture `{shot}` of a screen is named and is not there.", none)
   let inJourneys := (A.journeys.flatMap fun j => (j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups
   for e in A.surface do
     if e.owns && e.starter.starts && !(e.actions.any inJourneys.contains) then
@@ -1232,6 +1265,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
       ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner), ("by", .str e.starter.word),
+      ("screen", .str e.shownAs), ("ui", .str e.ui), ("shot", .str e.shot),
       ("shared", .arr <| (others.toArray.flatMap fun p => (p.surface.filter fun x =>
           !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>
         Json.mkObj [("part", .str p.name), ("what", .str x.what), ("status", .str x.status),

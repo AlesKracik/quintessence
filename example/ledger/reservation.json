@@ -198,6 +198,7 @@
  [{"title": "Buying a seat",
    "steps":
    [{"turnedDown": ["REQ-002", "REQ-003"],
+     "screens": [],
      "say": "The customer puts a seat on hold.",
      "requirements": ["REQ-001"],
      "repeats": true,
@@ -206,6 +207,7 @@
      "asTold": true,
      "actions": ["hold \"s1\" \"alice\"", "hold \"s2\" \"alice\""]},
     {"turnedDown": ["REQ-005"],
+     "screens": [],
      "say": "The customer confirms a seat on hold; it is theirs.",
      "requirements": ["REQ-004"],
      "repeats": true,
@@ -226,6 +228,7 @@
   {"title": "Giving a seat back",
    "steps":
    [{"turnedDown": ["REQ-007"],
+     "screens": [],
      "say": "The customer cancels the seat; it is free again.",
      "requirements": ["REQ-006"],
      "repeats": false,
@@ -234,6 +237,7 @@
      "asTold": true,
      "actions": ["cancel \"s1\" \"alice\""]},
     {"turnedDown": ["REQ-002", "REQ-003"],
+     "screens": [],
      "say": "Another customer can now put it on hold.",
      "requirements": ["REQ-001"],
      "repeats": false,
@@ -267,7 +271,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "15539074477912509819",
+  "inputs": "1976924042466071769",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",

@@ -157,6 +157,7 @@
    [{"ways":
      [{"steps":
        [{"turnedDown": [],
+         "screens": [],
          "say":
          "The customer cancels; the billing provider accepts and the customer is told.",
          "requirements": ["REQ-001", "REQ-002", "REQ-007"],
@@ -172,6 +173,7 @@
        "given": ""},
       {"steps":
        [{"turnedDown": [],
+         "screens": [],
          "say":
          "The customer cancels and the billing provider does not answer: nothing changes.",
          "requirements": ["REQ-004"],
@@ -181,6 +183,7 @@
          "asTold": true,
          "actions": ["cancel_unanswered \"alice\" true"]},
         {"turnedDown": [],
+         "screens": [],
          "say":
          "The customer cancels again; the billing provider accepts and the customer is told.",
          "requirements": ["REQ-001", "REQ-002", "REQ-007"],
@@ -196,6 +199,7 @@
        "given": ""},
       {"steps":
        [{"turnedDown": [],
+         "screens": [],
          "say":
          "The customer cancels and the billing provider declines: nothing changes.",
          "requirements": ["REQ-008"],
@@ -205,6 +209,7 @@
          "asTold": true,
          "actions": ["cancel_declined \"alice\""]},
         {"turnedDown": [],
+         "screens": [],
          "say":
          "The customer cancels again; the billing provider accepts and the customer is told.",
          "requirements": ["REQ-001", "REQ-002", "REQ-007"],
@@ -222,6 +227,7 @@
      "The customer cancels; the billing provider accepts and the customer is told.",
      "asChosen": false},
     {"turnedDown": [],
+     "screens": [],
      "say": "The paid period ends and access ends with it.",
      "requirements": ["REQ-005"],
      "repeats": false,
@@ -260,7 +266,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "9481233625990784337",
+  "inputs": "10796482664010206851",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",
