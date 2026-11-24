@@ -445,6 +445,19 @@ structure Report where
   failed : List String
   summary : String
 
+/-- A sentence that says something is left out and does not say what: it speaks of "the other
+checks", "the rest", "and so on" and of not modelling, not following or leaving out. -/
+def leavesOutUnnamed (sentence : String) : Bool :=
+  let t := " " ++ sentence.toLower ++ " "
+  let has := fun (w : String) => (t.splitOn w).length > 1
+  [" other ", " others", " the rest", " etc", " and so on", " and more", " further ", " remaining ", " and the like", " among others"].any has
+    && ["not modelled", "left out", "not covered", "not looked at", "not followed", "leaves out", "leave out", "not told", "not read",
+        "not checked", "ignored", "not in the model"].any has
+
+#guard leavesOutUnnamed "the warnings, the number of disks and the other checks are not modelled"
+#guard !leavesOutUnnamed "the group takes 2 VMs here; the real limit is 100"
+#guard !leavesOutUnnamed "the name check and the size check are not modelled"
+
 /-- What an area or part shows of itself to the others, for comparing them. -/
 structure Peer where
   name : String
@@ -1109,6 +1122,14 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       ("sources", .arr (w.sources.map .str).toArray), ("status", .str status),
       ("moments", .arr (rows.map (· full)))]
       ++ (if full then [("startViews", viewsJson A.init), ("start", stateJson A.init)] else []))
+  -- an assumption that leaves things out says which: "and the other checks are not modelled"
+  -- hides exactly the check that matters later
+  let unnamed := (A.assumptions.flatMap fun a => (a.splitOn ". ").flatMap (·.splitOn "; ")).filter leavesOutUnnamed
+  if !unnamed.isEmpty then
+    questions := questions.push
+      (s!"{unnamed.length} sentence(s) of the assumptions leave things out without naming them: "
+        ++ "; ".intercalate ((unnamed.take 3).map fun t => s!"\"{t.trim}\"") ++ (if unnamed.length > 3 then "; and more" else "")
+        ++ " Which ones exactly? Name each check, field or case that is left out, one by one, so that a person can see what the model does not speak about.", none)
   if A.journeys.isEmpty then
     questions := questions.push
       ("The area has no journey. Which business cases should a person recognise it by?", none)
