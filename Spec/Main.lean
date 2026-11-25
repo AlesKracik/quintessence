@@ -113,7 +113,7 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   let wanted (name : String) : Bool := match only with
     | some o => name == o || name.startsWith (o ++ "/")
     | none => true
-  if !areas.any (wanted ·.name) then
+  if only.isSome && !areas.any (wanted ·.name) then
     IO.eprintln s!"no area or part is called {only.getD ""}"
     return (1 : UInt32)
   IO.FS.createDirAll "ledger"
