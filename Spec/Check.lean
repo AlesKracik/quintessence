@@ -1179,7 +1179,9 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         (s!"{j.id} takes the same steps as {p.id} ({", ".intercalate (stepsOf j)}). Are they one business case? "
           ++ "Then tell it once, and tell a step that can go several ways as a choice with its ways.", none)
   -- what the model was read from: has a file it cites changed since?
-  let cited := ((A.surface.map (·.code) ++ A.invariants.flatMap (·.sources) ++ A.requirements.flatMap (·.sources)
+  -- the places of the user interface a way in is tied to are cited too: a screen that changed is read again
+  let shown := (A.surface.flatMap fun e => (e.seen.map (·.ui)).filter (· != "")).flatMap fun c => (places c).map (·.1)
+  let cited := ((A.surface.map (·.code) ++ A.surface.flatMap (fun e => e.seen.map (·.ui)) ++ A.invariants.flatMap (·.sources) ++ A.requirements.flatMap (·.sources)
     ++ A.journeys.flatMap (fun j => j.sources ++ j.steps.flatMap (·.ways.flatMap (·.sources))) ++ A.walkthroughs.flatMap (·.sources)).flatMap fun c => (places c).map (·.1)).eraseDups
   let checkouts := (Json.parse (← try IO.FS.readFile ".spec/local.json" catch _ => pure "")).toOption.getD .null
     |>.getObjValD "repo_paths"
@@ -1199,7 +1201,9 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         if !changed.isEmpty then
           questions := questions.push
             (s!"This part was read from `{repo}` at {commit.take 10}; it is now at {head.take 10}, and files the part cites have changed since: "
-              ++ s!"{", ".intercalate changed}. Read them again, correct the part where it no longer holds, and move the commit in `readAt`.", none)
+              ++ s!"{", ".intercalate changed}. Read them again, correct the part where it no longer holds, and move the commit in `readAt`."
+              ++ (if changed.any (fun f => shown.any fun c => ((c.splitOn "/").reverse.zip (f.splitOn "/").reverse).all fun (x, y) => x == y)
+                  then " Where a screen is tied to one of them, see that the control is still there and take its picture again." else ""), none)
       else
         questions := questions.push
           (s!"This part was read from `{repo}` at {commit.take 10}, and the checkout, now at {head.take 10}, cannot be compared with that commit. "
