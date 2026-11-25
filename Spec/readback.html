@@ -666,16 +666,17 @@ function render(a, only) {
     S.append(ul); hid(S, asm.length - shown.length); }
   const sf = a.surface || [];
   if (sf.length) { const out = sf.filter(e => e.status === "left out").length, md = sf.filter(e => e.status === "modelled").length,
-      ri = sf.filter(e => e.status === "ruled in").length, two = sf.filter(clash).length;
-    const S = sec("What the code offers", md + " of " + (md + out) + " operations modelled" + (ri ? ", " + ri + " ruled in another part" : ""),
-      [out ? out + " left out" : "", two ? two + " with two owners" : ""].filter(Boolean).join(", "), 0,
+      ri = sf.filter(e => e.status === "ruled in").length, two = sf.filter(clash).length, nr = sf.filter(e => e.status === "not read").length;
+    const S = sec("What the code offers", md + " of " + (md + out + nr) + " operations modelled" + (ri ? ", " + ri + " ruled in another part" : ""),
+      [nr ? nr + " not read yet" : "", out ? out + " left out" : "", two ? two + " with two owners" : ""].filter(Boolean).join(", "), 0,
       "Every way into the code of this area, listed from the code, and what the model does with each. What is left out, the model says nothing about. A way in has one owner: the part whose model says when it is accepted and what it does; another part that needs it names it as ruled there. Code that serves other areas is not listed here.");
-    const tb = h("tbody"); [...sf].sort((x, y) => (clash(y) - clash(x)) || ((y.status === "left out") - (x.status === "left out"))).forEach(e => {
+    const tb = h("tbody"); [...sf].sort((x, y) => (clash(y) - clash(x)) || ((y.status === "not read") - (x.status === "not read")) || ((y.status === "left out") - (x.status === "left out"))).forEach(e => {
       const as = e.actions.length ? h("span", "mono", e.actions.join(", ")) : null;
-      const r = h("tr", e.status === "left out" || clash(e) ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
+      const r = h("tr", e.status === "left out" || e.status === "not read" || clash(e) ? "lo" : "", h("td", "", e.what), h("td", "mono wr", e.code),
         h("td", "", e.status === "modelled" ? ["modelled: ", as, e.by ? h("div", "cnt", "used by " + e.by, e.screen ? [" on ", h("span", "", e.screen)] : null) : null, e.ui ? h("div", "cnt mono wr", e.ui) : null] : e.status === "reads" ? "only reads"
           : e.status === "outside" ? ["decided outside this area; here as: ", as]
           : e.status === "ruled in" ? ["ruled in ", link(e.owner, file(e.owner)), as ? ["; what follows here: ", as] : null]
+          : e.status === "not read" ? h("b", "", "not read yet")
           : [h("b", "", "left out: "), e.why],
           others(e).filter(x => !(e.status === "ruled in" && x.part === e.owner && x.status === "modelled")).map(x =>
             h("div", "cnt", x.same === false ? "code behind it is also " : clash(e) && x.status === "modelled" ? h("b", "", "two owners: ") : "also ", x.status, " in ", link(x.part, file(x.part))))));
@@ -754,10 +755,10 @@ if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readb
 else if (KIND === "index") {
   // One card per area. An area's parts are added up here; they are told apart on the area's own page.
   const by = new Map(); DATA.forEach(a => { const k = areaOf(a.area); if (!by.has(k)) by.set(k, []); by.get(k).push(a); });
-  const sum = ps => { const z = { j: 0, jBad: 0, wBad: 0, c: 0, ok: 0, below: 0, bad: 0, q: 0, md: 0, out: 0, code: new Set() };
+  const sum = ps => { const z = { j: 0, jBad: 0, wBad: 0, c: 0, ok: 0, below: 0, bad: 0, q: 0, md: 0, out: 0, nr: 0, code: new Set() };
     ps.forEach(a => { const t = stats(a), sf = a.surface || [];
       z.j += (a.journeys || []).length; z.jBad += t.jBad; z.wBad += t.wBad; z.c += a.claims.length; z.ok += t.ok; z.below += t.below; z.bad += t.bad;
-      z.q += a.questions.length; z.md += sf.filter(e => e.status === "modelled").length; z.out += sf.filter(e => e.status === "left out").length;
+      z.q += a.questions.length; z.md += sf.filter(e => e.status === "modelled").length; z.out += sf.filter(e => e.status === "left out").length; z.nr += sf.filter(e => e.status === "not read").length;
       z.code.add(codeOf(a).status); });
     return z; };
   const nice = name => { const t = name.replace(/[-_]/g, " "); return t.charAt(0).toUpperCase() + t.slice(1); };
@@ -773,17 +774,25 @@ else if (KIND === "index") {
     return link([
       h("div", "ctop", h("b", "", nice(name)), h("span", "badge " + cls, cls === "violated" ? "✕ needs attention" : cls === "below" ? "▲ below target" : "✓ ok")),
       h("p", "cnt", [num(z.j, "journey"), num(z.c, "claim"),
-        z.md + z.out ? n(z.md) + " of " + num(z.md + z.out, "way", "ways") + " into the code modelled" : null].filter(Boolean).join(" · ")),
+        z.md + z.out + z.nr ? n(z.md) + " of " + num(z.md + z.out + z.nr, "way", "ways") + " into the code modelled" : null].filter(Boolean).join(" · ")),
       z.c ? [bar, h("div", "leg", h("span", "mk ok", "✓ " + n(z.ok) + " ok"),
         z.below ? h("span", "mk below", "▲ " + n(z.below) + " below target") : null,
         z.bad ? h("span", "mk violated", "✕ " + n(z.bad) + " violated") : null)] : null,
       h("div", "pills", pill(z.jBad, "bad", "✕ " + num(z.jBad, "journey") + " failed"), pill(z.wBad, "bad", "✕ " + num(z.wBad, "walkthrough") + " failed"),
-        pill(z.q, "ask", "? " + num(z.q, "open question")), pill(z.out, "", num(z.out, "way", "ways") + " into the code left out"), pill(1, cc, ct))],
+        pill(z.q, "ask", "? " + num(z.q, "open question")), pill(z.nr, "ask", num(z.nr, "way", "ways") + " into the code not read yet"), pill(z.out, "", num(z.out, "way", "ways") + " into the code left out"), pill(1, cc, ct))],
       file(name), "card " + cls); };
   const each = [...by].map(([name, ps]) => [name, sum(ps)]), all = sum(DATA);
   app.append(h("h1", "", "Readback"),
     h("p", "sub", "Every area as it stands. Open one to read its journeys, what is claimed and checked, and what is still yours to decide."));
   if (PAGE.since) app.append(h("p", "", link("What the change since " + short(PAGE.since) + " does, across areas", "change.html")));
+  // counted from the code itself: what it offers, and what no part has said anything about
+  const wi = Object.entries(PAGE.waysIn || {});
+  if (wi.length) { const d = h("details", "row"), loose = wi.reduce((k, [, r]) => k + r.inNoPart.length, 0);
+    d.append(h("summary", "", h("b", "", "Counted from the code: "), n(wi.reduce((k, [, r]) => k + r.found, 0)) + " ways in, ",
+      loose ? h("span", "mk below", "▲ " + n(loose) + " in no part") : h("span", "mk ok", "✓ every one is in some part")));
+    wi.forEach(([repo, r]) => { d.append(h("p", "", h("b", "", repo), ": " + n(r.found) + " in the code, " + n(r.inNoPart.length) + " in no part"));
+      if (r.inNoPart.length) d.append(h("div", "mono wr cnt", r.inNoPart.map(x => h("div", "", x)))); });
+    app.append(d); }
   app.append(h("div", "tiles",
       tile("", n(each.length), each.length === 1 ? "area" : "areas"), tile("", n(all.j), "journeys"),
       tile("good", n(all.ok), "✓ claims ok"), tile(all.below ? "warn" : "good", n(all.below), "▲ claims below target"),

@@ -178,13 +178,7 @@
  "readAt": [],
  "questions":
  [{"text":
-   "Can `hold` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `confirm` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `cancel` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `tick` interleave with other events inside the implementation, or is it atomic? Not decided."}],
+   "Whether 4 action(s) can interleave with other events inside the implementation, or are atomic, is not decided: `hold`, `confirm`, `cancel`, `tick`. For existing code, read it from the code (what runs in one transaction, under which lock) and say so in `atomic`; otherwise it is the person's decision."}],
  "lifecycles":
  [{"name": "seat",
    "initial": ["free"],
@@ -271,7 +265,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "6921541509820862636",
+  "inputs": "14836150838046224707",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",

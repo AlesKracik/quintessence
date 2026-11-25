@@ -77,6 +77,54 @@ def freshen (override : Option Nat) : IO Unit := do
     if behind > 0 then
       IO.eprintln s!"sources: the checkout of `{name}` ({dir}) is {behind} commits behind its remote; bring it up to date, or read from a fresh copy, before reading from it"
 
+/-- The ways into the code, counted from the code itself and not from what an
+agent listed. `.spec/project.json` says for each repository what a way in
+looks like: `"ways_in": {"orders-service": {"files": [".kt"], "under":
+["src/main"], "marks": ["@PostMapping", "@KafkaListener", "@Scheduled"]}}`
+(plain text, no patterns; `under` and `skip` are parts of the path). Every
+line of the checkout that carries a mark is a way in. It is listed when some
+part names its file with lines that reach it (a mark stands a few lines above
+what it marks), or names the file with no lines. The rest are in no part:
+nobody has said whose they are. -/
+def waysIn (surfaces : List Surface) : IO (List String × Lean.Json) := do
+  let file (path : String) : IO Lean.Json :=
+    return (Lean.Json.parse (← try IO.FS.readFile path catch _ => pure "")).toOption.getD .null
+  let strs (j : Lean.Json) (k : String) : List String :=
+    ((j.getObjVal? k >>= Lean.Json.getArr?).toOption.getD #[]).toList.filterMap (·.getStr?.toOption)
+  let here ← file ".spec/local.json"
+  let cited := surfaces.filter (!·.elsewhere) |>.flatMap (places ·.code)
+  let has (t w : String) : Bool := (t.splitOn w).length > 1
+  let mut lines : List String := []
+  let mut out : List (String × Lean.Json) := []
+  match (← file ".spec/project.json").getObjVal? "ways_in" with
+  | .ok (.obj repos) =>
+    for (repo, cfg) in repos.fold (fun (acc : List (String × Lean.Json)) k v => acc ++ [(k, v)]) [] do
+      let some dir := (here.getObjVal? "repo_paths" >>= (·.getObjVal? repo) >>= Lean.Json.getStr?).toOption
+        | lines := lines ++ [s!"ways in: `{repo}` has no checkout in .spec/local.json; not counted"]
+      let exts := strs cfg "files"; let under := strs cfg "under"; let marks := strs cfg "marks"
+      let skip := strs cfg "skip" ++ ["/.git/", "/node_modules/", "/build/", "/test/", "/tests/"]
+      let mut found := 0
+      let mut loose : List String := []
+      let all ← try System.FilePath.walkDir dir (enter := fun d =>
+          pure (!([".git", "node_modules", "build"].contains (d.fileName.getD "")))) catch _ => pure #[]
+      for f in all.qsort (·.toString < ·.toString) do
+        let path := f.toString
+        if !(exts.any path.endsWith) || skip.any (has path) || !(under.isEmpty || under.any (has path)) then continue
+        let text ← try IO.FS.readFile f catch _ => pure ""
+        let rel := (path.drop dir.length).dropWhile (· == '/')
+        for (l, k) in (text.splitOn "\n").zipIdx do
+          if marks.any (has l) then
+            found := found + 1
+            let n := k + 1
+            let listed := cited.any fun (c, ls) =>
+              ((c.splitOn "/").reverse.zip (rel.splitOn "/").reverse).all (fun (x, y) => x == y)
+                && (ls.isEmpty || ls.any fun (lo, hi) => lo ≤ n + 8 && n ≤ hi)
+            if !listed then loose := loose ++ [s!"{rel}:{n}  {(l.trim.take 110)}"]
+      lines := lines ++ [s!"ways in: `{repo}`: {found} in the code, {loose.length} in no part"]
+      out := out ++ [(repo, Lean.Json.mkObj [("found", Lean.Json.num found), ("inNoPart", .arr (loose.map Lean.Json.str).toArray)])]
+  | _ => pure ()
+  return (lines, Lean.Json.mkObj out)
+
 def run (areas : List Entry) (args : List String) : IO UInt32 := do
   let since := match args.dropWhile (· != "--since") with
     | _ :: ref :: _ => some ref
@@ -120,10 +168,10 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   IO.FS.createDirAll "out/readback"
   let template ← IO.FS.readFile s!"{← platformDir}/Spec/readback.html"
   -- one page of the readback: what kind it is, and the areas it shows
-  let page (file kind : String) (data : Array Lean.Json) : IO Unit :=
+  let page (file kind : String) (data : Array Lean.Json) (more : List (String × Lean.Json) := []) : IO Unit :=
     IO.FS.writeFile s!"out/readback/{file}.html" <|
       (template.replace "/*DATA*/[]" ((Lean.Json.arr data).compress.replace "</" "<\\/")).replace "/*PAGE*/{}"
-        (Lean.Json.mkObj [("kind", .str kind), ("since", (since.map Lean.Json.str).getD .null)]).compress
+        ((Lean.Json.mkObj ([("kind", .str kind), ("since", (since.map Lean.Json.str).getD .null)] ++ more)).compress.replace "</" "<\\/")
   -- An area can have parts, each its own state machine: `protection/configuration`,
   -- `protection/runs`. They are read together, on the page of the area.
   let top (name : String) : String := (name.splitOn "/").headD name
@@ -146,7 +194,11 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
     if areas.all fun e => top e.name != a || wanted e.name then
       page a "area" ((ran.zip pages.toList).filterMap fun (e, p) => if top e.name == a then some p else none).toArray
   if only.isNone then
-    page "index" "index" ledgers  -- the list of areas
+    -- what the code offers against what the parts list, counted from the code
+    let (counted, ways) ← waysIn (areas.flatMap (·.peer.surface))
+    for l in counted do IO.println l
+    if !counted.isEmpty then IO.FS.writeFile "ledger/ways-in.json" (ways.pretty ++ "\n")
+    page "index" "index" ledgers [("waysIn", ways)]  -- the list of areas
     -- the change, across every area it touches
     if since.isSome then page "change" "change" pages
     else try IO.FS.removeFile "out/readback/change.html" catch _ => pure ()  -- an earlier comparison's page would be stale

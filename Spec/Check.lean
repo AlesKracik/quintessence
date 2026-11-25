@@ -297,6 +297,8 @@ structure Surface where
   starter : Starter := .unknown
   /-- Where a person meets it: every screen and control that reach it. -/
   seen : List Seen := []
+  /-- Found in the code and not read yet: nothing is said about it so far. -/
+  notRead : Bool := false
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
@@ -326,6 +328,10 @@ def Surface.readOnly (what code : String) : Surface := { what, code, reads := tr
 /-- An entry of this area that the model does not cover, and why. It stays an
 open question. -/
 def Surface.leftOut (what code why : String) : Surface := { what, code, why }
+/-- A way in that was found in the code and has not been read yet. It is not
+left out, which is a decision: it is still to do, and the part is not done
+while it has one. An outline of an area lists every way in like this. -/
+def Surface.unread (what code : String) : Surface := { what, code, notRead := true }
 /-- Something decided outside this area that the model has actions for
 ("the recovery side changes the state of the group's plan"). -/
 def Surface.outside (what : String) (actions : List String) : Surface :=
@@ -345,7 +351,7 @@ def Surface.passesOn (e : Surface) : Bool := e.owner != "" && !e.actions.isEmpty
 
 def Surface.status (e : Surface) : String :=
   if e.elsewhere then "outside" else if e.owner != "" then "ruled in"
-  else if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else "left out"
+  else if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else if e.notRead then "not read" else "left out"
 
 /-- The places in the code that a surface entry names. `code` is free text;
 a place in it is a file, with the lines given for it or, with none given, all
@@ -923,6 +929,8 @@ def Area.peer [Repr α] (A : Area σ α) : Peer :=
       (j.id, j.title, (j.heads.map (actionName ∘ label)).eraseDups, ((j.steps.flatMap (·.all)).map (actionName ∘ label)).eraseDups,
        j.steps.map (·.say)) }
 
+-- one long function: it needs more than the default budget to elaborate
+set_option maxHeartbeats 800000 in
 private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     (since : Option String) (rerun : Bool) (others : List Peer) : IO Report := do
   -- what was recorded at the revision this run is compared with, for the readback
@@ -1261,7 +1269,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         questions := questions.push
           (s!"\"{e.what}\" ({e.code}) is also modelled in {part} (\"{x.what}\"). One way in has one owner: "
             ++ (if e.owns then "which part owns it? The other names it with `.ruledIn`." else "name it here as ruled there."), none)
-      if e.actions.isEmpty && owners.isEmpty then
+      if e.actions.isEmpty && owners.isEmpty && !e.notRead then
         questions := questions.push
           (s!"The code can {e.what} ({e.code}), and the model leaves it out: {e.why}. Should the area cover it?", none)
   if !A.surface.isEmpty then
@@ -1269,10 +1277,18 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       if !(A.surface.any (·.actions.contains n)) then
         questions := questions.push
           (s!"`{n}` stands for nothing in the area's list of what the code offers. Where does it come from?", none)
-  for n in distinct do
-    if !(A.atomic.any (·.1 == n)) then
-      questions := questions.push
-        (s!"Can `{n}` interleave with other events inside the implementation, or is it atomic? Not decided.", none)
+  -- one question for the part, not one for each action
+  let undecided := distinct.toList.filter fun n => !(A.atomic.any (·.1 == n))
+  if !undecided.isEmpty then
+    questions := questions.push
+      (s!"Whether {undecided.length} action(s) can interleave with other events inside the implementation, or are atomic, is not decided: "
+        ++ s!"{", ".intercalate (undecided.map (s!"`{·}`"))}. For existing code, read it from the code (what runs in one transaction, under which lock) "
+        ++ "and say so in `atomic`; otherwise it is the person's decision.", none)
+  let unreadWays := A.surface.filter (·.notRead)
+  if !unreadWays.isEmpty then
+    questions := questions.push
+      (s!"{unreadWays.length} of the {(A.surface.filter fun e => !e.elsewhere && e.owner == "").length} ways in of this part have not been read yet: "
+        ++ s!"{"; ".intercalate (unreadWays.map (·.what))}. Read each, then model it, or say why it is left out and ask the person.", none)
   let status (level target : Nat) (verdict : String) : String :=
     if verdict == "violated" then "violated" else if level ≤ target then "ok" else "below target"
   let withSteps (full : Bool) (run : Option (List α)) (obj : List (String × Json)) : Json :=
@@ -1322,10 +1338,13 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ++ surfaceFailed
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size
-  let summary := s!"{A.name}: {states} states, "
+  let own := (A.surface.filter fun e => !e.elsewhere && e.owner == "").length
+  let summary := (if claims.isEmpty && A.actions.isEmpty then s!"{A.name}: outlined, not modelled; {questions.size} open questions"
+    else s!"{A.name}: {states} states, "
     ++ (if f.exhaustive then "scope exhausted" else s!"stopped at budget, depth {f.depth}")
     ++ s!"; {claims.size} claims, {below} below target, {failed.length} failed; "
-    ++ s!"{questions.size} open questions; code {code.status}"
+    ++ s!"{questions.size} open questions; code {code.status}")
+    ++ (if unreadWays.isEmpty then "" else s!"; {unreadWays.length} of {own} ways in not read")
     ++ (if code.reused then " (unchanged in git since recorded, not re-run)" else "")
   return { ledger := json false, readback := json true, failed := failed ++ codeFailed, summary }
 
@@ -1333,6 +1352,15 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
 -- (what it shows of itself to the others is `Area.peer`, above)
 def Area.entry [Hashable σ] [Repr σ] [Repr α] (A : Area σ α) : Entry :=
   { name := A.name, report := build A, peer := A.peer }
+
+/-- An area or a part that is outlined and not modelled yet: its name, the
+ways into the code that belong to it (not read yet, as a rule), where they
+were found, and what is open about its extent. The outline of a system is
+made before any model, so that every way in has one area and every part can
+name the others. -/
+def outline (name : String) (surface : List Surface) (questions : List String := [])
+    (readAt : List (String × String) := []) : Entry :=
+  ({ name, init := (), step := fun _ _ => none, actions := [], surface, questions, readAt } : Area Unit Unit).entry
 
 end
 end Spec

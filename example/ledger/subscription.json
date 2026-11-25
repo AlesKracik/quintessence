@@ -134,17 +134,7 @@
   {"text":
    "`expire_period \"alice\"` is refused at the start, and no requirement covers that. Is refusing right there?"},
   {"text":
-   "Can `cancel_subscription` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `cancel_declined` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `cancel_unanswered` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `cancel_again` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `expire_period` interleave with other events inside the implementation, or is it atomic? Not decided."},
-  {"text":
-   "Can `request_refund` interleave with other events inside the implementation, or is it atomic? Not decided."}],
+   "Whether 6 action(s) can interleave with other events inside the implementation, or are atomic, is not decided: `cancel_subscription`, `cancel_declined`, `cancel_unanswered`, `cancel_again`, `expire_period`, `request_refund`. For existing code, read it from the code (what runs in one transaction, under which lock) and say so in `atomic`; otherwise it is the person's decision."}],
  "lifecycles":
  [{"name": "subscription",
    "initial": ["active"],
@@ -266,7 +256,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "9659619708725949911",
+  "inputs": "7169381992223423807",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",
