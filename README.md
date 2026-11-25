@@ -77,9 +77,9 @@ Underneath, every command runs the same program, the **checker**: `lake exe chec
 
 ## How it works
 
-Everything about one part of a system lives in an **area**:
+Everything about one piece of a system lives in an **area**. An area that is too large for one model is told in **parts**, named `<area>/<part>` (`protection/runs`); each part is a model of its own with everything in the table below, and the readback shows the parts of an area together on the area's page. The checker takes no other shape of name, and an area with parts has no model of its own.
 
-| Part | What it is |
+| It holds | What it is |
 |---|---|
 | Model | The state, the actions, and one function `step : action → state → new state or refused` |
 | Invariants | What must hold in every reachable state |
@@ -136,6 +136,24 @@ The search also finds what the requirements do not say, and reports it as questi
 - nobody has decided whether an action can interleave with others inside the implementation.
 
 Answering a question means adding a requirement, a walkthrough, or a decision. The requirements are complete, relative to the scope, when the list is empty.
+
+### The words
+
+The same words are used everywhere: in the files, in what the checker prints, on the readback page and by the agent. Use these and no others for them.
+
+| Word | Meaning |
+|---|---|
+| Area | What the person calls one: a piece of the system with its own purpose (`protection`). One page of the readback |
+| Part | One model of an area that is too large for one, cut by a thing with a life of its own (`protection/runs`). Not a sub-area, section, module or component |
+| Way in | One place where the code is entered: an endpoint, a message handler, a scheduled job |
+| Surface | The list of an area's or a part's ways in, each with who uses it and whether it is modelled, read-only, left out, or ruled in another part |
+| Journey | One business case that a person, a client of the API or a schedule starts, told as its usual course |
+| Step, way | A journey's step; where a step can go several ways, each is a way of it |
+| Walkthrough | One specific run, told moment by moment |
+| Requirement, invariant | The two kinds of claim: what an action must do, and what holds in every state |
+| Assumption | What the model takes as given or leaves out, said in one plain sentence |
+| Question | What is open for the person: written by the agent, or raised by the checker |
+| Readback | The pages a person reads instead of the files |
 
 ## Existing code and drift
 

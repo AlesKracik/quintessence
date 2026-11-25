@@ -395,6 +395,10 @@ def Surface.sameWayIn (a b : Surface) : Bool :=
 #guard (Surface.modelled "x" "A.kt" ["a"]).meets (.modelled "y" "rest/A.kt:10" ["b"])
 
 structure Area (σ α : Type) where
+  /-- `<area>`, or `<area>/<part>` when the area is told in several parts
+  (`protection`, `protection/runs`). An area is what the person calls one; a
+  part is one model of it, cut by a thing with a life of its own. The record
+  is the same for both, and the checker refuses any other shape of name. -/
   name : String
   init : σ
   /-- One step; `none` means the action is refused in that state. -/

@@ -97,6 +97,18 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
   if !known args then
     IO.eprintln "usage: lake exe check [--since <rev>] [--full] [--only <area or part>] [--fresh-within <days>]"
     return (1 : UInt32)
+  -- the names: an area is `<area>`, a part of an area is `<area>/<part>`, and nothing else
+  let word (w : String) : Bool := w != "" && w.all fun c => c.isLower || c.isDigit || c == '-'
+  let names := areas.map (·.name)
+  let misnamed := names.filter fun n => !((n.splitOn "/").length ≤ 2 && (n.splitOn "/").all word)
+  let twice := names.filter fun n => (names.filter (· == n)).length > 1
+  let both := names.filter fun n => names.any (·.startsWith (n ++ "/"))
+  if !misnamed.isEmpty || !twice.isEmpty || !both.isEmpty then
+    for n in misnamed do
+      IO.eprintln s!"names: `{n}` is not a name of an area (`protection`) or of a part of an area (`protection/runs`): lower-case words joined by hyphens, one slash at most"
+    for n in twice.eraseDups do IO.eprintln s!"names: `{n}` is named twice"
+    for n in both do IO.eprintln s!"names: `{n}` has parts and a model of its own; an area with parts is only its parts"
+    return (1 : UInt32)
   freshen fresh
   let wanted (name : String) : Bool := match only with
     | some o => name == o || name.startsWith (o ++ "/")
