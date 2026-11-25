@@ -33,7 +33,7 @@ defaultTargets = ["check"]
 [[require]]
 name = "quintessence"
 git = "https://github.com/AlesKracik/quintessence"
-rev = "framework-redesign"
+rev = "main"
 
 [[lean_lib]]
 name = "Areas"

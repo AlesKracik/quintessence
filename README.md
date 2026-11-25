@@ -16,7 +16,7 @@ https://github.com/AlesKracik/quintessence
 
 Open the agent where the requirements should live: a new repository, or a directory in an existing one. Tell it:
 
-> Set up a Quintessence project here. The framework is at https://github.com/AlesKracik/quintessence, branch `framework-redesign`. Read `SETUP.md` there and follow it.
+> Set up a Quintessence project here. The framework is at https://github.com/AlesKracik/quintessence. Read `SETUP.md` there and follow it.
 
 It will ask you for a name, which repositories hold the code and where you have them, and what is written about the system (documents of any kind; none are required). It may ask to install Lean. It ends by running the checker once. From then on the four commands below are available.
 
