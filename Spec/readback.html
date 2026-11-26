@@ -790,11 +790,13 @@ else if (KIND === "index") {
     h("p", "sub", "Every area as it stands. Open one to read its journeys, what is claimed and checked, and what is still yours to decide."));
   if (PAGE.since) app.append(h("p", "", link("What the change since " + short(PAGE.since) + " does, across areas", "change.html")));
   // counted from the code itself: what it offers, and what no part has said anything about
-  const wi = Object.entries(PAGE.waysIn || {});
-  if (wi.length) { const d = h("details", "row"), loose = wi.reduce((k, [, r]) => k + r.inNoPart.length, 0);
-    d.append(h("summary", "", h("b", "", "Counted from the code: "), n(wi.reduce((k, [, r]) => k + r.found, 0)) + " ways in, ",
-      loose ? h("span", "mk below", "▲ " + n(loose) + " in no part") : h("span", "mk ok", "✓ every one is in some part")));
-    wi.forEach(([repo, r]) => { d.append(h("p", "", h("b", "", repo), ": " + n(r.found) + " in the code, " + n(r.inNoPart.length) + " in no part"));
+  for (const [got, what, none, all] of [[PAGE.waysIn, "ways in", "in no part", "every one is in some part"], [PAGE.variants, "places where the code has one course per kind", "named on no way in", "every one is named on a way in"]]) {
+    const wi = Object.entries(got || {});
+    if (!wi.length) continue;
+    const d = h("details", "row"), loose = wi.reduce((k, [, r]) => k + r.inNoPart.length, 0);
+    d.append(h("summary", "", h("b", "", "Counted from the code: "), n(wi.reduce((k, [, r]) => k + r.found, 0)) + " " + what + ", ",
+      loose ? h("span", "mk below", "▲ " + n(loose) + " " + none) : h("span", "mk ok", "✓ " + all)));
+    wi.forEach(([repo, r]) => { d.append(h("p", "", h("b", "", repo), ": " + n(r.found) + " in the code, " + n(r.inNoPart.length) + " " + none));
       if (r.inNoPart.length) d.append(h("div", "mono wr cnt", r.inNoPart.map(x => h("div", "", x)))); });
     app.append(d); }
   app.append(h("div", "tiles",

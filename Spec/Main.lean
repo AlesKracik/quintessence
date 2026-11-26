@@ -87,22 +87,29 @@ looks like: `"ways_in": {"orders-service": {"files": [".kt"], "under":
 line of the checkout that carries a mark is a way in. It is listed when some
 part names its file with lines that reach it (a mark stands a few lines above
 what it marks), or names the file with no lines. The rest are in no part:
-nobody has said whose they are. -/
-def waysIn (surfaces : List Surface) : IO (List String × Lean.Json) := do
+nobody has said whose they are.
+
+The variants behind the ways in are counted the same way, from `"variants"`
+with the same fields: the marks say what a place looks like where the code
+has one course per kind (a class per kind: `: ProtectionJob(`; the entries of
+an enumeration the code switches on). Such a line is named when some way in
+says its variants (`.branches`) and gives the line's file among the places
+where the code picks one. The rest are named on no way in: no journey can
+show them. -/
+def counted (key word loose' : String) (cited : List (String × List (Nat × Nat))) : IO (List String × Lean.Json) := do
   let file (path : String) : IO Lean.Json :=
     return (Lean.Json.parse (← try IO.FS.readFile path catch _ => pure "")).toOption.getD .null
   let strs (j : Lean.Json) (k : String) : List String :=
     ((j.getObjVal? k >>= Lean.Json.getArr?).toOption.getD #[]).toList.filterMap (·.getStr?.toOption)
   let here ← file ".spec/local.json"
-  let cited := surfaces.filter (!·.elsewhere) |>.flatMap (places ·.code)
   let has (t w : String) : Bool := (t.splitOn w).length > 1
   let mut lines : List String := []
   let mut out : List (String × Lean.Json) := []
-  match (← file ".spec/project.json").getObjVal? "ways_in" with
+  match (← file ".spec/project.json").getObjVal? key with
   | .ok (.obj repos) =>
     for (repo, cfg) in repos.fold (fun (acc : List (String × Lean.Json)) k v => acc ++ [(k, v)]) [] do
       let some dir := (here.getObjVal? "repo_paths" >>= (·.getObjVal? repo) >>= Lean.Json.getStr?).toOption
-        | lines := lines ++ [s!"ways in: `{repo}` has no checkout in .spec/local.json; not counted"]
+        | lines := lines ++ [s!"{word}: `{repo}` has no checkout in .spec/local.json; not counted"]
       let exts := strs cfg "files"; let under := strs cfg "under"; let marks := strs cfg "marks"
       let skip := strs cfg "skip" ++ ["/.git/", "/node_modules/", "/build/", "/test/", "/tests/"]
       let mut found := 0
@@ -122,7 +129,7 @@ def waysIn (surfaces : List Surface) : IO (List String × Lean.Json) := do
               ((c.splitOn "/").reverse.zip (rel.splitOn "/").reverse).all (fun (x, y) => x == y)
                 && (ls.isEmpty || ls.any fun (lo, hi) => lo ≤ n + 8 && n ≤ hi)
             if !listed then loose := loose ++ [s!"{rel}:{n}  {(l.trim.take 110)}"]
-      lines := lines ++ [s!"ways in: `{repo}`: {found} in the code, {loose.length} in no part"]
+      lines := lines ++ [s!"{word}: `{repo}`: {found} in the code, {loose.length} {loose'}"]
       out := out ++ [(repo, Lean.Json.mkObj [("found", Lean.Json.num found), ("inNoPart", .arr (loose.map Lean.Json.str).toArray)])]
   | _ => pure ()
   return (lines, Lean.Json.mkObj out)
@@ -197,10 +204,16 @@ def run (areas : List Entry) (args : List String) : IO UInt32 := do
       page a "area" ((ran.zip pages.toList).filterMap fun (e, p) => if top e.name == a then some p else none).toArray
   if only.isNone then
     -- what the code offers against what the parts list, counted from the code
-    let (counted, ways) ← waysIn (areas.flatMap (·.peer.surface))
-    for l in counted do IO.println l
-    if !counted.isEmpty then IO.FS.writeFile "ledger/ways-in.json" (ways.pretty ++ "\n")
-    page "index" "index" ledgers [("waysIn", ways)]  -- the list of areas
+    let surface := areas.flatMap (·.peer.surface)
+    let (said, ways) ← counted "ways_in" "ways in" "in no part" (surface.filter (!·.elsewhere) |>.flatMap (places ·.code))
+    for l in said do IO.println l
+    if !said.isEmpty then IO.FS.writeFile "ledger/ways-in.json" (ways.pretty ++ "\n")
+    -- and what the code branches into behind them, against the variants the ways in name
+    let (said, variants) ← counted "variants" "variants" "named on no way in"
+      (surface.filter (!·.variants.isEmpty) |>.flatMap (places ·.branchesAt))
+    for l in said do IO.println l
+    if !said.isEmpty then IO.FS.writeFile "ledger/variants.json" (variants.pretty ++ "\n")
+    page "index" "index" ledgers [("waysIn", ways), ("variants", variants)]  -- the list of areas
     -- the change, across every area it touches
     if since.isSome then page "change" "change" pages
     else try IO.FS.removeFile "out/readback/change.html" catch _ => pure ()  -- an earlier comparison's page would be stale

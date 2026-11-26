@@ -94,7 +94,7 @@ def Areas.all : List Spec.Entry := []
 
    When the person does not list the repositories and the documents do, follow the documents: take the repositories they name as holding the system's own code, leave out what they call another team's, and say which you took and which you left. A repository with no checkout: ask where to clone it, and clone it with its history (a shallow clone cannot be compared with an older revision). The project's freshness threshold is `"fresh_within_days"` in `.spec/project.json` (one day when not given).
 
-   For existing code, also write down what a way into the code looks like in each repository (`"ways_in"` in `.spec/project.json`; `/spec`, "The outline", says how). The checker counts the ways in from these marks, so that what nobody has read yet is seen.
+   For existing code, also write down what a way into the code looks like in each repository (`"ways_in"` in `.spec/project.json`; `/spec`, "The outline", says how). The checker counts the ways in from these marks, so that what nobody has read yet is seen. The same for the places where the code has one course per kind (`"variants"`), so that no flavour of the product is missed.
 
 8. Run `lake exe check`. With no areas yet it builds the checker (a minute or two the first time) and prints `readback: out/readback/index.html`. If it does not, fix that before going on.
 
