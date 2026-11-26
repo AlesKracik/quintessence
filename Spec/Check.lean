@@ -1347,16 +1347,23 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       (s!"{readWays.length} ways in of this part are read and not modelled yet: {"; ".intercalate (readWays.map (·.what))}.", none)
   -- the variants the code has behind a way in are told as ways of the step they change
   let wayNames := (A.journeys.flatMap fun j => j.steps.flatMap fun st => st.ways.map fun w =>
-    (w.name, (w.steps.flatMap (·.actions)).map (actionName ∘ label)))
+    (w.name, (w.steps.flatMap (·.actions)).map (actionName ∘ label), w.steps.length))
   for e in A.surface do
     if !e.variants.isEmpty && e.owns then
-      let shown := (wayNames.filter fun (_, as) => as.any e.actions.contains).map (·.1)
-      let missing := e.variants.filter fun v => !shown.contains v
+      let shown := wayNames.filter fun (_, as, _) => as.any e.actions.contains
+      let missing := e.variants.filter fun v => !shown.any (·.1 == v)
       if !missing.isEmpty then
         questions := questions.push
           (s!"The code takes \"{e.what}\" {e.variants.length} ways ({", ".intercalate e.variants}; {e.branchesAt}), and no journey shows "
             ++ s!"{", ".intercalate missing} as a way of the step. Tell each as a way of the step it changes, under that name, "
             ++ "or ask the person which may be left out.", none)
+      -- a variant is a course of its own: what it does step by step, not one sentence on a step all variants share
+      let thin := e.variants.filter fun v => shown.any (·.1 == v) && shown.all fun (n, _, k) => n != v || k < 2
+      if !thin.isEmpty then
+        questions := questions.push
+          (s!"Of the ways the code takes \"{e.what}\", {", ".intercalate thin} {if thin.length == 1 then "is" else "are"} told in one step. "
+            ++ "A variant is a course of its own: tell what it does step by step, each step an action of the model, "
+            ++ "with the requirements that hold on that course. Or ask the person whether one step is all there is to it.", none)
   let status (level target : Nat) (verdict : String) : String :=
     if verdict == "violated" then "violated" else if level ≤ target then "ok" else "below target"
   let withSteps (full : Bool) (run : Option (List α)) (obj : List (String × Json)) : Json :=
