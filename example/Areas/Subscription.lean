@@ -31,8 +31,7 @@ def req006 : Requirement State Action :=
     refused := true }
 
 theorem req006_holds : req006.Holds init apply (fun _ _ => 0) := by
-  intro s _ a _ _ hw
-  cases a <;> simp_all [req006, apply]
+  requirement_step [req006, apply]
 
 def area : Area State Action where
   name := "subscription"

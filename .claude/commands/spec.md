@@ -50,7 +50,7 @@ Run `lake exe check` from the repository root.
 - A violated claim comes with the shortest run that shows it (on the area's readback page, `out/readback/<area>.html`). Show the run to the person and ask whether the model or the claim is wrong. Then fix that one.
 - A claim "below target" is not a failure, but say so.
 
-## 3. Prove the invariants
+## 3. Prove
 
 For each invariant without a proof, write `Areas/<Name>/Proofs/<invariant>.lean` proving exactly
 
@@ -62,9 +62,24 @@ and attach it with `proof := some ⟨...⟩`. Use `Reachable.induct`. When the i
 
 `sorry`, `native_decide`, new axioms, `implemented_by`, `extern`, `unsafe` and `debug.skipKernelTC` are rejected by the build. If you cannot prove an invariant, leave the proof out and report it. If you find it is false, bring the counterexample to the person.
 
-There is no Mathlib: no `tauto`, `linarith`, `by_contra` and the like; use `simp`, `omega`, `cases`, `by_cases`, `Classical.byContradiction`. The data library (`Spec/Data.lean` in the framework) has the lemmas about maps you will need most, `FMap.get?_set`, `FMap.get_set`, `FMap.get?_of_mem_keys`, `FMap.get_of_get?`, and the proofs under `example/Areas/*/Proofs/` in the framework show the usual shape.
+There is no Mathlib: no `tauto`, `linarith`, `by_contra` and the like; use `simp`, `omega`, `cases`, `by_cases`, `Classical.byContradiction`. The data library (`Spec/Data.lean` in the framework) has the lemmas about maps you will need most, `FMap.get?_set`, `FMap.get_set`, `FMap.get?_of_mem_keys`, `FMap.mem_keys_of_get?`, `FMap.get_of_get?`, `FMap.get?_foldl_set`, `FSet.contains_insert`, `FSet.contains_filter_ne`, and `nat_toString_inj` / `prefix_nat_inj` (two numbers have two texts, for ids made from a counter), and the proofs under `example/Areas/*/Proofs/` in the framework show the usual shape.
 
-Requirements can be proven too, and you try it for every one, critical or not, once the search is clean: the search says a requirement holds in the scope (two customers, three steps of retry); a proof says it holds for every size and any number of steps. Write the requirement on its own (`def req006 : Requirement State Action := { ... }`, and name it in `requirements`), prove `theorem req006_holds : req006.Holds init apply reason` (what `Requirement.Holds` says: in every reachable state, for every action the requirement speaks about, the step is refused or succeeds and satisfies `shall`), and attach it by the requirement's position in the list, from 0: `proven := [⟨⟨7, by decide⟩, ⟨req006_holds⟩⟩]`. Most requirements speak about one step and need nothing about how the state was reached: `intro s _ a _ _ hw; cases a <;> simp_all [req006, apply]` closes many of them at once. Try that first on each; where it fails, look at the goal left: a fact about reachable states it needs is an invariant to prove first and use (`Reachable.induct`), and one more try is worth it; beyond that leave the requirement at the search and say in your report which stayed there and what they would need. A requirement stays "ok" at the search; the proof is the stronger verdict, shown on the page (`subscription` in the example proves one).
+### Requirements
+
+Requirements are proven too, every one, critical or not, once the search is clean. The search says a requirement holds in the scope (two customers, three steps of retry); a proof says it holds for every size and any number of steps. It is worth the effort for all of them: most requirements speak about one step and are proven by one line, and the attempt finds what the search cannot, a claim that is true only because of the scope.
+
+Write the requirement on its own (`def req006 : Requirement State Action := { ... }`, and name it in `requirements`), prove `theorem req006_holds : req006.Holds init apply reason` (what `Requirement.Holds` says: in every reachable state, for every action the requirement speaks about, the step is refused or succeeds and satisfies `shall`; `reason` is the area's, `fun _ _ => 0` when it gives none), and attach it by the requirement's position in the list, from 0: `proven := [⟨⟨7, by decide⟩, ⟨req006_holds⟩⟩]`. The theorems sit in the area file, after the requirements and before the area; lemmas and invariants they use go under `Proofs/`. A requirement made by a helper function is proven once for the helper, for every argument, not once per use. Definitions of the model that a proof has to unfold must not be `private`.
+
+Go in this order, and stop at the first that works:
+
+1. `requirement_step [req006, apply]`. It splits by action, unfolds, splits the conditions that are left and closes the rest.
+2. The same with the model's helper definitions the step goes through: `requirement_step [req006, apply, canChange, groupAt]`. Give only those on the way; a large list makes it slow, not stronger. For a requirement that refuses, leave out the helper its `when` names. In a part where many requirements need the same list, give the list a name of its own (a local `macro`).
+3. By hand, action by action: `intro s hr a _ _ hw; cases a`, then for the one or two actions the requirement speaks about, a small lemma that says what the step does to the state, and `simp` with that. Keep helpers folded until the action is split. A limit on effort (`set_option maxHeartbeats ... in`) may be raised for one theorem, not for a file.
+4. With a fact about reachable states. When the goal left is true only of states the system can reach, that fact is an invariant: prove it (`Reachable.induct`) and use it through `hr`. The usual ones: no key twice in a list kept by id; ids made from a counter are below the counter, so a new one is fresh; a thing in one table has its entry in another. When that fact is an invariant the area already states, prove that invariant, do not assume it.
+
+After that, leave the requirement at the search. Say in your report, for each one left, which of three it is: it needs a fact nobody has proven yet (say the fact); the proof is too costly (say where it stops); or **it is false outside the scope**. The last is a finding, not a failure of the proof: the model holds a fixed set of things (three networks, six machines) and the requirement says "any", so the claim holds only for the things the model knows. Do not reword the requirement or the model to make the proof pass. Bring it to the person as a question with the case that breaks it.
+
+A requirement stays "ok" at the search; the proof is the stronger verdict, shown on the page (`subscription` in the example proves one).
 
 Proof writing and proof repair after a model change are mechanical: delegate them to a cheaper model when you can. The kernel checks the result.
 

@@ -81,6 +81,18 @@ def Requirement.Holds {σ α : Type} (q : Requirement σ α) (init : σ) (step :
     | none => q.refused = true
     | some t => q.refused = false ∧ q.shall s a t = true
 
+/-- The usual proof of a requirement that speaks about one step and needs
+nothing about how the state was reached: `requirement_step [req006, apply]`,
+with the requirement, the step function and the model's own helper definitions
+that have to be unfolded. It splits by action first, then unfolds, splits the
+conditions left and closes what remains. What it leaves open is shown. -/
+syntax "requirement_step" "[" Lean.Parser.Tactic.simpLemma,* "]" : tactic
+macro_rules
+  | `(tactic| requirement_step [$ls,*]) =>
+    `(tactic| (intro s hr a _ _ hw; clear hr; cases a <;> (try simp_all [$ls,*]) <;>
+        (try (repeat' (first | split | split at *))) <;> (try simp_all) <;> (try subst_vars) <;>
+        (try simp_all) <;> (try grind)))
+
 /-- One step of a journey's usual course: what happens, in general words, and
 the evidence that the model takes the step: one or more concrete actions, in
 order. More than one says that the step can repeat, and the readback draws a
