@@ -263,7 +263,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "12722932461668996171",
+  "inputs": "10410648491978169533",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",

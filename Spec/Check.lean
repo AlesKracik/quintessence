@@ -319,6 +319,9 @@ structure Surface where
   variants : List String := []
   /-- Where the code picks the variant. -/
   branchesAt : String := ""
+  /-- The same, family by family: one way in can stand for several choices the code makes (the
+  kind of job, and the platform it runs on), each with its own variants and place. -/
+  families : List (List String × String) := []
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
@@ -363,9 +366,12 @@ def Surface.agreed (who : String) (e : Surface) : Surface := { e with accepted :
 "service/WorkflowSelector.kt:40-90" (.person ...)`. One way in often stands for several courses,
 chosen by a kind the code branches on. They are not ways in of their own: each is a way of the
 step it changes in the journey of the business case, and the checker asks for the ones no
-journey shows. An entry that is not read yet can carry them too. -/
+journey shows. An entry that is not read yet can carry them too. Where the code makes several
+choices behind one way in (the kind of copy, and the platform), say `.branches` once for each:
+they add up. -/
 def Surface.branches (variants : List String) (at_ : String) (e : Surface) : Surface :=
-  { e with variants, branchesAt := at_ }
+  { e with variants := e.variants ++ variants, families := e.families ++ [(variants, at_)],
+           branchesAt := if e.branchesAt.isEmpty then at_ else e.branchesAt ++ "; " ++ at_ }
 /-- Something decided outside this area that the model has actions for
 ("the recovery side changes the state of the group's plan"). -/
 def Surface.outside (what : String) (actions : List String) : Surface :=
@@ -1385,6 +1391,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
       ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner), ("by", .str e.starter.word),
       ("accepted", .str e.accepted), ("variants", .arr (e.variants.map .str).toArray), ("branchesAt", .str e.branchesAt),
+      ("families", .arr (e.families.map fun (vs, at_) => Json.mkObj [("variants", .arr (vs.map .str).toArray), ("at", .str at_)]).toArray),
       ("screen", .str e.shownAs), ("ui", .str ("; ".intercalate ((e.seen.map (·.ui)).filter (· != "")).eraseDups)),
       ("shared", .arr <| (others.toArray.flatMap fun p => (p.surface.filter fun x =>
           !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>

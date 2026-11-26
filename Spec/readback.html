@@ -681,7 +681,7 @@ function render(a, only) {
           : e.status === "not read" ? h("b", "", "not read yet")
           : e.status === "read, not modelled" ? h("b", "", "read, not modelled yet")
           : [h("b", "", "left out: "), e.why, e.accepted ? h("div", "cnt", "agreed: " + e.accepted) : null],
-          (e.variants || []).length ? h("div", "cnt", "the code takes it " + e.variants.length + " ways: " + e.variants.join(", "), e.branchesAt ? [" (", h("span", "mono", e.branchesAt), ")"] : null) : null,
+          (e.families || []).map(f => h("div", "cnt", (f.variants.length === 1 ? "the code takes it one way here: " : "the code takes it " + f.variants.length + " ways: ") + f.variants.join(", "), f.at ? [" (", h("span", "mono", f.at), ")"] : null)),
           others(e).filter(x => !(e.status === "ruled in" && x.part === e.owner && x.status === "modelled")).map(x =>
             h("div", "cnt", x.same === false ? "code behind it is also " : clash(e) && x.status === "modelled" ? h("b", "", "two owners: ") : "also ", x.status, " in ", link(x.part, file(x.part))))));
       tb.append(r); });
