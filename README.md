@@ -110,7 +110,7 @@ Each claim is reported at the strongest level it reached. The claim never change
 | 3 | No counterexample within N steps | The search stopped at the budget |
 | 5 | Not verified | The requirement never applied, or the claim is violated |
 
-Invariants are expected to reach level 1 and requirements level 2. Anything weaker is shown as "below target".
+Invariants are expected to reach level 1 and requirements level 2. Anything weaker is shown as "below target". A requirement can carry a proof as well (`proven` in the area), and is then reported as proven for all sizes and steps; `/spec` tries it for every requirement once the search is clean.
 
 ### Journeys and walkthroughs
 

@@ -69,6 +69,18 @@ structure Requirement (σ α : Type) where
   Free text, shown to the reviewer. -/
   sources : List String := []
 
+/-- What a requirement says, for every size and every number of steps: in each
+reachable state, for each action it speaks about, the step is refused (when it
+says "shall refuse"), or succeeds and satisfies `shall`. This is the statement
+a proof of the requirement proves; the search checks the same on the scope. -/
+def Requirement.Holds {σ α : Type} (q : Requirement σ α) (init : σ) (step : α → σ → Option σ)
+    (reason : σ → α → Nat) : Prop :=
+  ∀ s, Reachable init step s → ∀ a, q.on a = true → (∀ r, q.reason = some r → reason s a = r) →
+    q.when s a = true →
+    match step a s with
+    | none => q.refused = true
+    | some t => q.refused = false ∧ q.shall s a t = true
+
 /-- One step of a journey's usual course: what happens, in general words, and
 the evidence that the model takes the step: one or more concrete actions, in
 order. More than one says that the step can repeat, and the readback draws a
@@ -461,6 +473,12 @@ structure Area (σ α : Type) where
   budget : Nat := 1000000
   invariants : List (Invariant init step) := []
   requirements : List (Requirement σ α) := []
+  /-- Proofs of requirements: the position of the requirement in `requirements`
+  (from 0) with a proof of what it says (`Requirement.Holds`), checked by the
+  kernel against exactly that requirement: `⟨⟨3, by decide⟩, ⟨Proofs.req004⟩⟩`.
+  A requirement targets the search, not a proof; one that has a proof is
+  reported as proven for all sizes and steps. -/
+  proven : List ((i : Fin requirements.length) × PLift ((requirements[i]).Holds init step reason)) := []
   journeys : List (Journey α) := []
   walkthroughs : List (Walkthrough σ α) := []
   /-- Named projections of the state in words a reader knows ("seat s1" is
@@ -1008,6 +1026,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       | some (fp, a) => (q.id, "requirement", q.text, 5, 2, "violated", some (trace fp (some a)))
       | none =>
         if f.reqHits[j]! == 0 then (q.id, "requirement", q.text, 5, 2, "never applies in the scope", none)
+        else if A.proven.any (·.1.val == j) then (q.id, "requirement", q.text, 1, 2, "proven for all sizes and steps", none)
         else (q.id, "requirement", q.text, reached.1, 2, reached.2, none)
     if f.reqFail[j]!.isNone && f.reqHits[j]! == 0 then
       questions := questions.push

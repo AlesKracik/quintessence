@@ -20,6 +20,20 @@ def statusView (c : CustomerId) (s : State) : String :=
 def retryView (c : CustomerId) (s : State) : String :=
   s!"{triesOf s c} unanswered tries"
 
+/-- A requirement with a proof is written on its own, so that the proof can name it. -/
+def req006 : Requirement State Action :=
+  { id := "REQ-006",
+    sources := ["the earlier Quint specification of this example"],
+    text := "A refund for the unused part of a paid period is never issued.",
+    when := fun _ a => match a with
+      | .request_refund _ => true
+      | _ => false,
+    refused := true }
+
+theorem req006_holds : req006.Holds init apply (fun _ _ => 0) := by
+  intro s _ a _ _ hw
+  cases a <;> simp_all [req006, apply]
+
 def area : Area State Action where
   name := "subscription"
   init := init
@@ -116,13 +130,9 @@ def area : Area State Action where
       shall := fun _ a t => match a with
         | .expire_period c => t.status.get c == .Expired && !t.accessUntilPeriodEnd.get c
         | _ => true },
-    { id := "REQ-006",
-      sources := ["the earlier Quint specification of this example"],
-      text := "A refund for the unused part of a paid period is never issued.",
-      when := fun _ a => match a with
-        | .request_refund _ => true
-        | _ => false,
-      refused := true }]
+    req006]
+  -- REQ-006 holds for every customer and any number of steps, not only in the scope searched
+  proven := [⟨⟨7, by decide⟩, ⟨req006_holds⟩⟩]
   journeys := [
     { id := "J-001",
       sources := ["written for this example"], title := "Cancelling a subscription",
