@@ -81,17 +81,39 @@ def Requirement.Holds {σ α : Type} (q : Requirement σ α) (init : σ) (step :
     | none => q.refused = true
     | some t => q.refused = false ∧ q.shall s a t = true
 
+/-- `Holds` in the form a proof by hand wants: one goal for the step being
+refused and one for the step being taken, each with the step's result as a
+hypothesis to unfold, instead of a `match` on it in the goal. -/
+theorem Requirement.holds_of {σ α : Type} {q : Requirement σ α} {init : σ} {step : α → σ → Option σ}
+    {reason : σ → α → Nat}
+    (h : ∀ s, Reachable init step s → ∀ a, q.on a = true → (∀ r, q.reason = some r → reason s a = r) →
+      q.when s a = true →
+      (step a s = none → q.refused = true) ∧
+      (∀ t, step a s = some t → q.refused = false ∧ q.shall s a t = true)) :
+    q.Holds init step reason := by
+  intro s hr a ho hre hw
+  have ⟨h1, h2⟩ := h s hr a ho hre hw
+  cases hs : step a s with
+  | none => exact h1 hs
+  | some t => exact h2 t hs
+
 /-- The usual proof of a requirement that speaks about one step and needs
 nothing about how the state was reached: `requirement_step [req006, apply]`,
 with the requirement, the step function and the model's own helper definitions
 that have to be unfolded. It splits by action first, then unfolds, splits the
-conditions left and closes what remains. What it leaves open is shown. -/
+conditions left and closes what remains; when that does not close, it tries
+the same on the split form (`Requirement.holds_of`), where the step's result
+is a hypothesis. What it leaves open is shown. -/
 syntax "requirement_step" "[" Lean.Parser.Tactic.simpLemma,* "]" : tactic
 macro_rules
   | `(tactic| requirement_step [$ls,*]) =>
-    `(tactic| (intro s hr a _ _ hw; clear hr; cases a <;> (try simp_all [$ls,*]) <;>
-        (try (repeat' (first | split | split at *))) <;> (try simp_all) <;> (try subst_vars) <;>
-        (try simp_all) <;> (try grind)))
+    `(tactic| first
+      | (intro s hr a _ _ hw; clear hr; cases a <;> (try simp_all [$ls,*]) <;>
+          (try (repeat' (first | split | split at *))) <;> (try simp_all) <;> (try subst_vars) <;>
+          (try simp_all) <;> (try grind); done)
+      | (refine Requirement.holds_of ?_; intro s hr a _ _ hw; clear hr; cases a <;>
+          (try simp_all [$ls,*]) <;> (try (repeat' (first | split | split at *))) <;>
+          (try simp_all [$ls,*]) <;> (try subst_vars) <;> (try simp_all) <;> (try grind)))
 
 /-- One step of a journey's usual course: what happens, in general words, and
 the evidence that the model takes the step: one or more concrete actions, in
@@ -1448,10 +1470,12 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
   let below := (claims.filter fun (_, _, _, level, target, verdict, _) =>
     level > target && verdict != "violated").size
   let own := (A.surface.filter fun e => !e.elsewhere && e.owner == "").length
+  let proven := (List.range A.requirements.length).filter fun j => A.proven.any (·.1.val == j)
   let summary := (if claims.isEmpty && A.actions.isEmpty then s!"{A.name}: outlined, not modelled; {questions.size} open questions"
     else s!"{A.name}: {states} states, "
     ++ (if f.exhaustive then "scope exhausted" else s!"stopped at budget, depth {f.depth}")
     ++ s!"; {claims.size} claims, {below} below target, {failed.length} failed; "
+    ++ (if A.requirements.isEmpty then "" else s!"{proven.length} of {A.requirements.length} requirements proven; ")
     ++ s!"{questions.size} open questions; code {code.status}")
     ++ (if unreadWays.isEmpty then "" else s!"; {unreadWays.length} of {own} ways in not read")
     ++ (if readWays.isEmpty then "" else s!"; {readWays.length} read and not modelled yet")

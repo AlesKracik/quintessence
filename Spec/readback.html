@@ -509,7 +509,8 @@ const tile = (cls, big, label) => h("div", "tile " + cls, h("b", "", big), h("sp
 
 function stats(a) {
   const c = k => a.claims.filter(x => x.status === k).length, ws = a.walkthroughs || [];
-  return { ok: c("ok"), below: c("below target"), bad: c("violated"),
+  const rq = a.claims.filter(x => x.kind === "requirement");
+  return { ok: c("ok"), below: c("below target"), bad: c("violated"), rq: rq.length, pr: rq.filter(x => x.level === 1).length,
     wOk: ws.filter(x => x.status === "ok").length, wBad: ws.filter(x => x.status !== "ok").length,
     jOk: (a.journeys || []).filter(x => x.status === "ok").length, jBad: (a.journeys || []).filter(x => x.status !== "ok").length };
 }
@@ -634,6 +635,7 @@ function render(a, only) {
     tile(t.bad ? "bad" : "good", t.bad, "✕ claims violated"),
     tile(t.below ? "warn" : "good", t.below, "▲ claims below target"),
     tile("good", t.ok, "✓ claims ok"),
+    t.rq ? tile("", t.pr + " of " + t.rq, "requirements proven for all sizes") : null,
     tile(t.jBad ? "bad" : "good", t.jBad, "✕ journeys failed"),
     tile("good", t.jOk, "✓ journeys ok"),
     tile(t.wBad ? "bad" : "good", t.wBad, "✕ walkthroughs failed"),
@@ -759,9 +761,9 @@ if (!Array.isArray(DATA) || !DATA.length) app.append(h("div", "empty", "No readb
 else if (KIND === "index") {
   // One card per area. An area's parts are added up here; they are told apart on the area's own page.
   const by = new Map(); DATA.forEach(a => { const k = areaOf(a.area); if (!by.has(k)) by.set(k, []); by.get(k).push(a); });
-  const sum = ps => { const z = { j: 0, jBad: 0, wBad: 0, c: 0, ok: 0, below: 0, bad: 0, q: 0, md: 0, out: 0, nr: 0, code: new Set() };
+  const sum = ps => { const z = { j: 0, jBad: 0, wBad: 0, c: 0, ok: 0, below: 0, bad: 0, rq: 0, pr: 0, q: 0, md: 0, out: 0, nr: 0, code: new Set() };
     ps.forEach(a => { const t = stats(a), sf = a.surface || [];
-      z.j += (a.journeys || []).length; z.jBad += t.jBad; z.wBad += t.wBad; z.c += a.claims.length; z.ok += t.ok; z.below += t.below; z.bad += t.bad;
+      z.j += (a.journeys || []).length; z.jBad += t.jBad; z.wBad += t.wBad; z.c += a.claims.length; z.ok += t.ok; z.below += t.below; z.bad += t.bad; z.rq += t.rq; z.pr += t.pr;
       z.q += a.questions.length; z.md += sf.filter(e => e.status === "modelled").length; z.out += sf.filter(e => e.status === "left out").length; z.nr += sf.filter(e => e.status === "not read").length;
       z.code.add(codeOf(a).status); });
     return z; };
@@ -781,7 +783,8 @@ else if (KIND === "index") {
         z.md + z.out + z.nr ? n(z.md) + " of " + num(z.md + z.out + z.nr, "way", "ways") + " into the code modelled" : null].filter(Boolean).join(" · ")),
       z.c ? [bar, h("div", "leg", h("span", "mk ok", "✓ " + n(z.ok) + " ok"),
         z.below ? h("span", "mk below", "▲ " + n(z.below) + " below target") : null,
-        z.bad ? h("span", "mk violated", "✕ " + n(z.bad) + " violated") : null)] : null,
+        z.bad ? h("span", "mk violated", "✕ " + n(z.bad) + " violated") : null,
+        z.rq ? h("span", "mk", n(z.pr) + " of " + n(z.rq) + " requirements proven") : null)] : null,
       h("div", "pills", pill(z.jBad, "bad", "✕ " + num(z.jBad, "journey") + " failed"), pill(z.wBad, "bad", "✕ " + num(z.wBad, "walkthrough") + " failed"),
         pill(z.q, "ask", "? " + num(z.q, "open question")), pill(z.nr, "ask", num(z.nr, "way", "ways") + " into the code not read yet"), pill(z.out, "", num(z.out, "way", "ways") + " into the code left out"), pill(1, cc, ct))],
       file(name), "card " + cls); };
@@ -802,7 +805,8 @@ else if (KIND === "index") {
   app.append(h("div", "tiles",
       tile("", n(each.length), each.length === 1 ? "area" : "areas"), tile("", n(all.j), "journeys"),
       tile("good", n(all.ok), "✓ claims ok"), tile(all.below ? "warn" : "good", n(all.below), "▲ claims below target"),
-      tile(all.bad ? "bad" : "good", n(all.bad), "✕ claims violated"), tile(all.q ? "warn" : "good", n(all.q), "? open questions")),
+      tile(all.bad ? "bad" : "good", n(all.bad), "✕ claims violated"),
+      all.rq ? tile("", n(all.pr) + " of " + n(all.rq), "requirements proven for all sizes") : null, tile(all.q ? "warn" : "good", n(all.q), "? open questions")),
     h("div", "cards", each.map(([name, z]) => card(name, z))),
     h("p", "sub", h("b", "", "ok"), ": verified as strongly as asked. ", h("b", "", "below target"), ": holds as far as it was checked, but more weakly than asked. ",
       h("b", "", "violated"), ": the model breaks it; the area's page shows how."));
