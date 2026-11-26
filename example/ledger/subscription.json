@@ -124,7 +124,7 @@
  "readAt": [],
  "questions":
  [{"text":
-   "In J-001, 2 of 5 steps have no requirement of their own: none speaks at the step, or only the ones that speak at another step too, so what the step does is said in its sentence only (\"The customer cancels; the billing provider accepts and the customer is…\"; \"The customer cancels again; the billing provider accepts and the custo…\"). Code written from the requirements will not do it. Give each such step a requirement that says what it does, on a state the model keeps, or join it with the step it cannot be told apart from."},
+   "In J-001, 2 of 5 steps have no requirement of their own: none speaks at the step, or the step takes the same actions under the same requirements as a step that says something else, so what it does is said in its sentence only (\"The customer cancels; the billing provider accepts and the customer is…\"; \"The customer cancels again; the billing provider accepts and the custo…\"). Code written from the requirements will not do it. Give each such step a requirement that says what it does, on a state the model keeps, or join it with the step it cannot be told apart from."},
   {"text":
    "`cancel_subscription \"alice\" (Email)` is refused after cancel_subscription \"alice\" (Email), and no requirement covers that. Is refusing right there?"},
   {"text":
@@ -265,7 +265,7 @@
    ["notice bob", "system.noticeSentTo(\"bob\")"],
    ["unanswered tries bob", "system.unansweredTries(\"bob\")"]],
   "level": 4,
-  "inputs": "6213372031765326913",
+  "inputs": "3055591068774548107",
   "actions":
   {"request_refund": "system.requestRefund({0})",
    "expire_period": "system.expirePeriod({0})",
