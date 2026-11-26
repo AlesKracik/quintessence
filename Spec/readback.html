@@ -399,7 +399,7 @@ function journey(j, req, ms, walks, wmark, shown) {
     return out.length > 1 ? [out[0], h("details", "onj", h("summary", "", "reached from " + (out.length - 1) + " more place" + (out.length > 2 ? "s" : "")), out.slice(1))] : out; };
   const card = (st, n) => {
     const off = st.asTold === false, c = h("div", "mo" + (off ? " bad" : ""), h("span", "dot", n), h("p", "say", st.say),
-      st.repeats ? h("p", "again", LOOP(), "can repeat") : null, screens(st.screens), reqChips(st.requirements, req),
+      st.repeats ? h("p", "again", LOOP(), "can repeat") : null, st.looks ? h("p", "sub", "the person only looks; nothing changes") : null, screens(st.screens), reqChips(st.requirements, req),
       off ? h("p", "note", "the model does not take this step as told") : null);
     // each way of being turned down names the walkthroughs that show it happening
     const leaves = h("div", "lvs", (st.turnedDown || []).map(id => { const ws = shown.get(id) || [];
@@ -453,7 +453,9 @@ function journey(j, req, ms, walks, wmark, shown) {
 }
 function journeys(a, D) {
   const js = a.journeys || [], ws = a.walkthroughs || [], out = [];
-  if (!js.length) out.push(h("p", "sub", "No journeys yet — the business cases a person would recognise this area by are missing."));
+  if (!js.length && (a.named || []).length) out.push(h("p", "sub", "Named, not told yet: the business cases of this part, as the outline has them."),
+    h("ul", "", a.named.map(x => h("li", "", x.title, x.by ? h("span", "sub", " — " + x.by) : null))));
+  else if (!js.length) out.push(h("p", "sub", "No journeys yet — the business cases a person would recognise this area by are missing."));
   const req = new Map(a.claims.map(c => [c.id, c.text])), wmark = w => (D && D.w.get(w.id)) || null;
   const shown = new Map();  // requirement -> the walkthroughs in which it is seen at work
   ws.forEach(w => (w.moments || []).forEach(m => (m.requirements || []).forEach(r => {
@@ -666,9 +668,9 @@ function render(a, only) {
     S.append(ul); hid(S, asm.length - shown.length); }
   const sf = a.surface || [];
   if (sf.length) { const out = sf.filter(e => e.status === "left out").length, md = sf.filter(e => e.status === "modelled").length,
-      ri = sf.filter(e => e.status === "ruled in").length, two = sf.filter(clash).length, nr = sf.filter(e => e.status === "not read").length;
-    const S = sec("What the code offers", md + " of " + (md + out + nr) + " operations modelled" + (ri ? ", " + ri + " ruled in another part" : ""),
-      [nr ? nr + " not read yet" : "", out ? out + " left out" : "", two ? two + " with two owners" : ""].filter(Boolean).join(", "), 0,
+      ri = sf.filter(e => e.status === "ruled in").length, two = sf.filter(clash).length, nr = sf.filter(e => e.status === "not read").length, rn = sf.filter(e => e.status === "read, not modelled").length;
+    const S = sec("What the code offers", md + " of " + (md + out + nr + rn) + " operations modelled" + (ri ? ", " + ri + " ruled in another part" : ""),
+      [nr ? nr + " not read yet" : "", rn ? rn + " read, not modelled yet" : "", out ? out + " left out" : "", two ? two + " with two owners" : ""].filter(Boolean).join(", "), 0,
       "Every way into the code of this area, listed from the code, and what the model does with each. What is left out, the model says nothing about. A way in has one owner: the part whose model says when it is accepted and what it does; another part that needs it names it as ruled there. Code that serves other areas is not listed here.");
     const tb = h("tbody"); [...sf].sort((x, y) => (clash(y) - clash(x)) || ((y.status === "not read") - (x.status === "not read")) || ((y.status === "left out") - (x.status === "left out"))).forEach(e => {
       const as = e.actions.length ? h("span", "mono", e.actions.join(", ")) : null;
@@ -677,7 +679,9 @@ function render(a, only) {
           : e.status === "outside" ? ["decided outside this area; here as: ", as]
           : e.status === "ruled in" ? ["ruled in ", link(e.owner, file(e.owner)), as ? ["; what follows here: ", as] : null]
           : e.status === "not read" ? h("b", "", "not read yet")
-          : [h("b", "", "left out: "), e.why],
+          : e.status === "read, not modelled" ? h("b", "", "read, not modelled yet")
+          : [h("b", "", "left out: "), e.why, e.accepted ? h("div", "cnt", "agreed: " + e.accepted) : null],
+          (e.variants || []).length ? h("div", "cnt", "the code takes it " + e.variants.length + " ways: " + e.variants.join(", "), e.branchesAt ? [" (", h("span", "mono", e.branchesAt), ")"] : null) : null,
           others(e).filter(x => !(e.status === "ruled in" && x.part === e.owner && x.status === "modelled")).map(x =>
             h("div", "cnt", x.same === false ? "code behind it is also " : clash(e) && x.status === "modelled" ? h("b", "", "two owners: ") : "also ", x.status, " in ", link(x.part, file(x.part))))));
       tb.append(r); });

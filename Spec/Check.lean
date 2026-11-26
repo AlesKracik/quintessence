@@ -77,9 +77,15 @@ readback shows neither them nor any value they produce. -/
 structure Step (α : Type) where
   say : String
   actions : List α
+  /-- For a step in which the person only looks: the read-only way in that shows it, by its place in the code. -/
+  looks : String := ""
 
 /-- A step of a journey: `.step "The operator adds a VM." [.enroll "a", .enroll "b"]`. -/
-def Step.step {α : Type} (say : String) (actions : List α) : Step α := ⟨say, actions⟩
+def Step.step {α : Type} (say : String) (actions : List α) : Step α := { say, actions }
+/-- A step in which the person only looks at something and nothing changes: `.look "The person
+opens the list of plans." "rest/PlanController.kt:40"`. Its evidence is the read-only way in
+that the part lists at that place. -/
+def Step.look {α : Type} (say : String) (place : String) : Step α := { say, actions := [], looks := place }
 
 /-- One way a step of a journey can go: "on demand", "to another vCenter". Its own steps, in order
 (none when this way skips the step), when it applies, and the run that makes it apply, taken
@@ -107,9 +113,14 @@ structure Stage (α : Type) where
   orElse : List (List α) := []
   /-- The step goes the way an earlier choice went, and makes no choice of its own. -/
   tied : Bool := false
+  /-- For a step in which the person only looks: see `Step.look`. -/
+  looks : String := ""
 
 /-- A step of a journey: `.step "The operator adds a VM." [.enroll "a", .enroll "b"]`. -/
 def Stage.step {α : Type} (say : String) (actions : List α) : Stage α := { say, actions }
+/-- A step in which the person only looks; see `Step.look`. A journey of such steps is a business
+case too ("looking at what is protected"), started by a person. -/
+def Stage.look {α : Type} (say : String) (place : String) : Stage α := { say, looks := place }
 /-- A step that can go several ways: `.choice "A run starts." [.way "on schedule" [...], .way "on demand" [...]]`. -/
 def Stage.choice {α : Type} (say : String) (ways : List (Way α)) : Stage α := { say, ways }
 /-- A step that goes the way a choice of the journey went: one decision that shows at several steps
@@ -119,13 +130,13 @@ nothing to do here:
 def Stage.asChosen {α : Type} (say : String) (ways : List (Way α)) : Stage α := { say, ways, tied := true }
 /-- The same step with other evidence for where the first is not accepted: `(.step "The run is reported finished." [.finish 1]).or [.finish 2]`. -/
 def Stage.or {α : Type} (st : Stage α) (actions : List α) : Stage α := { st with orElse := st.orElse ++ [actions] }
-instance {α : Type} : Coe (Step α) (Stage α) := ⟨fun s => { say := s.say, actions := s.actions }⟩
+instance {α : Type} : Coe (Step α) (Stage α) := ⟨fun s => { say := s.say, actions := s.actions, looks := s.looks }⟩
 
 /-- The steps the stage comes to in state `s` when its choice is taken the `k`-th way. -/
 def Stage.taken {σ α : Type} (step : α → σ → Option σ) (s : σ) (st : Stage α) (w : Option (Way α)) : List (Step α) :=
   if st.ways.isEmpty then
     let goes (as : List α) := (as.foldl (init := some s) fun s a => s.bind (step a)).isSome
-    [⟨st.say, ((st.actions :: st.orElse).find? goes).getD st.actions⟩]
+    [{ say := st.say, actions := ((st.actions :: st.orElse).find? goes).getD st.actions, looks := st.looks }]
   else (w.map (·.steps)).getD []
 /-- Every action a stage can take, whichever way. -/
 def Stage.all {α : Type} (st : Stage α) : List α := st.actions ++ st.orElse.flatten ++ st.ways.flatMap (·.steps.flatMap (·.actions))
@@ -299,6 +310,15 @@ structure Surface where
   seen : List Seen := []
   /-- Found in the code and not read yet: nothing is said about it so far. -/
   notRead : Bool := false
+  /-- Read, and not modelled yet: its part is still an outline, or the model is to come. -/
+  readNotModelled : Bool := false
+  /-- Who agreed that it is left out, and when. A left-out way in without it is an open question. -/
+  accepted : String := ""
+  /-- The variants the code has behind this way in: the kinds it branches on (a workflow, a
+  provider, a target), in the person's words. Each is told as a way of the step it changes. -/
+  variants : List String := []
+  /-- Where the code picks the variant. -/
+  branchesAt : String := ""
 
 /-- An entry the model covers, by these actions. -/
 def Surface.modelled (what code : String) (actions : List String) : Surface := { what, code, actions }
@@ -332,6 +352,20 @@ def Surface.leftOut (what code why : String) : Surface := { what, code, why }
 left out, which is a decision: it is still to do, and the part is not done
 while it has one. An outline of an area lists every way in like this. -/
 def Surface.unread (what code : String) : Surface := { what, code, notRead := true }
+/-- A way in that was read and is not modelled yet: what it does is known, the model is to come.
+Between the stop at the journeys and the model, the ways in of a part stand like this. -/
+def Surface.read (what code : String) : Surface := { what, code, readNotModelled := true }
+/-- A left-out way in, with who agreed to leave it out and when: `.agreed "Jana, 2026-03-02"
+(.leftOut ...)`. It is then no open question any more. -/
+def Surface.agreed (who : String) (e : Surface) : Surface := { e with accepted := who }
+/-- The same way in, with the variants the code has behind it and where it picks one:
+`.branches ["to AWS", "to another vCenter by disk copy", "from a FlashArray"]
+"service/WorkflowSelector.kt:40-90" (.person ...)`. One way in often stands for several courses,
+chosen by a kind the code branches on. They are not ways in of their own: each is a way of the
+step it changes in the journey of the business case, and the checker asks for the ones no
+journey shows. An entry that is not read yet can carry them too. -/
+def Surface.branches (variants : List String) (at_ : String) (e : Surface) : Surface :=
+  { e with variants, branchesAt := at_ }
 /-- Something decided outside this area that the model has actions for
 ("the recovery side changes the state of the group's plan"). -/
 def Surface.outside (what : String) (actions : List String) : Surface :=
@@ -351,7 +385,7 @@ def Surface.passesOn (e : Surface) : Bool := e.owner != "" && !e.actions.isEmpty
 
 def Surface.status (e : Surface) : String :=
   if e.elsewhere then "outside" else if e.owner != "" then "ruled in"
-  else if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else if e.notRead then "not read" else "left out"
+  else if !e.actions.isEmpty then "modelled" else if e.reads then "reads" else if e.notRead then "not read" else if e.readNotModelled then "read, not modelled" else "left out"
 
 /-- The places in the code that a surface entry names. `code` is free text;
 a place in it is a file, with the lines given for it or, with none given, all
@@ -438,6 +472,9 @@ structure Area (σ α : Type) where
   /-- Per action name: the decision on whether it can interleave with other
   events inside the implementation. A missing entry is an open question. -/
   atomic : List (String × String) := []
+  /-- The journeys of a part that is outlined and not modelled yet, by name only: the business
+  case and who starts it. They are shown as named, not told. -/
+  named : List (String × String) := []
   /-- Questions for a person that the checker cannot find by itself: what a
   document says against what the code does, what a document leaves unsaid.
   They stay in the readback until answered; removing one means it was. -/
@@ -519,7 +556,7 @@ to the owner. A chain that comes back on itself leads nowhere. -/
 def leadsToOwner (peers : List Peer) : Nat → String → Surface → Bool
   | 0, _, _ => false
   | fuel + 1, part, e => (peers.find? (·.name == part)).any fun p => p.surface.any fun x =>
-      x.meets e && (x.owns || (x.passesOn && leadsToOwner peers fuel x.owner x))
+      x.meets e && (x.owns || x.notRead || x.readNotModelled || (x.passesOn && leadsToOwner peers fuel x.owner x))
 
 #guard leadsToOwner [{ name := "a", surface := [.modelled "x" "A.kt:1" ["a"]] }, { name := "b", surface := [.ruledIn "y" "A.kt:1; B.kt:2" "a" ["b"]] }]
   8 "b" (.ruledIn "z" "B.kt:2" "b" ["c"])
@@ -1009,7 +1046,9 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       let steps := stage.taken A.step s w
       for st in steps do
         let mut reqs : List String := []
+        -- a step in which the person only looks goes when the part lists the read it names
         let mut went := !st.actions.isEmpty
+          || (st.looks != "" && A.surface.any fun e => e.reads && e.meets { what := "", code := st.looks })
         for a in st.actions do
           match A.step a s with
           | some t =>
@@ -1041,7 +1080,9 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           ("say", .str st.say), ("actions", .arr (st.actions.map (.str ∘ label)).toArray),
           ("names", .arr (stepNames.eraseDups.map .str).toArray),
           ("continues", .arr (((takenUp ++ leadsOn).filter fun (as, _) => stepNames.any as.contains).map (·.2)).toArray),
-          ("screens", .arr (((A.surface.filter fun e => e.owns && e.actions.any stepNames.contains).flatMap (·.seen)).map fun x =>
+          ("looks", .str st.looks),
+          ("screens", .arr (((A.surface.filter fun e => (e.owns && e.actions.any stepNames.contains)
+              || (st.looks != "" && e.reads && e.meets { what := "", code := st.looks })).flatMap (·.seen)).map fun x =>
             Json.mkObj [("screen", .str x.screen), ("control", .str x.control), ("ui", .str x.ui), ("shot", .str x.shot)]).toArray),
           ("repeats", .bool (st.actions.length > 1)),
           ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
@@ -1101,7 +1142,11 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       let first ← all.head?
       -- every part that comes to it is named: the first as what it follows from, the others beside it
       pure <| Json.mkObj (one first ++ [("led", .bool true), ("also", .arr ((all.drop 1).map (Json.mkObj ∘ one)).toArray)])
-    let follows := follows <|> ledBy
+    -- one that begins with a way in ruled in a part that is only outlined so far follows from that part
+    let pending : Option Json := do
+      let e ← A.surface.find? fun e => e.owner != "" && e.actions.any fun n => (j.heads.map (actionName ∘ label)).contains n
+      pure <| Json.mkObj [("part", .str e.owner), ("what", .str e.what), ("journeys", .arr #[])]
+    let follows := follows <|> ledBy <|> pending
     -- who starts it: the one who uses the way in it begins with
     let headNames := (j.heads.map (actionName ∘ label)).eraseDups
     let starters := (A.surface.filter fun e => e.owns && e.actions.any headNames.contains).map (·.starter)
@@ -1110,6 +1155,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       else match [Starter.person, .client, .schedule, .system].find? starters.contains with
         | some k => k.word
         | none => if A.surface.any (fun e => e.elsewhere && e.actions.any headNames.contains) then "outside"
+                  else if (j.steps.head?.map (·.looks != "")).getD false then Starter.person.word
                   else ""
     if !A.surface.isEmpty && follows.isNone && (startedBy == Starter.system.word || startedBy == "outside") then
       startQs := startQs.push s!"The journey {j.id} \"{j.title}\" begins with what {if startedBy == "outside" then "something outside the model" else "another system"} does, not with a person, an API client or a schedule. Which business case leads to it? Tell it as what follows there; if another part owns what leads to it, name the way in as ruled in that part."
@@ -1152,7 +1198,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
       (s!"{unnamed.length} sentence(s) of the assumptions leave things out without naming them: "
         ++ "; ".intercalate ((unnamed.take 3).map fun t => s!"\"{t.trim}\"") ++ (if unnamed.length > 3 then "; and more" else "")
         ++ " Which ones exactly? Name each check, field or case that is left out, one by one, so that a person can see what the model does not speak about.", none)
-  if A.journeys.isEmpty then
+  if A.journeys.isEmpty && A.named.isEmpty then
     questions := questions.push
       ("The area has no journey. Which business cases should a person recognise it by?", none)
   else
@@ -1269,7 +1315,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
         questions := questions.push
           (s!"\"{e.what}\" ({e.code}) is also modelled in {part} (\"{x.what}\"). One way in has one owner: "
             ++ (if e.owns then "which part owns it? The other names it with `.ruledIn`." else "name it here as ruled there."), none)
-      if e.actions.isEmpty && owners.isEmpty && !e.notRead then
+      if e.actions.isEmpty && owners.isEmpty && !e.notRead && !e.readNotModelled && e.accepted == "" then
         questions := questions.push
           (s!"The code can {e.what} ({e.code}), and the model leaves it out: {e.why}. Should the area cover it?", none)
   if !A.surface.isEmpty then
@@ -1289,6 +1335,22 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     questions := questions.push
       (s!"{unreadWays.length} of the {(A.surface.filter fun e => !e.elsewhere && e.owner == "").length} ways in of this part have not been read yet: "
         ++ s!"{"; ".intercalate (unreadWays.map (·.what))}. Read each, then model it, or say why it is left out and ask the person.", none)
+  let readWays := A.surface.filter (·.readNotModelled)
+  if !readWays.isEmpty && !A.actions.isEmpty then
+    questions := questions.push
+      (s!"{readWays.length} ways in of this part are read and not modelled yet: {"; ".intercalate (readWays.map (·.what))}.", none)
+  -- the variants the code has behind a way in are told as ways of the step they change
+  let wayNames := (A.journeys.flatMap fun j => j.steps.flatMap fun st => st.ways.map fun w =>
+    (w.name, (w.steps.flatMap (·.actions)).map (actionName ∘ label)))
+  for e in A.surface do
+    if !e.variants.isEmpty && e.owns then
+      let shown := (wayNames.filter fun (_, as) => as.any e.actions.contains).map (·.1)
+      let missing := e.variants.filter fun v => !shown.contains v
+      if !missing.isEmpty then
+        questions := questions.push
+          (s!"The code takes \"{e.what}\" {e.variants.length} ways ({", ".intercalate e.variants}; {e.branchesAt}), and no journey shows "
+            ++ s!"{", ".intercalate missing} as a way of the step. Tell each as a way of the step it changes, under that name, "
+            ++ "or ask the person which may be left out.", none)
   let status (level target : Nat) (verdict : String) : String :=
     if verdict == "violated" then "violated" else if level ≤ target then "ok" else "below target"
   let withSteps (full : Bool) (run : Option (List α)) (obj : List (String × Json)) : Json :=
@@ -1317,10 +1379,12 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ("questions", .arr <| questions.map fun (text, run) => withSteps full run [("text", .str text)]),
     ("atomic", Json.mkObj (A.atomic.map fun (n, d) => (n, .str d))),
     ("assumptions", .arr (A.assumptions.map .str).toArray),
+    ("named", .arr (A.named.map fun (t, by_) => Json.mkObj [("title", .str t), ("by", .str by_)]).toArray),
     ("readAt", if full then .arr readAt else .arr (A.readAt.map fun (r, c) => Json.mkObj [("repo", .str r), ("commit", .str c)]).toArray),
     ("surface", .arr (A.surface.map fun e => Json.mkObj [
       ("what", .str e.what), ("code", .str e.code), ("actions", .arr (e.actions.map .str).toArray),
       ("status", .str e.status), ("why", .str e.why), ("owner", .str e.owner), ("by", .str e.starter.word),
+      ("accepted", .str e.accepted), ("variants", .arr (e.variants.map .str).toArray), ("branchesAt", .str e.branchesAt),
       ("screen", .str e.shownAs), ("ui", .str ("; ".intercalate ((e.seen.map (·.ui)).filter (· != "")).eraseDups)),
       ("shared", .arr <| (others.toArray.flatMap fun p => (p.surface.filter fun x =>
           !x.elsewhere && !x.reads && !e.elsewhere && !e.reads && x.meets e).toArray.map fun x =>
@@ -1345,6 +1409,7 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     ++ s!"; {claims.size} claims, {below} below target, {failed.length} failed; "
     ++ s!"{questions.size} open questions; code {code.status}")
     ++ (if unreadWays.isEmpty then "" else s!"; {unreadWays.length} of {own} ways in not read")
+    ++ (if readWays.isEmpty then "" else s!"; {readWays.length} read and not modelled yet")
     ++ (if code.reused then " (unchanged in git since recorded, not re-run)" else "")
   return { ledger := json false, readback := json true, failed := failed ++ codeFailed, summary }
 
@@ -1359,8 +1424,8 @@ were found, and what is open about its extent. The outline of a system is
 made before any model, so that every way in has one area and every part can
 name the others. -/
 def outline (name : String) (surface : List Surface) (questions : List String := [])
-    (readAt : List (String × String) := []) : Entry :=
-  ({ name, init := (), step := fun _ _ => none, actions := [], surface, questions, readAt } : Area Unit Unit).entry
+    (readAt : List (String × String) := []) (journeys : List (String × String) := []) : Entry :=
+  ({ name, init := (), step := fun _ _ => none, actions := [], surface, questions, readAt, named := journeys } : Area Unit Unit).entry
 
 end
 end Spec

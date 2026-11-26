@@ -65,7 +65,9 @@ def freshen (override : Option Nat) : IO Unit := do
         let seen ← try some <$> System.FilePath.metadata (System.FilePath.mk dir / f) catch _ => pure none
         last := match seen with | some m => m.modified.sec.toNat | none => 0
     if last == 0 then continue  -- not a git checkout: nothing to ask
-    if now ≥ last + days * 86400 then
+    -- a project whose sources must not be asked for (snapshots, no network) says `"fetch": false`
+    let mayFetch := ((← file ".spec/project.json").getObjVal? "fetch" >>= Lean.Json.getBool?).toOption.getD true
+    if mayFetch && now ≥ last + days * 86400 then
       -- never wait for a password or a hanging connection
       let quiet : Array (String × Option String) :=
         #[("GIT_TERMINAL_PROMPT", some "0"), ("GIT_SSH_COMMAND", some "ssh -oBatchMode=yes -oConnectTimeout=10")]

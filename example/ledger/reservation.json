@@ -179,6 +179,7 @@
  "questions":
  [{"text":
    "Whether 4 action(s) can interleave with other events inside the implementation, or are atomic, is not decided: `hold`, `confirm`, `cancel`, `tick`. For existing code, read it from the code (what runs in one transaction, under which lock) and say so in `atomic`; otherwise it is the person's decision."}],
+ "named": [],
  "lifecycles":
  [{"name": "seat",
    "initial": ["free"],
@@ -197,6 +198,7 @@
      "requirements": ["REQ-001"],
      "repeats": true,
      "names": ["hold"],
+     "looks": "",
      "continues": [],
      "asTold": true,
      "actions": ["hold \"s1\" \"alice\"", "hold \"s2\" \"alice\""]},
@@ -206,6 +208,7 @@
      "requirements": ["REQ-004"],
      "repeats": true,
      "names": ["confirm"],
+     "looks": "",
      "continues": [],
      "asTold": true,
      "actions": ["confirm \"s1\" \"alice\"", "confirm \"s2\" \"alice\""]}],
@@ -227,6 +230,7 @@
      "requirements": ["REQ-006"],
      "repeats": false,
      "names": ["cancel"],
+     "looks": "",
      "continues": [],
      "asTold": true,
      "actions": ["cancel \"s1\" \"alice\""]},
@@ -236,6 +240,7 @@
      "requirements": ["REQ-001"],
      "repeats": false,
      "names": ["hold"],
+     "looks": "",
      "continues": [],
      "asTold": true,
      "actions": ["hold \"s1\" \"bob\""]}],
@@ -265,7 +270,7 @@
    ["status s3", "system.status('s3')"],
    ["owner s3", "system.owner('s3')"]],
   "level": 4,
-  "inputs": "14836150838046224707",
+  "inputs": "11992663728224606054",
   "actions":
   {"tick": "clock.tick()",
    "hold": "system.hold({0}, {1})",
