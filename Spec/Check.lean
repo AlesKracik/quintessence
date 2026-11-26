@@ -1127,6 +1127,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
     let main := (good.head? <|> runs.head?).getD ([], (false, []))
     let mut ok := !good.isEmpty
     let mut rows : Array Json := #[]
+    -- what each step says, with the requirements that speak at it
+    let mut said : List (String × List String) := []
     for (stage, i) in j.steps.zipIdx do
       -- one step as it went in the run that shows it
       let stepJson (st : Step α) (went : Bool) (reqs : List String) : Json × List String :=
@@ -1146,12 +1148,13 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           ("repeats", .bool (st.actions.length > 1)),
           ("asTold", .bool went), ("requirements", .arr (reqs.map .str).toArray),
           ("turnedDown", .arr (turnedDown.map .str).toArray)], turnedDown)
-      let shown (run : List Nat × Bool × List (List (Step α × Bool × List String))) : List (Json × List String × List String) :=
+      let shown (run : List Nat × Bool × List (List (Step α × Bool × List String))) : List (Json × List String × List String × Step α) :=
         (run.2.2[i]?.getD []).map fun (st, went, reqs) =>
           let (js, td) := stepJson st went reqs
-          (js, reqs, td)
+          (js, reqs, td, st)
       if stage.ways.isEmpty then
-        for (js, reqs, td) in shown main do
+        for (js, reqs, td, st) in shown main do
+          if !st.actions.isEmpty && !said.any (·.1 == st.say) then said := said ++ [(st.say, reqs)]
           told := told ++ reqs
           leaves := leaves ++ td.map (·, j.id)
           rows := rows.push js
@@ -1164,7 +1167,8 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
           let went := mine.filter (·.2.1)
           if went.isEmpty then ok := false
           let mut steps : Array Json := #[]
-          for (js, reqs, td) in shown ((went.head? <|> mine.head?).getD main) do
+          for (js, reqs, td, st) in shown ((went.head? <|> mine.head?).getD main) do
+            if !st.actions.isEmpty && !said.any (·.1 == st.say) then said := said ++ [(st.say, reqs)]
             told := told ++ reqs
             leaves := leaves ++ td.map (·, j.id)
             steps := steps.push js
@@ -1178,6 +1182,19 @@ private def build [Hashable σ] [Repr σ] [Repr α] (A : Area σ α)
             ("name", .str w.name), ("given", .str w.given), ("sources", .arr (w.sources.map .str).toArray),
             ("status", .str (if went.isEmpty then "failed" else "ok")), ("only", .arr only.toArray), ("steps", .arr steps)]
         rows := rows.push <| Json.mkObj [("say", .str stage.say), ("asChosen", .bool stage.tied), ("ways", .arr ways)]
+    -- What a step says it does must be in a requirement: code is written from the model and its
+    -- requirements, not from the sentences. A step with no requirement, or with exactly the
+    -- requirements another step has, is told apart from it in words only.
+    let same (a b : List String) : Bool := a.all b.contains && b.all a.contains
+    let bare := said.filter fun (say, reqs) => reqs.isEmpty || said.any fun (o, rs) => o != say && same reqs rs
+    if ok && !bare.isEmpty then
+      let short (t : String) : String := if t.length > 70 then (t.take 70).trimRight ++ "…" else t
+      questions := questions.push
+        (s!"In {j.id}, {bare.length} of {said.length} steps have no requirement of their own: none speaks at the step, or only "
+          ++ s!"the ones that speak at another step too, so what the step does is said in its sentence only ("
+          ++ "; ".intercalate ((bare.take 3).map fun (t, _) => s!"\"{short t}\"") ++ (if bare.length > 3 then "; …" else "")
+          ++ "). Code written from the requirements will not do it. Give each such step a requirement that says what it does, "
+          ++ "on a state the model keeps, or join it with the step it cannot be told apart from.", none)
     let status := if ok then "ok" else "failed"
     -- A journey begins where something comes in: a person's request, a call or message from
     -- outside, a schedule. One that begins with a way in another part owns is what follows
