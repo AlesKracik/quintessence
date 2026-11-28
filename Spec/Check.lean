@@ -849,8 +849,8 @@ def platformDir : IO String := do
   let manifest := (Json.parse (← try IO.FS.readFile "lake-manifest.json" catch _ => pure "")).toOption.getD .null
   let text (j : Json) (k : String) : String := (j.getObjVal? k >>= Json.getStr?).toOption.getD ""
   for p in (manifest.getObjVal? "packages" >>= Json.getArr?).toOption.getD #[] do
-    if text p "name" == "quintessence" then
-      return if text p "type" == "path" then text p "dir" else s!"{text manifest "packagesDir"}/quintessence"
+    if text p "name" == "qedrick" then
+      return if text p "type" == "path" then text p "dir" else s!"{text manifest "packagesDir"}/qedrick"
   return "."
 
 /-- A framework file named in a binding (`adapters/python.py`), where it really is. -/

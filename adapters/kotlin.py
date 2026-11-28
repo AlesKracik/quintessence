@@ -140,7 +140,7 @@ def build(config, needs):
             if os.path.isfile(file):
                 stat = os.stat(file)
                 stamp.update(f"{file} {stat.st_mtime_ns} {stat.st_size}".encode())
-    cache = os.path.join(tempfile.gettempdir(), "quintessence-kotlin", stamp.hexdigest()[:24])
+    cache = os.path.join(tempfile.gettempdir(), "qedrick-kotlin", stamp.hexdigest()[:24])
     os.makedirs(cache, exist_ok=True)
     jar = os.path.join(cache, "harness.jar")
     if not os.path.exists(jar):

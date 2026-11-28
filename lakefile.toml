@@ -1,4 +1,4 @@
-name = "quintessence"
+name = "qedrick"
 defaultTargets = ["Spec"]
 
 [[lean_lib]]
