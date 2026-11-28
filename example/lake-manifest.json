@@ -3,7 +3,7 @@
  "packages":
  [{"type": "path",
    "scope": "",
-   "name": "quintessence",
+   "name": "qedrick",
    "manifestFile": "lake-manifest.json",
    "inherited": false,
    "dir": "..",

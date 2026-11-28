@@ -1,12 +1,12 @@
 # /spec — write or change the requirements of an area
 
-Requirements here are Lean 4 objects checked by `lake exe check`. The framework is the Lake package `quintessence`; read its `README.md` first if you have not (in a project it is under `.lake/packages/quintessence/`). Its `example/` directory is a complete project: `example/Areas/Auth` is the pattern for an area written from scratch, `example/Areas/Reservation` for one extracted from existing code.
+Requirements here are Lean 4 objects checked by `lake exe check`. The framework is the Lake package `qedrick`; read its `README.md` first if you have not (in a project it is under `.lake/packages/qedrick/`). Its `example/` directory is a complete project: `example/Areas/Auth` is the pattern for an area written from scratch, `example/Areas/Reservation` for one extracted from existing code.
 
 The person you work with decides what the system must do. You write the Lean, run the checker, and bring back what it found. Never decide a requirement on the person's behalf, and never weaken a claim to make the check pass.
 
 ## Starting a project (once)
 
-If the directory has no `lakefile.toml` yet, set the project up first: follow `SETUP.md` of the framework (in a project that already has the package it is at `.lake/packages/quintessence/SETUP.md`).
+If the directory has no `lakefile.toml` yet, set the project up first: follow `SETUP.md` of the framework (in a project that already has the package it is at `.lake/packages/qedrick/SETUP.md`).
 
 ## 0. The change
 

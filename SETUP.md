@@ -1,6 +1,6 @@
 # Setting up a project
 
-Instructions for the AI agent. A person asked you to set up a Quintessence project, or to move one to a newer framework version. Do the steps yourself and talk to the person in plain words. Ask only what is marked **Ask**; do not make them edit files or run commands. Without their yes, do not install anything, clone any repository other than the framework, commit, or push.
+Instructions for the AI agent. A person asked you to set up a Qedrick project, or to move one to a newer framework version. Do the steps yourself and talk to the person in plain words. Ask only what is marked **Ask**; do not make them edit files or run commands. Without their yes, do not install anything, clone any repository other than the framework, commit, or push.
 
 If you are reading this from a temporary checkout of the framework, keep it until you are done; `README.md` next to this file explains what the framework does, and `example/` is a complete project to compare with.
 
@@ -31,8 +31,8 @@ name = "myproject"
 defaultTargets = ["check"]
 
 [[require]]
-name = "quintessence"
-git = "https://github.com/AlesKracik/quintessence"
+name = "qedrick"
+git = "https://github.com/AlesKracik/qedrick"
 rev = "main"
 
 [[lean_lib]]
@@ -67,10 +67,10 @@ def Areas.all : List Spec.Entry := []
 
    ```
    lake update
-   mkdir -p .claude && cp -r .lake/packages/quintessence/.claude/commands .claude/
+   mkdir -p .claude && cp -r .lake/packages/qedrick/.claude/commands .claude/
    ```
 
-   `lake update` puts the framework under `.lake/packages/quintessence/` and writes `lake-manifest.json`, which pins the exact version and is committed. The agent reads `.claude/commands/` from the directory it is started in: when the project is a subdirectory of a repository, tell the person to start the agent there, or copy the commands to the repository root.
+   `lake update` puts the framework under `.lake/packages/qedrick/` and writes `lake-manifest.json`, which pins the exact version and is committed. The agent reads `.claude/commands/` from the directory it is started in: when the project is a subdirectory of a repository, tell the person to start the agent there, or copy the commands to the repository root.
 
 6. Add to `.gitignore`: `.lake/`, `out/`, `.spec/local.json`.
 
@@ -114,4 +114,4 @@ A binding names the code it checks:
 
 ## A newer framework version
 
-Change `rev` in `lakefile.toml`, run `lake update quintessence`, copy the commands again (step 5; they are the framework's, so overwrite), run `lake exe check --full`, and show the person what changed in the ledger before committing it together with `lake-manifest.json`.
+Change `rev` in `lakefile.toml`, run `lake update qedrick`, copy the commands again (step 5; they are the framework's, so overwrite), run `lake exe check --full`, and show the person what changed in the ledger before committing it together with `lake-manifest.json`.

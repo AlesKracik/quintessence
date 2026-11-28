@@ -2,7 +2,7 @@ name = "example"
 defaultTargets = ["check"]
 
 [[require]]
-name = "quintessence"
+name = "qedrick"
 path = ".."
 
 [[lean_lib]]
